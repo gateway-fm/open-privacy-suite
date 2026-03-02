@@ -23,7 +23,7 @@ test.describe('Authentication Flow', () => {
     await expect(page.locator(selectors.login.authCard)).toBeVisible();
 
     // Check the title text
-    await expect(page.locator(selectors.login.authTitle)).toContainText('Authenticate with Privado ID');
+    await expect(page.locator(selectors.login.authTitle)).toContainText('Sign In');
 
     // Verify the Privacy Proxy branding
     await expect(page.getByText('Privacy Proxy')).toBeVisible();

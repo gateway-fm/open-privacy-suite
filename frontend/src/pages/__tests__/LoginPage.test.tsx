@@ -36,7 +36,7 @@ describe('LoginPage', () => {
 
       expect(screen.getByText('Privacy Proxy')).toBeInTheDocument();
       expect(
-        screen.getByText('Authenticate with Privado ID')
+        screen.getByText('Sign In')
       ).toBeInTheDocument();
     });
 
