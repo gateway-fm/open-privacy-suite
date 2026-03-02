@@ -9,6 +9,7 @@ import '@rainbow-me/rainbowkit/styles.css';
 import { wagmiConfig } from './config/wagmi';
 import { AuthProvider } from './contexts/AuthContext';
 import { LoginPage } from './pages/LoginPage';
+import { AzureCallbackPage } from './pages/AzureCallbackPage';
 import { LinkWalletPage } from './pages/LinkWalletPage';
 import { SuccessPage } from './pages/SuccessPage';
 import { DisclosurePage } from './pages/DisclosurePage';
@@ -53,6 +54,7 @@ function Root() {
               <Routes>
                 {/* Auth flow routes */}
                 <Route path="/login" element={<LoginPage />} />
+                <Route path="/auth/azure/callback" element={<AzureCallbackPage />} />
                 <Route path="/link-wallet" element={<LinkWalletPage />} />
                 <Route path="/success" element={<SuccessPage />} />
                 <Route path="/disclosure" element={<DisclosurePage />} />

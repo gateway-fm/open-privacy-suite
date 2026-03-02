@@ -119,6 +119,34 @@ export const authApiMethods = {
       ...(accessToken && { access_token: accessToken }),
     });
   },
+
+  // Get available authentication providers
+  getAuthProviders: async (): Promise<AuthProvidersResponse> => {
+    const response = await authApi.get<AuthProvidersResponse>('/auth/providers');
+    return response.data;
+  },
+
+  // Get Microsoft authorization URL for Azure AD login
+  getAzureAuthURL: async (redirectURI: string): Promise<AzureAuthURLResponse> => {
+    const response = await authApi.get<AzureAuthURLResponse>('/auth/azure/url', {
+      params: { redirect_uri: redirectURI },
+    });
+    return response.data;
+  },
+
+  // Exchange Azure AD authorization code for our JWT tokens
+  completeAzureLogin: async (
+    code: string,
+    state: string,
+    redirectURI: string
+  ): Promise<AuthTokenResponse> => {
+    const response = await authApi.post<AuthTokenResponse>('/auth/azure/callback', {
+      code,
+      state,
+      redirect_uri: redirectURI,
+    });
+    return response.data;
+  },
 };
 
 export const ethLinkApiMethods = {
@@ -183,6 +211,15 @@ export function isMobileDevice(): boolean {
   return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
     navigator.userAgent
   );
+}
+
+export interface AuthProvidersResponse {
+  providers: string[];
+}
+
+export interface AzureAuthURLResponse {
+  url: string;
+  state: string;
 }
 
 // User organization info

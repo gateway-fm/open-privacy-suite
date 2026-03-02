@@ -7,12 +7,25 @@ import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
 import { authApiMethods, generatePrivadoLink, isMobileDevice, AuthRequestResponse, HumanityVerificationError } from '@/api/auth';
 
+// Microsoft logo SVG (official brand colours)
+function MicrosoftIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 21 21" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect x="1" y="1" width="9" height="9" fill="#F25022" />
+      <rect x="11" y="1" width="9" height="9" fill="#7FBA00" />
+      <rect x="1" y="11" width="9" height="9" fill="#00A4EF" />
+      <rect x="11" y="11" width="9" height="9" fill="#FFB900" />
+    </svg>
+  );
+}
+
 // Mock login requires explicit opt-in via VITE_ALLOW_MOCK_LOGIN=true
 const allowMockLogin = import.meta.env.VITE_ALLOW_MOCK_LOGIN === 'true';
 const AUTH_POLL_INTERVAL_MS = 2000;
 const AUTH_MAX_POLLS = 150;
 
 type AuthStep = 'init' | 'loading' | 'ready' | 'success' | 'error' | 'humanity_required' | 'timed_out';
+type AuthProvider = 'privado' | 'azuread';
 
 interface AuthState {
   step: AuthStep;
@@ -25,6 +38,9 @@ interface AuthState {
 export function LoginPage() {
   const navigate = useNavigate();
   const { login, isAuthenticated, isLoading } = useAuth();
+  const [providers, setProviders] = useState<string[]>(['privado']);
+  const [activeProvider, setActiveProvider] = useState<AuthProvider>('privado');
+  const [azureLoading, setAzureLoading] = useState(false);
   const [state, setState] = useState<AuthState>({
     step: 'init',
     sessionId: null,
@@ -39,6 +55,23 @@ export function LoginPage() {
       navigate('/link-wallet');
     }
   }, [isAuthenticated, navigate, isLoading]);
+
+  // Load available providers (silently ignore errors — default to privado only)
+  useEffect(() => {
+    authApiMethods.getAuthProviders().then((res) => setProviders(res.providers)).catch(() => {});
+  }, []);
+
+  // Handle "Sign in with Microsoft" — fetch auth URL then redirect browser
+  const handleAzureLogin = useCallback(async () => {
+    setAzureLoading(true);
+    try {
+      const redirectURI = `${window.location.origin}/auth/azure/callback`;
+      const { url } = await authApiMethods.getAzureAuthURL(redirectURI);
+      window.location.href = url;
+    } catch {
+      setAzureLoading(false);
+    }
+  }, []);
 
   // Start auth request
   const startAuth = useCallback(async () => {
@@ -239,12 +272,75 @@ export function LoginPage() {
         {/* Auth Card */}
         <Card variant="default" data-testid="auth-card">
           <CardHeader className="text-center">
-            <CardTitle data-testid="auth-title">Authenticate with Privado ID</CardTitle>
+            <CardTitle data-testid="auth-title">Sign In</CardTitle>
             <CardDescription>
-              Prove your humanity using zero-knowledge proofs
+              {activeProvider === 'azuread'
+                ? 'Use your Microsoft or corporate account'
+                : 'Prove your humanity using zero-knowledge proofs'}
             </CardDescription>
           </CardHeader>
+
+          {/* Provider tabs — only shown when more than one provider is available */}
+          {providers.includes('azuread') && (
+            <div className="flex border-b border-neutral-200 mx-6">
+              <button
+                onClick={() => setActiveProvider('privado')}
+                className={`flex-1 py-2 text-sm font-medium transition-colors ${
+                  activeProvider === 'privado'
+                    ? 'border-b-2 border-primary text-primary'
+                    : 'text-neutral-500 hover:text-neutral-700'
+                }`}
+                data-testid="tab-privado"
+              >
+                Privado ID
+              </button>
+              <button
+                onClick={() => setActiveProvider('azuread')}
+                className={`flex-1 py-2 text-sm font-medium transition-colors ${
+                  activeProvider === 'azuread'
+                    ? 'border-b-2 border-primary text-primary'
+                    : 'text-neutral-500 hover:text-neutral-700'
+                }`}
+                data-testid="tab-azuread"
+              >
+                Microsoft
+              </button>
+            </div>
+          )}
+
           <CardContent>
+            {/* Microsoft / Azure AD sign-in panel */}
+            {activeProvider === 'azuread' && (
+              <div className="flex flex-col items-center gap-6 py-8" data-testid="azuread-section">
+                <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-[#0078d4]/10">
+                  <MicrosoftIcon className="h-8 w-8" />
+                </div>
+                <div className="text-center">
+                  <p className="font-medium text-neutral-900">Sign in with Microsoft</p>
+                  <p className="mt-1 text-sm text-neutral-500">
+                    Use your @outlook.com, @hotmail.com, or corporate account
+                  </p>
+                </div>
+                <Button
+                  onClick={handleAzureLogin}
+                  disabled={azureLoading}
+                  className="w-full bg-[#0078d4] hover:bg-[#106ebe] text-white"
+                  size="lg"
+                  data-testid="azure-signin-btn"
+                >
+                  {azureLoading ? (
+                    <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                  ) : (
+                    <MicrosoftIcon className="w-5 h-5 mr-2" />
+                  )}
+                  {azureLoading ? 'Redirecting...' : 'Continue with Microsoft'}
+                </Button>
+              </div>
+            )}
+
+            {/* Privado ID flow — hidden when Microsoft tab is active */}
+            {activeProvider === 'privado' && (
+              <>
             {/* Loading state */}
             {state.step === 'loading' && (
               <div className="flex flex-col items-center gap-4 py-8" role="status" aria-live="polite" data-testid="auth-loading">
@@ -339,23 +435,27 @@ export function LoginPage() {
                 </Button>
               </div>
             )}
+              </>
+            )}
           </CardContent>
         </Card>
 
-        {/* Help text */}
-        <div className="mt-6 text-center">
-          <p className="text-sm text-neutral-700">
-            Don't have Privado ID?{' '}
-            <a
-              href="https://docs.privado.id/docs/wallet/wallet-app/privadoid-app/"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-primary underline underline-offset-2 hover:text-primary-300"
-            >
-              Download the wallet
-            </a>
-          </p>
-        </div>
+        {/* Help text — Privado only */}
+        {activeProvider === 'privado' && (
+          <div className="mt-6 text-center">
+            <p className="text-sm text-neutral-700">
+              Don't have Privado ID?{' '}
+              <a
+                href="https://docs.privado.id/docs/wallet/wallet-app/privadoid-app/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-primary underline underline-offset-2 hover:text-primary-300"
+              >
+                Download the wallet
+              </a>
+            </p>
+          </div>
+        )}
 
         {/* Mock login - requires explicit opt-in via VITE_ALLOW_MOCK_LOGIN=true */}
         {allowMockLogin && (
