@@ -57,6 +57,25 @@ docker-compose -f ../explorer/docker-compose.privacy-proxy.yml up -d
 
 **Note:** For network access from other devices, see `DEV.local.md` (gitignored) for machine-specific setup.
 
+## Security Review
+
+Every PR must include a security review before merging if it touches any of:
+
+- **Auth / RBAC** — JWT handling, claims, permissions, group access
+- **Visibility / redaction** — `GetBatchVisibility`, `RedactTransactions`, `RedactLogs`, event filtering
+- **New or changed API endpoints** — any new route, changed parameters, changed response shape
+- **Disclosure / grants** — disclosure requests, grants, logVisibleTo, shared logs
+- **Explorer API** — any endpoint that returns chain data filtered by privacy rules
+- **Cross-org isolation** — contract ownership, org context, default claims
+
+The review must check for:
+1. **Data leakage** — does the response expose addresses, DIDs, org IDs, or counts that the viewer shouldn't see?
+2. **Error message exposure** — are raw DB/internal errors returned to the client? (must be opaque)
+3. **Rate limiting** — is the endpoint behind rate-limiting middleware?
+4. **Cross-org isolation** — can a user in org A access data from org B?
+5. **Fail-closed** — does a missing/invalid token, missing DB row, or query error result in denial (not accidental access)?
+6. **Input validation** — are user-supplied params (addresses, hex values, DIDs) validated before use in queries?
+
 ## Documentation Site
 
 The docs site lives in `site/` (Next.js + MDX). When changing auth, RBAC, security, compliance, or other user-facing logic, update the corresponding docs page in `site/src/app/docs/`. Docs should be updated in the same PR as the code change.
