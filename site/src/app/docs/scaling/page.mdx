@@ -1,0 +1,102 @@
+import { Callout } from "@/components/mdx/callout";
+
+export const metadata = {
+  title: "Scaling",
+  description:
+    "Running multiple Open Privacy Suite instances behind a load balancer with shared Postgres and Redis.",
+};
+
+# Scaling
+
+The Open Privacy Suite supports horizontal scaling — multiple proxy instances sharing a single Postgres database and Redis instance behind a load balancer. All instances serve identical requests with consistent RBAC, sessions, and caching.
+
+---
+
+## Requirements
+
+| Component | Purpose | Shared? |
+|-----------|---------|---------|
+| **Postgres** | RBAC, contracts, users, audit logs — source of truth | Yes — all instances connect to the same database |
+| **Redis** | Sessions, OAuth state, RBAC permission cache | Yes — all instances connect to the same Redis |
+| **Ethereum node** | JSON-RPC endpoint (e.g. Geth, Anvil) | Yes — all instances forward to the same node |
+| **Load balancer** | Distributes requests across instances | Sits in front of the proxy instances |
+
+<Callout variant="info" title="No sticky sessions required">
+  Any instance can serve any request. Sessions and RBAC state are stored in shared Redis and Postgres, so the load balancer does not need session affinity.
+</Callout>
+
+---
+
+## Configuration
+
+Point each proxy instance to the same Postgres and Redis:
+
+```bash
+DATABASE_URL=postgres://user:pass@your-postgres:5432/privacy_proxy?sslmode=require
+REDIS_URL=redis://:password@your-redis:6379/0
+NODE_URL=http://your-ethereum-node:8545
+```
+
+All other environment variables (`JWT_SECRET`, `ADMIN_API_TOKEN`, etc.) must be identical across instances — they share the same user base and token validation.
+
+<Callout variant="danger" title="JWT secrets must match">
+  If instances have different `JWT_SECRET` or `JWT_REFRESH_SECRET` values, tokens issued by one instance will be rejected by another.
+</Callout>
+
+---
+
+## What is shared
+
+| State | Store | Behavior |
+|-------|-------|----------|
+| **User sessions** | Redis | Login on instance A, use the token on instance B |
+| **OAuth flows** | Redis | Start auth on instance A, complete on instance B |
+| **RBAC permissions** | Postgres + Redis cache | Permission changes propagate to all instances |
+| **Contract grants** | Postgres | Visible to all instances immediately |
+| **Audit logs** | Postgres | Written by whichever instance handles the request |
+
+---
+
+## Connection resilience
+
+Both Redis and Postgres connections handle startup ordering and transient failures:
+
+- **On startup**, the proxy retries the initial connection if the database or Redis is not yet reachable. This handles cases where the proxy starts before its dependencies are ready (common in container orchestration).
+- **At runtime**, if Redis becomes temporarily unavailable, cached operations fail fast instead of blocking on timeouts. The proxy continues serving requests using Postgres as the source of truth. When Redis recovers, caching resumes automatically.
+- **Postgres reconnection** is handled by the connection pool. If Postgres goes down briefly, the first query after recovery may fail, but subsequent queries succeed on fresh connections.
+
+<Callout variant="warning" title="Redis down = auth disrupted">
+  When Redis is unavailable, session validation and OAuth flows fail because session state is stored in Redis. RBAC permission checks fall back to Postgres (slower but functional). Plan Redis for the same availability as your database.
+</Callout>
+
+---
+
+## Testing locally
+
+A `docker-compose.scale.yml` is provided for testing with two proxy instances:
+
+```bash
+docker compose -f docker-compose.scale.yml up --build -d
+```
+
+This starts shared Postgres, Redis, and Anvil with two proxy instances on ports 8091 and 8092. A verification script tests cross-instance state sharing:
+
+```bash
+./scripts/verify-scaling.sh http://localhost:8091 http://localhost:8092
+```
+
+---
+
+## Built-in vs external Redis
+
+By default, `docker compose up` starts a built-in Redis container. To use an external Redis instead, set `REDIS_URL` in your `.env` file:
+
+```bash
+REDIS_URL=redis://:password@your-redis-host:6379/0
+```
+
+When `REDIS_URL` is set, `make dev-stack` automatically skips starting the built-in Redis container.
+
+<Callout variant="info" title="No setup required">
+  Redis requires no schema, migrations, or initialization. Point the proxy at any Redis instance with authentication enabled and it works immediately.
+</Callout>
