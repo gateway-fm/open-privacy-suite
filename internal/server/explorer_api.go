@@ -1518,24 +1518,29 @@ func (s *Server) getExplorerTransaction(c *gin.Context) {
 	c.JSON(http.StatusOK, redactedTxs[0])
 }
 
-// countAcrossPages walks a newest-first item feed in pages and sums a per-page
-// count, bounded by maxScan total items. It exists because privacy/gRPC mode
+// countAcrossPages pages through an item feed and sums a per-page count over
+// the DISTINCT items, bounded by maxScan. It exists because privacy/gRPC mode
 // clamps each indexer fetch to a small max page size (~100), so a single fetch
-// cannot count an active address's transactions — we must page through them.
+// cannot count an active address's transactions.
 //
-// fetch(before) returns the page strictly older than the given block cursor
-// (nil = newest first); cursorOf extracts a page item's block for the next
-// cursor; perPageCount returns how many items in the page should be counted
-// (e.g. redaction survivors). It stops at an empty page, when maxScan items have
-// been scanned, or when the cursor stops decreasing (a single block larger than
-// one page — a safety break so the loop is always bounded and terminates).
+// fetch(before) returns the page older than the given block cursor (nil = newest
+// first); cursorOf extracts an item's block; keyOf returns a stable per-item
+// identity; perPageCount counts the countable items in a page (e.g. redaction
+// survivors). Dedup by identity keeps the count correct even when the backend
+// ignores `before` and re-serves or reorders rows (the gRPC indexer maps
+// `before` to an inclusive block-range bound and does not guarantee order):
+// already-seen rows are dropped, and the cursor advances by the page minimum, so
+// a non-paginating backend under-reports rather than double-counts. It stops at
+// an empty page, when a page yields no new items, at genesis, or at maxScan.
 func countAcrossPages[T any](
 	fetch func(before *uint64) ([]T, error),
 	cursorOf func(T) uint64,
+	keyOf func(T) string,
 	perPageCount func([]T) (int, error),
 	maxScan int,
 ) (int, error) {
 	count, scanned := 0, 0
+	seen := make(map[string]struct{})
 	var before *uint64
 	for scanned < maxScan {
 		page, err := fetch(before)
@@ -1545,23 +1550,31 @@ func countAcrossPages[T any](
 		if len(page) == 0 {
 			break
 		}
-		// Pages are cursor-descending; if the top of this page hasn't moved
-		// below the previous cursor, the backend ignored `before` and is
-		// re-serving counted rows. Stop before counting to avoid duplicates.
-		if before != nil && cursorOf(page[0]) >= *before {
+		fresh := make([]T, 0, len(page))
+		var minCursor uint64
+		for i, item := range page {
+			if c := cursorOf(item); i == 0 || c < minCursor {
+				minCursor = c
+			}
+			if _, dup := seen[keyOf(item)]; dup {
+				continue
+			}
+			seen[keyOf(item)] = struct{}{}
+			fresh = append(fresh, item)
+		}
+		if len(fresh) == 0 {
 			break
 		}
-		scanned += len(page)
-		n, err := perPageCount(page)
+		scanned += len(fresh)
+		n, err := perPageCount(fresh)
 		if err != nil {
 			return 0, err
 		}
 		count += n
-		last := cursorOf(page[len(page)-1])
-		if last == 0 {
-			break // reached genesis
+		if minCursor == 0 {
+			break
 		}
-		bb := last
+		bb := minCursor
 		before = &bb
 	}
 	return count, nil
@@ -1583,6 +1596,7 @@ func (s *Server) countVisibleAddressTxs(ctx context.Context, address, viewerDID 
 			return s.explorerStore.GetTransactionsByAddress(ctx, address, perPage, before)
 		},
 		func(t explorer.Transaction) uint64 { return t.BlockNumber },
+		func(t explorer.Transaction) string { return t.Hash },
 		func(page []explorer.Transaction) (int, error) {
 			redacted, err := s.explorerRedactor.RedactTransactions(ctx, page, viewerDID, opts)
 			if err != nil {
@@ -1657,6 +1671,7 @@ func (s *Server) countVisibleAddressTransfers(ctx context.Context, address, view
 			return s.explorerStore.GetTransfersByAddress(ctx, address, perPage, before)
 		},
 		func(t explorer.TokenTransfer) uint64 { return t.BlockNumber },
+		func(t explorer.TokenTransfer) string { return t.TxHash + ":" + strconv.Itoa(t.LogIndex) },
 		func(page []explorer.TokenTransfer) (int, error) {
 			redacted, err := s.explorerRedactor.RedactTransfers(ctx, page, viewerDID, opts)
 			if err != nil {
