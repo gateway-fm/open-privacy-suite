@@ -121,6 +121,13 @@ RPC_API_KEY_HEADER = "Authorization"
 # address pseudonyms non-enumerable. It is a secret — set via env, not here.
 
 # -----------------------------------------------------------------------------
+# Per-transaction visibility (privateFor / visibleTo)
+# -----------------------------------------------------------------------------
+# How often the outbox reconciler makes a recipient's visibility of a private
+# tx effective. Default 5s; lower it in dev/test for faster recipient reads.
+VISIBILITY_RECONCILE_INTERVAL = "5s"
+
+# -----------------------------------------------------------------------------
 # Audit log integrity
 # -----------------------------------------------------------------------------
 AUDIT_INTEGRITY_VERIFY_INTERVAL = "15m"          # 0 disables the scheduled verifier

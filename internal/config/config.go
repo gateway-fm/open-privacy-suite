@@ -399,6 +399,11 @@ type Config struct {
 	SIEMFlushInterval   time.Duration // Max time before flushing SIEM batch (default: 10s)
 	SIEMFallbackLogPath string        // If set, failed SIEM batches written here as JSON lines (M4 fix)
 
+	// Visibility outbox reconciler (M7): how often pending per-tx visibility
+	// (privateFor/visibleTo) is drained into tx_visible_to. Default 5s; lower
+	// it in dev/test for faster recipient visibility.
+	VisibilityReconcileInterval time.Duration
+
 	// Audit hash-chain integrity worker (RD-858)
 	AuditIntegrityVerifyInterval time.Duration // How often the scheduled verifier walks the chains (default: 15m; 0 = disabled).
 	AuditTamperWebhookURL        string        // Optional generic webhook POSTed when the verifier detects tampering. Subject to the same SSRF guard as SIEMWebhookURL. Empty = disabled (SIEM-only notification path).
@@ -624,6 +629,9 @@ func Load() *Config {
 	}
 	siemFlushInterval := parseDurationEnv("SIEM_FLUSH_INTERVAL", 10*time.Second)
 
+	// M7: visibility outbox reconciler cadence (default 5s).
+	visibilityReconcileInterval := parseDurationEnv("VISIBILITY_RECONCILE_INTERVAL", 5*time.Second)
+
 	// RD-858: scheduled audit-chain integrity verifier.
 	auditIntegrityInterval := parseDurationEnv("AUDIT_INTEGRITY_VERIFY_INTERVAL", 15*time.Minute)
 	auditTamperWebhookURL := getEnv("AUDIT_TAMPER_WEBHOOK_URL", "")
@@ -811,6 +819,7 @@ func Load() *Config {
 		SIEMBatchSize:                       siemBatchSize,
 		SIEMFlushInterval:                   siemFlushInterval,
 		SIEMFallbackLogPath:                 getEnv("SIEM_FALLBACK_LOG_PATH", ""),
+		VisibilityReconcileInterval:         visibilityReconcileInterval,
 		AuditIntegrityVerifyInterval:        auditIntegrityInterval,
 		AuditTamperWebhookURL:               auditTamperWebhookURL,
 		AuditDatabaseURL:                    auditDatabaseURL,

@@ -191,6 +191,8 @@ services:
       # allowlist, MOCK_SIGNATURES / ALLOW_MOCK_LOGIN honored). Dev
       # compose sets "development" explicitly.
       - ENVIRONMENT=development
+      # Faster per-tx visibility reconciler in dev (RD-1202); default 5s in prod.
+      - VISIBILITY_RECONCILE_INTERVAL=${VISIBILITY_RECONCILE_INTERVAL:-5s}
       - VERIFIER_ID=${VERIFIER_ID:-did:privado:verifier:dev-0000000000000000}
       - BASE_URL=${BASE_URL:-http://localhost:${HOST_PORT_PROXY:-8080}}
       - FRONTEND_URL=${FRONTEND_URL:-http://localhost:${HOST_PORT_UI:-5173}}
