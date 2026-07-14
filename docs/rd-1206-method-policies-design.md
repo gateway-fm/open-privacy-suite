@@ -67,8 +67,9 @@ policy load for (target contract)
          else       → opaque DENY, no upstream call
      else (not allowed, policy HAS a return source):
          forward the caller's own eth_call once  (never a synthesized call) [C2]
-         decode ONLY the declared address output paths from the response   [H2]
-           (bounded blob; decode error / oversize → DENY)
+         decode the response's output tuple once, select the declared      [H2]
+           address paths (bounded ≤128 KiB before unpack; hostile/oversize/
+           wrong-typed return errors cleanly → DENY, no panic/OOM)
          caller identity ∩ decoded non-zero addresses? → return response
          else → opaque DENY
 ```
@@ -325,8 +326,11 @@ internals), same PR.
   isolation is this resolver's job, made load-bearing with H2.
 - **H1 (admin tier):** raised to `requireSuperAdmin` + full before/after
   audit-log, rationale recorded.
-- **H2 (hostile return decode):** bounded return blob, decode only declared
-  address paths (no full recursive unpack), deny on failure/oversize, test.
+- **H2 (hostile return decode):** input bounded ≤128 KiB *before* unpack;
+  decode the output tuple once and select only the declared address paths; a
+  hostile length-prefix, oversize, or wrong-typed slot errors cleanly (deny,
+  no panic/OOM), verified by test. The guarantee is "bounded to the cap,
+  fail-closed", not "one address per path".
 - **H3 (set-once front-running):** high-entropy-key precondition + poison
   detection (deny-all on conflicting set-once) + return resolver as the
   recommended identity default; receipt-status-1 promotion already blocks failed
@@ -346,3 +350,28 @@ internals), same PR.
   regression test.
 - **L3 (zero/empty guard):** extended beyond zero-address to empty DID / zero
   key/value.
+
+### Post-implementation audit (engine) — resolved
+
+An independent adversarial review of the committed engine confirmed **no path
+returns Allow=true when it shouldn't** (no disclosure/escalation); the gaps
+were fail-closed/correctness in `Validate` plus one nil-receiver panic. Fixed:
+
+- **C-1** — nil `*MethodPolicyDocument` now denies (no panic) in both
+  `GatedReader` and `EvaluateAccess`.
+- **H-1** — `Validate` rejects key/param types the runtime cannot
+  canonicalize; `canonicalizeArg` now handles native `uintN`/`intN` (<256) and
+  `bytesN`, so a common `uint64` key round-trips instead of silently bricking
+  the record.
+- **H-2** — `Validate` rejects a selector claimed by more than one record
+  type (was a nondeterministic map-order authorization decision).
+- **M-2** — read-side `decodeRecordKey` rejects an empty key, mirroring the
+  writer.
+- **L-1** — `AllowRule` unmarshaling rejects unknown fields inside/alongside
+  `callerIn` (keeps the strict-parse posture).
+- **L-2** — dead test helpers removed from the production file.
+
+**Operator note (identity fields):** identity fields (payer/payee) MUST be
+`set_once` and audience fields `union`. Marking an identity field `union`
+disables the set-once poison protection for it — the operator docs state this;
+Validate does not force it because `union` is legitimate for audience.

@@ -1,10 +1,13 @@
 package rbac
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
+	"reflect"
+	"strconv"
 	"strings"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
@@ -90,12 +93,16 @@ type ReturnSource struct {
 	Kind  string   `json:"kind"` // "address"
 }
 
-// UnmarshalJSON accepts callerIn as either a string array or a return object.
+// UnmarshalJSON accepts callerIn as either a string array or a return object,
+// and rejects unknown fields both alongside and inside callerIn (L-1: keep the
+// strict-parse posture the top-level decoder has).
 func (a *AllowRule) UnmarshalJSON(data []byte) error {
+	wrapDec := json.NewDecoder(bytes.NewReader(data))
+	wrapDec.DisallowUnknownFields()
 	var wrap struct {
 		CallerIn json.RawMessage `json:"callerIn"`
 	}
-	if err := json.Unmarshal(data, &wrap); err != nil {
+	if err := wrapDec.Decode(&wrap); err != nil {
 		return err
 	}
 	if len(wrap.CallerIn) == 0 {
@@ -105,12 +112,14 @@ func (a *AllowRule) UnmarshalJSON(data []byte) error {
 	if strings.HasPrefix(trimmed, "[") {
 		return json.Unmarshal(wrap.CallerIn, &a.Fields)
 	}
+	rsDec := json.NewDecoder(bytes.NewReader(wrap.CallerIn))
+	rsDec.DisallowUnknownFields()
 	var rs struct {
 		Source string   `json:"source"`
 		Paths  []string `json:"paths"`
 		Kind   string   `json:"kind"`
 	}
-	if err := json.Unmarshal(wrap.CallerIn, &rs); err != nil {
+	if err := rsDec.Decode(&rs); err != nil {
 		return err
 	}
 	if rs.Source != "return" {
@@ -205,6 +214,7 @@ func (d *MethodPolicyDocument) Validate(contractABI string) error {
 		return fmt.Errorf("method policy: parse ABI: %w", err)
 	}
 	methodCount := 0
+	selectorOwners := map[string]string{} // selector → record type, reject >1 (H-2)
 	for recType, rec := range d.Records {
 		if recType == "" {
 			return errors.New("method policy: empty record type")
@@ -222,7 +232,23 @@ func (d *MethodPolicyDocument) Validate(contractABI string) error {
 			if key.Index < 0 || key.Index >= len(m.Inputs) {
 				return "", fmt.Errorf("key index %d out of range for %s", key.Index, sig)
 			}
-			return m.Inputs[key.Index].Type.String(), nil
+			kt := m.Inputs[key.Index].Type
+			if !canonicalizableType(kt) {
+				return "", fmt.Errorf("key type %q of %s is not canonicalizable", kt.String(), sig)
+			}
+			return kt.String(), nil
+		}
+		claimSelector := func(sig string) error {
+			m, ok := methodBySig(parsed, sig)
+			if !ok {
+				return fmt.Errorf("method %q not found in ABI", sig)
+			}
+			sel := "0x" + common.Bytes2Hex(m.ID)
+			if owner, seen := selectorOwners[sel]; seen && owner != recType {
+				return fmt.Errorf("method %q (selector %s) claimed by more than one record type (%q and %q)", sig, sel, owner, recType)
+			}
+			selectorOwners[sel] = recType
+			return nil
 		}
 		declared := map[string]bool{} // capture field names available to callerIn
 
@@ -231,6 +257,9 @@ func (d *MethodPolicyDocument) Validate(contractABI string) error {
 			m, ok := methodBySig(parsed, cap.Method)
 			if !ok {
 				return fmt.Errorf("capture method %q not found in ABI", cap.Method)
+			}
+			if err := claimSelector(cap.Method); err != nil {
+				return err
 			}
 			kt, err := keyTypeOf(cap.Method, cap.Key)
 			if err != nil {
@@ -258,6 +287,9 @@ func (d *MethodPolicyDocument) Validate(contractABI string) error {
 					if *rf.Index < 0 || *rf.Index >= len(m.Inputs) {
 						return fmt.Errorf("capture %q field %q: param index out of range", cap.Method, name)
 					}
+					if !canonicalizableType(m.Inputs[*rf.Index].Type) {
+						return fmt.Errorf("capture %q field %q: param type %q is not canonicalizable", cap.Method, name, m.Inputs[*rf.Index].Type.String())
+					}
 				default:
 					return fmt.Errorf("capture %q field %q: %w %q", cap.Method, name, errUnsupportedField, rf.Source)
 				}
@@ -274,6 +306,9 @@ func (d *MethodPolicyDocument) Validate(contractABI string) error {
 			m, ok := methodBySig(parsed, ac.Method)
 			if !ok {
 				return fmt.Errorf("access method %q not found in ABI", ac.Method)
+			}
+			if err := claimSelector(ac.Method); err != nil {
+				return err
 			}
 			kt, err := keyTypeOf(ac.Method, ac.Key)
 			if err != nil {
@@ -328,6 +363,9 @@ func (d *MethodPolicyDocument) Validate(contractABI string) error {
 // GatedReader returns the AccessSpec (and its record type) matching a reader's
 // calldata selector, or ok=false when the call is not gated by any policy.
 func (d *MethodPolicyDocument) GatedReader(calldata []byte, contractABI string) (recordType string, spec AccessSpec, ok bool) {
+	if d == nil {
+		return "", AccessSpec{}, false
+	}
 	parsed, err := abi.JSON(strings.NewReader(contractABI))
 	if err != nil || len(calldata) < 4 {
 		return "", AccessSpec{}, false
@@ -426,6 +464,9 @@ func (d *MethodPolicyDocument) EvaluateAccess(
 	resolveReturn func() ([]common.Address, error),
 	contractABI string,
 ) (Decision, error) {
+	if d == nil {
+		return Decision{Allow: false}, nil
+	}
 	rt, spec, ok := d.GatedReader(calldata, contractABI)
 	if !ok || rt != recordType {
 		// Not gated (or record-type mismatch) — caller decides passthrough;
@@ -581,7 +622,14 @@ func decodeRecordKey(key KeySpec, calldata []byte, parsed abi.ABI) (string, erro
 	if err != nil {
 		return "", errDecode
 	}
-	return canonicalizeArg(args, key.Index)
+	k, err := canonicalizeArg(args, key.Index)
+	if err != nil {
+		return "", err
+	}
+	if k == "" {
+		return "", errDecode // empty key never matches a stored record (M-2)
+	}
+	return k, nil
 }
 
 // canonicalizeArg renders a decoded ABI argument to its canonical string form,
@@ -613,7 +661,36 @@ func canonicalizeArg(args []any, index int) (string, error) {
 		}
 		return "false", nil
 	default:
+		// go-ethereum decodes uintN/intN with N<256 as native Go ints
+		// (uint8/16/32/64, int8/…), and bytesN as [N]byte — cover them so
+		// common keys (e.g. a uint64 id) round-trip instead of erroring.
+		rv := reflect.ValueOf(v)
+		switch rv.Kind() {
+		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+			return strconv.FormatUint(rv.Uint(), 10), nil
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+			return strconv.FormatInt(rv.Int(), 10), nil
+		case reflect.Array:
+			if rv.Type().Elem().Kind() == reflect.Uint8 {
+				b := make([]byte, rv.Len())
+				reflect.Copy(reflect.ValueOf(b), rv)
+				return "0x" + strings.ToLower(common.Bytes2Hex(b)), nil
+			}
+		}
 		return "", fmt.Errorf("method policy: unsupported key/param type %T", v)
+	}
+}
+
+// canonicalizableType reports whether canonicalizeArg can render an ABI type of
+// this kind. Validate uses it so a policy can never validate on write and then
+// fail to decode at runtime (H-1): scalar value types only — never slices,
+// non-byte arrays, tuples, or functions.
+func canonicalizableType(t abi.Type) bool {
+	switch t.T {
+	case abi.StringTy, abi.AddressTy, abi.IntTy, abi.UintTy, abi.BoolTy, abi.FixedBytesTy, abi.BytesTy, abi.HashTy:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -633,15 +710,4 @@ func looksLikeAddress(s string) bool {
 
 func isZeroAddress(s string) bool {
 	return looksLikeAddress(s) && common.HexToAddress(s) == (common.Address{})
-}
-
-// test helpers (kept in non-test file so both are available)
-func bigInt(n int64) *big.Int { return big.NewInt(n) }
-
-func inputTypes(m abi.Method) []string {
-	out := make([]string, len(m.Inputs))
-	for i, in := range m.Inputs {
-		out[i] = in.Type.String()
-	}
-	return out
 }

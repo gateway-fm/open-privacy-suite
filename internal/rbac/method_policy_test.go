@@ -1,12 +1,16 @@
 package rbac
 
 import (
+	"math/big"
 	"strings"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 )
+
+// bigInt is a test helper for packing uint256 args.
+func bigInt(n int64) *big.Int { return big.NewInt(n) }
 
 // PaymentRegistry-shaped ABI used across the method-policy tests.
 const testPaymentABI = `[
@@ -365,5 +369,118 @@ func TestMethodPolicy_SetOncePoison(t *testing.T) {
 	}
 	if !dec.Poisoned {
 		t.Fatalf("expected Poisoned=true")
+	}
+}
+
+// ---- Plan-audit follow-up fixes (post-implementation review) ----
+
+// C-1: a nil policy document must never panic; it denies / reports not-gated.
+func TestMethodPolicy_NilDoc_NoPanic(t *testing.T) {
+	var doc *MethodPolicyDocument
+	getInfo := encodeCall(t, "getPaymentInfo", "PAY-1")
+
+	if _, _, ok := doc.GatedReader(getInfo, testPaymentABI); ok {
+		t.Fatalf("nil doc must not report a gated reader")
+	}
+	dec, err := doc.EvaluateAccess("payment", getInfo, NewCallerIdentity("did:test:alice", nil), nil,
+		func() ([]common.Address, error) { return nil, nil }, testPaymentABI)
+	if err != nil || dec.Allow {
+		t.Fatalf("nil doc must deny without error, got allow=%v err=%v", dec.Allow, err)
+	}
+}
+
+// H-1: a uint64 record key is a common case and must round-trip (validate,
+// capture-decode, key-decode) — not silently brick the record.
+func TestMethodPolicy_Uint64Key_RoundTrips(t *testing.T) {
+	const abiJSON = `[
+      {"type":"function","name":"open","stateMutability":"nonpayable",
+       "inputs":[{"name":"id","type":"uint64"},{"name":"cp","type":"address"}],"outputs":[]},
+      {"type":"function","name":"get","stateMutability":"view",
+       "inputs":[{"name":"id","type":"uint64"}],
+       "outputs":[{"name":"owner","type":"address"}]}]`
+	const pol = `{"records":{"trade":{
+      "capture":[{"method":"open(uint64,address)","key":{"source":"param","index":0},
+        "remember":{"initiator":{"source":"sender","merge":"set_once"}}}],
+      "access":[{"method":"get(uint64)","key":{"source":"param","index":0},
+        "allow":[{"callerIn":["initiator"]}],"onNoRecord":"deny","else":"deny"}]}}}`
+	doc, err := ParseMethodPolicyDocument([]byte(pol))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := doc.Validate(abiJSON); err != nil {
+		t.Fatalf("uint64-key policy must validate: %v", err)
+	}
+	parsed, _ := abi.JSON(strings.NewReader(abiJSON))
+	cd, err := parsed.Pack("open", uint64(4242), addr(payeeAddr))
+	if err != nil {
+		t.Fatalf("pack: %v", err)
+	}
+	caps, err := doc.DecodeCaptures(cd, "did:test:alice", nil, abiJSON)
+	if err != nil {
+		t.Fatalf("decode captures: %v", err)
+	}
+	if len(caps) != 1 || caps[0].RecordKey != "4242" || caps[0].Value != "did:test:alice" {
+		t.Fatalf("uint64 key capture wrong: %+v", caps)
+	}
+}
+
+// H-1: a key type the runtime cannot canonicalize (dynamic array) must be
+// rejected at Validate, not accepted-then-bricked.
+func TestMethodPolicy_UncanonicalizableKey_Rejected(t *testing.T) {
+	const abiJSON = `[
+      {"type":"function","name":"open","stateMutability":"nonpayable",
+       "inputs":[{"name":"ids","type":"address[]"}],"outputs":[]},
+      {"type":"function","name":"get","stateMutability":"view",
+       "inputs":[{"name":"ids","type":"address[]"}],"outputs":[{"name":"owner","type":"address"}]}]`
+	const pol = `{"records":{"t":{
+      "capture":[{"method":"open(address[])","key":{"source":"param","index":0},
+        "remember":{"x":{"source":"sender","merge":"union"}}}],
+      "access":[{"method":"get(address[])","key":{"source":"param","index":0},
+        "allow":[{"callerIn":["x"]}],"onNoRecord":"deny","else":"deny"}]}}}`
+	doc, err := ParseMethodPolicyDocument([]byte(pol))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := doc.Validate(abiJSON); err == nil || !strings.Contains(err.Error(), "canonicaliz") {
+		t.Fatalf("expected uncanonicalizable-key rejection, got %v", err)
+	}
+}
+
+// H-2: the same reader selector under two record types is a nondeterministic
+// authorization hazard and must be rejected at Validate.
+func TestMethodPolicy_DuplicateSelectorAcrossRecords_Rejected(t *testing.T) {
+	const pol = `{"records":{
+      "alpha":{"capture":[],"access":[{"method":"getPaymentInfo(string)","key":{"source":"param","index":0},
+        "allow":[{"callerIn":{"source":"return","paths":["payer"],"kind":"address"}}],"onNoRecord":"deny","else":"deny"}]},
+      "beta":{"capture":[],"access":[{"method":"getPaymentInfo(string)","key":{"source":"param","index":0},
+        "allow":[{"callerIn":{"source":"return","paths":["payee"],"kind":"address"}}],"onNoRecord":"deny","else":"deny"}]}}}`
+	doc, err := ParseMethodPolicyDocument([]byte(pol))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := doc.Validate(testPaymentABI); err == nil || !strings.Contains(err.Error(), "more than one record") {
+		t.Fatalf("expected duplicate-selector rejection, got %v", err)
+	}
+}
+
+// M-2: the read-side key decoder rejects an empty key, mirroring the writer.
+func TestMethodPolicy_DecodeRecordKey_EmptyRejected(t *testing.T) {
+	parsed := mustParseABI(t)
+	cd := encodeCall(t, "getPaymentInfo", "")
+	if _, err := decodeRecordKey(KeySpec{Source: "param", Index: 0}, cd, parsed); err == nil {
+		t.Fatalf("empty record key must be rejected")
+	}
+}
+
+// L-1: unknown fields inside/alongside callerIn are rejected (strict parse).
+func TestMethodPolicy_StrictAllowRule(t *testing.T) {
+	cases := []string{
+		`{"records":{"p":{"capture":[],"access":[{"method":"getPaymentInfo(string)","key":{"source":"param","index":0},"allow":[{"callerIn":{"source":"return","paths":["payer"],"kind":"address","EVIL":1}}],"onNoRecord":"deny","else":"deny"}]}}}`,
+		`{"records":{"p":{"capture":[],"access":[{"method":"getPaymentInfo(string)","key":{"source":"param","index":0},"allow":[{"callerIn":["payer"],"SNEAKY":1}],"onNoRecord":"deny","else":"deny"}]}}}`,
+	}
+	for i, j := range cases {
+		if _, err := ParseMethodPolicyDocument([]byte(j)); err == nil {
+			t.Fatalf("case %d: expected strict-parse rejection of unknown allow-rule field", i)
+		}
 	}
 }
