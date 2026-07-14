@@ -7,6 +7,7 @@ import type {
   GroupAccess,
   Contract,
   ContractGrant,
+  MethodPolicyDocument,
   EffectivePermissions,
   AccessCheckRequest,
   AccessCheckResult,
@@ -152,6 +153,18 @@ export const rbacApi = {
     updateAllowVisibleToUnlock: (orgId: string, address: string, allow: boolean) =>
       api.put<Contract>(`/orgs/${orgId}/contracts/${address}/visibleto-unlock`, {
         allow_visibleto_unlock: allow,
+      }),
+    // RD-1206: per-record method access policies. getMethodPolicies returns
+    // the current document (or null); updateMethodPolicies sets it (or clears
+    // with null). PUT is super-admin only and validated against the ABI
+    // server-side — surface the 400 message verbatim on failure.
+    getMethodPolicies: (orgId: string, address: string) =>
+      api.get<{ method_policies: MethodPolicyDocument | null }>(
+        `/orgs/${orgId}/contracts/${address}/method-policies`
+      ),
+    updateMethodPolicies: (orgId: string, address: string, doc: MethodPolicyDocument | null) =>
+      api.put<Contract>(`/orgs/${orgId}/contracts/${address}/method-policies`, {
+        method_policies: doc,
       }),
     // Event signatures from ABI (for event rules UI)
     listEvents: (orgId: string, address: string) =>

@@ -34,6 +34,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { useAdmin } from '@/components/auth/RequireAdmin';
+import { MethodPolicyManager } from '@/components/rbac/MethodPolicyManager';
 
 // Helper to get contract address from either new or legacy format
 const getContractAddress = (contract: Contract): string => {
@@ -382,6 +383,15 @@ export default function ContractGrantsManager({
           </div>
         </div>
       )}
+
+      {/* RD-1206: per-record method access policies */}
+      <MethodPolicyManager
+        orgId={orgId}
+        contractAddress={getContractAddress(contract)}
+        contractAbi={contract.abi}
+        initialPolicy={contract.method_policies}
+        isReadonlyAdmin={isReadonlyAdmin}
+      />
 
       {pendingUnlockEnable && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">

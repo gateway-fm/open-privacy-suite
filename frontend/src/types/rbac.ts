@@ -87,8 +87,61 @@ export interface Contract {
   // bypassing event_rules and param_rules for that one tx. Default
   // false. Admin-only flag; flip via the dedicated endpoint.
   allow_visibleto_unlock: boolean;
+  // RD-1206: per-record method access policy document, or null/absent when
+  // unset (getters gated by the contract grant only). Configured via the
+  // super-admin method-policies endpoint.
+  method_policies?: MethodPolicyDocument | null;
   created_at: string;
   updated_at: string;
+}
+
+// Method access policies (RD-1206). Mirrors the Go schema exactly so a
+// UI-built document validates on the first save.
+export interface MethodPolicyKeySpec {
+  source: "param";
+  index: number;
+}
+
+export interface MethodPolicyRememberField {
+  source: "sender" | "param" | "visibleTo";
+  index?: number; // required when source === "param"
+  merge: "set_once" | "union";
+}
+
+export interface MethodPolicyCaptureSpec {
+  method: string; // canonical ABI signature, e.g. "createPayment(string,address,uint256)"
+  key: MethodPolicyKeySpec;
+  remember: Record<string, MethodPolicyRememberField>;
+}
+
+export interface MethodPolicyReturnSource {
+  source: "return";
+  paths: string[];
+  kind: "address";
+}
+
+// callerIn is EITHER a list of captured field names OR a return source.
+export type MethodPolicyCallerIn = string[] | MethodPolicyReturnSource;
+
+export interface MethodPolicyAllowRule {
+  callerIn: MethodPolicyCallerIn;
+}
+
+export interface MethodPolicyAccessSpec {
+  method: string;
+  key: MethodPolicyKeySpec;
+  allow: MethodPolicyAllowRule[];
+  onNoRecord?: "deny";
+  else?: "deny";
+}
+
+export interface MethodPolicyRecord {
+  capture: MethodPolicyCaptureSpec[];
+  access: MethodPolicyAccessSpec[];
+}
+
+export interface MethodPolicyDocument {
+  records: Record<string, MethodPolicyRecord>;
 }
 
 
