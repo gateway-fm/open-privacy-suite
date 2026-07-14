@@ -81,10 +81,13 @@ type RememberField struct {
 
 // AllowRule is one alternative that can admit a caller: either a list of
 // captured field names (callerIn: ["payer","payee"]) or a return source
-// (callerIn: {source:"return", paths:[...], kind:"address"}).
+// (callerIn: {source:"return", paths:[...], kind:"address"}). An optional
+// `where` further RESTRICTS the rule to records whose captured scalar satisfies
+// a comparison — the rule admits only if callerIn matches AND where holds.
 type AllowRule struct {
 	Fields []string
 	Return *ReturnSource
+	Where  *WhereCondition `json:"where,omitempty"`
 }
 
 // ReturnSource names address-typed outputs of the reader to match the caller.
@@ -92,6 +95,19 @@ type ReturnSource struct {
 	Paths []string `json:"paths"`
 	Kind  string   `json:"kind"` // "address"
 }
+
+// WhereCondition compares a captured scalar field against a value (Example 4).
+// Numeric ops compare as *big.Int; eq/neq also work for string/address/bytes/
+// bool by canonical-string equality. It can only further-restrict a rule.
+type WhereCondition struct {
+	Field string `json:"field"`
+	Op    string `json:"op"` // eq | neq | lt | lte | gt | gte
+	Value string `json:"value"`
+}
+
+// whereOps is the accepted operator set; numericOps require a numeric field.
+var whereOps = map[string]bool{"eq": true, "neq": true, "lt": true, "lte": true, "gt": true, "gte": true}
+var numericWhereOps = map[string]bool{"lt": true, "lte": true, "gt": true, "gte": true}
 
 // UnmarshalJSON accepts callerIn as either a string array or a return object,
 // and rejects unknown fields both alongside and inside callerIn (L-1: keep the
@@ -101,6 +117,7 @@ func (a *AllowRule) UnmarshalJSON(data []byte) error {
 	wrapDec.DisallowUnknownFields()
 	var wrap struct {
 		CallerIn json.RawMessage `json:"callerIn"`
+		Where    *WhereCondition `json:"where"`
 	}
 	if err := wrapDec.Decode(&wrap); err != nil {
 		return err
@@ -108,6 +125,7 @@ func (a *AllowRule) UnmarshalJSON(data []byte) error {
 	if len(wrap.CallerIn) == 0 {
 		return errors.New("allow rule missing callerIn")
 	}
+	a.Where = wrap.Where
 	trimmed := strings.TrimSpace(string(wrap.CallerIn))
 	if strings.HasPrefix(trimmed, "[") {
 		return json.Unmarshal(wrap.CallerIn, &a.Fields)
@@ -250,7 +268,17 @@ func (d *MethodPolicyDocument) Validate(contractABI string) error {
 			selectorOwners[sel] = recType
 			return nil
 		}
-		declared := map[string]bool{} // capture field names available to callerIn
+		// declared maps a captured field name → its kind: "did" (sender /
+		// visibleTo — DID/DID-list values) or the canonical ABI type of a
+		// param source (e.g. "uint256", "address"). callerIn checks membership;
+		// where checks the field exists and (for numeric ops) is numeric.
+		// declaredMerge tracks the merge mode per name. A field name MAY recur
+		// across capture specs of the same record (e.g. audience captured on
+		// both createPayment and completePayment — required by the spec), but
+		// its (kind, merge) MUST stay consistent, else the same name means two
+		// different things (a footgun that can poison or silently widen).
+		declared := map[string]string{}
+		declaredMerge := map[string]string{}
 
 		for _, cap := range rec.Capture {
 			methodCount++
@@ -277,9 +305,10 @@ func (d *MethodPolicyDocument) Validate(contractABI string) error {
 				return fmt.Errorf("capture %q: too many remembered fields", cap.Method)
 			}
 			for name, rf := range cap.Remember {
-				declared[name] = true
+				var kind string
 				switch rf.Source {
 				case "sender", "visibleTo":
+					kind = "did"
 				case "param":
 					if rf.Index == nil {
 						return fmt.Errorf("capture %q field %q: param source requires an index", cap.Method, name)
@@ -290,13 +319,31 @@ func (d *MethodPolicyDocument) Validate(contractABI string) error {
 					if !canonicalizableType(m.Inputs[*rf.Index].Type) {
 						return fmt.Errorf("capture %q field %q: param type %q is not canonicalizable", cap.Method, name, m.Inputs[*rf.Index].Type.String())
 					}
+					kind = m.Inputs[*rf.Index].Type.String()
 				default:
 					return fmt.Errorf("capture %q field %q: %w %q", cap.Method, name, errUnsupportedField, rf.Source)
 				}
+				// A field re-declared across captures must keep a consistent kind
+				// (a name meaning two different things is a footgun).
+				if prev, ok := declared[name]; ok && prev != kind {
+					return fmt.Errorf("capture field %q is declared with conflicting kinds %q and %q in record %q", name, prev, kind, recType)
+				}
+				declared[name] = kind
 				switch rf.Merge {
 				case "set_once", "union":
 				default:
 					return fmt.Errorf("capture %q field %q: unsupported merge %q", cap.Method, name, rf.Merge)
+				}
+				if prev, ok := declaredMerge[name]; ok && prev != rf.Merge {
+					return fmt.Errorf("capture field %q is declared with conflicting merge modes %q and %q in record %q", name, prev, rf.Merge, recType)
+				}
+				declaredMerge[name] = rf.Merge
+				// P1 invariant (was wizard-only): a visibleTo audience accumulates
+				// across txs, so it MUST be union — set_once would keep only the
+				// first tx's list and silently under-expose. Enforce it here so
+				// raw-JSON authoring is as safe as the wizard.
+				if rf.Source == "visibleTo" && rf.Merge == "set_once" {
+					return fmt.Errorf("capture %q field %q: a visibleTo audience must use merge \"union\", not \"set_once\"", cap.Method, name)
 				}
 			}
 		}
@@ -344,12 +391,35 @@ func (d *MethodPolicyDocument) Validate(contractABI string) error {
 					}
 				case len(rule.Fields) > 0:
 					for _, f := range rule.Fields {
-						if !declared[f] {
-							return fmt.Errorf("access %q: callerIn field %q not declared by any capture of record %q", ac.Method, f, recType)
+						// A callerIn entry is either a captured field name (matches
+						// the caller against that field's captured values) or a
+						// LITERAL principal — a DID or ETH address that matches the
+						// caller directly (Example 4: a fixed compliance desk).
+						// Anything else (a typo'd field name) is rejected, so
+						// literals can't silently swallow mistakes.
+						if _, ok := declared[f]; ok {
+							continue
+						}
+						if !isLiteralPrincipal(f) {
+							return fmt.Errorf("access %q: callerIn %q is neither a captured field of record %q nor a literal DID/address principal", ac.Method, f, recType)
 						}
 					}
 				default:
 					return fmt.Errorf("access %q: empty allow rule", ac.Method)
+				}
+				// where (Example 4) further-restricts the rule; validate its field
+				// is a captured scalar and the op/type are coherent. Only allowed
+				// on captured-field rules — scoping a where to specific return
+				// paths through the single-decode resolver is out of scope and
+				// unneeded by any example; keeping where off return rules keeps
+				// the C2 "one forward" property trivially intact.
+				if rule.Where != nil {
+					if rule.Return != nil {
+						return fmt.Errorf("access %q: where is not supported on a return-source rule", ac.Method)
+					}
+					if err := validateWhere(rule.Where, declared, ac.Method, recType); err != nil {
+						return err
+					}
 				}
 			}
 		}
@@ -504,14 +574,27 @@ func (d *MethodPolicyDocument) EvaluateAccess(
 	hasReturnRule := false
 	for _, rule := range spec.Allow {
 		if rule.Return != nil {
-			hasReturnRule = true
+			hasReturnRule = true // where is not permitted on return rules (Validate)
+			continue
+		}
+		// A where condition further-restricts this rule: skip it entirely when
+		// the record's captured scalar does not satisfy the comparison.
+		if rule.Where != nil && !evalWhere(rule.Where, byField) {
 			continue
 		}
 		for _, f := range rule.Fields {
-			for _, v := range byField[f] {
-				if caller.matches(v) {
-					return Decision{Allow: true}, nil
+			if vals, ok := byField[f]; ok {
+				for _, v := range vals {
+					if caller.matches(v) {
+						return Decision{Allow: true}, nil
+					}
 				}
+				continue
+			}
+			// Not a captured field → a literal principal (DID/address); match
+			// the caller directly. (Validate guarantees it is one or the other.)
+			if isLiteralPrincipal(f) && caller.matches(f) {
+				return Decision{Allow: true}, nil
 			}
 		}
 	}
@@ -666,6 +749,82 @@ func setOncePoisoned(captured []CapturedField) bool {
 		} else {
 			seen[c.Field] = c.Value
 		}
+	}
+	return false
+}
+
+// isNumericKind reports whether a declared field kind is an ABI numeric type.
+func isNumericKind(kind string) bool {
+	return strings.HasPrefix(kind, "uint") || strings.HasPrefix(kind, "int")
+}
+
+// isLiteralPrincipal reports whether a callerIn entry is a literal principal —
+// a DID (did:…) or a 0x ETH address — as opposed to a captured field name.
+func isLiteralPrincipal(s string) bool {
+	return strings.HasPrefix(s, "did:") && len(s) > 4 || looksLikeAddress(s)
+}
+
+// validateWhere checks a where condition against the declared capture fields.
+// declared maps field name → kind ("did" or an ABI type string).
+func validateWhere(w *WhereCondition, declared map[string]string, method, recType string) error {
+	if w.Field == "" {
+		return fmt.Errorf("access %q: where.field is required", method)
+	}
+	kind, ok := declared[w.Field]
+	if !ok {
+		return fmt.Errorf("access %q: where.field %q is not a captured field of record %q", method, w.Field, recType)
+	}
+	if !whereOps[w.Op] {
+		return fmt.Errorf("access %q: where.op %q unsupported (eq,neq,lt,lte,gt,gte)", method, w.Op)
+	}
+	if numericWhereOps[w.Op] {
+		if !isNumericKind(kind) {
+			return fmt.Errorf("access %q: where.op %q requires a numeric field, but %q is %q", method, w.Op, w.Field, kind)
+		}
+		if _, ok := new(big.Int).SetString(w.Value, 10); !ok {
+			return fmt.Errorf("access %q: where.value %q is not a valid integer for op %q", method, w.Value, w.Op)
+		}
+	}
+	if w.Value == "" && w.Op != "eq" && w.Op != "neq" {
+		return fmt.Errorf("access %q: where.value is required", method)
+	}
+	return nil
+}
+
+// evalWhere returns true iff the record's captured scalar for w.Field satisfies
+// the comparison. Fail-closed in every ambiguous case (field absent, multiple
+// values, unparsable) — a where can only further-restrict, never widen.
+func evalWhere(w *WhereCondition, byField map[string][]string) bool {
+	vals := byField[w.Field]
+	if len(vals) != 1 {
+		return false // scalar expected; absent (0) or multi (union misuse) → deny
+	}
+	got := vals[0]
+	gi, gok := new(big.Int).SetString(got, 10)
+	wi, wok := new(big.Int).SetString(w.Value, 10)
+	if gok && wok { // numeric comparison (never lexical)
+		switch c := gi.Cmp(wi); w.Op {
+		case "eq":
+			return c == 0
+		case "neq":
+			return c != 0
+		case "lt":
+			return c < 0
+		case "lte":
+			return c <= 0
+		case "gt":
+			return c > 0
+		case "gte":
+			return c >= 0
+		}
+		return false
+	}
+	// non-numeric: only equality is defined; ordering fails closed.
+	switch w.Op {
+	case "eq":
+		return strings.EqualFold(got, w.Value)
+	case "neq":
+		return !strings.EqualFold(got, w.Value)
 	}
 	return false
 }

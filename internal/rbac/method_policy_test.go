@@ -107,9 +107,9 @@ func TestMethodPolicy_Validate(t *testing.T) {
 			wantErr: "not an address",
 		},
 		{
-			name:    "callerIn field not declared by any capture",
+			name:    "callerIn field not declared and not a literal principal",
 			json:    `{"records":{"p":{"capture":[{"method":"createPayment(string,address,uint256)","key":{"source":"param","index":0},"remember":{"payer":{"source":"sender","merge":"set_once"}}}],"access":[{"method":"getPaymentInfo(string)","key":{"source":"param","index":0},"allow":[{"callerIn":["ghost"]}],"onNoRecord":"deny","else":"deny"}]}}}`,
-			wantErr: "not declared",
+			wantErr: "neither a captured field",
 		},
 		{
 			name:    "capture and access key types differ",
@@ -530,5 +530,225 @@ func TestMethodPolicy_EvaluateReader(t *testing.T) {
 	gated, dec, _ = doc.EvaluateReader(getPAY1, NewCallerIdentity("did:test:alice", nil), loadErr, retPayer, testPaymentABI)
 	if !gated || dec.Allow {
 		t.Fatalf("store error must deny: allow=%v", dec.Allow)
+	}
+}
+
+// ---- P1: invariant consolidation (visibleTo⇒union, merge consistency) ----
+
+func TestMethodPolicy_Validate_VisibleToMustBeUnion(t *testing.T) {
+	// audience captured from visibleTo with set_once must be rejected at the
+	// backend (was wizard-only).
+	j := `{"records":{"payment":{
+      "capture":[{"method":"createPayment(string,address,uint256)","key":{"source":"param","index":0},
+        "remember":{"audience":{"source":"visibleTo","merge":"set_once"}}}],
+      "access":[{"method":"getPaymentInfo(string)","key":{"source":"param","index":0},
+        "allow":[{"callerIn":["audience"]}],"onNoRecord":"deny","else":"deny"}]}}}`
+	doc, err := ParseMethodPolicyDocument([]byte(j))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := doc.Validate(testPaymentABI); err == nil || !strings.Contains(err.Error(), "must use merge \"union\"") {
+		t.Fatalf("expected visibleTo+set_once rejection, got %v", err)
+	}
+}
+
+func TestMethodPolicy_Validate_MergeConsistencyAcrossCaptures(t *testing.T) {
+	// same field name captured on two methods with DIFFERENT merge → reject.
+	j := `{"records":{"payment":{
+      "capture":[
+        {"method":"createPayment(string,address,uint256)","key":{"source":"param","index":0},
+         "remember":{"audience":{"source":"visibleTo","merge":"union"}}},
+        {"method":"completePayment(string)","key":{"source":"param","index":0},
+         "remember":{"audience":{"source":"visibleTo","merge":"set_once"}}}],
+      "access":[{"method":"getPaymentInfo(string)","key":{"source":"param","index":0},
+        "allow":[{"callerIn":["audience"]}],"onNoRecord":"deny","else":"deny"}]}}}`
+	doc, err := ParseMethodPolicyDocument([]byte(j))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	// the set_once branch is also a visibleTo→union violation; either way it must reject.
+	if err := doc.Validate(testPaymentABI); err == nil {
+		t.Fatalf("expected rejection for inconsistent/invalid merge across captures")
+	}
+}
+
+func TestMethodPolicy_Validate_SameFieldAcrossCapturesOK(t *testing.T) {
+	// audience captured on BOTH create and complete with the SAME kind+merge is
+	// legitimate (draft Example 1) and must validate.
+	j := `{"records":{"payment":{
+      "capture":[
+        {"method":"createPayment(string,address,uint256)","key":{"source":"param","index":0},
+         "remember":{"payer":{"source":"sender","merge":"set_once"},"audience":{"source":"visibleTo","merge":"union"}}},
+        {"method":"completePayment(string)","key":{"source":"param","index":0},
+         "remember":{"audience":{"source":"visibleTo","merge":"union"}}}],
+      "access":[{"method":"getPaymentInfo(string)","key":{"source":"param","index":0},
+        "allow":[{"callerIn":["payer","audience"]}],"onNoRecord":"deny","else":"deny"}]}}}`
+	doc, err := ParseMethodPolicyDocument([]byte(j))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := doc.Validate(testPaymentABI); err != nil {
+		t.Fatalf("multi-capture same-field policy must validate: %v", err)
+	}
+}
+
+// ---- P2: where-conditions (Example 4) ----
+
+// ABI with an amount param captured as a scalar for where-conditions.
+const testWhereABI = `[
+  {"type":"function","name":"createPayment","stateMutability":"nonpayable",
+   "inputs":[{"name":"paymentIdentifier","type":"string"},{"name":"payee","type":"address"},{"name":"amount","type":"uint256"}],"outputs":[]},
+  {"type":"function","name":"getPaymentInfo","stateMutability":"view",
+   "inputs":[{"name":"paymentIdentifier","type":"string"}],
+   "outputs":[{"name":"amount","type":"uint256"},{"name":"payer","type":"address"},{"name":"payee","type":"address"}]}
+]`
+
+// capture payer(sender)+amount(param2); gate getPaymentInfo: payer always, OR
+// did:test:compliance only when amount >= 1000000.
+const testWherePolicyJSON = `{"records":{"payment":{
+  "capture":[{"method":"createPayment(string,address,uint256)","key":{"source":"param","index":0},
+    "remember":{"payer":{"source":"sender","merge":"set_once"},"amount":{"source":"param","index":2,"merge":"set_once"}}}],
+  "access":[{"method":"getPaymentInfo(string)","key":{"source":"param","index":0},
+    "allow":[
+      {"callerIn":["payer"]},
+      {"callerIn":["did:test:compliance"],"where":{"field":"amount","op":"gte","value":"1000000"}}
+    ],"onNoRecord":"deny","else":"deny"}]}}}`
+
+func TestMethodPolicy_Where_Validate(t *testing.T) {
+	tests := []struct {
+		name, json, wantErr string
+	}{
+		{name: "valid where policy", json: testWherePolicyJSON},
+		{
+			name:    "where field not captured",
+			json:    `{"records":{"p":{"capture":[{"method":"createPayment(string,address,uint256)","key":{"source":"param","index":0},"remember":{"payer":{"source":"sender","merge":"set_once"}}}],"access":[{"method":"getPaymentInfo(string)","key":{"source":"param","index":0},"allow":[{"callerIn":["payer"],"where":{"field":"ghost","op":"gte","value":"1"}}],"onNoRecord":"deny","else":"deny"}]}}}`,
+			wantErr: "not a captured field",
+		},
+		{
+			name:    "numeric op on non-numeric field",
+			json:    `{"records":{"p":{"capture":[{"method":"createPayment(string,address,uint256)","key":{"source":"param","index":0},"remember":{"payer":{"source":"sender","merge":"set_once"}}}],"access":[{"method":"getPaymentInfo(string)","key":{"source":"param","index":0},"allow":[{"callerIn":["payer"],"where":{"field":"payer","op":"gte","value":"1"}}],"onNoRecord":"deny","else":"deny"}]}}}`,
+			wantErr: "requires a numeric field",
+		},
+		{
+			name:    "unparseable numeric value",
+			json:    `{"records":{"p":{"capture":[{"method":"createPayment(string,address,uint256)","key":{"source":"param","index":0},"remember":{"amount":{"source":"param","index":2,"merge":"set_once"}}}],"access":[{"method":"getPaymentInfo(string)","key":{"source":"param","index":0},"allow":[{"callerIn":["amount"],"where":{"field":"amount","op":"gte","value":"notanumber"}}],"onNoRecord":"deny","else":"deny"}]}}}`,
+			wantErr: "not a valid integer",
+		},
+		{
+			name:    "bad op",
+			json:    `{"records":{"p":{"capture":[{"method":"createPayment(string,address,uint256)","key":{"source":"param","index":0},"remember":{"amount":{"source":"param","index":2,"merge":"set_once"}}}],"access":[{"method":"getPaymentInfo(string)","key":{"source":"param","index":0},"allow":[{"callerIn":["amount"],"where":{"field":"amount","op":"between","value":"1"}}],"onNoRecord":"deny","else":"deny"}]}}}`,
+			wantErr: "unsupported",
+		},
+		{
+			name:    "where on a return rule rejected",
+			json:    `{"records":{"p":{"capture":[{"method":"createPayment(string,address,uint256)","key":{"source":"param","index":0},"remember":{"amount":{"source":"param","index":2,"merge":"set_once"}}}],"access":[{"method":"getPaymentInfo(string)","key":{"source":"param","index":0},"allow":[{"callerIn":{"source":"return","paths":["payer"],"kind":"address"},"where":{"field":"amount","op":"gte","value":"1"}}],"onNoRecord":"deny","else":"deny"}]}}}`,
+			wantErr: "not supported on a return-source rule",
+		},
+		{
+			name:    "unknown field inside where rejected (strict parse)",
+			json:    `{"records":{"p":{"capture":[{"method":"createPayment(string,address,uint256)","key":{"source":"param","index":0},"remember":{"amount":{"source":"param","index":2,"merge":"set_once"}}}],"access":[{"method":"getPaymentInfo(string)","key":{"source":"param","index":0},"allow":[{"callerIn":["amount"],"where":{"field":"amount","op":"gte","value":"1","EVIL":1}}],"onNoRecord":"deny","else":"deny"}]}}}`,
+			wantErr: "", // parse error, asserted below
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			doc, err := ParseMethodPolicyDocument([]byte(tc.json))
+			if tc.name == "unknown field inside where rejected (strict parse)" {
+				if err == nil {
+					t.Fatalf("expected parse rejection of unknown where field")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			err = doc.Validate(testWhereABI)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("expected valid, got %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("want error containing %q, got %v", tc.wantErr, err)
+			}
+		})
+	}
+}
+
+func TestMethodPolicy_Where_Evaluate(t *testing.T) {
+	doc, err := ParseMethodPolicyDocument([]byte(testWherePolicyJSON))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := doc.Validate(testWhereABI); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	whereParsed := func(t *testing.T) abi.ABI {
+		p, e := abi.JSON(strings.NewReader(testWhereABI))
+		if e != nil {
+			t.Fatal(e)
+		}
+		return p
+	}
+	getInfo := func(t *testing.T) []byte {
+		data, e := whereParsed(t).Pack("getPaymentInfo", "PAY-1")
+		if e != nil {
+			t.Fatal(e)
+		}
+		return data
+	}(t)
+	retErr := func() ([]common.Address, error) { return nil, errDecode }
+
+	rowsFor := func(amount string) []CapturedField {
+		return []CapturedField{
+			{Field: "payer", Value: "did:test:alice", Merge: "set_once"},
+			{Field: "amount", Value: amount, Merge: "set_once"},
+		}
+	}
+
+	tests := []struct {
+		name   string
+		caller CallerIdentity
+		amount string
+		want   bool
+	}{
+		{name: "payer always allowed regardless of amount", caller: NewCallerIdentity("did:test:alice", nil), amount: "5", want: true},
+		{name: "compliance allowed for large amount", caller: NewCallerIdentity("did:test:compliance", nil), amount: "2000000", want: true},
+		{name: "compliance allowed at exact boundary", caller: NewCallerIdentity("did:test:compliance", nil), amount: "1000000", want: true},
+		{name: "compliance denied for small amount", caller: NewCallerIdentity("did:test:compliance", nil), amount: "999999", want: false},
+		{name: "compliance denied when amount absent", caller: NewCallerIdentity("did:test:compliance", nil), amount: "", want: false},
+		{name: "unrelated denied even for large amount", caller: NewCallerIdentity("did:test:diana", nil), amount: "5000000", want: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rows := rowsFor(tc.amount)
+			if tc.amount == "" {
+				rows = []CapturedField{{Field: "payer", Value: "did:test:alice", Merge: "set_once"}}
+			}
+			dec, err := doc.EvaluateAccess("payment", getInfo, tc.caller, rows, retErr, testWhereABI)
+			if err != nil {
+				t.Fatalf("evaluate: %v", err)
+			}
+			if dec.Allow != tc.want {
+				t.Fatalf("allow=%v want %v", dec.Allow, tc.want)
+			}
+		})
+	}
+}
+
+// A numeric where must never compare lexically ("9" > "1000000" would be a bug).
+func TestMethodPolicy_Where_NumericNotLexical(t *testing.T) {
+	doc, _ := ParseMethodPolicyDocument([]byte(testWherePolicyJSON))
+	if err := doc.Validate(testWhereABI); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	p, _ := abi.JSON(strings.NewReader(testWhereABI))
+	getInfo, _ := p.Pack("getPaymentInfo", "PAY-1")
+	// amount "9" is lexically > "1000000" but numerically far less → must deny.
+	rows := []CapturedField{{Field: "amount", Value: "9", Merge: "set_once"}}
+	dec, _ := doc.EvaluateAccess("payment", getInfo, NewCallerIdentity("did:test:compliance", nil), rows, func() ([]common.Address, error) { return nil, errDecode }, testWhereABI)
+	if dec.Allow {
+		t.Fatalf("numeric where compared lexically — 9 must NOT satisfy >= 1000000")
 	}
 }

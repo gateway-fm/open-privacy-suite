@@ -375,3 +375,92 @@ were fail-closed/correctness in `Validate` plus one nil-receiver panic. Fixed:
 `set_once` and audience fields `union`. Marking an identity field `union`
 disables the set-once poison protection for it — the operator docs state this;
 Validate does not force it because `union` is legitimate for audience.
+
+## Addendum — full-schema completion (where-conditions, invariants, simulator)
+
+Scope decision (2026-07-15, Ivan): implement **everything in the generic
+draft**, not just phases 1–2 — including Example 4 (`where` conditions) and
+structured multi-capture/multi-reader authoring — and make correctness
+guaranteeable for **any** authoring path (structured form OR raw JSON), because
+raw JSON can otherwise express a schema-valid-but-unsafe policy the wizard would
+block. Chosen approach: **extend our domain DSL** (not adopt OPA/Cedar — a
+general engine adds expressivity = more ways to leak, and neither models our
+capture-from-tx / return-resolver domain) + **all invariants in the backend
+validator** + **a policy simulator**.
+
+### Correctness model (the four levels)
+
+1. Syntactic (valid JSON) — parser.
+2. Structural (methods/params/returns resolve against the ABI) — `Validate`.
+3. **Safety invariants** (deny-only outcomes; `callerIn` ⊆ captured∪return;
+   `visibleTo`⇒`union`; unique field names; key = record id; `where` field is a
+   captured scalar) — **must all live in `Validate`**, so raw JSON == wizard
+   safety. Previously some lived only in the wizard (`validateWizard`); P1 moves
+   them to the backend. The wizard keeps a mirror for instant feedback, but the
+   backend is authoritative.
+4. **Intent** (right people, no under/over-exposure) — *unprovable by any
+   validator, for any authoring method*. Answered by **simulation**, mirroring
+   mature authz practice (AWS IAM Policy Simulator, Cedar "validate + test",
+   OPA coverage). This is why raw JSON is made safe not by forbidding it but by
+   (a) full backend invariants and (b) a simulator run before trusting a policy.
+
+Architectural floor that bounds the raw-JSON risk: the gate runs **after**
+`CheckAccess` and can only turn an allowed response into a deny — so no policy
+(however authored) can widen past the grant/allowlist or touch event rules. The
+only residual risk is *wrong narrowing* (deny real parties / admit an
+unintended captured field or return path) — exactly what the simulator surfaces.
+
+### where-conditions (Example 4)
+
+`AllowRule` gains an optional `where`:
+
+```json
+{ "callerIn": ["compliance-desk"],
+  "where": { "field": "amount", "op": "gte", "value": "1000000" } }
+```
+
+- Semantics: the rule admits the caller only if `callerIn` matches **AND** the
+  record's captured `field` satisfies `op value`. AND within a rule; rules are
+  still OR'd.
+- `field` MUST be a `remember`-ed field of the same record type (validated), and
+  its captured value is compared as its canonical type. Numeric ops
+  (`eq,neq,lt,lte,gt,gte`) compare as `*big.Int` (never lexical); `eq/neq` also
+  work for string/address/bytes/bool by canonical-string equality.
+- Fail-closed: field not captured for this record, value unparsable, or type/op
+  mismatch → the rule does not admit (deny). `where` can only **further
+  restrict** a rule, never widen it.
+- Validate: `field` declared by a capture of the record; `op` in the allowed
+  set; `value` parses for the field's inferred type; numeric op ⇒ numeric field.
+
+### Simulator
+
+Admin dry-run answering "who can read this record, and would caller X be
+allowed?" — the intent check.
+
+- `POST /api/v1/admin/orgs/{org}/contracts/{address}/method-policies/simulate`
+  body `{record_type?, record_key, method, caller:{did, addresses[]}}`.
+- Evaluates the **capture side** deterministically against stored rows +
+  `where`; returns `{allow, matched_rule, captured:{field:[values]},
+  return_resolver_note}`. The **return resolver is NOT simulated** (it depends
+  on live contract state) — stated explicitly in the response so the operator
+  knows a getter-returned address could additionally admit.
+- Also returns the full captured admit-set for the record (payer/payee/audience
+  values) so over/under-exposure is visible at a glance.
+- Tier: `denyOperatorTenantRead` (same as the GET — reveals the org's own policy
+  behavior + captured rows, not cross-org; not a mutation). No node call, so no
+  eth_call side effect. Opaque on missing record (no cross-org existence probe).
+
+### Structured multi-capture / multi-reader UI
+
+The wizard becomes arrays: N capture specs (each: writer method + key + remember
+rows) and N reader specs (each: reader method + key + allow rules incl.
+optional `where`). This makes Examples 1 (both captures), 2, 3, 4 all
+structured-form-authorable. Raw JSON is demoted to an optional advanced view
+that is validated by the same backend `Validate` and can be simulated before
+save. Everything compiles to the identical document schema.
+
+### Out of scope (still deferred, per the draft's "Later")
+
+- Field-level **redaction** as an access outcome (vs allow/deny).
+- Capture from contract-to-contract **call traces**.
+These remain the documented next phase; everything else in the draft is in.
