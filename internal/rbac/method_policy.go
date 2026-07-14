@@ -360,6 +360,21 @@ func (d *MethodPolicyDocument) Validate(contractABI string) error {
 	return nil
 }
 
+// ValidateForClient validates the document against the ABI and returns a
+// curated, operator-safe reason string (empty when valid). Unlike a raw
+// error chain, the returned reason is safe to surface to the admin client:
+// every Validate message describes the admin's OWN submitted policy against the
+// contract's registered ABI (method signatures, parameter indices, type names,
+// field names) — never internal/DB state, file paths, or wrapped driver errors.
+// Handlers surface this string directly (RD-934: the sanitization boundary is
+// here, not in the handler).
+func (d *MethodPolicyDocument) ValidateForClient(contractABI string) string {
+	if err := d.Validate(contractABI); err != nil {
+		return err.Error()
+	}
+	return ""
+}
+
 // GatedReader returns the AccessSpec (and its record type) matching a reader's
 // calldata selector, or ok=false when the call is not gated by any policy.
 func (d *MethodPolicyDocument) GatedReader(calldata []byte, contractABI string) (recordType string, spec AccessSpec, ok bool) {

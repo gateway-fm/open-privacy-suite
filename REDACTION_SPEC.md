@@ -745,3 +745,9 @@ event must gate that event separately (per-record `param_rules`), or the record
 is still observable via logs. This is not an RPC/explorer invariant violation:
 `eth_call` has no explorer counterpart, and the policy only *narrows* an
 already-`CheckAccess`-allowed call — it never touches `GetBatchVisibility`.
+
+**Gating scope (aliases):** the gate fires for `eth_call` (and any method alias
+that `ResolveMethodAlias` maps to `eth_call`). A chain-specific read method
+exposed via a wildcard namespace that is NOT aliased to `eth_call` bypasses the
+gate, like every other response filter — if an operator adds a `*_call`-style
+method, it must be aliased to `eth_call` to inherit method-policy gating.

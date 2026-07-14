@@ -654,11 +654,17 @@ func (s *Server) updateContractMethodPolicies(c *gin.Context) {
 		}
 		doc, perr := rbac.ParseMethodPolicyDocument(input.MethodPolicies)
 		if perr != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid method policy: " + perr.Error()})
+			// Generic client message (avoid echoing raw JSON-parser output);
+			// the detail is logged for operator diagnostics (RD-934).
+			respondBadRequestAndLog(c, "malformed method policy document",
+				"admin_rbac_contract: method policy parse failed",
+				"contract_id", contract.ID, "err", perr)
 			return
 		}
-		if verr := doc.Validate(contract.ABI); verr != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "method policy failed ABI validation: " + verr.Error()})
+		// ValidateForClient returns a curated, ABI-derived reason (safe to
+		// surface — see its doc); the sanitization boundary lives in rbac.
+		if reason := doc.ValidateForClient(contract.ABI); reason != "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "method policy failed ABI validation: " + reason})
 			return
 		}
 		toStore = input.MethodPolicies

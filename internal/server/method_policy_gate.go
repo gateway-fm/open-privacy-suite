@@ -8,8 +8,15 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 
+	"privacy-proxy/internal/db"
 	"privacy-proxy/internal/rbac"
 )
+
+// Compile-time guard (final-audit M1): the concrete store MUST satisfy the
+// capture-store capability. Without this, a future signature change on *db.DB
+// would silently flip the runtime type assertion in methodPolicyStore() to
+// ok=false and fail OPEN (gated reads served unfiltered). Keep it a build error.
+var _ methodPolicyCaptureStore = (*db.DB)(nil)
 
 // Method access policy request-path wiring (RD-1206). The read gate runs inside
 // applyResponseFilter (post-forward), so it decodes the caller's OWN already-
@@ -50,6 +57,14 @@ func (p *JSONRPCProcessor) applyMethodPolicyGate(ctx context.Context, req *Proce
 	}
 	if contract == nil || len(contract.MethodPolicies) == 0 {
 		return responseBody // no policy configured → passthrough (unchanged)
+	}
+	// C1 (final-audit M2): the global address lookup can return a contract
+	// registered to another org (addresses are unique only per-org). CheckAccess
+	// already bound this caller to the contract's owning org, but enforce the
+	// equality here too — deny if the policy we loaded belongs to a different org
+	// than the one this request resolved against.
+	if req.resolvedOrgID != "" && !strings.EqualFold(contract.OrgID, req.resolvedOrgID) {
+		return denyMethodPolicy(responseBody)
 	}
 	doc, perr := rbac.ParseMethodPolicyDocument(contract.MethodPolicies)
 	if perr != nil {
@@ -95,6 +110,11 @@ func (p *JSONRPCProcessor) enqueueMethodPolicyCaptures(ctx context.Context, req 
 	}
 	contract, err := p.rbacAccessCtrl.Store().GetContractByAddressGlobal(ctx, toHex)
 	if err != nil || contract == nil || len(contract.MethodPolicies) == 0 {
+		return
+	}
+	// C1 (final-audit M2): don't capture under another org's contract row if the
+	// address happens to be dual-registered — scope to the caller's resolved org.
+	if req.resolvedOrgID != "" && !strings.EqualFold(contract.OrgID, req.resolvedOrgID) {
 		return
 	}
 	doc, perr := rbac.ParseMethodPolicyDocument(contract.MethodPolicies)
