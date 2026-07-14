@@ -552,6 +552,147 @@ func (s *Server) updateContractEventsAllowDynamicPayload(c *gin.Context) {
 	c.JSON(http.StatusOK, contract)
 }
 
+// getContractMethodPolicies returns the contract's configured method access
+// policy document (RD-1206), or null when none is set.
+//
+// @Summary      Get a contract's method access policies
+// @Description  Returns the per-record method access policy document (RD-1206) configured on the contract, or null when unset. Scoped to {org_id}; the restricted operator token is rejected (tenant read).
+// @Tags         Admin: RBAC
+// @Produce      json
+// @Param        org_id path string true "Organization ID"
+// @Param        address path string true "Contract address (0x-prefixed hex)"
+// @Success      200 {object} contractMethodPoliciesResponse
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "operator token cannot read tenant data, or caller is out of org scope"
+// @Failure      404 {object} APIError "contract not found"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id}/contracts/{address}/method-policies [get]
+func (s *Server) getContractMethodPolicies(c *gin.Context) {
+	if denyOperatorTenantRead(c) {
+		return
+	}
+	orgID := c.Param("org_id")
+	address := c.Param("address")
+	contract, err := s.db.GetContractByAddress(c.Request.Context(), orgID, address)
+	if err != nil {
+		respondInternalErrorAndLog(c, "failed to read contract",
+			"admin_rbac_contract: GetContractByAddress failed (getContractMethodPolicies)",
+			"org_id", orgID, "address", address, "err", err)
+		return
+	}
+	if contract == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "contract not found"})
+		return
+	}
+	c.JSON(http.StatusOK, contractMethodPoliciesResponse{MethodPolicies: contract.MethodPolicies})
+}
+
+// updateContractMethodPolicies sets or clears the per-record method access
+// policy document (RD-1206). Send method_policies:null to clear.
+//
+// PUT /orgs/:org_id/contracts/:address/method-policies
+//
+// **Super-admin only** (X-Admin-Token). A method policy is the whole per-record
+// enforcement surface for a contract's reads; a malformed or over-broad policy
+// silently changes the privacy posture for every caller. Same tier as
+// events-allow-dynamic-payload (contract-wide privacy semantics, not a per-grant
+// decision), and stricter than the tier-2 visibleto-unlock / grant endpoints.
+// The policy is validated against the contract's registered ABI on write, so a
+// policy can never validate here and then misbehave at read time. Audit-logged
+// with before/after state.
+//
+// @Summary      Set a contract's method access policies
+// @Description  Sets or clears (method_policies:null) the per-record method access policy (RD-1206), gating record-reader eth_calls to a record's stakeholders. Validated against the contract's registered ABI. Super-admin token only — it is the whole per-record read-enforcement surface; the change is audit-logged with before/after state.
+// @Tags         Admin: RBAC
+// @Accept       json
+// @Produce      json
+// @Param        org_id path string true "Organization ID"
+// @Param        address path string true "Contract address (0x-prefixed hex)"
+// @Param        request body contractMethodPoliciesRequest true "policy document, or null to clear"
+// @Success      200 {object} rbac.Contract
+// @Failure      400 {object} APIError "invalid body, policy fails ABI validation, or no ABI registered"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "super-admin token required"
+// @Failure      404 {object} APIError "contract not found"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id}/contracts/{address}/method-policies [put]
+func (s *Server) updateContractMethodPolicies(c *gin.Context) {
+	if !requireSuperAdmin(c) {
+		return
+	}
+	orgID := c.Param("org_id")
+	address := c.Param("address")
+
+	contract, err := s.db.GetContractByAddress(c.Request.Context(), orgID, address)
+	if err != nil {
+		respondInternalErrorAndLog(c, "failed to read contract",
+			"admin_rbac_contract: GetContractByAddress failed (updateContractMethodPolicies)",
+			"org_id", orgID, "address", address, "err", err)
+		return
+	}
+	if contract == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "contract not found"})
+		return
+	}
+
+	var input contractMethodPoliciesRequest
+	if err := c.ShouldBindJSON(&input); err != nil {
+		respondBadRequestAndLog(c, "invalid request body",
+			"admin_rbac_contract: invalid updateContractMethodPolicies body",
+			"contract_id", contract.ID, "err", err)
+		return
+	}
+
+	var toStore []byte
+	clearing := len(input.MethodPolicies) == 0 || string(input.MethodPolicies) == "null"
+	if !clearing {
+		if contract.ABI == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "register the contract ABI before setting method policies"})
+			return
+		}
+		doc, perr := rbac.ParseMethodPolicyDocument(input.MethodPolicies)
+		if perr != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid method policy: " + perr.Error()})
+			return
+		}
+		if verr := doc.Validate(contract.ABI); verr != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "method policy failed ABI validation: " + verr.Error()})
+			return
+		}
+		toStore = input.MethodPolicies
+	}
+
+	if err := s.db.UpdateContractMethodPolicies(c.Request.Context(), contract.ID, toStore); err != nil {
+		respondInternalErrorAndLog(c, "failed to update method policies",
+			"admin_rbac_contract: UpdateContractMethodPolicies failed",
+			"contract_id", contract.ID, "err", err)
+		return
+	}
+
+	if s.rbacAccessCtrl != nil {
+		s.rbacAccessCtrl.InvalidateOrg(c.Request.Context(), orgID)
+	}
+
+	// Audit with full before/after policy JSON — the change-management artifact
+	// for a security-relevant read-enforcement config.
+	s.recordAuditActionScoped(c, rbac.AuditActionUpdate, rbac.ResourceTypeContract, contract.ID, contract.Name, orgID,
+		map[string]any{"method_policies": rawOrNull(contract.MethodPolicies)},
+		map[string]any{"method_policies": rawOrNull(toStore), "address": contract.Address})
+
+	contract.MethodPolicies = toStore
+	c.JSON(http.StatusOK, contract)
+}
+
+// rawOrNull renders raw JSON for the audit log, or nil when empty.
+func rawOrNull(b []byte) any {
+	if len(b) == 0 {
+		return nil
+	}
+	return json.RawMessage(b)
+}
+
 // listContractEvents parses the stored ABI and returns the list of events with
 // their topic0 hashes and parameter info. Used by the UI to show a human-readable
 // event picker for configuring event rules.

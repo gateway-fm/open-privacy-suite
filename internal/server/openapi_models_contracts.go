@@ -13,6 +13,8 @@ package server
 // constructed at runtime — annotation references only.
 
 import (
+	"encoding/json"
+
 	"privacy-proxy/internal/db"
 	"privacy-proxy/internal/rbac"
 )
@@ -137,6 +139,21 @@ type contractVisibleToUnlockRequest struct {
 // /orgs/{org_id}/contracts/{address}/events-allow-dynamic-payload body.
 type contractEventsAllowDynamicPayloadRequest struct {
 	EventsAllowDynamicPayload *bool `json:"events_allow_dynamic_payload" example:"false"`
+}
+
+// contractMethodPoliciesRequest is the PUT
+// /orgs/{org_id}/contracts/{address}/method-policies body (RD-1206). The
+// method_policies object is a per-record access policy validated against the
+// contract's registered ABI; send null to clear it (feature off).
+type contractMethodPoliciesRequest struct {
+	MethodPolicies json.RawMessage `json:"method_policies" swaggertype:"object"`
+}
+
+// contractMethodPoliciesResponse is the GET
+// /orgs/{org_id}/contracts/{address}/method-policies body: the currently
+// configured policy document, or null when none is set.
+type contractMethodPoliciesResponse struct {
+	MethodPolicies json.RawMessage `json:"method_policies" swaggertype:"object"`
 }
 
 // contractSyncDeleteRequest is the POST

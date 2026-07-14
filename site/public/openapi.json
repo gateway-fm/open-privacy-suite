@@ -1827,6 +1827,22 @@
                 },
                 "type": "object"
             },
+            "internal_server.contractMethodPoliciesRequest": {
+                "properties": {
+                    "method_policies": {
+                        "type": "object"
+                    }
+                },
+                "type": "object"
+            },
+            "internal_server.contractMethodPoliciesResponse": {
+                "properties": {
+                    "method_policies": {
+                        "type": "object"
+                    }
+                },
+                "type": "object"
+            },
             "internal_server.contractSyncCheckResponse": {
                 "properties": {
                     "errors": {
@@ -4120,6 +4136,14 @@
                     "metadata": {
                         "additionalProperties": {},
                         "type": "object"
+                    },
+                    "method_policies": {
+                        "description": "MethodPolicies is the raw per-contract method-access policy document\n(RD-1206; contracts.method_policies JSONB). Nil when unset (feature off\nfor the contract). Kept raw here — the request path parses it via\nParseMethodPolicyDocument and fails closed on a parse error, so a\ncorrupt policy denies only that contract's gated reads rather than\nbreaking every contract load.",
+                        "items": {
+                            "type": "integer"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
                     },
                     "name": {
                         "type": "string"
@@ -10652,6 +10676,206 @@
                     }
                 ],
                 "summary": "Update a contract grant",
+                "tags": [
+                    "Admin: RBAC"
+                ]
+            }
+        },
+        "/api/v1/admin/orgs/{org_id}/contracts/{address}/method-policies": {
+            "get": {
+                "description": "Returns the per-record method access policy document (RD-1206) configured on the contract, or null when unset. Scoped to {org_id}; the restricted operator token is rejected (tenant read).",
+                "parameters": [
+                    {
+                        "description": "Organization ID",
+                        "in": "path",
+                        "name": "org_id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Contract address (0x-prefixed hex)",
+                        "in": "path",
+                        "name": "address",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/internal_server.contractMethodPoliciesResponse"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/internal_server.APIError"
+                                }
+                            }
+                        },
+                        "description": "missing or invalid admin token"
+                    },
+                    "403": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/internal_server.APIError"
+                                }
+                            }
+                        },
+                        "description": "operator token cannot read tenant data, or caller is out of org scope"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/internal_server.APIError"
+                                }
+                            }
+                        },
+                        "description": "contract not found"
+                    },
+                    "500": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/internal_server.APIError"
+                                }
+                            }
+                        },
+                        "description": "Internal Server Error"
+                    }
+                },
+                "security": [
+                    {
+                        "AdminToken": []
+                    }
+                ],
+                "summary": "Get a contract's method access policies",
+                "tags": [
+                    "Admin: RBAC"
+                ]
+            },
+            "put": {
+                "description": "Sets or clears (method_policies:null) the per-record method access policy (RD-1206), gating record-reader eth_calls to a record's stakeholders. Validated against the contract's registered ABI. Super-admin token only — it is the whole per-record read-enforcement surface; the change is audit-logged with before/after state.",
+                "parameters": [
+                    {
+                        "description": "Organization ID",
+                        "in": "path",
+                        "name": "org_id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Contract address (0x-prefixed hex)",
+                        "in": "path",
+                        "name": "address",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "oneOf": [
+                                    {
+                                        "type": "object"
+                                    },
+                                    {
+                                        "$ref": "#/components/schemas/internal_server.contractMethodPoliciesRequest",
+                                        "summary": "request",
+                                        "description": "policy document, or null to clear"
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "description": "policy document, or null to clear",
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_rbac.Contract"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/internal_server.APIError"
+                                }
+                            }
+                        },
+                        "description": "invalid body, policy fails ABI validation, or no ABI registered"
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/internal_server.APIError"
+                                }
+                            }
+                        },
+                        "description": "missing or invalid admin token"
+                    },
+                    "403": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/internal_server.APIError"
+                                }
+                            }
+                        },
+                        "description": "super-admin token required"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/internal_server.APIError"
+                                }
+                            }
+                        },
+                        "description": "contract not found"
+                    },
+                    "500": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/internal_server.APIError"
+                                }
+                            }
+                        },
+                        "description": "Internal Server Error"
+                    }
+                },
+                "security": [
+                    {
+                        "AdminToken": []
+                    }
+                ],
+                "summary": "Set a contract's method access policies",
                 "tags": [
                     "Admin: RBAC"
                 ]
