@@ -20,14 +20,27 @@ import (
 // via Stop(). The reconciler holds no in-memory state — restart is safe
 // (next tick picks up where the previous one left off).
 type VisibilityReconciler struct {
-	db       *db.DB
-	interval time.Duration
-	batch    int
-	stop     chan struct{}
-	done     chan struct{}
+	db        *db.DB
+	interval  time.Duration
+	batch     int
+	stop      chan struct{}
+	done      chan struct{}
 	startOnce sync.Once
 	stopOnce  sync.Once
+
+	// receiptStatus, when set, enables RD-1206 method-policy capture promotion:
+	// a pending capture is promoted only after its source tx's receipt confirms
+	// success. Nil disables capture promotion (tx-visibility promotion is
+	// unaffected) — used by tests without a node and by any deployment that
+	// hasn't wired a receipt checker.
+	receiptStatus ReceiptStatusFunc
 }
+
+// ReceiptStatusFunc reports a transaction's mined/success state from the node.
+// mined=false means "not yet mined" (retry later). mined=true with
+// success=false means the tx reverted (drop the capture). A non-nil err is a
+// transient lookup failure (retry).
+type ReceiptStatusFunc func(ctx context.Context, txHash string) (mined bool, success bool, err error)
 
 // VisibilityReconcilerConfig holds tunables. Defaults are conservative;
 // production can tighten the interval if outbox lag becomes an SLO.
@@ -68,6 +81,14 @@ func NewVisibilityReconciler(database *db.DB, cfg VisibilityReconcilerConfig) *V
 		batch:    cfg.BatchSize,
 		stop:     make(chan struct{}),
 		done:     make(chan struct{}),
+	}
+}
+
+// SetReceiptStatus wires the receipt checker that enables capture promotion
+// (RD-1206). Call before Start.
+func (r *VisibilityReconciler) SetReceiptStatus(fn ReceiptStatusFunc) {
+	if r != nil {
+		r.receiptStatus = fn
 	}
 }
 
@@ -156,4 +177,67 @@ func (r *VisibilityReconciler) tick(ctx context.Context) {
 		slog.Debug("visibility reconciler: tick complete",
 			"promoted", promoted, "failed", failed, "batch", len(rows))
 	}
+
+	r.tickCaptures(ctx)
+}
+
+// tickCaptures drains pending_record_captures (RD-1206). A capture is promoted
+// only after its source tx's receipt confirms success; a reverted tx's capture
+// is dropped (a failed create must not plant capture rows); an unmined tx or a
+// transient lookup error is retried on the next tick. No-op until a receipt
+// checker is wired.
+func (r *VisibilityReconciler) tickCaptures(ctx context.Context) {
+	if r.receiptStatus == nil {
+		return
+	}
+	rows, err := r.db.ListDuePendingRecordCaptures(ctx, r.batch)
+	if err != nil {
+		slog.Warn("capture reconciler: list failed", "err", err)
+		return
+	}
+	if len(rows) == 0 {
+		return
+	}
+
+	var promoted, dropped, retried int
+	for _, row := range rows {
+		mined, success, rerr := r.receiptStatus(ctx, row.TxHash)
+		switch {
+		case rerr != nil || !mined:
+			retried++
+			if markErr := r.db.MarkPendingRecordCaptureFailure(ctx, row.ID, receiptErrMsg(rerr, mined)); markErr != nil {
+				slog.Warn("capture reconciler: mark-failure update failed", "pending_id", row.ID, "mark_err", markErr)
+			}
+		case !success:
+			// tx reverted → drop the capture (no rows planted for a failed create)
+			dropped++
+			if delErr := r.db.DeletePendingRecordCapture(ctx, row.ID); delErr != nil {
+				slog.Warn("capture reconciler: drop-reverted delete failed", "pending_id", row.ID, "del_err", delErr)
+			} else {
+				slog.Debug("capture reconciler: dropped capture for reverted tx", "tx_hash", row.TxHash)
+			}
+		default:
+			if err := r.db.PromoteRecordCapture(ctx, row); err != nil {
+				retried++
+				if markErr := r.db.MarkPendingRecordCaptureFailure(ctx, row.ID, err.Error()); markErr != nil {
+					slog.Warn("capture reconciler: mark-failure update failed", "pending_id", row.ID, "mark_err", markErr)
+				}
+				continue
+			}
+			promoted++
+		}
+	}
+	if promoted > 0 || dropped > 0 || retried > 0 {
+		slog.Debug("capture reconciler: tick complete", "promoted", promoted, "dropped", dropped, "retried", retried, "batch", len(rows))
+	}
+}
+
+func receiptErrMsg(err error, mined bool) string {
+	if err != nil {
+		return err.Error()
+	}
+	if !mined {
+		return "tx not yet mined"
+	}
+	return ""
 }

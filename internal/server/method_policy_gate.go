@@ -120,6 +120,46 @@ func (p *JSONRPCProcessor) linkedAddresses(ctx context.Context, did string) []st
 	return addrs
 }
 
+// nodeForwarder is the subset of *proxy.Proxy the receipt checker needs.
+type nodeForwarder interface {
+	Forward(reqBody []byte) ([]byte, int, error)
+}
+
+// makeReceiptStatusFunc builds the reconciler's receipt checker backed by an
+// upstream eth_getTransactionReceipt call (RD-1206 capture promotion).
+func makeReceiptStatusFunc(fwd nodeForwarder) ReceiptStatusFunc {
+	return func(ctx context.Context, txHash string) (mined bool, success bool, err error) {
+		body, mErr := json.Marshal(map[string]any{
+			"jsonrpc": "2.0", "id": 1,
+			"method": "eth_getTransactionReceipt",
+			"params": []any{txHash}, // marshaled, never string-concatenated
+		})
+		if mErr != nil {
+			return false, false, mErr
+		}
+		resp, _, fErr := fwd.Forward(body)
+		if fErr != nil {
+			return false, false, fErr
+		}
+		var r struct {
+			Result *struct {
+				Status string `json:"status"`
+			} `json:"result"`
+			Error *json.RawMessage `json:"error"`
+		}
+		if e := json.Unmarshal(resp, &r); e != nil {
+			return false, false, e
+		}
+		if r.Error != nil {
+			return false, false, nil // treat as transient — retry
+		}
+		if r.Result == nil {
+			return false, false, nil // not yet mined
+		}
+		return true, strings.EqualFold(r.Result.Status, "0x1"), nil
+	}
+}
+
 // denyMethodPolicy returns an opaque JSON-RPC error preserving the request id.
 // The message carries no record detail (no existence oracle).
 func denyMethodPolicy(responseBody []byte) []byte {

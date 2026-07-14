@@ -907,6 +907,11 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	// in the hot JSON-RPC write path; rows are retried until promoted or
 	// dead-lettered (attempt_count >= 10).
 	s.visibilityReconciler = NewVisibilityReconciler(database, DefaultVisibilityReconcilerConfig())
+	// RD-1206: enable method-policy capture promotion (receipt-confirmed) when a
+	// node forwarder is available.
+	if s.proxy != nil {
+		s.visibilityReconciler.SetReceiptStatus(makeReceiptStatusFunc(s.proxy))
+	}
 	s.visibilityReconciler.Start(context.Background())
 	slog.Info("visibility reconciler started", "interval", "5s", "batch", 100)
 
