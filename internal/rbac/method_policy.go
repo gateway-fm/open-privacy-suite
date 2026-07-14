@@ -1,0 +1,647 @@
+package rbac
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"math/big"
+	"strings"
+
+	"github.com/ethereum/go-ethereum/accounts/abi"
+	"github.com/ethereum/go-ethereum/common"
+)
+
+// Method access policies (RD-1206) bind a record-reader call (e.g.
+// getPaymentInfo(id)) to the record's stakeholders, so authorization is
+// parameter-bound rather than all-or-nothing per function. A policy NEVER
+// widens: the method allowlist, contract grant, claims, function-selector
+// list and RD-915 tracing all run first and unchanged; this layer only
+// narrows an already-permitted call, and every failure path denies.
+//
+// See docs/rd-1206-method-policies-design.md for the full model and the
+// security-audit resolutions this code implements.
+
+// Limits (validated at write time; see design doc "Policy schema").
+const (
+	MethodPolicyMaxBytes      = 32 * 1024
+	MethodPolicyMaxMethods    = 16
+	MethodPolicyMaxRemembered = 8
+	MethodPolicyMaxAudience   = 256
+)
+
+var (
+	errDecode           = errors.New("method policy: return decode failed")
+	errPolicyTooLarge   = fmt.Errorf("method policy exceeds %d bytes", MethodPolicyMaxBytes)
+	errUnsupportedField = errors.New("method policy: unsupported field")
+)
+
+// MethodPolicyDocument is the per-contract policy (contracts.method_policies).
+type MethodPolicyDocument struct {
+	Records map[string]RecordPolicy `json:"records"`
+}
+
+// RecordPolicy groups capture (writer) and access (reader) rules for one
+// logical record type on a contract.
+type RecordPolicy struct {
+	Capture []CaptureSpec `json:"capture"`
+	Access  []AccessSpec  `json:"access"`
+}
+
+// CaptureSpec remembers values from a writer call under a record key.
+type CaptureSpec struct {
+	Method   string                   `json:"method"` // canonical ABI signature "name(t1,t2)"
+	Key      KeySpec                  `json:"key"`
+	Remember map[string]RememberField `json:"remember"`
+}
+
+// AccessSpec gates a reader call against captured rows and/or its return.
+type AccessSpec struct {
+	Method     string      `json:"method"`
+	Key        KeySpec     `json:"key"`
+	Allow      []AllowRule `json:"allow"`
+	OnNoRecord string      `json:"onNoRecord"` // "deny" (only supported outcome)
+	Else       string      `json:"else"`       // "deny"
+}
+
+// KeySpec locates the record key within a call's calldata.
+type KeySpec struct {
+	Source string `json:"source"` // "param"
+	Index  int    `json:"index"`
+}
+
+// RememberField describes one captured value's source and merge behavior.
+type RememberField struct {
+	Source string `json:"source"`          // "param" | "sender" | "visibleTo"
+	Index  *int   `json:"index,omitempty"` // required when Source == "param"
+	Merge  string `json:"merge"`           // "set_once" | "union"
+}
+
+// AllowRule is one alternative that can admit a caller: either a list of
+// captured field names (callerIn: ["payer","payee"]) or a return source
+// (callerIn: {source:"return", paths:[...], kind:"address"}).
+type AllowRule struct {
+	Fields []string
+	Return *ReturnSource
+}
+
+// ReturnSource names address-typed outputs of the reader to match the caller.
+type ReturnSource struct {
+	Paths []string `json:"paths"`
+	Kind  string   `json:"kind"` // "address"
+}
+
+// UnmarshalJSON accepts callerIn as either a string array or a return object.
+func (a *AllowRule) UnmarshalJSON(data []byte) error {
+	var wrap struct {
+		CallerIn json.RawMessage `json:"callerIn"`
+	}
+	if err := json.Unmarshal(data, &wrap); err != nil {
+		return err
+	}
+	if len(wrap.CallerIn) == 0 {
+		return errors.New("allow rule missing callerIn")
+	}
+	trimmed := strings.TrimSpace(string(wrap.CallerIn))
+	if strings.HasPrefix(trimmed, "[") {
+		return json.Unmarshal(wrap.CallerIn, &a.Fields)
+	}
+	var rs struct {
+		Source string   `json:"source"`
+		Paths  []string `json:"paths"`
+		Kind   string   `json:"kind"`
+	}
+	if err := json.Unmarshal(wrap.CallerIn, &rs); err != nil {
+		return err
+	}
+	if rs.Source != "return" {
+		return fmt.Errorf("callerIn object: unsupported source %q", rs.Source)
+	}
+	a.Return = &ReturnSource{Paths: rs.Paths, Kind: rs.Kind}
+	return nil
+}
+
+// ParseMethodPolicyDocument unmarshals and size-checks a policy document.
+func ParseMethodPolicyDocument(data []byte) (*MethodPolicyDocument, error) {
+	if len(data) > MethodPolicyMaxBytes {
+		return nil, errPolicyTooLarge
+	}
+	var doc MethodPolicyDocument
+	dec := json.NewDecoder(strings.NewReader(string(data)))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&doc); err != nil {
+		return nil, fmt.Errorf("method policy: %w", err)
+	}
+	if doc.Records == nil {
+		return nil, errors.New("method policy: no records")
+	}
+	return &doc, nil
+}
+
+// CapturedField is one stored capture value for a record (loaded from the DB).
+type CapturedField struct {
+	Field string
+	Value string
+	Merge string // "set_once" | "union"
+}
+
+// CapturedWrite is a value to persist from a writer call.
+type CapturedWrite struct {
+	RecordType string
+	RecordKey  string
+	Field      string
+	Value      string
+	Merge      string
+}
+
+// CallerIdentity is the authenticated caller's DID + linked addresses,
+// already stripped of empty/zero values.
+type CallerIdentity struct {
+	dids  map[string]bool
+	addrs map[string]bool // lowercased hex
+}
+
+// NewCallerIdentity builds the match set, excluding empty and zero values (L3).
+func NewCallerIdentity(did string, addresses []string) CallerIdentity {
+	ci := CallerIdentity{dids: map[string]bool{}, addrs: map[string]bool{}}
+	if did != "" {
+		ci.dids[did] = true
+	}
+	for _, a := range addresses {
+		if a == "" || isZeroAddress(a) {
+			continue
+		}
+		ci.addrs[strings.ToLower(a)] = true
+	}
+	return ci
+}
+
+func (ci CallerIdentity) matches(value string) bool {
+	if value == "" {
+		return false
+	}
+	if looksLikeAddress(value) {
+		if isZeroAddress(value) {
+			return false
+		}
+		return ci.addrs[strings.ToLower(value)]
+	}
+	return ci.dids[value]
+}
+
+// Decision is the outcome of evaluating a reader call against a policy.
+type Decision struct {
+	Allow    bool
+	Poisoned bool // set-once conflict on the key (H3) — deny-all
+}
+
+// Validate checks the document against the contract's registered ABI. Rejects
+// on write so evaluation never has to handle a malformed policy.
+func (d *MethodPolicyDocument) Validate(contractABI string) error {
+	if contractABI == "" {
+		return errors.New("method policy: contract ABI required")
+	}
+	parsed, err := abi.JSON(strings.NewReader(contractABI))
+	if err != nil {
+		return fmt.Errorf("method policy: parse ABI: %w", err)
+	}
+	methodCount := 0
+	for recType, rec := range d.Records {
+		if recType == "" {
+			return errors.New("method policy: empty record type")
+		}
+		// key types must agree across capture and access for this record type
+		var keyType string
+		keyTypeOf := func(sig string, key KeySpec) (string, error) {
+			m, ok := methodBySig(parsed, sig)
+			if !ok {
+				return "", fmt.Errorf("method %q not found in ABI", sig)
+			}
+			if key.Source != "param" {
+				return "", fmt.Errorf("key source %q unsupported", key.Source)
+			}
+			if key.Index < 0 || key.Index >= len(m.Inputs) {
+				return "", fmt.Errorf("key index %d out of range for %s", key.Index, sig)
+			}
+			return m.Inputs[key.Index].Type.String(), nil
+		}
+		declared := map[string]bool{} // capture field names available to callerIn
+
+		for _, cap := range rec.Capture {
+			methodCount++
+			m, ok := methodBySig(parsed, cap.Method)
+			if !ok {
+				return fmt.Errorf("capture method %q not found in ABI", cap.Method)
+			}
+			kt, err := keyTypeOf(cap.Method, cap.Key)
+			if err != nil {
+				return err
+			}
+			if keyType == "" {
+				keyType = kt
+			} else if keyType != kt {
+				return fmt.Errorf("record %q: key type %q disagrees with %q", recType, kt, keyType)
+			}
+			if len(cap.Remember) == 0 {
+				return fmt.Errorf("capture %q: no remembered fields", cap.Method)
+			}
+			if len(cap.Remember) > MethodPolicyMaxRemembered {
+				return fmt.Errorf("capture %q: too many remembered fields", cap.Method)
+			}
+			for name, rf := range cap.Remember {
+				declared[name] = true
+				switch rf.Source {
+				case "sender", "visibleTo":
+				case "param":
+					if rf.Index == nil {
+						return fmt.Errorf("capture %q field %q: param source requires an index", cap.Method, name)
+					}
+					if *rf.Index < 0 || *rf.Index >= len(m.Inputs) {
+						return fmt.Errorf("capture %q field %q: param index out of range", cap.Method, name)
+					}
+				default:
+					return fmt.Errorf("capture %q field %q: %w %q", cap.Method, name, errUnsupportedField, rf.Source)
+				}
+				switch rf.Merge {
+				case "set_once", "union":
+				default:
+					return fmt.Errorf("capture %q field %q: unsupported merge %q", cap.Method, name, rf.Merge)
+				}
+			}
+		}
+
+		for _, ac := range rec.Access {
+			methodCount++
+			m, ok := methodBySig(parsed, ac.Method)
+			if !ok {
+				return fmt.Errorf("access method %q not found in ABI", ac.Method)
+			}
+			kt, err := keyTypeOf(ac.Method, ac.Key)
+			if err != nil {
+				return err
+			}
+			if keyType == "" {
+				keyType = kt
+			} else if keyType != kt {
+				return fmt.Errorf("record %q: access key type %q disagrees with %q", recType, kt, keyType)
+			}
+			if ac.OnNoRecord != "" && ac.OnNoRecord != "deny" {
+				return fmt.Errorf("access %q: onNoRecord %q unsupported (only deny)", ac.Method, ac.OnNoRecord)
+			}
+			if ac.Else != "" && ac.Else != "deny" {
+				return fmt.Errorf("access %q: else %q unsupported (only deny)", ac.Method, ac.Else)
+			}
+			if len(ac.Allow) == 0 {
+				return fmt.Errorf("access %q: no allow rules", ac.Method)
+			}
+			for _, rule := range ac.Allow {
+				switch {
+				case rule.Return != nil:
+					if rule.Return.Kind != "address" {
+						return fmt.Errorf("access %q: return kind %q unsupported (only address)", ac.Method, rule.Return.Kind)
+					}
+					if len(rule.Return.Paths) == 0 {
+						return fmt.Errorf("access %q: return source with no paths", ac.Method)
+					}
+					for _, p := range rule.Return.Paths {
+						if !outputIsAddress(m, p) {
+							return fmt.Errorf("access %q: return path %q is not an address output", ac.Method, p)
+						}
+					}
+				case len(rule.Fields) > 0:
+					for _, f := range rule.Fields {
+						if !declared[f] {
+							return fmt.Errorf("access %q: callerIn field %q not declared by any capture of record %q", ac.Method, f, recType)
+						}
+					}
+				default:
+					return fmt.Errorf("access %q: empty allow rule", ac.Method)
+				}
+			}
+		}
+	}
+	if methodCount > MethodPolicyMaxMethods {
+		return fmt.Errorf("method policy: too many gated methods (%d > %d)", methodCount, MethodPolicyMaxMethods)
+	}
+	return nil
+}
+
+// GatedReader returns the AccessSpec (and its record type) matching a reader's
+// calldata selector, or ok=false when the call is not gated by any policy.
+func (d *MethodPolicyDocument) GatedReader(calldata []byte, contractABI string) (recordType string, spec AccessSpec, ok bool) {
+	parsed, err := abi.JSON(strings.NewReader(contractABI))
+	if err != nil || len(calldata) < 4 {
+		return "", AccessSpec{}, false
+	}
+	m, err := parsed.MethodById(calldata[:4])
+	if err != nil {
+		return "", AccessSpec{}, false
+	}
+	for rt, rec := range d.Records {
+		for _, ac := range rec.Access {
+			if ac.Method == m.Sig {
+				return rt, ac, true
+			}
+		}
+	}
+	return "", AccessSpec{}, false
+}
+
+// DecodeCaptures decodes a writer call into the values to persist. Returns an
+// empty slice (no error) when the call matches no capture spec.
+func (d *MethodPolicyDocument) DecodeCaptures(calldata []byte, senderDID string, visibleTo []string, contractABI string) ([]CapturedWrite, error) {
+	if len(calldata) < 4 {
+		return nil, nil
+	}
+	parsed, err := abi.JSON(strings.NewReader(contractABI))
+	if err != nil {
+		return nil, fmt.Errorf("method policy: parse ABI: %w", err)
+	}
+	m, err := parsed.MethodById(calldata[:4])
+	if err != nil {
+		return nil, nil // unknown selector — nothing to capture
+	}
+	args, err := m.Inputs.Unpack(calldata[4:])
+	if err != nil {
+		return nil, fmt.Errorf("method policy: unpack calldata: %w", err)
+	}
+
+	var out []CapturedWrite
+	for recType, rec := range d.Records {
+		for _, cap := range rec.Capture {
+			if cap.Method != m.Sig {
+				continue
+			}
+			key, err := canonicalizeArg(args, cap.Key.Index)
+			if err != nil {
+				return nil, err
+			}
+			if key == "" {
+				return nil, fmt.Errorf("method policy: empty record key for %s", cap.Method)
+			}
+			for name, rf := range cap.Remember {
+				switch rf.Source {
+				case "sender":
+					if senderDID != "" {
+						out = append(out, CapturedWrite{recType, key, name, senderDID, rf.Merge})
+					}
+				case "param":
+					v, err := canonicalizeArg(args, *rf.Index)
+					if err != nil {
+						return nil, err
+					}
+					if v != "" && !isZeroAddress(v) {
+						out = append(out, CapturedWrite{recType, key, name, v, rf.Merge})
+					}
+				case "visibleTo":
+					n := 0
+					for _, did := range visibleTo {
+						if did == "" {
+							continue
+						}
+						if n >= MethodPolicyMaxAudience {
+							break // cap; writer logs the drop at the call site
+						}
+						out = append(out, CapturedWrite{recType, key, name, did, rf.Merge})
+						n++
+					}
+				}
+			}
+		}
+	}
+	return out, nil
+}
+
+// EvaluateAccess decides whether the caller may receive the reader's response.
+// captured holds the rows already loaded for (org, contract, recordType, key).
+// resolveReturn is consulted ONLY when a capture rule did not already admit the
+// caller AND the matched access spec has a return source — so a capture-only
+// policy never triggers an upstream forward (C2). resolveReturn must decode the
+// single already-forwarded response; the caller is responsible for bounding it
+// (H2) and for equalizing timing between allow and deny (C2).
+func (d *MethodPolicyDocument) EvaluateAccess(
+	recordType string,
+	calldata []byte,
+	caller CallerIdentity,
+	captured []CapturedField,
+	resolveReturn func() ([]common.Address, error),
+	contractABI string,
+) (Decision, error) {
+	rt, spec, ok := d.GatedReader(calldata, contractABI)
+	if !ok || rt != recordType {
+		// Not gated (or record-type mismatch) — caller decides passthrough;
+		// this function is only invoked for gated readers, so treat a
+		// mismatch as fail-closed deny.
+		return Decision{Allow: false}, nil
+	}
+
+	// H3: a set-once field with ≥2 distinct values is a poisoned key → deny-all.
+	if poisoned := setOncePoisoned(captured); poisoned {
+		return Decision{Allow: false, Poisoned: true}, nil
+	}
+
+	// index captured values by field name
+	byField := map[string][]string{}
+	for _, c := range captured {
+		byField[c.Field] = append(byField[c.Field], c.Value)
+	}
+
+	hasReturnRule := false
+	for _, rule := range spec.Allow {
+		if rule.Return != nil {
+			hasReturnRule = true
+			continue
+		}
+		for _, f := range rule.Fields {
+			for _, v := range byField[f] {
+				if caller.matches(v) {
+					return Decision{Allow: true}, nil
+				}
+			}
+		}
+	}
+
+	if !hasReturnRule {
+		return Decision{Allow: false}, nil // capture-only: never forward
+	}
+
+	addrs, err := resolveReturn()
+	if err != nil {
+		return Decision{Allow: false}, nil // fail closed (H2)
+	}
+	for _, a := range addrs {
+		if (a == common.Address{}) {
+			continue // zero guard (L3)
+		}
+		if caller.addrs[strings.ToLower(a.Hex())] {
+			return Decision{Allow: true}, nil
+		}
+	}
+	return Decision{Allow: false}, nil
+}
+
+// DecodeReturnAddresses decodes the declared address output paths from a
+// reader's return bytes. Bounds the input (H2) and decodes the full output
+// tuple once, then selects only the named address outputs.
+func DecodeReturnAddresses(returnData []byte, calldata []byte, paths []string, contractABI string) ([]common.Address, error) {
+	const maxReturnBytes = 128 * 1024
+	if len(returnData) > maxReturnBytes {
+		return nil, errDecode
+	}
+	if len(calldata) < 4 {
+		return nil, errDecode
+	}
+	parsed, err := abi.JSON(strings.NewReader(contractABI))
+	if err != nil {
+		return nil, errDecode
+	}
+	m, err := parsed.MethodById(calldata[:4])
+	if err != nil {
+		return nil, errDecode
+	}
+	vals, err := m.Outputs.Unpack(returnData)
+	if err != nil {
+		return nil, errDecode
+	}
+	want := map[string]bool{}
+	for _, p := range paths {
+		want[p] = true
+	}
+	var out []common.Address
+	for i, o := range m.Outputs {
+		name := o.Name
+		if name == "" {
+			name = fmt.Sprintf("%d", i)
+		}
+		if !want[name] {
+			continue
+		}
+		if i >= len(vals) {
+			return nil, errDecode
+		}
+		a, ok := vals[i].(common.Address)
+		if !ok {
+			return nil, errDecode
+		}
+		out = append(out, a)
+	}
+	return out, nil
+}
+
+// ---- helpers ----
+
+func setOncePoisoned(captured []CapturedField) bool {
+	seen := map[string]string{} // field -> first set-once value
+	for _, c := range captured {
+		if c.Merge != "set_once" {
+			continue
+		}
+		if prev, ok := seen[c.Field]; ok {
+			if prev != c.Value {
+				return true
+			}
+		} else {
+			seen[c.Field] = c.Value
+		}
+	}
+	return false
+}
+
+func methodBySig(parsed abi.ABI, sig string) (abi.Method, bool) {
+	for _, m := range parsed.Methods {
+		if m.Sig == sig {
+			return m, true
+		}
+	}
+	return abi.Method{}, false
+}
+
+func outputIsAddress(m abi.Method, path string) bool {
+	for i, o := range m.Outputs {
+		name := o.Name
+		if name == "" {
+			name = fmt.Sprintf("%d", i)
+		}
+		if name == path {
+			return o.Type.T == abi.AddressTy
+		}
+	}
+	return false
+}
+
+// decodeRecordKey unpacks calldata and canonicalizes the key parameter.
+func decodeRecordKey(key KeySpec, calldata []byte, parsed abi.ABI) (string, error) {
+	if len(calldata) < 4 {
+		return "", errDecode
+	}
+	m, err := parsed.MethodById(calldata[:4])
+	if err != nil {
+		return "", errDecode
+	}
+	args, err := m.Inputs.Unpack(calldata[4:])
+	if err != nil {
+		return "", errDecode
+	}
+	return canonicalizeArg(args, key.Index)
+}
+
+// canonicalizeArg renders a decoded ABI argument to its canonical string form,
+// operating on the DECODED typed value (never the raw calldata slice) so
+// distinct logical values never collide (M2).
+func canonicalizeArg(args []any, index int) (string, error) {
+	if index < 0 || index >= len(args) {
+		return "", fmt.Errorf("method policy: arg index %d out of range (%d args)", index, len(args))
+	}
+	switch v := args[index].(type) {
+	case string:
+		return v, nil
+	case common.Address:
+		return strings.ToLower(v.Hex()), nil
+	case common.Hash:
+		return strings.ToLower(v.Hex()), nil
+	case [32]byte:
+		return strings.ToLower(common.BytesToHash(v[:]).Hex()), nil
+	case []byte:
+		return "0x" + strings.ToLower(common.Bytes2Hex(v)), nil
+	case *big.Int:
+		if v == nil {
+			return "", nil
+		}
+		return v.String(), nil
+	case bool:
+		if v {
+			return "true", nil
+		}
+		return "false", nil
+	default:
+		return "", fmt.Errorf("method policy: unsupported key/param type %T", v)
+	}
+}
+
+func looksLikeAddress(s string) bool {
+	if len(s) != 42 || !strings.HasPrefix(s, "0x") && !strings.HasPrefix(s, "0X") {
+		return false
+	}
+	for _, c := range s[2:] {
+		switch {
+		case c >= '0' && c <= '9', c >= 'a' && c <= 'f', c >= 'A' && c <= 'F':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func isZeroAddress(s string) bool {
+	return looksLikeAddress(s) && common.HexToAddress(s) == (common.Address{})
+}
+
+// test helpers (kept in non-test file so both are available)
+func bigInt(n int64) *big.Int { return big.NewInt(n) }
+
+func inputTypes(m abi.Method) []string {
+	out := make([]string, len(m.Inputs))
+	for i, in := range m.Inputs {
+		out[i] = in.Type.String()
+	}
+	return out
+}
