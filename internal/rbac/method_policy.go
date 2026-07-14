@@ -658,6 +658,83 @@ func (d *MethodPolicyDocument) EvaluateReader(
 	return true, decision, nil
 }
 
+// SimResult is the capture-side simulation of a gated reader for one caller.
+// The return resolver is deliberately NOT simulated (it needs live contract
+// state); HasReturnSource flags that the live decision could additionally
+// admit a caller the getter returns.
+type SimResult struct {
+	RecordType      string
+	Allow           bool   // capture-side allow
+	MatchedRule     string // e.g. "captured:payer" / "principal:did:…", or ""
+	HasReturnSource bool
+	Poisoned        bool
+}
+
+// SimulateReader evaluates the CAPTURE side of the gated reader identified by
+// methodSig for a caller, loading that record's captures via loadCaptures. It
+// performs NO node/return call — a policy simulator must have no side effect and
+// no live dependency. ok=false means methodSig is not a gated reader.
+func (d *MethodPolicyDocument) SimulateReader(
+	methodSig string,
+	caller CallerIdentity,
+	loadCaptures func(recordType string) ([]CapturedField, error),
+) (SimResult, bool, error) {
+	if d == nil {
+		return SimResult{}, false, nil
+	}
+	var spec AccessSpec
+	var rt string
+	found := false
+	for t, rec := range d.Records {
+		for _, ac := range rec.Access {
+			if ac.Method == methodSig {
+				spec, rt, found = ac, t, true
+			}
+		}
+	}
+	if !found {
+		return SimResult{}, false, nil
+	}
+	captured, err := loadCaptures(rt)
+	if err != nil {
+		return SimResult{RecordType: rt}, true, err
+	}
+	res := SimResult{RecordType: rt}
+	if setOncePoisoned(captured) {
+		res.Poisoned = true
+		return res, true, nil
+	}
+	byField := map[string][]string{}
+	for _, c := range captured {
+		byField[c.Field] = append(byField[c.Field], c.Value)
+	}
+	for _, rule := range spec.Allow {
+		if rule.Return != nil {
+			res.HasReturnSource = true
+			continue
+		}
+		if rule.Where != nil && !evalWhere(rule.Where, byField) {
+			continue
+		}
+		for _, f := range rule.Fields {
+			if vals, ok := byField[f]; ok {
+				for _, v := range vals {
+					if caller.matches(v) {
+						res.Allow, res.MatchedRule = true, "captured:"+f
+						return res, true, nil
+					}
+				}
+				continue
+			}
+			if isLiteralPrincipal(f) && caller.matches(f) {
+				res.Allow, res.MatchedRule = true, "principal:"+f
+				return res, true, nil
+			}
+		}
+	}
+	return res, true, nil
+}
+
 // ReturnAddressPaths returns the union of address output paths declared by the
 // gated reader's return-source allow rules (empty when the call is not gated or
 // has no return source). The request-path gate uses it to decode only the

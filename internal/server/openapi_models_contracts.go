@@ -156,6 +156,29 @@ type contractMethodPoliciesResponse struct {
 	MethodPolicies json.RawMessage `json:"method_policies" swaggertype:"object"`
 }
 
+// methodPolicySimulateRequest is the POST .../method-policies/simulate body:
+// "would this caller be allowed to read this record via this method?" (RD-1206).
+type methodPolicySimulateRequest struct {
+	Method    string   `json:"method"`     // canonical reader signature, e.g. "getPaymentInfo(string)"
+	RecordKey string   `json:"record_key"` // the record identifier value
+	CallerDID string   `json:"caller_did"`
+	CallerETH []string `json:"caller_eth_addresses"`
+}
+
+// methodPolicySimulateResponse is the simulator result. Result is tri-state:
+// "allow" / "deny" / "indeterminate_return_source" — the last means the
+// capture side denies but the reader has a return-address rule whose live
+// result is not simulated (a getter-returned address could additionally admit).
+type methodPolicySimulateResponse struct {
+	Result          string              `json:"result"`
+	RecordType      string              `json:"record_type"`
+	MatchedRule     string              `json:"matched_rule,omitempty"`
+	HasReturnSource bool                `json:"has_return_source"`
+	Poisoned        bool                `json:"poisoned"`
+	Captured        map[string][]string `json:"captured"` // full admit-set (super-admin only)
+	Note            string              `json:"note,omitempty"`
+}
+
 // contractSyncDeleteRequest is the POST
 // /orgs/{org_id}/contracts/sync-delete body: the contracts to re-check and
 // delete if still missing on-chain.

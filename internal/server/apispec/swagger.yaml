@@ -1582,6 +1582,44 @@ components:
         membership:
           $ref: '#/components/schemas/privacy-proxy_internal_rbac.UserMembership'
       type: object
+    internal_server.methodPolicySimulateRequest:
+      properties:
+        caller_did:
+          type: string
+        caller_eth_addresses:
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+        method:
+          description: canonical reader signature, e.g. "getPaymentInfo(string)"
+          type: string
+        record_key:
+          description: the record identifier value
+          type: string
+      type: object
+    internal_server.methodPolicySimulateResponse:
+      properties:
+        captured:
+          additionalProperties:
+            items:
+              type: string
+            type: array
+          description: full admit-set (super-admin only)
+          type: object
+        has_return_source:
+          type: boolean
+        matched_rule:
+          type: string
+        note:
+          type: string
+        poisoned:
+          type: boolean
+        record_type:
+          type: string
+        result:
+          type: string
+      type: object
     internal_server.oauthAuthorizeJSONResponse:
       properties:
         auth_request:
@@ -7041,6 +7079,78 @@ paths:
       security:
       - AdminToken: []
       summary: Set a contract's method access policies
+      tags:
+      - 'Admin: RBAC'
+  /api/v1/admin/orgs/{org_id}/contracts/{address}/method-policies/simulate:
+    post:
+      description: Evaluates the capture side of a contract's method policy for a
+        given caller + record, returning allow / deny / indeterminate_return_source
+        plus the record's captured admit-set. No node call; the live return-address
+        resolver is not simulated. Super-admin token only; org-scoped; audit-logged.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: org_id
+        required: true
+        schema:
+          type: string
+      - description: Contract address (0x-prefixed hex)
+        in: path
+        name: address
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/internal_server.methodPolicySimulateRequest'
+                description: caller + record to simulate
+                summary: request
+        description: caller + record to simulate
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/internal_server.methodPolicySimulateResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/internal_server.APIError'
+          description: invalid body, or no policy configured
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/internal_server.APIError'
+          description: missing or invalid admin token
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/internal_server.APIError'
+          description: super-admin token required
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/internal_server.APIError'
+          description: contract not found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/internal_server.APIError'
+          description: Internal Server Error
+      security:
+      - AdminToken: []
+      summary: Simulate a method access policy decision
       tags:
       - 'Admin: RBAC'
   /api/v1/admin/orgs/{org_id}/contracts/{address}/visibleto-unlock:

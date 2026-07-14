@@ -752,3 +752,74 @@ func TestMethodPolicy_Where_NumericNotLexical(t *testing.T) {
 		t.Fatalf("numeric where compared lexically — 9 must NOT satisfy >= 1000000")
 	}
 }
+
+// ---- P3: simulator (capture-side, no node call) ----
+
+func TestMethodPolicy_SimulateReader(t *testing.T) {
+	doc, err := ParseMethodPolicyDocument([]byte(testWherePolicyJSON))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := doc.Validate(testWhereABI); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	load := func(rows []CapturedField) func(string) ([]CapturedField, error) {
+		return func(rt string) ([]CapturedField, error) {
+			if rt != "payment" {
+				t.Fatalf("unexpected record type %q", rt)
+			}
+			return rows, nil
+		}
+	}
+	rows := []CapturedField{
+		{Field: "payer", Value: "did:test:alice", Merge: "set_once"},
+		{Field: "amount", Value: "2000000", Merge: "set_once"},
+	}
+
+	// payer allowed, no return source in this policy → deterministic.
+	res, ok, err := doc.SimulateReader("getPaymentInfo(string)", NewCallerIdentity("did:test:alice", nil), load(rows))
+	if err != nil || !ok {
+		t.Fatalf("sim ok=%v err=%v", ok, err)
+	}
+	if !res.Allow || res.MatchedRule != "captured:payer" || res.HasReturnSource {
+		t.Fatalf("payer sim wrong: %+v", res)
+	}
+	// compliance principal allowed via where (amount high).
+	res, _, _ = doc.SimulateReader("getPaymentInfo(string)", NewCallerIdentity("did:test:compliance", nil), load(rows))
+	if !res.Allow || res.MatchedRule != "principal:did:test:compliance" {
+		t.Fatalf("compliance sim wrong: %+v", res)
+	}
+	// compliance denied when amount low.
+	res, _, _ = doc.SimulateReader("getPaymentInfo(string)", NewCallerIdentity("did:test:compliance", nil),
+		load([]CapturedField{{Field: "amount", Value: "1", Merge: "set_once"}}))
+	if res.Allow {
+		t.Fatalf("compliance must be denied for low amount: %+v", res)
+	}
+	// unknown reader method → not gated.
+	if _, ok, _ := doc.SimulateReader("noSuch(string)", NewCallerIdentity("did:test:alice", nil), load(rows)); ok {
+		t.Fatalf("unknown method should not be gated")
+	}
+}
+
+// The simulator must flag HasReturnSource so a capture-side deny is not
+// mistaken for an authoritative deny (the live return resolver may admit).
+func TestMethodPolicy_SimulateReader_ReturnSourceFlagged(t *testing.T) {
+	doc, err := ParseMethodPolicyDocument([]byte(testPaymentPolicyJSON)) // has a return rule
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := doc.Validate(testPaymentABI); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	load := func(string) ([]CapturedField, error) { return nil, nil } // no captures
+	res, ok, _ := doc.SimulateReader("getPaymentInfo(string)", NewCallerIdentity("did:test:diana", nil), load)
+	if !ok {
+		t.Fatalf("should be gated")
+	}
+	if res.Allow {
+		t.Fatalf("capture-side should deny with no captures")
+	}
+	if !res.HasReturnSource {
+		t.Fatalf("HasReturnSource must be true so the deny is not read as authoritative")
+	}
+}
