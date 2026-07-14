@@ -484,3 +484,51 @@ func TestMethodPolicy_StrictAllowRule(t *testing.T) {
 		}
 	}
 }
+
+// EvaluateReader: single entry point — gated/not, key-scoped capture load,
+// capture-then-return, fail-closed.
+func TestMethodPolicy_EvaluateReader(t *testing.T) {
+	doc, err := ParseMethodPolicyDocument([]byte(testPaymentPolicyJSON))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := doc.Validate(testPaymentABI); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+
+	loadFor := func(rows map[string][]CapturedField) func(string, string) ([]CapturedField, error) {
+		return func(rt, key string) ([]CapturedField, error) { return rows["payment|"+key], nil }
+	}
+	capturedPAY1 := map[string][]CapturedField{
+		"payment|PAY-1": {{Field: "payer", Value: "did:test:alice", Merge: "set_once"}},
+	}
+	retNever := func() ([]common.Address, error) { t.Fatal("resolver must not run"); return nil, nil }
+
+	// not gated: a non-policy method → gated=false, passthrough
+	nonGated := encodeCall(t, "createPayment", "PAY-1", addr(payeeAddr), bigInt(1))
+	if gated, _, _ := doc.EvaluateReader(nonGated, NewCallerIdentity("did:test:alice", nil), loadFor(capturedPAY1), retNever, testPaymentABI); gated {
+		t.Fatalf("createPayment is not a gated reader")
+	}
+
+	// gated, captured payer matches → allow, resolver not consulted
+	getPAY1 := encodeCall(t, "getPaymentInfo", "PAY-1")
+	gated, dec, err := doc.EvaluateReader(getPAY1, NewCallerIdentity("did:test:alice", nil), loadFor(capturedPAY1), retNever, testPaymentABI)
+	if err != nil || !gated || !dec.Allow {
+		t.Fatalf("payer should be allowed via capture: gated=%v allow=%v err=%v", gated, dec.Allow, err)
+	}
+
+	// gated, key with NO captures + return admits payer
+	getPAY2 := encodeCall(t, "getPaymentInfo", "PAY-2")
+	retPayer := func() ([]common.Address, error) { return []common.Address{addr(payerAddr)}, nil }
+	gated, dec, _ = doc.EvaluateReader(getPAY2, NewCallerIdentity("", []string{payerAddr}), loadFor(capturedPAY1), retPayer, testPaymentABI)
+	if !gated || !dec.Allow {
+		t.Fatalf("payer should be allowed via return for uncaptured key: allow=%v", dec.Allow)
+	}
+
+	// store error → deny
+	loadErr := func(string, string) ([]CapturedField, error) { return nil, errDecode }
+	gated, dec, _ = doc.EvaluateReader(getPAY1, NewCallerIdentity("did:test:alice", nil), loadErr, retPayer, testPaymentABI)
+	if !gated || dec.Allow {
+		t.Fatalf("store error must deny: allow=%v", dec.Allow)
+	}
+}

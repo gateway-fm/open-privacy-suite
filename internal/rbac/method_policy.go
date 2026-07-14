@@ -520,6 +520,74 @@ func (d *MethodPolicyDocument) EvaluateAccess(
 	return Decision{Allow: false}, nil
 }
 
+// EvaluateReader is the request-path entry point. It resolves the gated reader
+// for calldata; if none, gated=false and the caller passes the response through
+// unchanged. Otherwise it decodes the record key, loads that record's captures
+// via loadCaptures, and evaluates (capture ∪ return). resolveReturn is only
+// invoked when a capture rule did not already admit the caller AND the matched
+// access spec declares a return source (so a capture-only policy never triggers
+// an upstream decode). Every error path fails closed (gated=true, Allow=false).
+func (d *MethodPolicyDocument) EvaluateReader(
+	calldata []byte,
+	caller CallerIdentity,
+	loadCaptures func(recordType, recordKey string) ([]CapturedField, error),
+	resolveReturn func() ([]common.Address, error),
+	contractABI string,
+) (gated bool, dec Decision, err error) {
+	if d == nil {
+		return false, Decision{Allow: false}, nil
+	}
+	rt, spec, ok := d.GatedReader(calldata, contractABI)
+	if !ok {
+		return false, Decision{Allow: false}, nil
+	}
+	parsed, perr := abi.JSON(strings.NewReader(contractABI))
+	if perr != nil {
+		return true, Decision{Allow: false}, nil // gated but ABI unusable → deny
+	}
+	key, kerr := decodeRecordKey(spec.Key, calldata, parsed)
+	if kerr != nil {
+		return true, Decision{Allow: false}, nil
+	}
+	caps, lerr := loadCaptures(rt, key)
+	if lerr != nil {
+		return true, Decision{Allow: false}, nil // store error → deny (M1)
+	}
+	decision, derr := d.EvaluateAccess(rt, calldata, caller, caps, resolveReturn, contractABI)
+	if derr != nil {
+		return true, Decision{Allow: false}, nil
+	}
+	return true, decision, nil
+}
+
+// ReturnAddressPaths returns the union of address output paths declared by the
+// gated reader's return-source allow rules (empty when the call is not gated or
+// has no return source). The request-path gate uses it to decode only the
+// declared address slots from the already-forwarded response.
+func (d *MethodPolicyDocument) ReturnAddressPaths(calldata []byte, contractABI string) []string {
+	if d == nil {
+		return nil
+	}
+	_, spec, ok := d.GatedReader(calldata, contractABI)
+	if !ok {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, rule := range spec.Allow {
+		if rule.Return == nil {
+			continue
+		}
+		for _, p := range rule.Return.Paths {
+			if !seen[p] {
+				seen[p] = true
+				out = append(out, p)
+			}
+		}
+	}
+	return out
+}
+
 // DecodeReturnAddresses decodes the declared address output paths from a
 // reader's return bytes. Bounds the input (H2) and decodes the full output
 // tuple once, then selects only the named address outputs.

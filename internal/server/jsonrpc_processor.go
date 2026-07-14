@@ -973,6 +973,15 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 		}
 	}
 
+	// RD-1206: enqueue method-policy record captures for this send (independent
+	// of visibleTo — a create still captures payer/payee from sender/params).
+	if statusCode == http.StatusOK {
+		if txHash := extractTxHashFromResult(responseBody); txHash != "" {
+			_, to, data, _ := extractTxParams(req.Params)
+			p.enqueueMethodPolicyCaptures(ctx, req, to, data, visibleTo, txHash)
+		}
+	}
+
 	// Apply response-level privacy filtering based on method.
 	// This filters responses to prevent cross-participant data leakage
 	// within the same organization.
@@ -1154,6 +1163,13 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 			addrs = nil
 		}
 		return FilterBlockReceipts(responseBody, addrs)
+
+	case strings.EqualFold(m, rbac.MethodCall):
+		// RD-1206: per-record method access policy. Gates the already-forwarded
+		// eth_call response by the target contract's policy (no second upstream
+		// call). Passthrough when the contract has no policy or the method is
+		// not a gated reader.
+		return p.applyMethodPolicyGate(ctx, req, responseBody)
 	}
 	return responseBody
 }
@@ -1729,6 +1745,15 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 						"tx", txHash, "recipients", len(rawTxVisibleTo), "sender", req.UserID, "org", result.OrgID, "error", err)
 				}
 			}
+		}
+	}
+
+	// RD-1206: enqueue method-policy record captures for this raw send. `to` and
+	// `data` were decoded from the signed tx above; captures ride the same
+	// receipt-confirmed outbox as visibleTo.
+	if statusCode == http.StatusOK {
+		if txHash := extractTxHashFromResult(responseBody); txHash != "" {
+			p.enqueueMethodPolicyCaptures(ctx, req, to, data, rawTxVisibleTo, txHash)
 		}
 	}
 
