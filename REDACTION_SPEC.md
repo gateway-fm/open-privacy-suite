@@ -695,3 +695,53 @@ The hash means private addresses or signed-tx blobs in params never persist; rev
 - Dashboard "View as user" / browse-as flow — Phase 2, deferred (see RD-872).
 - Tier-3 admin / Read-Only Admin / super-admin dry-run — explicit NO. Each adds real attack surface that the tier-2-only argument doesn't cover.
 - JWT minting / impersonation tokens — never. The synthetic principal is a per-request struct; if it leaked, it would be a bug.
+
+## 9. Method access policies (RD-1206)
+
+Per-record access control for record-reader `eth_call`s (e.g.
+`getPaymentInfo(id)`). A contract grant authorizes a function all-or-nothing;
+this layer binds the *call* to the *record*, so only a record's stakeholders may
+read it. Operator-facing docs: `site/.../docs/security/method-policies`.
+
+**Where it runs.** The read gate is `applyMethodPolicyGate`
+(`internal/server/method_policy_gate.go`), invoked from `applyResponseFilter`
+for `eth_call` — i.e. **post-forward**. It decodes the caller's OWN
+already-fetched response; it never issues a second upstream call, so allow and
+deny share the timing profile (no per-record existence oracle). The engine is
+`internal/rbac/method_policy.go` (`Validate`, `DecodeCaptures`, `EvaluateReader`,
+`EvaluateAccess`, `DecodeReturnAddresses`).
+
+**Model.** Per contract, `contracts.method_policies` (JSONB, nullable). Two
+halves, both validated against the registered ABI at write time:
+
+- **capture** (writer methods): remember `param(i)` / `sender` / `visibleTo`
+  under a record key, written via the receipt-confirmed outbox
+  (`pending_record_captures` → `contract_record_captures`, promoted by the
+  visibility reconciler only when the source tx's receipt is status 1).
+- **access** (reader methods): allow when the authenticated caller matches the
+  record's captured fields/audience, OR an address decoded from the reader's
+  return. Union of the two resolvers.
+
+**Fail-closed, everywhere.** No policy → passthrough (unchanged). Policy but a
+DB/parse/decode error, owner-org mismatch, missing capture, or set-once poison
+→ opaque deny. Zero/empty values never match a caller. Keys canonicalize on the
+decoded typed value; capture and access key types must agree. Only narrows —
+the method allowlist / grant / claims / function-selector list / RD-915 tracing
+all run first and unchanged.
+
+**Admin.** `GET`/`PUT /api/v1/admin/orgs/{org}/contracts/{address}/method-policies`.
+PUT is **super-admin only** (same tier as `events-allow-dynamic-payload`: it is
+the whole per-record read-enforcement surface, not a per-grant decision), ABI-
+validated, audit-logged before/after.
+
+### Surface asymmetry — what a method policy does NOT cover
+
+A method policy gates the **getter** (`eth_call`) only. The *same record's data
+reachable by other means* — the writer transaction's emitted **event logs**
+(`eth_getLogs`, receipt logs) — is governed by the event-rule engine (§3.4.1)
+and `visibleTo` (§3.7.1, §7), **not** by the method policy. An operator who
+locks `getPaymentInfo` but whose `createPayment` emits a stakeholder-bearing
+event must gate that event separately (per-record `param_rules`), or the record
+is still observable via logs. This is not an RPC/explorer invariant violation:
+`eth_call` has no explorer counterpart, and the policy only *narrows* an
+already-`CheckAccess`-allowed call — it never touches `GetBatchVisibility`.

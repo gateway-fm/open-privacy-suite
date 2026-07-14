@@ -1,0 +1,116 @@
+import { Callout } from "@/components/mdx/callout";
+
+export const metadata = {
+  title: "Method Access Policies",
+  description:
+    "Per-record access control for record-reader contract calls (e.g. getPaymentInfo) in the Open Privacy Suite — gate a getter to a record's stakeholders, not the whole group.",
+};
+
+# Method Access Policies
+
+A contract grant authorizes a function all-or-nothing: if a group can call
+`getPaymentInfo`, every member can call it for **any** record. For methods that
+return record-level private data (a payment's payer, payee, amount), that is too
+coarse — access needs to be **per record**. A method access policy binds a
+record-reader call to the record's stakeholders: only the parties of *that*
+payment (and any designated third party, such as a settlement bank) may read it.
+
+<Callout type="info">
+  Policies only **narrow**. The method allowlist, contract grant, claims, and
+  function-selector list are all enforced first and unchanged — a policy can
+  never grant access the grant didn't already allow. With no policy configured,
+  a contract behaves exactly as before.
+</Callout>
+
+## What you configure
+
+A policy is a JSON document set per contract, validated against the contract's
+registered ABI. It has two halves:
+
+- **capture** — on the writer methods (e.g. `createPayment`), remember who the
+  record's parties are: values taken from a call parameter, the sender, or the
+  transaction's `visibleTo` list, stored under a **record key** (a call
+  parameter, e.g. the payment identifier).
+- **access** — on the reader methods (e.g. `getPaymentInfo`), allow the call
+  only when the authenticated caller matches the record's captured
+  parties/audience, or an address the getter itself returns.
+
+Example (the reference `PaymentRegistry`):
+
+```json
+{
+  "records": {
+    "payment": {
+      "capture": [
+        {
+          "method": "createPayment(string,address,uint256)",
+          "key": { "source": "param", "index": 0 },
+          "remember": {
+            "payer":    { "source": "sender",           "merge": "set_once" },
+            "payee":    { "source": "param", "index": 1, "merge": "set_once" },
+            "audience": { "source": "visibleTo",         "merge": "union" }
+          }
+        }
+      ],
+      "access": [
+        {
+          "method": "getPaymentInfo(string)",
+          "key": { "source": "param", "index": 0 },
+          "allow": [
+            { "callerIn": ["payer", "payee", "audience"] },
+            { "callerIn": { "source": "return", "paths": ["payer", "payee"], "kind": "address" } }
+          ],
+          "onNoRecord": "deny",
+          "else": "deny"
+        }
+      ]
+    }
+  }
+}
+```
+
+Read this as: the payer (the sender of `createPayment`), the payee (its second
+argument), and any DID listed in that transaction's `visibleTo` may read the
+payment; everyone else is denied. As a fallback, a caller whose address the
+getter returns as `payer`/`payee` is also allowed (this covers records created
+outside a captured flow).
+
+## Setting a policy
+
+```
+PUT /api/v1/admin/orgs/{org_id}/contracts/{address}/method-policies
+{ "method_policies": { ...document... } }     # or  { "method_policies": null } to clear
+GET /api/v1/admin/orgs/{org_id}/contracts/{address}/method-policies
+```
+
+- **Super-admin token only.** A method policy is the whole per-record
+  read-enforcement surface for a contract; it is set with the super-admin
+  credential, not a tier-2 org-admin token. Every change is audit-logged with
+  the before/after policy.
+- The contract's **ABI must be registered first** — the policy is validated
+  against it on write (unknown methods, out-of-range parameter indices, or a
+  return path that isn't an address are rejected), so a policy that saves
+  successfully will not misbehave at read time.
+- Configure the policy **before** the contract takes traffic, so every record is
+  captured from creation.
+
+## What to expect
+
+- A denied read returns an opaque error — indistinguishable from "no such
+  record".
+- Everything fails closed: no captured record, a corrupt policy, or any
+  decoding error results in denial, never accidental access.
+- Record keys must be **high-entropy, opaque identifiers** (for example a random
+  128-bit value), never sequential or meaningful strings. Possession of a valid
+  identifier is what proves a caller is a party; a guessable identifier weakens
+  that.
+- Identity parameters (payer, payee) should use `set_once`; a shared audience
+  (a settlement group) uses `union`.
+
+<Callout type="warning">
+  A method policy gates the **getter** only. The same record's data reachable by
+  other means — the events its creating transaction emitted — is governed by
+  [event rules and `visibleTo`](/docs/security/response-filtering), not by the
+  method policy. If a record must stay confidential, gate its **events**
+  (per-record event rules) as well as its getter.
+</Callout>

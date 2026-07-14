@@ -34,6 +34,10 @@ export const navigation: NavGroup[] = [
         href: "/docs/security/response-filtering",
       },
       {
+        title: "Method Access Policies",
+        href: "/docs/security/method-policies",
+      },
+      {
         title: "Privacy Requirements",
         href: "/docs/security/privacy-requirements",
       },
