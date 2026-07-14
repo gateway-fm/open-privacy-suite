@@ -146,4 +146,26 @@ describe("validateWizard", () => {
   it("rejects an allow field that isn't captured", () => {
     expect(validateWizard({ ...partiorWizard, allowFields: ["ghost"] }, fns)).toMatch(/isn't a captured field/);
   });
+  it("rejects duplicate captured field names (H1)", () => {
+    const dup = {
+      ...partiorWizard,
+      remember: [
+        { field: "payer", source: "sender" as const, merge: "set_once" as const },
+        { field: "payer", source: "param" as const, paramIndex: 1, merge: "set_once" as const },
+      ],
+      allowFields: ["payer"],
+    };
+    expect(validateWizard(dup, fns)).toMatch(/[Dd]uplicate/);
+  });
+  it("rejects a visibleTo audience field set to set_once (H2)", () => {
+    const bad = {
+      ...partiorWizard,
+      remember: [{ field: "audience", source: "visibleTo" as const, merge: "set_once" as const }],
+      allowFields: ["audience"],
+    };
+    expect(validateWizard(bad, fns)).toMatch(/must use "union"/);
+  });
+  it("rejects a return path that isn't an address output of the reader (H3)", () => {
+    expect(validateWizard({ ...partiorWizard, returnPaths: ["amount"] }, fns)).toMatch(/not an address output/);
+  });
 });

@@ -118,6 +118,48 @@ describe("MethodPolicyManager", () => {
     );
   });
 
+  it("advanced JSON editor saves the full parsed document (multi-capture/reader)", async () => {
+    const u = userEvent.setup();
+    (rbacApi.contracts.updateMethodPolicies as ReturnType<typeof vi.fn>).mockResolvedValue({});
+    render(<MethodPolicyManager {...baseProps} initialPolicy={null} />);
+
+    await u.click(screen.getByRole("button", { name: /edit json/i }));
+    const ta = screen.getByLabelText("Method policy JSON") as HTMLTextAreaElement;
+    // A shape the guided wizard can't express: two capture specs on one record.
+    const doc = {
+      records: {
+        payment: {
+          capture: [
+            { method: "createPayment(string,address,uint256)", key: { source: "param", index: 0 }, remember: { payer: { source: "sender", merge: "set_once" } } },
+            { method: "completePayment(string)", key: { source: "param", index: 0 }, remember: { audience: { source: "visibleTo", merge: "union" } } },
+          ],
+          access: [
+            { method: "getPaymentInfo(string)", key: { source: "param", index: 0 }, allow: [{ callerIn: ["payer", "audience"] }], onNoRecord: "deny", else: "deny" },
+          ],
+        },
+      },
+    };
+    await u.clear(ta);
+    await u.paste(JSON.stringify(doc));
+    await u.click(screen.getByRole("button", { name: /save json/i }));
+
+    await waitFor(() => expect(rbacApi.contracts.updateMethodPolicies).toHaveBeenCalledTimes(1));
+    const [, , saved] = (rbacApi.contracts.updateMethodPolicies as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(saved).toEqual(doc);
+  });
+
+  it("advanced JSON editor rejects invalid JSON without calling the API", async () => {
+    const u = userEvent.setup();
+    render(<MethodPolicyManager {...baseProps} initialPolicy={null} />);
+    await u.click(screen.getByRole("button", { name: /edit json/i }));
+    const ta = screen.getByLabelText("Method policy JSON");
+    await u.clear(ta);
+    await u.paste("{ not valid json");
+    await u.click(screen.getByRole("button", { name: /save json/i }));
+    expect(screen.getByText(/Invalid JSON/i)).toBeInTheDocument();
+    expect(rbacApi.contracts.updateMethodPolicies).not.toHaveBeenCalled();
+  });
+
   it("confirms before clearing (privacy-loosening)", async () => {
     const u = userEvent.setup();
     const confirmSpy = vi.fn(() => false); // user cancels

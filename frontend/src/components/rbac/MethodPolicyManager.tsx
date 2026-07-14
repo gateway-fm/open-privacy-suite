@@ -40,6 +40,13 @@ export function MethodPolicyManager({ orgId, contractAddress, contractAbi, initi
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  // Advanced raw-JSON editor: the guided wizard covers one capture + one reader
+  // per record; the JSON editor expresses the FULL schema (multiple captures /
+  // readers / record types, editing an existing policy, removing one record).
+  // The backend validates it against the ABI on save.
+  const [jsonMode, setJsonMode] = useState(false);
+  const [jsonText, setJsonText] = useState("");
+  const [jsonError, setJsonError] = useState<string | null>(null);
 
   const fns = useMemo(() => parseAbiFunctions(contractAbi), [contractAbi]);
   const keyableFns = useMemo(() => functionsWithKeyableParam(fns), [fns]);
@@ -64,7 +71,7 @@ export function MethodPolicyManager({ orgId, contractAddress, contractAbi, initi
   // a tier-2 admin sees the policy (GET works for them) without a dead 403.
   const canEdit = !isReadonlyAdmin && getAdminToken() !== "";
 
-  async function save(doc: MethodPolicyDocument | null) {
+  async function save(doc: MethodPolicyDocument | null): Promise<boolean> {
     setSaving(true);
     setError(null);
     setSuccess(null);
@@ -73,6 +80,7 @@ export function MethodPolicyManager({ orgId, contractAddress, contractAbi, initi
       setPolicy(doc);
       setWizardOpen(false);
       setSuccess(doc ? "Method policy saved." : "Method policy cleared.");
+      return true;
     } catch (e: unknown) {
       // L2: surface the backend's 400 validation message verbatim; for any
       // other status show a generic message (500 bodies are opaque by design).
@@ -86,6 +94,7 @@ export function MethodPolicyManager({ orgId, contractAddress, contractAbi, initi
       } else {
         setError("Failed to save method policy.");
       }
+      return false;
     } finally {
       setSaving(false);
     }
@@ -106,6 +115,33 @@ export function MethodPolicyManager({ orgId, contractAddress, contractAbi, initi
   // set_once (poison-protected), visibleTo audience to union (M3).
   function mergeDefaultForSource(source: "sender" | "param" | "visibleTo"): "set_once" | "union" {
     return source === "visibleTo" ? "union" : "set_once";
+  }
+
+  // openJsonEditor seeds the textarea with the current policy so any part can be
+  // edited (add captures/readers/records, remove one record, fix a typo).
+  function openJsonEditor() {
+    setJsonText(JSON.stringify(policy ?? { records: {} }, null, 2));
+    setJsonError(null);
+    setError(null);
+    setSuccess(null);
+    setWizardOpen(false);
+    setJsonMode(true);
+  }
+
+  function saveJson() {
+    let parsed: MethodPolicyDocument;
+    try {
+      parsed = JSON.parse(jsonText) as MethodPolicyDocument;
+    } catch (e) {
+      setJsonError("Invalid JSON: " + (e as Error).message);
+      return;
+    }
+    setJsonError(null);
+    // Empty document → clear the policy.
+    const isEmpty = !parsed.records || Object.keys(parsed.records).length === 0;
+    void save(isEmpty ? null : parsed).then((ok) => {
+      if (ok) setJsonMode(false); // keep the editor open (edits intact) on a validation failure
+    });
   }
 
   return (
@@ -173,14 +209,15 @@ export function MethodPolicyManager({ orgId, contractAddress, contractAbi, initi
         </p>
       </div>
 
-      {canEdit && (
-        <div className="flex gap-2">
-          {!wizardOpen && (
-            <Button variant="outline" size="sm" onClick={() => { setW(emptyWizard); setWizardOpen(true); setError(null); setSuccess(null); }} disabled={noAbi}>
-              {policy ? "Add / edit a record policy" : "Configure a policy"}
-            </Button>
-          )}
-          {policy && !wizardOpen && (
+      {canEdit && !wizardOpen && !jsonMode && (
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" size="sm" onClick={() => { setW(emptyWizard); setWizardOpen(true); setError(null); setSuccess(null); }} disabled={noAbi}>
+            {policy ? "Add / edit a record (wizard)" : "Configure a policy (wizard)"}
+          </Button>
+          <Button variant="ghost" size="sm" onClick={openJsonEditor} disabled={noAbi}>
+            Edit JSON (advanced)
+          </Button>
+          {policy && (
             <Button variant="ghost" size="sm" onClick={clearPolicy} disabled={saving}>
               Clear policy
             </Button>
@@ -281,9 +318,9 @@ export function MethodPolicyManager({ orgId, contractAddress, contractAbi, initi
           <div className="space-y-1">
             <div className="text-xs font-medium text-neutral-600">Capture (who are the record&apos;s parties)</div>
             {w.remember.map((r, i) => (
-              <div key={i} className="flex items-center gap-1">
+              <div key={i} className="flex flex-wrap items-center gap-1">
                 <input
-                  className="border rounded px-2 py-1 text-sm w-28"
+                  className="border rounded px-2 py-1 text-sm w-40 shrink-0"
                   placeholder="field (payer)"
                   aria-label={`capture field ${i} name`}
                   value={r.field}
@@ -327,20 +364,27 @@ export function MethodPolicyManager({ orgId, contractAddress, contractAbi, initi
                     ))}
                   </select>
                 )}
-                <select
-                  className="border rounded px-2 py-1 text-sm"
-                  aria-label={`capture field ${i} merge`}
-                  value={r.merge}
-                  onChange={(e) => {
-                    const rem = [...w.remember];
-                    rem[i] = { ...rem[i], merge: e.target.value as "set_once" | "union" };
-                    setW({ ...w, remember: rem });
-                  }}
-                >
-                  <option value="set_once">set_once</option>
-                  <option value="union">union</option>
-                </select>
-                <button aria-label={`remove capture field ${i}`} onClick={() => setW({ ...w, remember: w.remember.filter((_, j) => j !== i) })}>
+                {/* An audience (visibleTo) is always union — hide the merge
+                    control so the two can't be set to a contradictory combo.
+                    Identity fields (sender/param) choose set_once vs union. */}
+                {r.source === "visibleTo" ? (
+                  <span className="text-xs text-neutral-500 px-1" aria-label={`capture field ${i} merge`}>union</span>
+                ) : (
+                  <select
+                    className="border rounded px-2 py-1 text-sm shrink-0"
+                    aria-label={`capture field ${i} merge`}
+                    value={r.merge}
+                    onChange={(e) => {
+                      const rem = [...w.remember];
+                      rem[i] = { ...rem[i], merge: e.target.value as "set_once" | "union" };
+                      setW({ ...w, remember: rem });
+                    }}
+                  >
+                    <option value="set_once">set_once</option>
+                    <option value="union">union</option>
+                  </select>
+                )}
+                <button type="button" aria-label={`remove capture field ${i}`} onClick={() => setW({ ...w, remember: w.remember.filter((_, j) => j !== i) })}>
                   <X className="w-3.5 h-3.5 text-neutral-400" />
                 </button>
               </div>
@@ -415,6 +459,36 @@ export function MethodPolicyManager({ orgId, contractAddress, contractAbi, initi
               {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Save policy
             </Button>
             <Button variant="ghost" size="sm" onClick={() => setWizardOpen(false)} disabled={saving}>
+              Cancel
+            </Button>
+          </div>
+          <p className="text-xs text-neutral-500">
+            The guided wizard configures <strong>one capture and one reader</strong> per record type, and
+            replaces that record type&apos;s policy on save (other record types are kept). For multiple
+            captures/readers, or to edit an existing policy in place, use <em>Edit JSON (advanced)</em>.
+          </p>
+        </div>
+      )}
+
+      {jsonMode && (
+        <div className="p-3 rounded-lg border border-neutral-300 bg-white space-y-2" data-testid="method-policy-json">
+          <div className="text-xs text-neutral-600">
+            Full policy document (all record types). Empty <code>{'{"records":{}}'}</code> clears the policy.
+            Validated against the contract ABI on save.
+          </div>
+          <textarea
+            className="w-full border rounded p-2 font-mono text-xs h-64"
+            aria-label="Method policy JSON"
+            value={jsonText}
+            onChange={(e) => setJsonText(e.target.value)}
+            spellCheck={false}
+          />
+          {jsonError && <p className="text-xs text-amber-700">{jsonError}</p>}
+          <div className="flex gap-2">
+            <Button size="sm" disabled={saving} onClick={saveJson}>
+              {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Save JSON
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setJsonMode(false)} disabled={saving}>
               Cancel
             </Button>
           </div>

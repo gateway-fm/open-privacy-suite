@@ -118,18 +118,33 @@ export function validateWizard(s: WizardState, fns: AbiFnInfo[]): string | null 
   if (!rKey || !isCanonicalizableKeyType(rKey.type)) return "Choose a valid record-key parameter on the reader.";
   if (wKey.type !== rKey.type) return `Writer and reader key types must match (writer ${wKey.type} vs reader ${rKey.type}).`;
   if (s.remember.length === 0) return "Capture at least one field (e.g. payer, payee).";
+  const fieldNames = new Set<string>();
   for (const r of s.remember) {
-    if (!r.field.trim()) return "Every captured field needs a name.";
+    const name = r.field.trim();
+    if (!name) return "Every captured field needs a name.";
+    if (fieldNames.has(name)) return `Duplicate captured field name "${name}" — each must be unique.`;
+    fieldNames.add(name);
     if (r.source === "param" && (r.paramIndex == null || !writer.inputs[r.paramIndex])) {
-      return `Field "${r.field}" is sourced from a parameter — pick which one.`;
+      return `Field "${name}" is sourced from a parameter — pick which one.`;
+    }
+    // An accumulating audience (visibleTo) must use union; set_once would only
+    // ever keep the first tx's list and defeats the audience. Identity fields
+    // (sender/param) should stay set_once (poison protection).
+    if (r.source === "visibleTo" && r.merge === "set_once") {
+      return `Field "${name}" (visibleTo audience) must use "union", not "set_once".`;
     }
   }
   if (s.allowFields.length === 0 && s.returnPaths.length === 0) {
     return "Add at least one allow rule (captured fields and/or returned addresses).";
   }
-  const known = new Set(s.remember.map((r) => r.field));
   for (const f of s.allowFields) {
-    if (!known.has(f)) return `Allow rule references "${f}", which isn't a captured field.`;
+    if (!fieldNames.has(f)) return `Allow rule references "${f}", which isn't a captured field.`;
+  }
+  const readerAddrOutputs = new Set(reader.addressOutputs.map((o) => o.name));
+  for (const p of s.returnPaths) {
+    if (!readerAddrOutputs.has(p)) {
+      return `Return-address rule references "${p}", which is not an address output of the reader.`;
+    }
   }
   return null;
 }
