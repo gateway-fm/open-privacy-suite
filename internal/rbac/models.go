@@ -151,6 +151,14 @@ type Contract struct {
 	// visibleTo unlock. Admin-only via the dedicated PUT endpoint.
 	EventsAllowDynamicPayload bool `json:"events_allow_dynamic_payload"`
 
+	// MethodPolicies is the raw per-contract method-access policy document
+	// (RD-1206; contracts.method_policies JSONB). Nil when unset (feature off
+	// for the contract). Kept raw here — the request path parses it via
+	// ParseMethodPolicyDocument and fails closed on a parse error, so a
+	// corrupt policy denies only that contract's gated reads rather than
+	// breaking every contract load.
+	MethodPolicies json.RawMessage `json:"method_policies,omitempty"`
+
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -400,13 +408,13 @@ func (r *AccessCheckRequest) EffectiveMethod() string {
 // that consumes this field should slog it for the operator and
 // respond with a generic opaque message to the client.
 type AccessCheckResult struct {
-	Allowed        bool    `json:"allowed"`
-	AuthRequired   bool    `json:"auth_required,omitempty"` // True when denial is due to missing authentication (401 vs 403)
-	Reason         string  `json:"reason,omitempty"`
-	OrgID          string  `json:"org_id,omitempty"`  // Resolved organization ID
-	UserID         string  `json:"user_id,omitempty"` // Internal user ID (UUID)
-	RPCAPIKey      string  `json:"-"`                 // API key for upstream RPC proxy (excluded from JSON — sensitive)
-	Claims         []Claim `json:"claims,omitempty"`
+	Allowed      bool    `json:"allowed"`
+	AuthRequired bool    `json:"auth_required,omitempty"` // True when denial is due to missing authentication (401 vs 403)
+	Reason       string  `json:"reason,omitempty"`
+	OrgID        string  `json:"org_id,omitempty"`  // Resolved organization ID
+	UserID       string  `json:"user_id,omitempty"` // Internal user ID (UUID)
+	RPCAPIKey    string  `json:"-"`                 // API key for upstream RPC proxy (excluded from JSON — sensitive)
+	Claims       []Claim `json:"claims,omitempty"`
 }
 
 // GroupWithAccess combines a Group with its access settings.
