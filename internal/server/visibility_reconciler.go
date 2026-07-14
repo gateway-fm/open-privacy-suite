@@ -145,39 +145,39 @@ func (r *VisibilityReconciler) run(ctx context.Context) {
 // tick processes one batch of pending rows. Each row is promoted in its
 // own DB transaction; one row's failure does not block the next.
 func (r *VisibilityReconciler) tick(ctx context.Context) {
+	// Drain the tx-visibility outbox. This must NOT early-return before
+	// tickCaptures — the two outboxes are independent, and a tx with captures
+	// but no visibleTo (the common case: a payment with no settlement bank)
+	// has zero pending_tx_visibility rows yet still needs its captures promoted.
 	rows, err := r.db.ListDuePendingTxVisibility(ctx, r.batch)
 	if err != nil {
 		slog.Warn("visibility reconciler: list failed", "err", err)
-		return
-	}
-	if len(rows) == 0 {
-		return
-	}
-
-	var promoted, failed int
-	for _, row := range rows {
-		if err := r.db.PromotePendingTxVisibility(ctx, row); err != nil {
-			failed++
-			if markErr := r.db.MarkPendingTxVisibilityFailed(ctx, row.ID, err); markErr != nil {
-				slog.Warn("visibility reconciler: mark-failed update failed",
-					"pending_id", row.ID, "promote_err", err, "mark_err", markErr)
-			} else {
-				slog.Warn("visibility reconciler: promotion failed",
-					"pending_id", row.ID,
-					"tx_hash", row.TxHash,
-					"attempt", row.AttemptCount+1,
-					"err", err)
+	} else if len(rows) > 0 {
+		var promoted, failed int
+		for _, row := range rows {
+			if err := r.db.PromotePendingTxVisibility(ctx, row); err != nil {
+				failed++
+				if markErr := r.db.MarkPendingTxVisibilityFailed(ctx, row.ID, err); markErr != nil {
+					slog.Warn("visibility reconciler: mark-failed update failed",
+						"pending_id", row.ID, "promote_err", err, "mark_err", markErr)
+				} else {
+					slog.Warn("visibility reconciler: promotion failed",
+						"pending_id", row.ID,
+						"tx_hash", row.TxHash,
+						"attempt", row.AttemptCount+1,
+						"err", err)
+				}
+				continue
 			}
-			continue
+			promoted++
 		}
-		promoted++
+		if promoted > 0 || failed > 0 {
+			slog.Debug("visibility reconciler: tick complete",
+				"promoted", promoted, "failed", failed, "batch", len(rows))
+		}
 	}
 
-	if promoted > 0 || failed > 0 {
-		slog.Debug("visibility reconciler: tick complete",
-			"promoted", promoted, "failed", failed, "batch", len(rows))
-	}
-
+	// Always drain the capture outbox, independent of the visibility outbox.
 	r.tickCaptures(ctx)
 }
 
