@@ -7012,9 +7012,9 @@ paths:
     put:
       description: Sets or clears (method_policies:null) the per-record method access
         policy (RD-1206), gating record-reader eth_calls to a record's stakeholders.
-        Validated against the contract's registered ABI. Super-admin token only —
-        it is the whole per-record read-enforcement surface; the change is audit-logged
-        with before/after state.
+        Validated against the contract's registered ABI. Tier-2 org-admin (the restricted
+        operator token is rejected) — it is per-contract, per-org configuration that
+        only narrows reads; the change is audit-logged with before/after state.
       parameters:
       - description: Organization ID
         in: path
@@ -7063,7 +7063,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/internal_server.APIError'
-          description: super-admin token required
+          description: operator token cannot manage tenant data, or caller is out
+            of org scope
         "404":
           content:
             application/json:
@@ -7086,7 +7087,8 @@ paths:
       description: Evaluates the capture side of a contract's method policy for a
         given caller + record, returning allow / deny / indeterminate_return_source
         plus the record's captured admit-set. No node call; the live return-address
-        resolver is not simulated. Super-admin token only; org-scoped; audit-logged.
+        resolver is not simulated. Tier-2 org-admin (the restricted operator token
+        is rejected); org-scoped; audit-logged.
       parameters:
       - description: Organization ID
         in: path
@@ -7135,7 +7137,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/internal_server.APIError'
-          description: super-admin token required
+          description: operator token cannot read tenant data, or caller is out of
+            org scope
         "404":
           content:
             application/json:

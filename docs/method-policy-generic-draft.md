@@ -306,3 +306,35 @@ against the one record the key resolves to.
   yes (union), matching how `visibleTo` already behaves for that tx's logs.
 - Limits: max remembered fields per record, max audience size (reuse the
   existing visibleTo cap), record-row retention.
+
+## Implementation notes (as shipped — RD-1206)
+
+Where the shipped implementation refines this draft:
+
+- **Merge modes.** Only `set-once` and `union` are implemented; `overwrite` is
+  intentionally omitted (a silent identity rewrite is exactly what `set-once`
+  guards against — nothing needed it). `set-once` is enforced as *deny-on-conflict*:
+  if two **distinct** values ever land for one (record, field), the key is treated
+  as poisoned and all reads of it are denied (fail-safe against a front-running
+  writer), rather than "first write silently wins".
+- **Literal principals.** A `callerIn` entry that is not a captured field name
+  must be a real principal — a DID (`did:…`) or an ETH address (`0x…`). The bare
+  label `"compliance-desk"` in Example 4 is illustrative only; use a concrete
+  principal such as `did:example:compliance-desk`. A non-field, non-principal
+  entry is rejected at write time (a typo can't degrade into an inert literal).
+- **Deny path / timing.** The reader's `eth_call` is always forwarded **once**,
+  then the response is gated: allow passes it through unchanged, deny discards it
+  and returns the opaque error. Allow and deny therefore share the same timing
+  profile (no upstream-call oracle), and this includes the capture-only case.
+- **Trace twin.** `debug_traceCall` executes the same getter, so it is gated by
+  the same policy; the return-address resolver is neutralized when the call
+  carries a state override (a forgeable return).
+- **Limits (chosen).** 32 KiB per policy document · 16 gated methods · 8
+  remembered fields/capture · 256 audience DIDs per writer call · 1024-byte
+  record key. The capture outbox retries an unmined tx without counting it
+  toward a dead-letter cap and reaps rows that never mine (24h) — a slow-to-mine
+  tx is never abandoned before it lands.
+- **Admin tier.** Configured by a **tier-2 org admin** (the operator token is
+  rejected), same tier as the contract's grants / ABI / visibleTo-unlock. An ABI
+  edit that would break a configured policy is rejected, so the gate cannot be
+  silently disabled.

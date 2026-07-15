@@ -22,6 +22,13 @@ const (
 	// ReasonMethodNotAllowed: the caller's group(s) don't permit this method
 	// or contract (RBAC entry-point deny).
 	ReasonMethodNotAllowed = "method_not_allowed"
+	// ReasonMethodPolicyDenied: RBAC permitted the call, but the target
+	// contract's per-record method access policy (RD-1206) denied this caller
+	// for the requested record. ORACLE-SENSITIVE — whether a record exists / who
+	// its stakeholders are is another tenant's state; NOT on the wire allowlist,
+	// so it collapses to the generic value (and the JSON-RPC deny body is a fixed
+	// opaque error regardless). Stored precisely in the access log (org-scoped).
+	ReasonMethodPolicyDenied = "method_policy_denied"
 	// ReasonSenderNotLinked: a user-supplied `from` is not one of the caller's
 	// linked EOAs. A fact about the caller's own request — safe to surface.
 	ReasonSenderNotLinked = "sender_not_linked"

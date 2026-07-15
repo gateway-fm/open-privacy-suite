@@ -3,12 +3,10 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MethodPolicyManager } from "../MethodPolicyManager";
 import { rbacApi } from "@/api/rbac";
-import { getAdminToken } from "@/api/adminClient";
 
 vi.mock("@/api/rbac", () => ({
   rbacApi: { contracts: { updateMethodPolicies: vi.fn(), simulateMethodPolicy: vi.fn() } },
 }));
-vi.mock("@/api/adminClient", () => ({ getAdminToken: vi.fn() }));
 
 const paymentABI = JSON.stringify([
   { type: "function", name: "createPayment", stateMutability: "nonpayable",
@@ -21,7 +19,6 @@ const baseProps = { orgId: "org-1", contractAddress: "0xabc", contractAbi: payme
 
 beforeEach(() => {
   vi.clearAllMocks();
-  (getAdminToken as ReturnType<typeof vi.fn>).mockReturnValue("admin-tok");
 });
 
 describe("MethodPolicyManager", () => {
@@ -31,11 +28,12 @@ describe("MethodPolicyManager", () => {
     expect(screen.getByText(/not the record's event logs/i)).toBeInTheDocument();
   });
 
-  it("C1: no admin token → read-only (no configure, no PUT)", () => {
-    (getAdminToken as ReturnType<typeof vi.fn>).mockReturnValue("");
-    render(<MethodPolicyManager {...baseProps} initialPolicy={null} />);
+  it("C1: read-only admin → read-only (no configure, no PUT)", () => {
+    // Tier-2 org-admin control: a non-read-only admin can configure (covered by
+    // the save tests below); a read-only admin sees the panel read-only.
+    render(<MethodPolicyManager {...baseProps} initialPolicy={null} isReadonlyAdmin />);
     expect(screen.queryByRole("button", { name: /configure a policy/i })).not.toBeInTheDocument();
-    expect(screen.getByText(/requires the super-admin API token/i)).toBeInTheDocument();
+    expect(screen.getByText(/requires org-admin \(non-read-only\) access/i)).toBeInTheDocument();
     expect(rbacApi.contracts.updateMethodPolicies).not.toHaveBeenCalled();
   });
 

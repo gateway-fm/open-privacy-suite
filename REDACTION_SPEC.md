@@ -730,9 +730,13 @@ the method allowlist / grant / claims / function-selector list / RD-915 tracing
 all run first and unchanged.
 
 **Admin.** `GET`/`PUT /api/v1/admin/orgs/{org}/contracts/{address}/method-policies`.
-PUT is **super-admin only** (same tier as `events-allow-dynamic-payload`: it is
-the whole per-record read-enforcement surface, not a per-grant decision), ABI-
-validated, audit-logged before/after.
+PUT is **tier-2 org-admin** (`denyOperatorOrgScoped`, same tier as
+`visibleto-unlock` / grants / ABI — a per-contract, per-org control; the operator
+token is rejected), ABI-validated, audit-logged before/after. `updateContractABI`
+re-validates any configured policy against a new ABI and rejects a breaking
+change, so an ABI edit cannot silently disable the gate (revised 2026-07-15 from
+tier-1; the policy only narrows and fails closed, so it belongs at the same tier
+as the contract's other controls).
 
 ### Surface asymmetry — what a method policy does NOT cover
 
@@ -752,6 +756,15 @@ exposed via a wildcard namespace that is NOT aliased to `eth_call` bypasses the
 gate, like every other response filter — if an operator adds a `*_call`-style
 method, it must be aliased to `eth_call` to inherit method-policy gating.
 
+**Trace twin (`debug_traceCall`).** `debug_traceCall` executes the same getter as
+`eth_call` and its top frame carries the return data, so it is gated through the
+**same** per-record policy (shared `methodPolicyDecision`): a caller who would be
+denied the `eth_call` cannot read the record by tracing it. The return-address
+resolver is neutralized when the call carries a state override (`eth_call`
+params[2]/[3], or `debug_traceCall` `stateOverrides`), since an overridden return
+is attacker-forgeable; capture-based rules are unaffected. `debug_traceTransaction`
+(a historical replay, not a caller-initiated read) is out of scope.
+
 ### 9.1 where-conditions and the simulator (RD-1206 addendum)
 
 **where** (`AllowRule.Where{field,op,value}`): a captured-field allow rule may be
@@ -769,12 +782,13 @@ field name or a literal DID/ETH-address principal matched directly against the
 caller (a non-declared, non-literal entry is rejected — typos can't become inert
 literals).
 
-**Simulator** (`POST .../method-policies/simulate`, super-admin, org-scoped,
+**Simulator** (`POST .../method-policies/simulate`, tier-2 org-admin, org-scoped,
 audit-logged): capture-side evaluation of "would caller X read record K?" —
 allow / deny / **indeterminate_return_source**. It performs NO node call, so the
 live return-address resolver is not simulated; a capture-side deny on a reader
 that has a return rule is reported as indeterminate, never an authoritative deny.
-Returns the record's captured admit-set (super-admin disclosure). This is the
+Returns the record's captured admit-set (a tenant-read the org admin already has
+via GET; the operator token is rejected). This is the
 *intent* check — validators prove structure/safety, the simulator surfaces
 over/under-exposure.
 

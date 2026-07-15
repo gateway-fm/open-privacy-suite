@@ -174,6 +174,13 @@ type ProcessRequest struct {
 	// admin Access Logs view shows WHY, not just the status. Set at the denial
 	// site right before logAccess; empty for success/unclassified => NULL.
 	denialReason string
+
+	// methodPolicyDenied is set by applyMethodPolicyGate (RD-1206) when a
+	// per-record policy denies an otherwise-permitted eth_call. The upstream call
+	// already returned 200, so the wire stays a 200 JSON-RPC error; this flag lets
+	// the caller record the access-log row as a real denial (403) rather than a
+	// served read.
+	methodPolicyDenied bool
 }
 
 // ProcessResult represents the result of processing a JSON-RPC request.
@@ -975,7 +982,13 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 
 	// RD-1206: enqueue method-policy record captures for this send (independent
 	// of visibleTo — a create still captures payer/payee from sender/params).
-	if statusCode == http.StatusOK {
+	// Gate on eth_sendTransaction ONLY: this runs in the shared Process() body
+	// that also serves eth_call / eth_estimateGas, whose 200 "result" is return
+	// data / a gas estimate — NOT a tx hash. Enqueuing those would pollute the
+	// outbox with un-mineable hashes, and a return value that happened to equal a
+	// real mined tx hash could plant a forged capture row. eth_sendRawTransaction
+	// captures on its own path (processRawTransaction).
+	if statusCode == http.StatusOK && req.Method == "eth_sendTransaction" {
 		if txHash := extractTxHashFromResult(responseBody); txHash != "" {
 			_, to, data, _ := extractTxParams(req.Params)
 			p.enqueueMethodPolicyCaptures(ctx, req, to, data, visibleTo, txHash)
@@ -986,6 +999,18 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 	// This filters responses to prevent cross-participant data leakage
 	// within the same organization.
 	responseBody = p.applyResponseFilter(ctx, req, result, responseBody)
+
+	// RD-1206: a per-record method-policy denial keeps the upstream 200 on the
+	// wire (JSON-RPC error body) but must be recorded as a denial in the access
+	// log, not a served read. denialReason was stamped by the gate.
+	if req.methodPolicyDenied {
+		p.recordRPCOutcome(req.Method, "method_policy_denied", start)
+		p.logAccess(ctx, req, http.StatusForbidden, statusCode)
+		return &ProcessResult{
+			StatusCode:   statusCode,
+			ResponseBody: responseBody,
+		}
+	}
 
 	// Log successful access
 	p.recordRPCOutcome(req.Method, "success", start)

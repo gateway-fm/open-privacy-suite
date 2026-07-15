@@ -5,11 +5,12 @@ import { RBACTestFixture } from '../../helpers/rbac-fixtures';
 
 // RD-1206: the Method Access Policies panel lives inside the Contract
 // Permissions dialog (rendered by ContractGrantsManager). This spec verifies it
-// renders in a real browser and that the C1 gating holds: a tier-2 org-admin
-// (JWT) session — which the backend rejects for the super-admin-only PUT — sees
-// the panel read-only with the explanatory note, and no wizard affordance. The
-// full wizard-compile-and-save path is covered by the RTL component test
-// (MethodPolicyManager.test.tsx) and the backend e2e (method_policy_e2e_test.go).
+// renders in a real browser and that the tier-2 gating holds: a (non-read-only)
+// org-admin JWT session — which the backend now accepts for the PUT (a
+// per-contract, per-org control, same tier as grants/ABI) — sees the wizard
+// affordance. The full wizard-compile-and-save path is covered by the RTL
+// component test (MethodPolicyManager.test.tsx) and the backend e2e
+// (method_policy_e2e_test.go).
 
 const PAYMENT_ABI = JSON.stringify([
   {
@@ -70,9 +71,10 @@ test.describe('Method access policies panel', () => {
     // The getter-only surface-asymmetry caveat must be present (false-confidence guard).
     await expect(permDialog.getByText(/gates the/i)).toBeVisible();
 
-    // C1: a JWT (tier-2) session cannot save — no configure affordance, and the
-    // read-only note is shown instead. (The backend enforces regardless.)
-    await expect(permDialog.getByRole('button', { name: /configure a policy/i })).toHaveCount(0);
-    await expect(permDialog.getByText(/requires the super-admin API token/i)).toBeVisible();
+    // Tier-2: a (non-read-only) org-admin JWT session CAN configure — the wizard
+    // affordance is present and the read-only note is absent. (The backend
+    // enforces org scope regardless.)
+    await expect(permDialog.getByRole('button', { name: /configure a policy/i })).toBeVisible();
+    await expect(permDialog.getByText(/requires org-admin \(non-read-only\) access/i)).toHaveCount(0);
   });
 });

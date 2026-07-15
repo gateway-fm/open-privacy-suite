@@ -83,10 +83,13 @@ PUT /api/v1/admin/orgs/{org_id}/contracts/{address}/method-policies
 GET /api/v1/admin/orgs/{org_id}/contracts/{address}/method-policies
 ```
 
-- **Super-admin token only.** A method policy is the whole per-record
-  read-enforcement surface for a contract; it is set with the super-admin
-  credential, not a tier-2 org-admin token. Every change is audit-logged with
-  the before/after policy.
+- **Org-admin (tier-2).** A method policy is per-contract, per-organization
+  configuration — the same scope and tier as the contract's grants, ABI and
+  visibleTo-unlock toggle — so an org admin manages it with their org-admin
+  credential (the restricted operator token is rejected). Every change is
+  audit-logged with the before/after policy. Editing the contract's ABI cannot
+  silently disable a configured policy: an ABI change that no longer satisfies
+  the policy is rejected until the policy is updated or cleared.
 - The contract's **ABI must be registered first** — the policy is validated
   against it on write (unknown methods, out-of-range parameter indices, or a
   return path that isn't an address are rejected), so a policy that saves
@@ -132,7 +135,7 @@ indeterminate**, the rule that matched, and the record's full captured
 admit-set. It runs against stored captures only — no on-chain call — and the
 live return-address rule is **not** simulated, so a capture-side "deny" on a
 reader that also has a return rule is reported as *indeterminate* rather than a
-definitive no. Simulate is super-admin only and audit-logged.
+definitive no. Simulate is org-admin (tier-2) only and audit-logged.
 
 <Callout type="warning">
   A method policy gates the **getter** only. The same record's data reachable by

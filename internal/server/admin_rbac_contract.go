@@ -345,6 +345,26 @@ func (s *Server) updateContractABI(c *gin.Context) {
 		return
 	}
 
+	// RD-1206 (H2): if a method policy is configured, the new ABI must still
+	// satisfy it. A gated reader whose selector/signature no longer resolves
+	// against the ABI fails OPEN at the gate (it looks "not gated" and the
+	// response is served unfiltered), so a breaking ABI change would silently
+	// disable per-record read gating. Re-validate and reject; the policy must be
+	// updated or cleared (same tier) first.
+	if len(contract.MethodPolicies) > 0 {
+		doc, perr := rbac.ParseMethodPolicyDocument(contract.MethodPolicies)
+		if perr != nil {
+			respondBadRequestAndLog(c, "contract has a method policy that cannot be re-validated against the new ABI; clear the method policy first",
+				"admin_rbac_contract: stored method policy unreadable on ABI update",
+				"contract_id", contract.ID, "err", perr)
+			return
+		}
+		if reason := doc.ValidateForClient(input.ABI); reason != "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "this ABI change would disable the configured method policy (" + reason + "); update or clear the method policy first"})
+			return
+		}
+	}
+
 	if err := s.db.UpdateContractABI(c.Request.Context(), contract.ID, input.ABI); err != nil {
 		respondInternalErrorAndLog(c, "failed to update contract ABI",
 			"admin_rbac_contract: UpdateContractABI failed",
@@ -593,17 +613,19 @@ func (s *Server) getContractMethodPolicies(c *gin.Context) {
 //
 // PUT /orgs/:org_id/contracts/:address/method-policies
 //
-// **Super-admin only** (X-Admin-Token). A method policy is the whole per-record
-// enforcement surface for a contract's reads; a malformed or over-broad policy
-// silently changes the privacy posture for every caller. Same tier as
-// events-allow-dynamic-payload (contract-wide privacy semantics, not a per-grant
-// decision), and stricter than the tier-2 visibleto-unlock / grant endpoints.
-// The policy is validated against the contract's registered ABI on write, so a
-// policy can never validate here and then misbehave at read time. Audit-logged
-// with before/after state.
+// **Tier-2 org-admin** (org-scoped JWT; the restricted operator token is
+// rejected). A method policy is per-contract, per-org configuration — the same
+// scope as the contract's grants, groups, ABI and the RD-874 visibleto-unlock
+// toggle, all of which the org admin already owns. It only ever NARROWS an
+// already-permitted read and fails closed, so a malformed policy denies rather
+// than leaks. The policy is validated against the contract's registered ABI on
+// write, so a policy can never validate here and then misbehave at read time;
+// and updateContractABI re-validates any configured policy against a new ABI so
+// an ABI change cannot silently disable the gate. Audit-logged with before/after
+// state.
 //
 // @Summary      Set a contract's method access policies
-// @Description  Sets or clears (method_policies:null) the per-record method access policy (RD-1206), gating record-reader eth_calls to a record's stakeholders. Validated against the contract's registered ABI. Super-admin token only — it is the whole per-record read-enforcement surface; the change is audit-logged with before/after state.
+// @Description  Sets or clears (method_policies:null) the per-record method access policy (RD-1206), gating record-reader eth_calls to a record's stakeholders. Validated against the contract's registered ABI. Tier-2 org-admin (the restricted operator token is rejected) — it is per-contract, per-org configuration that only narrows reads; the change is audit-logged with before/after state.
 // @Tags         Admin: RBAC
 // @Accept       json
 // @Produce      json
@@ -613,13 +635,13 @@ func (s *Server) getContractMethodPolicies(c *gin.Context) {
 // @Success      200 {object} rbac.Contract
 // @Failure      400 {object} APIError "invalid body, policy fails ABI validation, or no ABI registered"
 // @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "super-admin token required"
+// @Failure      403 {object} APIError "operator token cannot manage tenant data, or caller is out of org scope"
 // @Failure      404 {object} APIError "contract not found"
 // @Failure      500 {object} APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/contracts/{address}/method-policies [put]
 func (s *Server) updateContractMethodPolicies(c *gin.Context) {
-	if !requireSuperAdmin(c) {
+	if denyOperatorOrgScoped(c) {
 		return
 	}
 	orgID := c.Param("org_id")
@@ -706,14 +728,15 @@ func rawOrNull(b []byte) any {
 // "indeterminate_return_source" so a capture-side deny is never mistaken for an
 // authoritative deny.
 //
-// **Super-admin only** — it discloses the record's full captured admit-set
-// (stakeholder DIDs/addresses) and is a per-caller allow/deny oracle; that is
-// the same disclosure tier as GET/PUT method-policies. Org-scoped by the path
-// org_id (never a global address lookup); opaque 404 for a missing or
-// other-org contract (no cross-org existence probe). Audit-logged.
+// **Tier-2 org-admin** (the restricted operator token is rejected) — it
+// discloses the record's captured admit-set (stakeholder DIDs/addresses) and is
+// a per-caller allow/deny oracle over the org's own contract, the same tenant-read
+// tier as GET method-policies. Org-scoped by the path org_id (never a global
+// address lookup); opaque 404 for a missing or other-org contract (no cross-org
+// existence probe). Audit-logged.
 //
 // @Summary      Simulate a method access policy decision
-// @Description  Evaluates the capture side of a contract's method policy for a given caller + record, returning allow / deny / indeterminate_return_source plus the record's captured admit-set. No node call; the live return-address resolver is not simulated. Super-admin token only; org-scoped; audit-logged.
+// @Description  Evaluates the capture side of a contract's method policy for a given caller + record, returning allow / deny / indeterminate_return_source plus the record's captured admit-set. No node call; the live return-address resolver is not simulated. Tier-2 org-admin (the restricted operator token is rejected); org-scoped; audit-logged.
 // @Tags         Admin: RBAC
 // @Accept       json
 // @Produce      json
@@ -723,13 +746,13 @@ func rawOrNull(b []byte) any {
 // @Success      200 {object} methodPolicySimulateResponse
 // @Failure      400 {object} APIError "invalid body, or no policy configured"
 // @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "super-admin token required"
+// @Failure      403 {object} APIError "operator token cannot read tenant data, or caller is out of org scope"
 // @Failure      404 {object} APIError "contract not found"
 // @Failure      500 {object} APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/contracts/{address}/method-policies/simulate [post]
 func (s *Server) simulateContractMethodPolicy(c *gin.Context) {
-	if !requireSuperAdmin(c) {
+	if denyOperatorTenantRead(c) {
 		return
 	}
 	orgID := c.Param("org_id")

@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"strings"
 
@@ -37,63 +38,158 @@ func (p *JSONRPCProcessor) methodPolicyStore() (methodPolicyCaptureStore, bool) 
 	return s, ok
 }
 
-// applyMethodPolicyGate gates an eth_call response by the target contract's
-// per-record method policy. Not-gated calls pass through unchanged; a policy
-// denial or any fail-closed condition returns an opaque error.
-func (p *JSONRPCProcessor) applyMethodPolicyGate(ctx context.Context, req *ProcessRequest, responseBody []byte) []byte {
-	_, to, data, _ := extractTxParams(req.Params)
+// errMethodPolicyOrgUnresolved: a policy-bearing contract was found by the
+// global address lookup but the request has no resolved org to attribute it to,
+// so we cannot safely apply (or skip) it. Callers fail closed.
+var errMethodPolicyOrgUnresolved = errors.New("method policy: contract org unresolved")
+
+// methodPolicyContract resolves the gate's target contract, scoped to the
+// request's resolved org. Addresses are unique only PER ORG, so a global lookup
+// can return a different org's row for a dual-registered address — which would
+// non-deterministically skip or misapply a policy (C1). eth_call/eth_sendTransaction
+// both resolve the org via CheckAccess before this runs, so resolvedOrgID is
+// normally set. If it is empty we fall back to the global lookup only to DETECT
+// a policy: finding one we cannot attribute to an org returns an error so the
+// caller fails closed rather than guessing.
+func (p *JSONRPCProcessor) methodPolicyContract(ctx context.Context, req *ProcessRequest, to string) (*rbac.Contract, error) {
+	if req.resolvedOrgID != "" {
+		return p.rbacAccessCtrl.Store().GetContractByAddress(ctx, req.resolvedOrgID, to)
+	}
+	contract, err := p.rbacAccessCtrl.Store().GetContractByAddressGlobal(ctx, to)
+	if err != nil {
+		return nil, err
+	}
+	if contract != nil && len(contract.MethodPolicies) > 0 {
+		return nil, errMethodPolicyOrgUnresolved
+	}
+	return nil, nil
+}
+
+// ethCallHasStateOverride reports whether an eth_call carries a state- or
+// block-override object (params[2]/[3]). Such overrides make the node compute
+// the return against caller-supplied state, so the returned address fields are
+// forgeable and must not be trusted by the return-address resolver (MED).
+func ethCallHasStateOverride(params []any) bool {
+	for i := 2; i < len(params); i++ {
+		if m, ok := params[i].(map[string]any); ok && len(m) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// methodPolicyDecision evaluates the target contract's per-record method policy
+// for the current request against the provided return bytes (may be nil). It is
+// the shared core for every execution surface that runs a reader (eth_call and
+// its trace twin debug_traceCall). It returns whether the call is gated and, if
+// so, whether it is DENIED — it does NOT shape a response or log, so each caller
+// can deny in its own idiom. When overridden is true the return-address resolver
+// is neutralized (the return was computed against caller-supplied state and is
+// forgeable). Every fail-closed condition (capability wired but DB error, corrupt
+// policy, unresolved org, eval error) returns gated=true, denied=true.
+func (p *JSONRPCProcessor) methodPolicyDecision(ctx context.Context, req *ProcessRequest, to, data string, returnData []byte, overridden bool) (gated, denied bool) {
 	to = strings.ToLower(strings.TrimSpace(to))
 	if to == "" || data == "" {
-		return responseBody
+		return false, false
 	}
 	store, ok := p.methodPolicyStore()
 	if !ok {
-		return responseBody // capability not wired — no policy enforcement possible
+		return false, false // capability not wired — no policy enforcement possible
 	}
-
-	contract, err := p.rbacAccessCtrl.Store().GetContractByAddressGlobal(ctx, to)
+	contract, err := p.methodPolicyContract(ctx, req, to)
 	if err != nil {
-		return denyMethodPolicy(responseBody) // DB error → fail closed
+		return true, true // DB error, or a policy we can't attribute to the resolved org → fail closed
 	}
 	if contract == nil || len(contract.MethodPolicies) == 0 {
-		return responseBody // no policy configured → passthrough (unchanged)
-	}
-	// C1 (final-audit M2): the global address lookup can return a contract
-	// registered to another org (addresses are unique only per-org). CheckAccess
-	// already bound this caller to the contract's owning org, but enforce the
-	// equality here too — deny if the policy we loaded belongs to a different org
-	// than the one this request resolved against.
-	if req.resolvedOrgID != "" && !strings.EqualFold(contract.OrgID, req.resolvedOrgID) {
-		return denyMethodPolicy(responseBody)
+		return false, false // no policy configured
 	}
 	doc, perr := rbac.ParseMethodPolicyDocument(contract.MethodPolicies)
 	if perr != nil {
-		return denyMethodPolicy(responseBody) // corrupt policy → deny (M1)
+		return true, true // corrupt policy → deny (M1)
 	}
-
 	calldata := common.FromHex(data)
 	caller := rbac.NewCallerIdentity(req.UserID, p.linkedAddresses(ctx, req.UserID))
 	ownerOrg := contract.OrgID
 	loadCaptures := func(recordType, recordKey string) ([]rbac.CapturedField, error) {
 		return store.GetRecordCaptures(ctx, ownerOrg, to, recordType, recordKey)
 	}
-	returnData := extractEthCallResultBytes(responseBody)
 	paths := doc.ReturnAddressPaths(calldata, contract.ABI)
 	resolveReturn := func() ([]common.Address, error) {
-		if len(paths) == 0 || len(returnData) == 0 {
+		if overridden || len(paths) == 0 || len(returnData) == 0 {
 			return nil, nil
 		}
 		return rbac.DecodeReturnAddresses(returnData, calldata, paths, contract.ABI)
 	}
+	g, dec, evalErr := doc.EvaluateReader(calldata, caller, loadCaptures, resolveReturn, contract.ABI)
+	if evalErr != nil {
+		return true, true
+	}
+	if !g {
+		return false, false
+	}
+	return true, !dec.Allow
+}
 
-	gated, dec, err := doc.EvaluateReader(calldata, caller, loadCaptures, resolveReturn, contract.ABI)
-	if err != nil {
+// applyMethodPolicyGate gates an eth_call response by the target contract's
+// per-record method policy. Not-gated calls pass through unchanged; a policy
+// denial or any fail-closed condition returns an opaque error and stamps the
+// access log as a denial (RD-1137).
+func (p *JSONRPCProcessor) applyMethodPolicyGate(ctx context.Context, req *ProcessRequest, responseBody []byte) []byte {
+	_, to, data, _ := extractTxParams(req.Params)
+	returnData := extractEthCallResultBytes(responseBody)
+	// A state override makes the node compute the return against caller-supplied
+	// state, so its address fields are forgeable — neutralize the return resolver
+	// (capture-based rules, which read the DB, are unaffected).
+	overridden := ethCallHasStateOverride(req.Params)
+	gated, denied := p.methodPolicyDecision(ctx, req, to, data, returnData, overridden)
+	if gated && denied {
+		req.methodPolicyDenied = true
+		req.denialReason = ReasonMethodPolicyDenied
 		return denyMethodPolicy(responseBody)
 	}
-	if !gated || dec.Allow {
-		return responseBody
+	return responseBody
+}
+
+// extractTraceCallOutputBytes returns the decoded bytes of a debug_traceCall
+// response's top-level frame output (the getter's return data), or nil when the
+// response is an error / has no output / is a non-callTracer format.
+func extractTraceCallOutputBytes(responseBody []byte) []byte {
+	var resp struct {
+		Result *struct {
+			Output string `json:"output"`
+		} `json:"result"`
+		Error *json.RawMessage `json:"error"`
 	}
-	return denyMethodPolicy(responseBody)
+	if err := json.Unmarshal(responseBody, &resp); err != nil {
+		return nil
+	}
+	if resp.Error != nil || resp.Result == nil {
+		return nil
+	}
+	s := strings.TrimSpace(resp.Result.Output)
+	if !strings.HasPrefix(s, "0x") && !strings.HasPrefix(s, "0X") {
+		return nil
+	}
+	return common.FromHex(s)
+}
+
+// debugTraceCallHasStateOverride reports whether a debug_traceCall trace config
+// (params[2]) carries a state override, which would make the traced return
+// forgeable for the return-address resolver (same concern as eth_call overrides).
+func debugTraceCallHasStateOverride(params []any) bool {
+	if len(params) < 3 {
+		return false
+	}
+	cfg, ok := params[2].(map[string]any)
+	if !ok {
+		return false
+	}
+	for _, k := range []string{"stateOverrides", "stateOverride", "overrides"} {
+		if m, ok := cfg[k].(map[string]any); ok && len(m) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // enqueueMethodPolicyCaptures decodes a send's calldata against the target
@@ -108,13 +204,10 @@ func (p *JSONRPCProcessor) enqueueMethodPolicyCaptures(ctx context.Context, req 
 	if !ok {
 		return
 	}
-	contract, err := p.rbacAccessCtrl.Store().GetContractByAddressGlobal(ctx, toHex)
+	// Org-scoped (C1): never capture under another org's row for a dual-registered
+	// address. On the unresolved-org fallback the helper returns an error → skip.
+	contract, err := p.methodPolicyContract(ctx, req, toHex)
 	if err != nil || contract == nil || len(contract.MethodPolicies) == 0 {
-		return
-	}
-	// C1 (final-audit M2): don't capture under another org's contract row if the
-	// address happens to be dual-registered — scope to the caller's resolved org.
-	if req.resolvedOrgID != "" && !strings.EqualFold(contract.OrgID, req.resolvedOrgID) {
 		return
 	}
 	doc, perr := rbac.ParseMethodPolicyDocument(contract.MethodPolicies)

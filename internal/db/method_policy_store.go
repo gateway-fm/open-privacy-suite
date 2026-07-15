@@ -56,13 +56,26 @@ func (d *DB) EnqueuePendingRecordCaptures(ctx context.Context, txHash, orgID, co
 	return nil
 }
 
-// ListDuePendingRecordCaptures returns outbox rows under the soft attempt cap,
+// Capture outbox retention/retry bounds (RD-1206). attempt_count counts only
+// hard failures (transient upstream/lookup errors, promote errors) — NOT the
+// "not mined yet" wait, so a slow-to-mine tx is never dead-lettered before it
+// lands. maxCaptureAge bounds a row that never mines / stays stuck, so the
+// outbox cannot grow without bound. Kept in sync with the partial index in
+// migration 070 (attempt_count < 20).
+const (
+	MaxCaptureAttempts = 20
+	maxCaptureAgeSQL   = "24 hours"
+)
+
+// ListDuePendingRecordCaptures returns outbox rows still eligible for a promotion
+// attempt (under the hard-failure cap and younger than the retention bound),
 // oldest first.
 func (d *DB) ListDuePendingRecordCaptures(ctx context.Context, limit int) ([]PendingRecordCapture, error) {
 	rows, err := d.conn.QueryContext(ctx,
 		`SELECT id, tx_hash, org_id, contract_address, captures, sender_did, attempt_count
 		 FROM pending_record_captures
 		 WHERE attempt_count < 20
+		   AND created_at > NOW() - INTERVAL '`+maxCaptureAgeSQL+`'
 		 ORDER BY created_at ASC
 		 LIMIT $1`, limit)
 	if err != nil {
@@ -117,9 +130,27 @@ func (d *DB) DeletePendingRecordCapture(ctx context.Context, id int64) error {
 	return err
 }
 
-// MarkPendingRecordCaptureFailure records a transient failure (tx not mined
-// yet, upstream error) so the reconciler retries and an operator metric can
-// surface rows that exhaust the cap.
+// PurgePendingRecordCaptures deletes outbox rows that will never promote: those
+// that exhausted the hard-failure cap (dead-lettered) or aged past the retention
+// bound without mining. Returns the number reaped so the caller can surface a
+// dead-letter signal to operators. Bounds outbox growth.
+func (d *DB) PurgePendingRecordCaptures(ctx context.Context) (int64, error) {
+	res, err := d.conn.ExecContext(ctx,
+		`DELETE FROM pending_record_captures
+		 WHERE attempt_count >= $1
+		    OR created_at <= NOW() - INTERVAL '`+maxCaptureAgeSQL+`'`, MaxCaptureAttempts)
+	if err != nil {
+		return 0, fmt.Errorf("purge pending captures: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
+// MarkPendingRecordCaptureFailure records a HARD failure (transient upstream /
+// lookup error, or a promote error) so the reconciler retries and eventually
+// dead-letters at the cap. NOT used for "not mined yet" — that is a normal wait
+// and must not count toward the cap (else a slow-to-mine tx is dead-lettered
+// before it lands, permanently denying the record's stakeholders).
 func (d *DB) MarkPendingRecordCaptureFailure(ctx context.Context, id int64, errMsg string) error {
 	_, err := d.conn.ExecContext(ctx,
 		`UPDATE pending_record_captures

@@ -1,6 +1,5 @@
 import { useMemo, useState } from "react";
 import { rbacApi } from "@/api/rbac";
-import { getAdminToken } from "@/api/adminClient";
 import type { MethodPolicyDocument } from "@/types/rbac";
 import {
   parseAbiFunctions,
@@ -46,7 +45,10 @@ export function MethodPolicyManager({ orgId, contractAddress, contractAbi, initi
   const keyableFns = useMemo(() => functionsWithKeyableParam(fns), [fns]);
   const rendered = policy ? renderPolicy(policy) : [];
   const noAbi = !contractAbi;
-  const canEdit = !isReadonlyAdmin && getAdminToken() !== "";
+  // Tier-2 org-admin control (RD-1206): editable by any non-read-only admin,
+  // matching the contract's grants / ABI / visibleto-unlock managers. The admin
+  // client authenticates with the org-admin JWT or the admin token.
+  const canEdit = !isReadonlyAdmin;
 
   const compiled = useMemo(() => {
     try {
@@ -76,7 +78,7 @@ export function MethodPolicyManager({ orgId, contractAddress, contractAbi, initi
       const status = err?.response?.status;
       const backendMsg = err?.response?.data?.error;
       if (status === 400 && backendMsg) setError(backendMsg);
-      else if (status === 401 || status === 403) setError("Saving a method policy requires the super-admin token.");
+      else if (status === 401 || status === 403) setError("Saving a method policy requires org-admin access for this organization.");
       else setError("Failed to save method policy.");
       return false;
     } finally {
@@ -164,7 +166,7 @@ export function MethodPolicyManager({ orgId, contractAddress, contractAbi, initi
         <Info className="w-3.5 h-3.5 text-amber-600 mt-0.5 flex-shrink-0" />
         <p className="text-xs text-amber-700">
           A method policy gates the <strong>getter</strong> only — not the record&apos;s event logs. Gate those with
-          event rules too. Use high-entropy, opaque record identifiers. Saving requires the super-admin token.
+          event rules too. Use high-entropy, opaque record identifiers.
         </p>
       </div>
 
@@ -176,8 +178,8 @@ export function MethodPolicyManager({ orgId, contractAddress, contractAbi, initi
           {policy && <Button variant="ghost" size="sm" onClick={clearPolicy} disabled={saving}>Clear policy</Button>}
         </div>
       )}
-      {!canEdit && !isReadonlyAdmin && (
-        <p className="text-xs text-neutral-500">Editing method policies requires the super-admin API token; this view is read-only.</p>
+      {isReadonlyAdmin && (
+        <p className="text-xs text-neutral-500">Editing method policies requires org-admin (non-read-only) access; this view is read-only.</p>
       )}
       {canEdit && noAbi && <p className="text-xs text-neutral-500">Register the contract ABI first to configure method policies.</p>}
 

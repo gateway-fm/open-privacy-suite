@@ -69,7 +69,11 @@ func TestReconciler_CapturePromotion(t *testing.T) {
 	if len(due) != 1 || due[0].TxHash != "0xunmined" {
 		t.Fatalf("outbox after tick = %+v, want only 0xunmined", due)
 	}
-	if due[0].AttemptCount != 1 {
-		t.Fatalf("unmined tx should have 1 recorded attempt, got %d", due[0].AttemptCount)
+	// A not-yet-mined tx is a normal wait, NOT a failure: it must NOT increment
+	// attempt_count, or a slow-to-mine tx would dead-letter at the cap before it
+	// lands and permanently deny the record's stakeholders (RD-1206 fix). The row
+	// stays due (retried next tick) with attempt_count untouched.
+	if due[0].AttemptCount != 0 {
+		t.Fatalf("unmined tx must not count toward the dead-letter cap, got attempt_count=%d", due[0].AttemptCount)
 	}
 }

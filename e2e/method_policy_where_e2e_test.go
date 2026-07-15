@@ -23,8 +23,9 @@ import (
 
 // adminJSON does an admin API call and returns status + body. setupE2E runs the
 // admin API in dev mode (no ADMIN_API_TOKEN configured), where auth_method=="" →
-// requireSuperAdmin passes; so no X-Admin-Token header is sent (sending a
-// non-matching one would 401). This is the super-admin path the endpoints require.
+// both requireSuperAdmin and denyOperatorOrgScoped/denyOperatorTenantRead pass;
+// so no X-Admin-Token header is sent (sending a non-matching one would 401). The
+// method-policy endpoints are tier-2 org-admin; dev mode satisfies that tier.
 func adminJSON(t *testing.T, method, url string, body any) (int, []byte) {
 	t.Helper()
 	var r io.Reader
@@ -83,7 +84,7 @@ func TestMethodPolicy_Where_And_Simulate_E2E(t *testing.T) {
 	}))
 	require.NoError(t, database.CreateContractGrant(ctx, &rbac.ContractGrant{ID: uuid.New().String(), ContractID: mpContractID(t, database, contractAddr), GroupID: groupID}))
 
-	// Provision the where-policy via the SUPER-ADMIN endpoint (exercises the
+	// Provision the where-policy via the tier-2 org-admin endpoint (exercises the
 	// handler + ABI validation, not just the DB).
 	wherePolicy := map[string]any{"records": map[string]any{"payment": map[string]any{
 		"capture": []any{map[string]any{
@@ -148,7 +149,7 @@ func TestMethodPolicy_Where_And_Simulate_E2E(t *testing.T) {
 	require.Equal(t, "deny", simulate("did:test:compliance", "PAY-SMALL").Result, "sim: compliance denied on small")
 	require.Equal(t, "allow", simulate("did:test:alice", "PAY-SMALL").Result, "sim: payer allowed")
 	require.Equal(t, "deny", simulate("did:test:diana", "PAY-BIG").Result, "sim: unrelated denied")
-	// admit-set is disclosed to super-admin.
+	// admit-set is disclosed to the tier-2 org admin.
 	require.Contains(t, simulate("did:test:alice", "PAY-BIG").Captured["payer"], "did:test:alice")
 }
 

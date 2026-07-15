@@ -30,6 +30,12 @@ const (
 	MethodPolicyMaxMethods    = 16
 	MethodPolicyMaxRemembered = 8
 	MethodPolicyMaxAudience   = 256
+	// MethodPolicyMaxRecordKeyBytes bounds a canonicalized record key (a string
+	// param can be arbitrarily long within the request-body cap). A longer key is
+	// rejected on the read path (deny) and skipped on the capture path — it keeps
+	// stored keys and the gate's lookups bounded. Generous: real keys are opaque
+	// identifiers (a hash / UUID), well under this.
+	MethodPolicyMaxRecordKeyBytes = 1024
 )
 
 var (
@@ -457,26 +463,35 @@ func (d *MethodPolicyDocument) ValidateForClient(contractABI string) string {
 
 // GatedReader returns the AccessSpec (and its record type) matching a reader's
 // calldata selector, or ok=false when the call is not gated by any policy.
-func (d *MethodPolicyDocument) GatedReader(calldata []byte, contractABI string) (recordType string, spec AccessSpec, ok bool) {
+func (d *MethodPolicyDocument) GatedReader(calldata []byte, contractABI string) (recordType string, spec AccessSpec, ok bool, err error) {
 	if d == nil {
-		return "", AccessSpec{}, false
+		return "", AccessSpec{}, false, nil
 	}
-	parsed, err := abi.JSON(strings.NewReader(contractABI))
-	if err != nil || len(calldata) < 4 {
-		return "", AccessSpec{}, false
+	parsed, perr := abi.JSON(strings.NewReader(contractABI))
+	if perr != nil {
+		// A policy IS configured but the stored ABI won't parse: we cannot tell
+		// whether this selector is one of the gated readers. Signal the error so
+		// the request-path evaluator fails CLOSED (deny) rather than treating the
+		// call as "not gated" and passing the response through unfiltered (H2).
+		return "", AccessSpec{}, false, perr
 	}
-	m, err := parsed.MethodById(calldata[:4])
-	if err != nil {
-		return "", AccessSpec{}, false
+	if len(calldata) < 4 {
+		return "", AccessSpec{}, false, nil
+	}
+	m, merr := parsed.MethodById(calldata[:4])
+	if merr != nil {
+		// Selector not present in the ABI → not a gated reader (the node would
+		// hit fallback/revert; nothing record-shaped to protect). Not an error.
+		return "", AccessSpec{}, false, nil
 	}
 	for rt, rec := range d.Records {
 		for _, ac := range rec.Access {
 			if ac.Method == m.Sig {
-				return rt, ac, true
+				return rt, ac, true, nil
 			}
 		}
 	}
-	return "", AccessSpec{}, false
+	return "", AccessSpec{}, false, nil
 }
 
 // DecodeCaptures decodes a writer call into the values to persist. Returns an
@@ -511,6 +526,11 @@ func (d *MethodPolicyDocument) DecodeCaptures(calldata []byte, senderDID string,
 			if key == "" {
 				return nil, fmt.Errorf("method policy: empty record key for %s", cap.Method)
 			}
+			if len(key) > MethodPolicyMaxRecordKeyBytes {
+				// Over-long key: never readable (the gate rejects it too), so
+				// capturing it is pointless — skip this record's captures.
+				continue
+			}
 			for name, rf := range cap.Remember {
 				switch rf.Source {
 				case "sender":
@@ -532,7 +552,10 @@ func (d *MethodPolicyDocument) DecodeCaptures(calldata []byte, senderDID string,
 							continue
 						}
 						if n >= MethodPolicyMaxAudience {
-							break // cap; writer logs the drop at the call site
+							// Per-tx cap on how many visibleTo DIDs one writer call
+							// contributes to a record's audience (union accumulates
+							// across txs). Excess is silently dropped here.
+							break
 						}
 						out = append(out, CapturedWrite{recType, key, name, did, rf.Merge})
 						n++
@@ -562,8 +585,8 @@ func (d *MethodPolicyDocument) EvaluateAccess(
 	if d == nil {
 		return Decision{Allow: false}, nil
 	}
-	rt, spec, ok := d.GatedReader(calldata, contractABI)
-	if !ok || rt != recordType {
+	rt, spec, ok, gerr := d.GatedReader(calldata, contractABI)
+	if gerr != nil || !ok || rt != recordType {
 		// Not gated (or record-type mismatch) — caller decides passthrough;
 		// this function is only invoked for gated readers, so treat a
 		// mismatch as fail-closed deny.
@@ -645,13 +668,19 @@ func (d *MethodPolicyDocument) EvaluateReader(
 	if d == nil {
 		return false, Decision{Allow: false}, nil
 	}
-	rt, spec, ok := d.GatedReader(calldata, contractABI)
+	rt, spec, ok, gerr := d.GatedReader(calldata, contractABI)
+	if gerr != nil {
+		// Policy configured but the stored ABI won't parse → we cannot confirm
+		// this call is NOT a gated reader → fail closed (H2). Previously this
+		// collapsed into the !ok passthrough below and served the response raw.
+		return true, Decision{Allow: false}, nil
+	}
 	if !ok {
 		return false, Decision{Allow: false}, nil
 	}
 	parsed, perr := abi.JSON(strings.NewReader(contractABI))
 	if perr != nil {
-		return true, Decision{Allow: false}, nil // gated but ABI unusable → deny
+		return true, Decision{Allow: false}, nil // defensive: GatedReader already parsed OK
 	}
 	key, kerr := decodeRecordKey(spec.Key, calldata, parsed)
 	if kerr != nil {
@@ -753,8 +782,8 @@ func (d *MethodPolicyDocument) ReturnAddressPaths(calldata []byte, contractABI s
 	if d == nil {
 		return nil
 	}
-	_, spec, ok := d.GatedReader(calldata, contractABI)
-	if !ok {
+	_, spec, ok, gerr := d.GatedReader(calldata, contractABI)
+	if gerr != nil || !ok {
 		return nil
 	}
 	seen := map[string]bool{}
@@ -957,6 +986,9 @@ func decodeRecordKey(key KeySpec, calldata []byte, parsed abi.ABI) (string, erro
 	}
 	if k == "" {
 		return "", errDecode // empty key never matches a stored record (M-2)
+	}
+	if len(k) > MethodPolicyMaxRecordKeyBytes {
+		return "", errDecode // bound the key (defense in depth) — fail closed
 	}
 	return k, nil
 }

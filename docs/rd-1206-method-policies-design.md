@@ -61,15 +61,15 @@ policy load for (target contract)
               record_type=... AND record_key=key                          [C1]
        poison check: a set-once field with ≥2 distinct values → DENY      [H3]
        caller identity ∩ (captured DID/address values per allow rules)?
-         → ALLOWED (still must forward to serve the real data)
-     if ALLOWED or policy has NO return source:
-         if ALLOWED → forward caller's own eth_call once, return response
-         else       → opaque DENY, no upstream call
-     else (not allowed, policy HAS a return source):
-         forward the caller's own eth_call once  (never a synthesized call) [C2]
-         decode the response's output tuple once, select the declared      [H2]
-           address paths (bounded ≤128 KiB before unpack; hostile/oversize/
-           wrong-typed return errors cleanly → DENY, no panic/OOM)
+         → ALLOWED (still must serve the real data)
+     the gate is a POST-FORWARD response filter: the caller's own eth_call has
+     ALREADY been forwarded exactly once, so it decides on that response:
+         if ALLOWED → return the response unchanged
+         else if policy has NO return source → opaque DENY (discard response)
+         else (not allowed, policy HAS a return source):                   [C2]
+           decode the already-forwarded response's output tuple once,       [H2]
+             select the declared address paths (bounded ≤128 KiB before
+             unpack; hostile/oversize/wrong-typed return errors → DENY, no panic/OOM)
          caller identity ∩ decoded non-zero addresses? → return response
          else → opaque DENY
 ```
@@ -89,21 +89,24 @@ policy load for (target contract)
 The threat: distinguishing "record exists, you're not on it" from "record
 doesn't exist" by latency. Resolution, per policy shape:
 
-- **Capture-only policy** (no return source): the decision is a single indexed
-  DB lookup whose timing is independent of whether the record exists on chain
-  or whether other rows exist for the key — a non-party's lookup returns zero
-  matching rows identically in both cases. Deny short-circuits with no upstream
-  call. No oracle. **This is the recommended default configuration.**
-- **Policy with a return source:** every outcome — capture-hit allow, and both
-  flavors of capture-miss (exists-but-not-party, doesn't-exist) — **forwards
-  the caller's own eth_call exactly once** and then decides. Allow and deny
-  therefore have the same observable profile (one forward, one decode). No
-  per-record oracle.
-- The remaining difference — capture-only (fast local deny) vs return-source
-  (always forwards) — is a property of the **admin's fixed per-contract
-  configuration**, not of any record or caller, so it is not a per-record
-  existence oracle. Documented and test-locked (a companion timing/upstream-call
-  test to the "zero upstream calls on capture-only deny" test).
+As shipped, the gate runs in `applyResponseFilter` — i.e. **after** the caller's
+own `eth_call` has already been forwarded once — so the wiring gives an even
+simpler, stronger anti-oracle property than the original pre-forward sketch:
+
+- **Every gated read forwards the caller's own call exactly once**, regardless of
+  policy shape (capture-only or return-source) and regardless of outcome
+  (allow, exists-but-not-party, doesn't-exist). The gate then decides on the
+  response the node already produced: allow passes it through unchanged; deny
+  discards it and returns the opaque error. Allow and deny share one identical
+  profile (one forward), so there is no timing/behavior oracle — not even the
+  capture-only-vs-return-source difference the earlier draft carried.
+- The capture side is still a single indexed DB lookup whose timing is
+  independent of whether the record exists; the return resolver, when present,
+  decodes that same already-forwarded response (never a second call).
+- Test-locked: `TestMethodPolicy_CaptureOnly_NeverForwards` asserts the *return
+  resolver* is not consulted for a capture-only policy (no decode of the
+  response), and the gate helper is unit-tested to forward at most the one call
+  the caller made (the response filter never issues its own upstream call).
 
 **We forward the caller's own call, never a second one.** The return resolver
 decodes the single response the node already produced for the caller's
@@ -230,18 +233,27 @@ ambiguity). Because capture and access key types are validated equal, a
 (body `{"method_policies": {...}}` or `null` to clear); value returned in
 `GET .../contracts/{address}`.
 
-**Gated behind `requireSuperAdmin`** — matching `events-allow-dynamic-payload`,
-**not** the tier-2 `denyOperatorOrgScoped` used by `visibleto-unlock` /
-`createContractGrant`. Rationale: a method policy is the whole per-record
-enforcement surface for a contract's reads; a malformed policy silently changes
-the privacy posture for every caller and gives false confidence. This is the
-same "affects every viewer, contract-wide privacy semantics, not a per-grant
-decision" test that put `events-allow-dynamic-payload` behind super-admin. (A
-policy can only *narrow*, so this is conservative rather than strictly
-necessary for escalation-prevention — but the conservative default is correct
-here, and provisioning already uses the super-admin token via
-`provision-rbac.sh`. Relaxing to tier-2 would be a separate, explicit product
-decision.)
+**Gated behind `denyOperatorOrgScoped` (tier-2 org-admin)** — matching
+`visibleto-unlock` / `createContractGrant` / `updateContractABI`, the other
+per-contract controls; the restricted operator token is rejected. `GET` and
+`simulate` use `denyOperatorTenantRead` (tier-2 read; operator blocked).
+
+Rationale (revised 2026-07-15, the explicit product decision the prior draft
+deferred): a method policy is per-contract, per-organization configuration —
+same scope as the grants, groups and ABI the org admin already owns. It only
+ever *narrows* an already-permitted read and fails closed, so a malformed policy
+denies rather than leaks; the residual risk is availability (denying legitimate
+readers), an intra-org concern. Enforcement is entirely intra-org: a
+cross-org counterparty (e.g. a settlement bank) participates by being onboarded
+into a group in the contract's org, not via any cross-org grant — so the org
+that owns the contract is the correct custodian of its record-visibility policy,
+at the same tier as everything else on that contract. The earlier tier-1 choice
+also created a privilege inversion (the policy was tier-1 but its ABI dependency
+tier-2, so a tier-2 ABI edit could silently disable it); aligning both at tier-2
+removes it. `updateContractABI` additionally re-validates any configured policy
+against a new ABI and rejects a breaking change, so the tiers cannot drift into
+a fail-open. (Initial provisioning may still use the super-admin token via
+`provision-rbac.sh`; tier-2 org admins can also manage policies directly.)
 
 Every mutation is **audit-logged with the full before/after policy JSON** at
 `ResourceTypeContract` (change-management artifact), as
@@ -296,7 +308,7 @@ audience row → deny (CheckAccess fails first).
    capture-visibleTo; unrelated denied; cross-record denied (parameter-bound);
    **zero/empty guard** (L3); no-policy passthrough; **policy-load-error → deny**
    (M1); no-capture-rows + return resolver admits payer/payee; no-rows +
-   no-return-source → deny **without forward (assert zero upstream calls)**;
+   no-return-source → deny (capture-only: the return resolver is not consulted);
    **return-source deny forwards exactly once, same profile as allow** (C2);
    **grant-revoked-but-in-audience → deny** (L2); ABI/decode errors deny;
    **oversized/hostile dynamic return → deny + bounded work** (H2).
@@ -326,8 +338,11 @@ internals), same PR.
   own call exactly once; allow and deny share the profile; capture-only deny is
   oracle-free (DB-timing independent of chain state); same-org per-record
   isolation is this resolver's job, made load-bearing with H2.
-- **H1 (admin tier):** raised to `requireSuperAdmin` + full before/after
-  audit-log, rationale recorded.
+- **H1 (admin tier):** tier-2 org-admin (`denyOperatorOrgScoped` for PUT,
+  `denyOperatorTenantRead` for GET/simulate) — a per-contract, per-org control
+  consistent with grants/ABI/visibleto-unlock; full before/after audit-log;
+  `updateContractABI` re-validates the policy so an ABI edit can't disable it.
+  Revised 2026-07-15 (was tier-1; see the config section for the rationale).
 - **H2 (hostile return decode):** input bounded ≤128 KiB *before* unpack;
   decode the output tuple once and select only the declared address paths; a
   hostile length-prefix, oversize, or wrong-typed slot errors cleanly (deny,

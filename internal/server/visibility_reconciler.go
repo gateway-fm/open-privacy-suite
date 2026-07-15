@@ -199,15 +199,24 @@ func (r *VisibilityReconciler) tickCaptures(ctx context.Context) {
 		return
 	}
 
-	var promoted, dropped, retried int
+	var promoted, dropped, retried, waiting int
 	for _, row := range rows {
 		mined, success, rerr := r.receiptStatus(ctx, row.TxHash)
 		switch {
-		case rerr != nil || !mined:
+		case rerr != nil:
+			// Hard failure (transient upstream/lookup error): count it so a
+			// persistently failing row eventually dead-letters at the cap.
 			retried++
 			if markErr := r.db.MarkPendingRecordCaptureFailure(ctx, row.ID, receiptErrMsg(rerr, mined)); markErr != nil {
 				slog.Warn("capture reconciler: mark-failure update failed", "pending_id", row.ID, "mark_err", markErr)
 			}
+		case !mined:
+			// Not mined YET — a normal wait, not a failure. Leave the row
+			// untouched and retry next tick WITHOUT counting toward the cap, so a
+			// slow-to-mine tx is never dead-lettered before it lands (the record's
+			// stakeholders would otherwise be denied forever). PurgePendingRecordCaptures
+			// reaps rows that never mine, bounding growth.
+			waiting++
 		case !success:
 			// tx reverted → drop the capture (no rows planted for a failed create)
 			dropped++
@@ -227,8 +236,19 @@ func (r *VisibilityReconciler) tickCaptures(ctx context.Context) {
 			promoted++
 		}
 	}
-	if promoted > 0 || dropped > 0 || retried > 0 {
-		slog.Debug("capture reconciler: tick complete", "promoted", promoted, "dropped", dropped, "retried", retried, "batch", len(rows))
+	if promoted > 0 || dropped > 0 || retried > 0 || waiting > 0 {
+		slog.Debug("capture reconciler: tick complete", "promoted", promoted, "dropped", dropped, "retried", retried, "waiting", waiting, "batch", len(rows))
+	}
+
+	// Reap dead-lettered (cap-exhausted) and aged-out rows so the outbox cannot
+	// grow without bound. A non-zero reap is surfaced at WARN: it means captures
+	// were abandoned (their records' stakeholders will be denied), which an
+	// operator should investigate.
+	if reaped, err := r.db.PurgePendingRecordCaptures(ctx); err != nil {
+		slog.Warn("capture reconciler: purge failed", "err", err)
+	} else if reaped > 0 {
+		slog.Warn("capture reconciler: reaped abandoned captures (dead-lettered or aged out); their records' parties will be denied",
+			"reaped", reaped)
 	}
 }
 

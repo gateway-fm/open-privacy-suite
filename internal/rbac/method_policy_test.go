@@ -477,8 +477,8 @@ func TestMethodPolicy_NilDoc_NoPanic(t *testing.T) {
 	var doc *MethodPolicyDocument
 	getInfo := encodeCall(t, "getPaymentInfo", "PAY-1")
 
-	if _, _, ok := doc.GatedReader(getInfo, testPaymentABI); ok {
-		t.Fatalf("nil doc must not report a gated reader")
+	if _, _, ok, err := doc.GatedReader(getInfo, testPaymentABI); ok || err != nil {
+		t.Fatalf("nil doc must not report a gated reader or error, got ok=%v err=%v", ok, err)
 	}
 	dec, err := doc.EvaluateAccess("payment", getInfo, NewCallerIdentity("did:test:alice", nil), nil,
 		func() ([]common.Address, error) { return nil, nil }, testPaymentABI)
