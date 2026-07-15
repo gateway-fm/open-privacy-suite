@@ -166,6 +166,22 @@ export const rbacApi = {
       api.put<Contract>(`/orgs/${orgId}/contracts/${address}/method-policies`, {
         method_policies: doc,
       }),
+    // RD-1206 simulator: "would this caller read this record?" — capture-side,
+    // no node call. Super-admin only; returns allow/deny/indeterminate + admit-set.
+    simulateMethodPolicy: (
+      orgId: string,
+      address: string,
+      body: { method: string; record_key: string; caller_did: string; caller_eth_addresses?: string[] }
+    ) =>
+      api.post<{
+        result: string;
+        record_type: string;
+        matched_rule?: string;
+        has_return_source: boolean;
+        poisoned: boolean;
+        captured: Record<string, string[]>;
+        note?: string;
+      }>(`/orgs/${orgId}/contracts/${address}/method-policies/simulate`, body),
     // Event signatures from ABI (for event rules UI)
     listEvents: (orgId: string, address: string) =>
       api.get<{ events: EventSignature[]; message?: string }>(`/orgs/${orgId}/contracts/${address}/events`),

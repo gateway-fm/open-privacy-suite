@@ -1,12 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MethodPolicyManager } from "../MethodPolicyManager";
 import { rbacApi } from "@/api/rbac";
 import { getAdminToken } from "@/api/adminClient";
 
 vi.mock("@/api/rbac", () => ({
-  rbacApi: { contracts: { updateMethodPolicies: vi.fn() } },
+  rbacApi: { contracts: { updateMethodPolicies: vi.fn(), simulateMethodPolicy: vi.fn() } },
 }));
 vi.mock("@/api/adminClient", () => ({ getAdminToken: vi.fn() }));
 
@@ -15,9 +15,8 @@ const paymentABI = JSON.stringify([
     inputs: [{ name: "paymentIdentifier", type: "string" }, { name: "payee", type: "address" }, { name: "amount", type: "uint256" }], outputs: [] },
   { type: "function", name: "getPaymentInfo", stateMutability: "view",
     inputs: [{ name: "paymentIdentifier", type: "string" }],
-    outputs: [{ name: "amount", type: "uint256" }, { name: "timestamp", type: "uint256" }, { name: "payer", type: "address" }, { name: "payee", type: "address" }, { name: "isCompleted", type: "bool" }] },
+    outputs: [{ name: "amount", type: "uint256" }, { name: "payer", type: "address" }, { name: "payee", type: "address" }] },
 ]);
-
 const baseProps = { orgId: "org-1", contractAddress: "0xabc", contractAbi: paymentABI };
 
 beforeEach(() => {
@@ -26,13 +25,13 @@ beforeEach(() => {
 });
 
 describe("MethodPolicyManager", () => {
-  it("shows the empty-state default and the surface-asymmetry warning", () => {
+  it("empty state + getter-only caveat", () => {
     render(<MethodPolicyManager {...baseProps} initialPolicy={null} />);
     expect(screen.getByText(/No method policies configured/i)).toBeInTheDocument();
     expect(screen.getByText(/not the record's event logs/i)).toBeInTheDocument();
   });
 
-  it("C1: without an admin token, renders read-only (no configure button, no PUT)", () => {
+  it("C1: no admin token → read-only (no configure, no PUT)", () => {
     (getAdminToken as ReturnType<typeof vi.fn>).mockReturnValue("");
     render(<MethodPolicyManager {...baseProps} initialPolicy={null} />);
     expect(screen.queryByRole("button", { name: /configure a policy/i })).not.toBeInTheDocument();
@@ -40,109 +39,65 @@ describe("MethodPolicyManager", () => {
     expect(rbacApi.contracts.updateMethodPolicies).not.toHaveBeenCalled();
   });
 
-  it("drives the wizard and saves the Partior policy as the exact backend schema", async () => {
+  it("structured editor builds and saves a capture+reader policy in exact schema", async () => {
     const u = userEvent.setup();
     (rbacApi.contracts.updateMethodPolicies as ReturnType<typeof vi.fn>).mockResolvedValue({});
     render(<MethodPolicyManager {...baseProps} initialPolicy={null} />);
 
     await u.click(screen.getByRole("button", { name: /configure a policy/i }));
-    await u.type(screen.getByLabelText("Record type name"), "payment");
-    await u.selectOptions(screen.getByLabelText("Writer method"), "createPayment(string,address,uint256)");
-    await u.selectOptions(screen.getByLabelText("Reader method"), "getPaymentInfo(string)");
-
+    const editor = screen.getByTestId("method-policy-structured");
+    await u.type(within(editor).getByLabelText("record type name"), "payment");
+    await u.selectOptions(within(editor).getByLabelText("writer method"), "createPayment(string,address,uint256)");
     // capture field 0 → payer / sender / set_once (defaults)
-    await u.type(screen.getByLabelText("capture field 0 name"), "payer");
-    // add field 1 → payee / param 1
-    await u.click(screen.getByRole("button", { name: "capture field", exact: true }));
-    await u.type(screen.getByLabelText("capture field 1 name"), "payee");
-    await u.selectOptions(screen.getByLabelText("capture field 1 source"), "param");
-    await u.selectOptions(screen.getByLabelText("capture field 1 param index"), "1");
-    // add field 2 → audience / visibleTo (merge auto-defaults to union)
-    await u.click(screen.getByRole("button", { name: "capture field", exact: true }));
-    await u.type(screen.getByLabelText("capture field 2 name"), "audience");
-    await u.selectOptions(screen.getByLabelText("capture field 2 source"), "visibleTo");
-
-    // allow: payer, payee, audience + return payer, payee
-    await u.click(screen.getByLabelText("allow field payer"));
-    await u.click(screen.getByLabelText("allow field payee"));
-    await u.click(screen.getByLabelText("allow field audience"));
-    await u.click(screen.getByLabelText("allow return payer"));
-    await u.click(screen.getByLabelText("allow return payee"));
+    await u.type(within(editor).getByLabelText("capture field 0 name"), "payer");
+    await u.selectOptions(within(editor).getByLabelText("reader method"), "getPaymentInfo(string)");
+    // allow rule: tick the captured field "payer"
+    await u.click(within(editor).getByLabelText("allow field payer"));
 
     await u.click(screen.getByRole("button", { name: /save policy/i }));
-
     await waitFor(() => expect(rbacApi.contracts.updateMethodPolicies).toHaveBeenCalledTimes(1));
     const [, , doc] = (rbacApi.contracts.updateMethodPolicies as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(doc).toEqual({
       records: {
         payment: {
-          capture: [{
-            method: "createPayment(string,address,uint256)",
-            key: { source: "param", index: 0 },
-            remember: {
-              payer: { source: "sender", merge: "set_once" },
-              payee: { source: "param", index: 1, merge: "set_once" },
-              audience: { source: "visibleTo", merge: "union" },
-            },
-          }],
-          access: [{
-            method: "getPaymentInfo(string)",
-            key: { source: "param", index: 0 },
-            allow: [
-              { callerIn: ["payer", "payee", "audience"] },
-              { callerIn: { source: "return", paths: ["payer", "payee"], kind: "address" } },
-            ],
-            onNoRecord: "deny",
-            else: "deny",
-          }],
+          capture: [{ method: "createPayment(string,address,uint256)", key: { source: "param", index: 0 }, remember: { payer: { source: "sender", merge: "set_once" } } }],
+          access: [{ method: "getPaymentInfo(string)", key: { source: "param", index: 0 }, allow: [{ callerIn: ["payer"] }], onNoRecord: "deny", else: "deny" }],
         },
       },
     });
   });
 
-  it("surfaces a backend 400 validation message verbatim", async () => {
+  it("surfaces a backend 400 verbatim (via clear path)", async () => {
     const u = userEvent.setup();
     (rbacApi.contracts.updateMethodPolicies as ReturnType<typeof vi.fn>).mockRejectedValue({
-      response: { status: 400, data: { error: "method policy failed ABI validation: key type \"address[]\" is not canonicalizable" } },
+      response: { status: 400, data: { error: "method policy failed ABI validation: nope" } },
     });
-    const policy = { records: { payment: { capture: [{ method: "createPayment(string,address,uint256)", key: { source: "param" as const, index: 0 }, remember: { payer: { source: "sender" as const, merge: "set_once" as const } } }], access: [{ method: "getPaymentInfo(string)", key: { source: "param" as const, index: 0 }, allow: [{ callerIn: ["payer"] }], onNoRecord: "deny" as const, else: "deny" as const }] } } };
-    render(<MethodPolicyManager {...baseProps} initialPolicy={policy} />);
-    // clear-confirm path is separate; here drive a fresh save via the wizard-less
-    // Clear button which does call the API with null → but we want the 400 path.
-    // Simplest: open wizard, it's pre-validated invalid until filled; instead we
-    // assert the error surfacing through the Clear action.
     vi.stubGlobal("confirm", () => true);
+    render(<MethodPolicyManager {...baseProps} initialPolicy={{ records: { payment: { capture: [], access: [] } } }} />);
     await u.click(screen.getByRole("button", { name: /clear policy/i }));
-    await waitFor(() =>
-      expect(screen.getByText(/not canonicalizable/i)).toBeInTheDocument()
-    );
+    await waitFor(() => expect(screen.getByText(/nope/i)).toBeInTheDocument());
   });
 
-  it("advanced JSON editor saves the full parsed document (multi-capture/reader)", async () => {
+  it("confirms before clearing", async () => {
+    const u = userEvent.setup();
+    const confirmSpy = vi.fn(() => false);
+    vi.stubGlobal("confirm", confirmSpy);
+    render(<MethodPolicyManager {...baseProps} initialPolicy={{ records: { payment: { capture: [], access: [] } } }} />);
+    await u.click(screen.getByRole("button", { name: /clear policy/i }));
+    expect(confirmSpy).toHaveBeenCalled();
+    expect(rbacApi.contracts.updateMethodPolicies).not.toHaveBeenCalled();
+  });
+
+  it("advanced JSON editor saves the full parsed document", async () => {
     const u = userEvent.setup();
     (rbacApi.contracts.updateMethodPolicies as ReturnType<typeof vi.fn>).mockResolvedValue({});
     render(<MethodPolicyManager {...baseProps} initialPolicy={null} />);
-
     await u.click(screen.getByRole("button", { name: /edit json/i }));
-    const ta = screen.getByLabelText("Method policy JSON") as HTMLTextAreaElement;
-    // A shape the guided wizard can't express: two capture specs on one record.
-    const doc = {
-      records: {
-        payment: {
-          capture: [
-            { method: "createPayment(string,address,uint256)", key: { source: "param", index: 0 }, remember: { payer: { source: "sender", merge: "set_once" } } },
-            { method: "completePayment(string)", key: { source: "param", index: 0 }, remember: { audience: { source: "visibleTo", merge: "union" } } },
-          ],
-          access: [
-            { method: "getPaymentInfo(string)", key: { source: "param", index: 0 }, allow: [{ callerIn: ["payer", "audience"] }], onNoRecord: "deny", else: "deny" },
-          ],
-        },
-      },
-    };
+    const ta = screen.getByLabelText("Method policy JSON");
+    const doc = { records: { payment: { capture: [{ method: "createPayment(string,address,uint256)", key: { source: "param", index: 0 }, remember: { payer: { source: "sender", merge: "set_once" } } }], access: [{ method: "getPaymentInfo(string)", key: { source: "param", index: 0 }, allow: [{ callerIn: ["payer"] }], onNoRecord: "deny", else: "deny" }] } } };
     await u.clear(ta);
     await u.paste(JSON.stringify(doc));
     await u.click(screen.getByRole("button", { name: /save json/i }));
-
     await waitFor(() => expect(rbacApi.contracts.updateMethodPolicies).toHaveBeenCalledTimes(1));
     const [, , saved] = (rbacApi.contracts.updateMethodPolicies as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(saved).toEqual(doc);
@@ -152,22 +107,27 @@ describe("MethodPolicyManager", () => {
     const u = userEvent.setup();
     render(<MethodPolicyManager {...baseProps} initialPolicy={null} />);
     await u.click(screen.getByRole("button", { name: /edit json/i }));
-    const ta = screen.getByLabelText("Method policy JSON");
-    await u.clear(ta);
-    await u.paste("{ not valid json");
+    await u.clear(screen.getByLabelText("Method policy JSON"));
+    await u.paste("{ not json");
     await u.click(screen.getByRole("button", { name: /save json/i }));
     expect(screen.getByText(/Invalid JSON/i)).toBeInTheDocument();
     expect(rbacApi.contracts.updateMethodPolicies).not.toHaveBeenCalled();
   });
 
-  it("confirms before clearing (privacy-loosening)", async () => {
+  it("simulator runs and renders the result + admit-set", async () => {
     const u = userEvent.setup();
-    const confirmSpy = vi.fn(() => false); // user cancels
-    vi.stubGlobal("confirm", confirmSpy);
-    const policy = { records: { payment: { capture: [], access: [] } } };
-    render(<MethodPolicyManager {...baseProps} initialPolicy={policy} />);
-    await u.click(screen.getByRole("button", { name: /clear policy/i }));
-    expect(confirmSpy).toHaveBeenCalled();
-    expect(rbacApi.contracts.updateMethodPolicies).not.toHaveBeenCalled(); // cancelled
+    (rbacApi.contracts.simulateMethodPolicy as ReturnType<typeof vi.fn>).mockResolvedValue({
+      data: { result: "allow", record_type: "payment", matched_rule: "captured:payer", has_return_source: false, poisoned: false, captured: { payer: ["did:test:alice"] } },
+    });
+    render(<MethodPolicyManager {...baseProps} initialPolicy={{ records: { payment: { capture: [], access: [] } } }} />);
+    await u.click(screen.getByRole("button", { name: /simulate/i }));
+    const panel = screen.getByTestId("method-policy-simulate");
+    await u.selectOptions(within(panel).getByLabelText("simulate method"), "getPaymentInfo(string)");
+    await u.type(within(panel).getByLabelText("simulate record key"), "PAY-1");
+    await u.type(within(panel).getByLabelText("simulate caller did"), "did:test:alice");
+    await u.click(within(panel).getByRole("button", { name: /^simulate$/i }));
+    await waitFor(() => expect(rbacApi.contracts.simulateMethodPolicy).toHaveBeenCalledTimes(1));
+    expect(within(panel).getByText("allow")).toBeInTheDocument();
+    expect(within(panel).getByText(/did:test:alice/)).toBeInTheDocument();
   });
 });

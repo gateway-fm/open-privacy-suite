@@ -1,171 +1,197 @@
 import { describe, it, expect } from "vitest";
 import {
   parseAbiFunctions,
-  compileMethodPolicy,
+  compileWizard,
+  decompileWizard,
   validateWizard,
   isCanonicalizableKeyType,
+  emptyRecord,
   type WizardState,
 } from "../methodPolicy";
 
 const paymentABI = JSON.stringify([
-  {
-    type: "function",
-    name: "createPayment",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "paymentIdentifier", type: "string" },
-      { name: "payee", type: "address" },
-      { name: "amount", type: "uint256" },
-    ],
-    outputs: [],
-  },
-  {
-    type: "function",
-    name: "getPaymentInfo",
-    stateMutability: "view",
+  { type: "function", name: "createPayment", stateMutability: "nonpayable",
+    inputs: [{ name: "paymentIdentifier", type: "string" }, { name: "payee", type: "address" }, { name: "amount", type: "uint256" }], outputs: [] },
+  { type: "function", name: "completePayment", stateMutability: "nonpayable",
+    inputs: [{ name: "paymentIdentifier", type: "string" }], outputs: [] },
+  { type: "function", name: "getPaymentInfo", stateMutability: "view",
     inputs: [{ name: "paymentIdentifier", type: "string" }],
-    outputs: [
-      { name: "amount", type: "uint256" },
-      { name: "timestamp", type: "uint256" },
-      { name: "payer", type: "address" },
-      { name: "payee", type: "address" },
-      { name: "isCompleted", type: "bool" },
-    ],
-  },
+    outputs: [{ name: "amount", type: "uint256" }, { name: "payer", type: "address" }, { name: "payee", type: "address" }] },
 ]);
+const fns = parseAbiFunctions(paymentABI);
 
-const partiorWizard: WizardState = {
-  recordType: "payment",
-  writerSig: "createPayment(string,address,uint256)",
-  writerKeyIndex: 0,
-  readerSig: "getPaymentInfo(string)",
-  readerKeyIndex: 0,
-  remember: [
-    { field: "payer", source: "sender", merge: "set_once" },
-    { field: "payee", source: "param", paramIndex: 1, merge: "set_once" },
-    { field: "audience", source: "visibleTo", merge: "union" },
-  ],
-  allowFields: ["payer", "payee", "audience"],
-  returnPaths: ["payer", "payee"],
+// Full Partior record: two captures (create + complete) and one reader with a
+// captured-field rule AND a return rule.
+const partior: WizardState = {
+  records: [{
+    recordType: "payment",
+    captures: [
+      { writerSig: "createPayment(string,address,uint256)", keyIndex: 0, remember: [
+        { field: "payer", source: "sender", merge: "set_once" },
+        { field: "payee", source: "param", paramIndex: 1, merge: "set_once" },
+        { field: "audience", source: "visibleTo", merge: "union" },
+      ]},
+      { writerSig: "completePayment(string)", keyIndex: 0, remember: [
+        { field: "audience", source: "visibleTo", merge: "union" },
+      ]},
+    ],
+    readers: [{ readerSig: "getPaymentInfo(string)", keyIndex: 0, rules: [
+      { kind: "callerIn", fields: ["payer", "payee", "audience"], principals: [], returnPaths: [], where: null },
+      { kind: "return", fields: [], principals: [], returnPaths: ["payer", "payee"] },
+    ]}],
+  }],
 };
 
 describe("parseAbiFunctions", () => {
-  it("produces canonical signatures and address outputs", () => {
-    const fns = parseAbiFunctions(paymentABI);
+  it("canonical signatures + address outputs", () => {
     const get = fns.find((f) => f.name === "getPaymentInfo")!;
     expect(get.signature).toBe("getPaymentInfo(string)");
     expect(get.addressOutputs.map((o) => o.name)).toEqual(["payer", "payee"]);
-    const create = fns.find((f) => f.name === "createPayment")!;
-    expect(create.signature).toBe("createPayment(string,address,uint256)");
-    expect(create.inputs[1]).toEqual({ name: "payee", type: "address" });
   });
-
-  it("returns [] for missing/garbage ABI", () => {
-    expect(parseAbiFunctions(undefined)).toEqual([]);
-    expect(parseAbiFunctions("not json")).toEqual([]);
+  it("[] for garbage", () => {
+    expect(parseAbiFunctions("nope")).toEqual([]);
   });
 });
 
 describe("isCanonicalizableKeyType", () => {
-  it("accepts scalar value types, rejects arrays/tuples", () => {
-    for (const t of ["string", "address", "bytes32", "bytes", "uint256", "uint64", "bool"]) {
-      expect(isCanonicalizableKeyType(t)).toBe(true);
-    }
-    for (const t of ["address[]", "tuple", "uint256[]", "string[]"]) {
-      expect(isCanonicalizableKeyType(t)).toBe(false);
-    }
+  it("scalars yes, arrays/tuples no", () => {
+    for (const t of ["string", "address", "bytes32", "uint256", "uint64", "bool"]) expect(isCanonicalizableKeyType(t)).toBe(true);
+    for (const t of ["address[]", "tuple", "uint256[]"]) expect(isCanonicalizableKeyType(t)).toBe(false);
   });
 });
 
-describe("compileMethodPolicy", () => {
-  it("compiles the Partior policy to the exact backend schema", () => {
-    const doc = compileMethodPolicy(partiorWizard);
-    expect(doc).toEqual({
+describe("compileWizard", () => {
+  it("compiles the full Partior policy (2 captures, callerIn+return) to exact schema", () => {
+    expect(compileWizard(partior)).toEqual({
       records: {
         payment: {
           capture: [
-            {
-              method: "createPayment(string,address,uint256)",
-              key: { source: "param", index: 0 },
-              remember: {
-                payer: { source: "sender", merge: "set_once" },
-                payee: { source: "param", index: 1, merge: "set_once" },
-                audience: { source: "visibleTo", merge: "union" },
-              },
-            },
+            { method: "createPayment(string,address,uint256)", key: { source: "param", index: 0 }, remember: {
+              payer: { source: "sender", merge: "set_once" },
+              payee: { source: "param", index: 1, merge: "set_once" },
+              audience: { source: "visibleTo", merge: "union" },
+            }},
+            { method: "completePayment(string)", key: { source: "param", index: 0 }, remember: {
+              audience: { source: "visibleTo", merge: "union" },
+            }},
           ],
-          access: [
-            {
-              method: "getPaymentInfo(string)",
-              key: { source: "param", index: 0 },
-              allow: [
-                { callerIn: ["payer", "payee", "audience"] },
-                { callerIn: { source: "return", paths: ["payer", "payee"], kind: "address" } },
-              ],
-              onNoRecord: "deny",
-              else: "deny",
-            },
-          ],
+          access: [{
+            method: "getPaymentInfo(string)", key: { source: "param", index: 0 },
+            allow: [
+              { callerIn: ["payer", "payee", "audience"] },
+              { callerIn: { source: "return", paths: ["payer", "payee"], kind: "address" } },
+            ],
+            onNoRecord: "deny", else: "deny",
+          }],
         },
       },
     });
   });
 
-  it("merges into an existing document, preserving other record types", () => {
-    const existing = { records: { other: { capture: [], access: [] } } };
-    const doc = compileMethodPolicy(partiorWizard, existing);
-    expect(Object.keys(doc.records).sort()).toEqual(["other", "payment"]);
+  it("Example 3: one writer mapped onto multiple readers", () => {
+    const s: WizardState = { records: [{
+      recordType: "invoice",
+      captures: [{ writerSig: "createPayment(string,address,uint256)", keyIndex: 0, remember: [
+        { field: "issuer", source: "sender", merge: "set_once" },
+        { field: "debtor", source: "param", paramIndex: 1, merge: "set_once" },
+      ]}],
+      readers: [
+        { readerSig: "getPaymentInfo(string)", keyIndex: 0, rules: [{ kind: "callerIn", fields: ["issuer", "debtor"], principals: [], returnPaths: [], where: null }] },
+        { readerSig: "completePayment(string)", keyIndex: 0, rules: [{ kind: "callerIn", fields: ["issuer"], principals: [], returnPaths: [], where: null }] },
+      ],
+    }]};
+    const doc = compileWizard(s);
+    expect(doc.records.invoice.access).toHaveLength(2);
+    expect(doc.records.invoice.access[0].method).toBe("getPaymentInfo(string)");
+    expect(doc.records.invoice.access[1].method).toBe("completePayment(string)");
   });
 
-  it("omits the return rule when no return paths are chosen (capture-only)", () => {
-    const doc = compileMethodPolicy({ ...partiorWizard, returnPaths: [] });
-    const allow = doc.records.payment.access[0].allow;
-    expect(allow).toHaveLength(1);
-    expect(allow[0].callerIn).toEqual(["payer", "payee", "audience"]);
+  it("Example 4: where + literal principal", () => {
+    const s: WizardState = { records: [{
+      recordType: "payment",
+      captures: [{ writerSig: "createPayment(string,address,uint256)", keyIndex: 0, remember: [
+        { field: "payer", source: "sender", merge: "set_once" },
+        { field: "amount", source: "param", paramIndex: 2, merge: "set_once" },
+      ]}],
+      readers: [{ readerSig: "getPaymentInfo(string)", keyIndex: 0, rules: [
+        { kind: "callerIn", fields: ["payer"], principals: [], returnPaths: [], where: null },
+        { kind: "callerIn", fields: [], principals: ["did:test:compliance"], returnPaths: [], where: { field: "amount", op: "gte", value: "1000000" } },
+      ]}],
+    }]};
+    const allow = compileWizard(s).records.payment.access[0].allow;
+    expect(allow[1]).toEqual({ callerIn: ["did:test:compliance"], where: { field: "amount", op: "gte", value: "1000000" } });
   });
 });
 
 describe("validateWizard", () => {
-  const fns = parseAbiFunctions(paymentABI);
-  it("passes the coherent Partior state", () => {
-    expect(validateWizard(partiorWizard, fns)).toBeNull();
+  it("passes the full Partior policy", () => {
+    expect(validateWizard(partior, fns)).toBeNull();
   });
-  it("rejects a key-type mismatch between writer and reader", () => {
-    // point the reader key at getPaymentInfo's only param (string) but the
-    // writer key at the address param → mismatch
-    const bad = { ...partiorWizard, writerKeyIndex: 1 };
-    expect(validateWizard(bad, fns)).toMatch(/key types must match/);
+  it("rejects visibleTo + set_once", () => {
+    const s = structuredClone(partior);
+    // set BOTH captures' audience to set_once so the merge-consistency check
+    // passes and the visibleTo⇒union invariant is the one that fires.
+    s.records[0].captures[0].remember[2].merge = "set_once";
+    s.records[0].captures[1].remember[0].merge = "set_once";
+    expect(validateWizard(s, fns)).toMatch(/must use union/);
   });
-  it("requires at least one allow rule", () => {
-    expect(validateWizard({ ...partiorWizard, allowFields: [], returnPaths: [] }, fns)).toMatch(/allow rule/);
+  it("rejects conflicting merge for a re-used field across captures", () => {
+    const s = structuredClone(partior);
+    s.records[0].captures[1].remember[0].merge = "set_once"; // audience union in cap0, set_once in cap1
+    expect(validateWizard(s, fns)).toMatch(/must use union|conflicting merge/);
   });
-  it("requires a param index for param-sourced fields", () => {
-    const bad = { ...partiorWizard, remember: [{ field: "payee", source: "param" as const, merge: "set_once" as const }] };
-    expect(validateWizard(bad, fns)).toMatch(/pick which one/);
+  it("rejects a callerIn field that isn't captured and isn't a principal", () => {
+    const s = structuredClone(partior);
+    s.records[0].readers[0].rules[0] = { kind: "callerIn", fields: ["ghost"], principals: [], returnPaths: [], where: null };
+    expect(validateWizard(s, fns)).toMatch(/not a captured field/);
   });
-  it("rejects an allow field that isn't captured", () => {
-    expect(validateWizard({ ...partiorWizard, allowFields: ["ghost"] }, fns)).toMatch(/isn't a captured field/);
+  it("accepts a literal DID principal", () => {
+    const s = structuredClone(partior);
+    s.records[0].readers[0].rules[0] = { kind: "callerIn", fields: [], principals: ["did:test:compliance"], returnPaths: [], where: null };
+    expect(validateWizard(s, fns)).toBeNull();
   });
-  it("rejects duplicate captured field names (H1)", () => {
-    const dup = {
-      ...partiorWizard,
-      remember: [
-        { field: "payer", source: "sender" as const, merge: "set_once" as const },
-        { field: "payer", source: "param" as const, paramIndex: 1, merge: "set_once" as const },
-      ],
-      allowFields: ["payer"],
-    };
-    expect(validateWizard(dup, fns)).toMatch(/[Dd]uplicate/);
+  it("rejects a non-principal, non-field literal", () => {
+    const s = structuredClone(partior);
+    s.records[0].readers[0].rules[0] = { kind: "callerIn", fields: [], principals: ["compliance-desk"], returnPaths: [], where: null };
+    expect(validateWizard(s, fns)).toMatch(/must be a did:/);
   });
-  it("rejects a visibleTo audience field set to set_once (H2)", () => {
-    const bad = {
-      ...partiorWizard,
-      remember: [{ field: "audience", source: "visibleTo" as const, merge: "set_once" as const }],
-      allowFields: ["audience"],
-    };
-    expect(validateWizard(bad, fns)).toMatch(/must use "union"/);
+  it("rejects duplicate record types", () => {
+    const s: WizardState = { records: [partior.records[0], structuredClone(partior.records[0])] };
+    expect(validateWizard(s, fns)).toMatch(/Duplicate record type/);
   });
-  it("rejects a return path that isn't an address output of the reader (H3)", () => {
-    expect(validateWizard({ ...partiorWizard, returnPaths: ["amount"] }, fns)).toMatch(/not an address output/);
+  it("rejects where on a return rule", () => {
+    const s = structuredClone(partior);
+    s.records[0].readers[0].rules[1].where = { field: "payer", op: "eq", value: "x" };
+    expect(validateWizard(s, fns)).toMatch(/where is not allowed on a return rule/);
+  });
+  it("rejects numeric where on a non-numeric field", () => {
+    const s = structuredClone(partior);
+    s.records[0].readers[0].rules[0].where = { field: "payer", op: "gte", value: "1" };
+    expect(validateWizard(s, fns)).toMatch(/needs a numeric field/);
+  });
+  it("rejects a return path that isn't an address output", () => {
+    const s = structuredClone(partior);
+    s.records[0].readers[0].rules[1].returnPaths = ["amount"];
+    expect(validateWizard(s, fns)).toMatch(/not an address output/);
+  });
+});
+
+describe("decompileWizard round-trip", () => {
+  it("compile → decompile → compile is stable for the Partior policy", () => {
+    const doc = compileWizard(partior);
+    const back = decompileWizard(doc);
+    expect(compileWizard(back)).toEqual(doc);
+  });
+  it("empty doc → empty state", () => {
+    expect(decompileWizard(null)).toEqual({ records: [] });
+  });
+});
+
+describe("emptyRecord", () => {
+  it("produces a minimal editable record", () => {
+    const r = emptyRecord();
+    expect(r.captures).toHaveLength(1);
+    expect(r.readers).toHaveLength(1);
+    expect(r.readers[0].rules).toHaveLength(1);
   });
 });

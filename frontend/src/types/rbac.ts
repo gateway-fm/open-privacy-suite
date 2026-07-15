@@ -120,11 +120,21 @@ export interface MethodPolicyReturnSource {
   kind: "address";
 }
 
-// callerIn is EITHER a list of captured field names OR a return source.
+// callerIn is EITHER a list of captured field names / literal principals OR a
+// return source.
 export type MethodPolicyCallerIn = string[] | MethodPolicyReturnSource;
+
+// where further-restricts an allow rule by a captured scalar comparison
+// (RD-1206 Example 4). Only valid on callerIn-list rules, not return rules.
+export interface MethodPolicyWhere {
+  field: string;
+  op: "eq" | "neq" | "lt" | "lte" | "gt" | "gte";
+  value: string;
+}
 
 export interface MethodPolicyAllowRule {
   callerIn: MethodPolicyCallerIn;
+  where?: MethodPolicyWhere;
 }
 
 export interface MethodPolicyAccessSpec {
