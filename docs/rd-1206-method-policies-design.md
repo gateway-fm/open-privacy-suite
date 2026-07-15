@@ -201,9 +201,11 @@ attacker-chosen identities. Three layers close this:
 As in the draft's "Policy draft": `records.<type>` with `capture[]` (method,
 `key = {source: param, index}`, `remember` fields sourced `param(i)` |
 `sender` | `visibleTo`, merge `set_once` | `union`) and `access[]` (method,
-key, `allow[]` rules of `callerIn` over captured field names and/or
-`{source:"return", paths, kind:"address"}`, `onNoRecord`, `else`). Deferred:
-`where` scalar conditions, redact outcomes, non-address return kinds.
+key, `allow[]` rules of `callerIn` over captured field names, literal
+DID/address principals, and/or `{source:"return", paths, kind:"address"}`, an
+optional `where` scalar condition per callerIn rule, `onNoRecord`, `else`). See
+the addendum below for `where` and the simulator. Still deferred: field-level
+redact outcomes and non-address return kinds.
 
 **Validation at PUT** (reject-on-write; never at read):
 - ABI registered; every method resolves to an ABI selector.

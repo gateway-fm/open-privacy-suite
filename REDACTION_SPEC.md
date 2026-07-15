@@ -751,3 +751,35 @@ that `ResolveMethodAlias` maps to `eth_call`). A chain-specific read method
 exposed via a wildcard namespace that is NOT aliased to `eth_call` bypasses the
 gate, like every other response filter — if an operator adds a `*_call`-style
 method, it must be aliased to `eth_call` to inherit method-policy gating.
+
+### 9.1 where-conditions and the simulator (RD-1206 addendum)
+
+**where** (`AllowRule.Where{field,op,value}`): a captured-field allow rule may be
+further restricted by a comparison on a captured scalar (Example 4 — e.g. a
+compliance principal reads a payment only when `amount >= 1000000`). AND-combined
+with `callerIn`; a where can only narrow, never widen. Numeric ops
+(`lt/lte/gt/gte`) compare as `big.Int` (never lexical); `eq/neq` fall back to
+canonical-string equality. Fail-closed on absent/multi/unparsable/non-numeric —
+the rule does not admit. `where` is rejected on return-source rules (keeps the
+single-forward property) and validated against the ABI at write time
+(field is a captured scalar; numeric op ⇒ numeric field; value parses).
+
+**callerIn literal principals:** a `callerIn` list entry is either a captured
+field name or a literal DID/ETH-address principal matched directly against the
+caller (a non-declared, non-literal entry is rejected — typos can't become inert
+literals).
+
+**Simulator** (`POST .../method-policies/simulate`, super-admin, org-scoped,
+audit-logged): capture-side evaluation of "would caller X read record K?" —
+allow / deny / **indeterminate_return_source**. It performs NO node call, so the
+live return-address resolver is not simulated; a capture-side deny on a reader
+that has a return rule is reported as indeterminate, never an authoritative deny.
+Returns the record's captured admit-set (super-admin disclosure). This is the
+*intent* check — validators prove structure/safety, the simulator surfaces
+over/under-exposure.
+
+**Invariant consolidation:** all safety invariants live in `Validate` (not just
+the UI), so raw-JSON authoring is exactly as safe as the structured editor:
+key-type agreement, `visibleTo⇒union`, cross-capture (kind,merge) consistency,
+`callerIn` ⊆ captured∪literal, return paths are top-level address outputs,
+deny-only outcomes, and the where checks above.

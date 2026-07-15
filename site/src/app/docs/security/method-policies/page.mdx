@@ -105,7 +105,34 @@ GET /api/v1/admin/orgs/{org_id}/contracts/{address}/method-policies
   identifier is what proves a caller is a party; a guessable identifier weakens
   that.
 - Identity parameters (payer, payee) should use `set_once`; a shared audience
-  (a settlement group) uses `union`.
+  (a settlement group) uses `union`. The editor enforces this.
+
+## Beyond the basics
+
+- **Multiple captures and readers per record.** A record can be captured on more
+  than one writer (e.g. `createPayment` and `completePayment`), and one record
+  can gate several reader methods with different rules each. The editor supports
+  repeatable capture and reader sections; the same is expressible in the
+  advanced JSON view.
+- **Literal principals.** An allow rule can name a fixed principal directly — a
+  DID (`did:…`) or ETH address (`0x…`) — in addition to captured fields. Use
+  this for a standing party such as a compliance desk.
+- **Conditions (`where`).** An allow rule can be further restricted by a
+  captured scalar, e.g. *a compliance principal may read a payment only when its
+  `amount` ≥ 1,000,000*. Numeric operators (`lt/lte/gt/gte`) compare as integers;
+  `eq/neq` also work for addresses/strings. A condition can only narrow a rule,
+  never widen it, and it applies to captured-party rules (not return rules).
+
+## Verify before you trust it — the simulator
+
+Because no validator can prove *intent* (that a policy admits exactly the right
+people), use the **Simulate** action to check a policy against concrete cases:
+give a record key and a caller, and it returns **allow / deny /
+indeterminate**, the rule that matched, and the record's full captured
+admit-set. It runs against stored captures only — no on-chain call — and the
+live return-address rule is **not** simulated, so a capture-side "deny" on a
+reader that also has a return rule is reported as *indeterminate* rather than a
+definitive no. Simulate is super-admin only and audit-logged.
 
 <Callout type="warning">
   A method policy gates the **getter** only. The same record's data reachable by
