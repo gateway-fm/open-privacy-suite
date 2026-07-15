@@ -466,3 +466,44 @@ save. Everything compiles to the identical document schema.
 - Field-level **redaction** as an access outcome (vs allow/deny).
 - Capture from contract-to-contract **call traces**.
 These remain the documented next phase; everything else in the draft is in.
+
+### Future improvement — effective-dated / soft-deactivated policies (not yet scoped)
+
+**Problem.** A policy today is a single mutable JSONB column; clearing it is a
+hard removal. Because reader gates are evaluated **live** (no "as of block N"),
+removing a *narrowing* policy silently **widens access to every historical
+record at once** — records that were visible only to their parties become
+readable by any member of a granted group the instant the policy is cleared.
+That is a mass re-exposure of historical private data and a change-management /
+audit concern (ISO 27001). Symmetrically, *adding* a policy narrows old records
+(capture rows only exist from write-time forward; pre-policy records fall back
+to the return resolver or become invisible).
+
+**Idea (operator's request).** Don't delete policies — **deactivate** them, and
+keep enforcing the version that was in force when a record was created, so
+history reads exactly as it did. Optionally give policies a `effective_from` /
+`effective_to` window (time-boxed access — e.g. a compliance DID that may read
+only during an audit window, pairing with `where`).
+
+**What it would take (per-record binding).** Reads are live, so "preserve
+history exactly" requires versioning, not just dates:
+- Store policy **versions** (new table, each with a stable id + `effective_from`
+  / `effective_to`), instead of overwriting one column.
+- Stamp each promoted capture row with the **policy version id** in force at
+  capture time.
+- On read, evaluate a record under the version bound to *its* capture rows, not
+  the current document.
+
+**Design tensions to settle first.**
+- "Freeze history" cuts both ways: sometimes the operator *wants* a stricter new
+  policy applied retroactively (tighten old records after a leak). The design
+  should offer **retroactive vs forward-only** as an explicit choice, with the
+  safe (more-restrictive) default.
+- The **return resolver reads live chain state**, so effective-dating only fully
+  governs the capture-based rules; return-based access is always "current."
+- Hard-delete must still exist as a deliberate, audited action (data retention).
+
+**Cheap interim (no schema change).** Removal is already audit-logged and the
+"Clear policy" UI already warns that getters revert to group-readable. Until the
+above lands, treat clearing a live narrowing policy as a reviewed
+change-management step, not a casual toggle.
