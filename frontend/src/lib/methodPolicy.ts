@@ -162,6 +162,10 @@ function declaredKinds(
     for (const r of cap.remember) {
       const name = r.field.trim();
       if (!name) return { kinds, merges, err: "Every captured field needs a name." };
+      // A capture field name must not look like a DID/address literal, or a
+      // callerIn entry equal to it becomes ambiguous (captured field vs literal
+      // principal) and can admit a caller with no captured basis.
+      if (isLiteralPrincipal(name)) return { kinds, merges, err: `Field name "${name}" must not look like a DID/address literal.` };
       if (seen.has(name)) return { kinds, merges, err: `Duplicate field "${name}" within one capture.` };
       seen.add(name);
       let kind = "did";

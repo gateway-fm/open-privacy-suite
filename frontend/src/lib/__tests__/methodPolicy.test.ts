@@ -174,6 +174,13 @@ describe("validateWizard", () => {
     s.records[0].readers[0].rules[1].returnPaths = ["amount"];
     expect(validateWizard(s, fns)).toMatch(/not an address output/);
   });
+  it("rejects a literal-shaped capture field name (final-audit HIGH)", () => {
+    for (const name of ["0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC", "did:test:role"]) {
+      const s = structuredClone(partior);
+      s.records[0].captures[0].remember[0].field = name;
+      expect(validateWizard(s, fns)).toMatch(/must not look like a DID\/address literal/);
+    }
+  });
 });
 
 describe("decompileWizard round-trip", () => {

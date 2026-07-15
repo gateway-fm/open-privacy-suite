@@ -823,3 +823,26 @@ func TestMethodPolicy_SimulateReader_ReturnSourceFlagged(t *testing.T) {
 		t.Fatalf("HasReturnSource must be true so the deny is not read as authoritative")
 	}
 }
+
+// Final-audit HIGH: a capture field NAME that looks like a DID/address literal
+// must be rejected — otherwise a callerIn entry equal to that name admits a
+// caller with no captured basis (eval falls through to literal-principal).
+func TestMethodPolicy_Validate_RejectsLiteralShapedFieldName(t *testing.T) {
+	for _, name := range []string{
+		"0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+		"did:test:role",
+	} {
+		j := `{"records":{"payment":{
+          "capture":[{"method":"createPayment(string,address,uint256)","key":{"source":"param","index":0},
+            "remember":{"` + name + `":{"source":"sender","merge":"set_once"}}}],
+          "access":[{"method":"getPaymentInfo(string)","key":{"source":"param","index":0},
+            "allow":[{"callerIn":["` + name + `"]}],"onNoRecord":"deny","else":"deny"}]}}}`
+		doc, err := ParseMethodPolicyDocument([]byte(j))
+		if err != nil {
+			t.Fatalf("parse (%s): %v", name, err)
+		}
+		if err := doc.Validate(testPaymentABI); err == nil || !strings.Contains(err.Error(), "must not look like a DID/address literal") {
+			t.Fatalf("literal-shaped field name %q must be rejected, got %v", name, err)
+		}
+	}
+}

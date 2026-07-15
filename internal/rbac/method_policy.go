@@ -305,6 +305,16 @@ func (d *MethodPolicyDocument) Validate(contractABI string) error {
 				return fmt.Errorf("capture %q: too many remembered fields", cap.Method)
 			}
 			for name, rf := range cap.Remember {
+				// A capture field NAME must not look like a DID/address literal.
+				// Otherwise a callerIn entry equal to that name is ambiguous:
+				// Validate treats it as a captured field, but eval falls through
+				// to "literal principal" when the record has no captured rows —
+				// admitting a caller with no captured basis (final-audit HIGH).
+				// Reject at write time so the declared-vs-literal split is
+				// unambiguous everywhere.
+				if isLiteralPrincipal(name) {
+					return fmt.Errorf("capture %q field %q: a capture field name must not look like a DID/address literal", cap.Method, name)
+				}
 				var kind string
 				switch rf.Source {
 				case "sender", "visibleTo":
