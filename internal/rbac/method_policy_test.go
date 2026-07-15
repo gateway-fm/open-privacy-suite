@@ -223,8 +223,9 @@ func TestMethodPolicy_DecodeCaptures(t *testing.T) {
 		t.Fatalf("validate: %v", err)
 	}
 
+	parsed := mustParseABI(t)
 	cd := encodeCall(t, "createPayment", "PAY-1", addr(payeeAddr), bigInt(1001))
-	caps, err := doc.DecodeCaptures(cd, "did:test:alice", []string{"did:test:charlie"}, testPaymentABI)
+	caps, err := doc.DecodeCaptures(cd, "did:test:alice", []string{"did:test:charlie"}, parsed)
 	if err != nil {
 		t.Fatalf("decode captures: %v", err)
 	}
@@ -248,7 +249,7 @@ func TestMethodPolicy_DecodeCaptures(t *testing.T) {
 
 	// A non-matching selector produces no captures (no error).
 	cd2 := encodeCall(t, "getPaymentInfo", "PAY-1")
-	caps2, err := doc.DecodeCaptures(cd2, "did:test:alice", nil, testPaymentABI)
+	caps2, err := doc.DecodeCaptures(cd2, "did:test:alice", nil, parsed)
 	if err != nil {
 		t.Fatalf("decode non-writer: %v", err)
 	}
@@ -275,6 +276,7 @@ func TestMethodPolicy_Evaluate(t *testing.T) {
 	if err := doc.Validate(testPaymentABI); err != nil {
 		t.Fatalf("validate: %v", err)
 	}
+	parsed := mustParseABI(t)
 	getInfo := encodeCall(t, "getPaymentInfo", "PAY-1")
 
 	// return resolver that yields the record's payer/payee
@@ -312,7 +314,7 @@ func TestMethodPolicy_Evaluate(t *testing.T) {
 			ident := NewCallerIdentity(tc.callerDID, tc.callerAddr)
 			forwarded := false
 			ret := func() ([]common.Address, error) { forwarded = true; return tc.ret() }
-			dec, err := doc.EvaluateAccess("payment", getInfo, ident, tc.captured, ret, testPaymentABI)
+			dec, err := doc.EvaluateAccess("payment", getInfo, ident, tc.captured, ret, parsed)
 			if err != nil {
 				t.Fatalf("evaluate: %v", err)
 			}
@@ -340,6 +342,7 @@ func TestMethodPolicy_CaptureOnly_NeverForwards(t *testing.T) {
 	if err := doc.Validate(testPaymentABI); err != nil {
 		t.Fatalf("validate: %v", err)
 	}
+	parsed := mustParseABI(t)
 	getInfo := encodeCall(t, "getPaymentInfo", "PAY-1")
 	for _, hit := range []bool{true, false} {
 		var captured []CapturedField
@@ -348,7 +351,7 @@ func TestMethodPolicy_CaptureOnly_NeverForwards(t *testing.T) {
 		}
 		forwarded := false
 		ret := func() ([]common.Address, error) { forwarded = true; return nil, nil }
-		dec, err := doc.EvaluateAccess("payment", getInfo, NewCallerIdentity("did:test:alice", nil), captured, ret, testPaymentABI)
+		dec, err := doc.EvaluateAccess("payment", getInfo, NewCallerIdentity("did:test:alice", nil), captured, ret, parsed)
 		if err != nil {
 			t.Fatalf("evaluate: %v", err)
 		}
@@ -382,6 +385,7 @@ func TestMethodPolicy_Example2_AddresslessReturn(t *testing.T) {
 	if err := doc.Validate(testPaymentABI); err != nil {
 		t.Fatalf("validate: %v", err)
 	}
+	parsed := mustParseABI(t)
 	getStatus := encodeCall(t, "getTradeStatus", "TRADE-1")
 	captured := rows(
 		[2]string{"initiator", "did:test:alice"},
@@ -404,7 +408,7 @@ func TestMethodPolicy_Example2_AddresslessReturn(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			forwarded := false
 			ret := func() ([]common.Address, error) { forwarded = true; return nil, nil }
-			dec, err := doc.EvaluateAccess("trade", getStatus, NewCallerIdentity(tc.callerDID, tc.callerAddr), captured, ret, testPaymentABI)
+			dec, err := doc.EvaluateAccess("trade", getStatus, NewCallerIdentity(tc.callerDID, tc.callerAddr), captured, ret, parsed)
 			if err != nil {
 				t.Fatalf("evaluate: %v", err)
 			}
@@ -425,6 +429,7 @@ func TestMethodPolicy_ZeroGuard(t *testing.T) {
 	if err := doc.Validate(testPaymentABI); err != nil {
 		t.Fatalf("validate: %v", err)
 	}
+	parsed := mustParseABI(t)
 	getInfo := encodeCall(t, "getPaymentInfo", "PAY-1")
 
 	// Captured payee is the zero address; a caller who (bugged) presents the
@@ -436,7 +441,7 @@ func TestMethodPolicy_ZeroGuard(t *testing.T) {
 	}
 	dec, err := doc.EvaluateAccess("payment", getInfo,
 		NewCallerIdentity("", []string{"0x0000000000000000000000000000000000000000"}),
-		captured, ret, testPaymentABI)
+		captured, ret, parsed)
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
 	}
@@ -451,6 +456,7 @@ func TestMethodPolicy_SetOncePoison(t *testing.T) {
 	if err := doc.Validate(testPaymentABI); err != nil {
 		t.Fatalf("validate: %v", err)
 	}
+	parsed := mustParseABI(t)
 	getInfo := encodeCall(t, "getPaymentInfo", "PAY-1")
 
 	poisoned := []CapturedField{
@@ -458,7 +464,7 @@ func TestMethodPolicy_SetOncePoison(t *testing.T) {
 		{Field: "payer", Value: "did:test:mallory", Merge: "set_once"},
 	}
 	ret := func() ([]common.Address, error) { return nil, nil }
-	dec, err := doc.EvaluateAccess("payment", getInfo, NewCallerIdentity("did:test:alice", nil), poisoned, ret, testPaymentABI)
+	dec, err := doc.EvaluateAccess("payment", getInfo, NewCallerIdentity("did:test:alice", nil), poisoned, ret, parsed)
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
 	}
@@ -475,13 +481,14 @@ func TestMethodPolicy_SetOncePoison(t *testing.T) {
 // C-1: a nil policy document must never panic; it denies / reports not-gated.
 func TestMethodPolicy_NilDoc_NoPanic(t *testing.T) {
 	var doc *MethodPolicyDocument
+	parsed := mustParseABI(t)
 	getInfo := encodeCall(t, "getPaymentInfo", "PAY-1")
 
-	if _, _, ok, err := doc.GatedReader(getInfo, testPaymentABI); ok || err != nil {
-		t.Fatalf("nil doc must not report a gated reader or error, got ok=%v err=%v", ok, err)
+	if _, _, ok := doc.GatedReader(getInfo, parsed); ok {
+		t.Fatalf("nil doc must not report a gated reader, got ok=%v", ok)
 	}
 	dec, err := doc.EvaluateAccess("payment", getInfo, NewCallerIdentity("did:test:alice", nil), nil,
-		func() ([]common.Address, error) { return nil, nil }, testPaymentABI)
+		func() ([]common.Address, error) { return nil, nil }, parsed)
 	if err != nil || dec.Allow {
 		t.Fatalf("nil doc must deny without error, got allow=%v err=%v", dec.Allow, err)
 	}
@@ -513,7 +520,7 @@ func TestMethodPolicy_Uint64Key_RoundTrips(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pack: %v", err)
 	}
-	caps, err := doc.DecodeCaptures(cd, "did:test:alice", nil, abiJSON)
+	caps, err := doc.DecodeCaptures(cd, "did:test:alice", nil, parsed)
 	if err != nil {
 		t.Fatalf("decode captures: %v", err)
 	}
@@ -593,6 +600,7 @@ func TestMethodPolicy_EvaluateReader(t *testing.T) {
 	if err := doc.Validate(testPaymentABI); err != nil {
 		t.Fatalf("validate: %v", err)
 	}
+	parsed := mustParseABI(t)
 
 	loadFor := func(rows map[string][]CapturedField) func(string, string) ([]CapturedField, error) {
 		return func(rt, key string) ([]CapturedField, error) { return rows["payment|"+key], nil }
@@ -604,13 +612,13 @@ func TestMethodPolicy_EvaluateReader(t *testing.T) {
 
 	// not gated: a non-policy method → gated=false, passthrough
 	nonGated := encodeCall(t, "createPayment", "PAY-1", addr(payeeAddr), bigInt(1))
-	if gated, _, _ := doc.EvaluateReader(nonGated, NewCallerIdentity("did:test:alice", nil), loadFor(capturedPAY1), retNever, testPaymentABI); gated {
+	if gated, _, _ := doc.EvaluateReader(nonGated, NewCallerIdentity("did:test:alice", nil), loadFor(capturedPAY1), retNever, parsed); gated {
 		t.Fatalf("createPayment is not a gated reader")
 	}
 
 	// gated, captured payer matches → allow, resolver not consulted
 	getPAY1 := encodeCall(t, "getPaymentInfo", "PAY-1")
-	gated, dec, err := doc.EvaluateReader(getPAY1, NewCallerIdentity("did:test:alice", nil), loadFor(capturedPAY1), retNever, testPaymentABI)
+	gated, dec, err := doc.EvaluateReader(getPAY1, NewCallerIdentity("did:test:alice", nil), loadFor(capturedPAY1), retNever, parsed)
 	if err != nil || !gated || !dec.Allow {
 		t.Fatalf("payer should be allowed via capture: gated=%v allow=%v err=%v", gated, dec.Allow, err)
 	}
@@ -618,14 +626,14 @@ func TestMethodPolicy_EvaluateReader(t *testing.T) {
 	// gated, key with NO captures + return admits payer
 	getPAY2 := encodeCall(t, "getPaymentInfo", "PAY-2")
 	retPayer := func() ([]common.Address, error) { return []common.Address{addr(payerAddr)}, nil }
-	gated, dec, _ = doc.EvaluateReader(getPAY2, NewCallerIdentity("", []string{payerAddr}), loadFor(capturedPAY1), retPayer, testPaymentABI)
+	gated, dec, _ = doc.EvaluateReader(getPAY2, NewCallerIdentity("", []string{payerAddr}), loadFor(capturedPAY1), retPayer, parsed)
 	if !gated || !dec.Allow {
 		t.Fatalf("payer should be allowed via return for uncaptured key: allow=%v", dec.Allow)
 	}
 
 	// store error → deny
 	loadErr := func(string, string) ([]CapturedField, error) { return nil, errDecode }
-	gated, dec, _ = doc.EvaluateReader(getPAY1, NewCallerIdentity("did:test:alice", nil), loadErr, retPayer, testPaymentABI)
+	gated, dec, _ = doc.EvaluateReader(getPAY1, NewCallerIdentity("did:test:alice", nil), loadErr, retPayer, parsed)
 	if !gated || dec.Allow {
 		t.Fatalf("store error must deny: allow=%v", dec.Allow)
 	}
@@ -782,20 +790,14 @@ func TestMethodPolicy_Where_Evaluate(t *testing.T) {
 	if err := doc.Validate(testWhereABI); err != nil {
 		t.Fatalf("validate: %v", err)
 	}
-	whereParsed := func(t *testing.T) abi.ABI {
-		p, e := abi.JSON(strings.NewReader(testWhereABI))
-		if e != nil {
-			t.Fatal(e)
-		}
-		return p
+	parsed, e := abi.JSON(strings.NewReader(testWhereABI))
+	if e != nil {
+		t.Fatal(e)
 	}
-	getInfo := func(t *testing.T) []byte {
-		data, e := whereParsed(t).Pack("getPaymentInfo", "PAY-1")
-		if e != nil {
-			t.Fatal(e)
-		}
-		return data
-	}(t)
+	getInfo, e := parsed.Pack("getPaymentInfo", "PAY-1")
+	if e != nil {
+		t.Fatal(e)
+	}
 	retErr := func() ([]common.Address, error) { return nil, errDecode }
 
 	rowsFor := func(amount string) []CapturedField {
@@ -824,7 +826,7 @@ func TestMethodPolicy_Where_Evaluate(t *testing.T) {
 			if tc.amount == "" {
 				rows = []CapturedField{{Field: "payer", Value: "did:test:alice", Merge: "set_once"}}
 			}
-			dec, err := doc.EvaluateAccess("payment", getInfo, tc.caller, rows, retErr, testWhereABI)
+			dec, err := doc.EvaluateAccess("payment", getInfo, tc.caller, rows, retErr, parsed)
 			if err != nil {
 				t.Fatalf("evaluate: %v", err)
 			}
@@ -845,7 +847,7 @@ func TestMethodPolicy_Where_NumericNotLexical(t *testing.T) {
 	getInfo, _ := p.Pack("getPaymentInfo", "PAY-1")
 	// amount "9" is lexically > "1000000" but numerically far less → must deny.
 	rows := []CapturedField{{Field: "amount", Value: "9", Merge: "set_once"}}
-	dec, _ := doc.EvaluateAccess("payment", getInfo, NewCallerIdentity("did:test:compliance", nil), rows, func() ([]common.Address, error) { return nil, errDecode }, testWhereABI)
+	dec, _ := doc.EvaluateAccess("payment", getInfo, NewCallerIdentity("did:test:compliance", nil), rows, func() ([]common.Address, error) { return nil, errDecode }, p)
 	if dec.Allow {
 		t.Fatalf("numeric where compared lexically — 9 must NOT satisfy >= 1000000")
 	}

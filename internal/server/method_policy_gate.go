@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 
 	"privacy-proxy/internal/db"
@@ -107,20 +108,30 @@ func (p *JSONRPCProcessor) methodPolicyDecision(ctx context.Context, req *Proces
 	if perr != nil {
 		return true, true // corrupt policy → deny (M1)
 	}
+	// Parse the contract ABI ONCE for the whole gate decision and thread the
+	// parsed value through the rbac helpers (each used to re-parse this same
+	// string). A policy IS configured, so a parse failure here means we cannot
+	// tell whether this selector is a gated reader → fail CLOSED (H2). This is
+	// the single site that owns the parse-failure deny formerly split across
+	// GatedReader / EvaluateReader.
+	parsedABI, abiErr := abi.JSON(strings.NewReader(contract.ABI))
+	if abiErr != nil {
+		return true, true
+	}
 	calldata := common.FromHex(data)
 	caller := rbac.NewCallerIdentity(req.UserID, p.linkedAddresses(ctx, req.UserID))
 	ownerOrg := contract.OrgID
 	loadCaptures := func(recordType, recordKey string) ([]rbac.CapturedField, error) {
 		return store.GetRecordCaptures(ctx, ownerOrg, to, recordType, recordKey)
 	}
-	paths := doc.ReturnAddressPaths(calldata, contract.ABI)
+	paths := doc.ReturnAddressPaths(calldata, parsedABI)
 	resolveReturn := func() ([]common.Address, error) {
 		if overridden || len(paths) == 0 || len(returnData) == 0 {
 			return nil, nil
 		}
-		return rbac.DecodeReturnAddresses(returnData, calldata, paths, contract.ABI)
+		return rbac.DecodeReturnAddresses(returnData, calldata, paths, parsedABI)
 	}
-	g, dec, evalErr := doc.EvaluateReader(calldata, caller, loadCaptures, resolveReturn, contract.ABI)
+	g, dec, evalErr := doc.EvaluateReader(calldata, caller, loadCaptures, resolveReturn, parsedABI)
 	if evalErr != nil {
 		return true, true
 	}
@@ -214,7 +225,14 @@ func (p *JSONRPCProcessor) enqueueMethodPolicyCaptures(ctx context.Context, req 
 	if perr != nil {
 		return
 	}
-	writes, derr := doc.DecodeCaptures(common.FromHex(dataHex), req.UserID, visibleTo, contract.ABI)
+	// Parse the ABI once and thread it into DecodeCaptures (which used to parse
+	// the string itself). A parse failure → skip, exactly as the old
+	// DecodeCaptures parse-error return did (best-effort capture path).
+	parsedABI, abiErr := abi.JSON(strings.NewReader(contract.ABI))
+	if abiErr != nil {
+		return
+	}
+	writes, derr := doc.DecodeCaptures(common.FromHex(dataHex), req.UserID, visibleTo, parsedABI)
 	if derr != nil || len(writes) == 0 {
 		return
 	}
@@ -240,6 +258,13 @@ type nodeForwarder interface {
 
 // makeReceiptStatusFunc builds the reconciler's receipt checker backed by an
 // upstream eth_getTransactionReceipt call (RD-1206 capture promotion).
+//
+// This marshal→forward→parse is INTENTIONALLY not shared with
+// getTransactionReceipt / getTransactionReceiptStatus in jsonrpc_processor.go:
+// those turn an upstream RPC error object into a HARD error, whereas the
+// reconciler must treat it as a transient not-mined signal (retry) — err=nil,
+// mined=false, success=false (pinned by TestMakeReceiptStatusFunc). Unifying
+// would change one caller's error semantics, so the duplication stays.
 func makeReceiptStatusFunc(fwd nodeForwarder) ReceiptStatusFunc {
 	return func(ctx context.Context, txHash string) (mined bool, success bool, err error) {
 		body, mErr := json.Marshal(map[string]any{

@@ -462,47 +462,39 @@ func (d *MethodPolicyDocument) ValidateForClient(contractABI string) string {
 }
 
 // GatedReader returns the AccessSpec (and its record type) matching a reader's
-// calldata selector, or ok=false when the call is not gated by any policy.
-func (d *MethodPolicyDocument) GatedReader(calldata []byte, contractABI string) (recordType string, spec AccessSpec, ok bool, err error) {
+// calldata selector, or ok=false when the call is not gated by any policy. The
+// contract ABI is parsed once by the caller (methodPolicyDecision / the request
+// path) and threaded in; a parse failure at that single site fails closed there
+// (H2), so this function no longer re-parses per call.
+func (d *MethodPolicyDocument) GatedReader(calldata []byte, parsed abi.ABI) (recordType string, spec AccessSpec, ok bool) {
 	if d == nil {
-		return "", AccessSpec{}, false, nil
-	}
-	parsed, perr := abi.JSON(strings.NewReader(contractABI))
-	if perr != nil {
-		// A policy IS configured but the stored ABI won't parse: we cannot tell
-		// whether this selector is one of the gated readers. Signal the error so
-		// the request-path evaluator fails CLOSED (deny) rather than treating the
-		// call as "not gated" and passing the response through unfiltered (H2).
-		return "", AccessSpec{}, false, perr
+		return "", AccessSpec{}, false
 	}
 	if len(calldata) < 4 {
-		return "", AccessSpec{}, false, nil
+		return "", AccessSpec{}, false
 	}
 	m, merr := parsed.MethodById(calldata[:4])
 	if merr != nil {
 		// Selector not present in the ABI → not a gated reader (the node would
 		// hit fallback/revert; nothing record-shaped to protect). Not an error.
-		return "", AccessSpec{}, false, nil
+		return "", AccessSpec{}, false
 	}
 	for rt, rec := range d.Records {
 		for _, ac := range rec.Access {
 			if ac.Method == m.Sig {
-				return rt, ac, true, nil
+				return rt, ac, true
 			}
 		}
 	}
-	return "", AccessSpec{}, false, nil
+	return "", AccessSpec{}, false
 }
 
 // DecodeCaptures decodes a writer call into the values to persist. Returns an
-// empty slice (no error) when the call matches no capture spec.
-func (d *MethodPolicyDocument) DecodeCaptures(calldata []byte, senderDID string, visibleTo []string, contractABI string) ([]CapturedWrite, error) {
+// empty slice (no error) when the call matches no capture spec. The contract
+// ABI is parsed once by the caller (enqueueMethodPolicyCaptures) and threaded in.
+func (d *MethodPolicyDocument) DecodeCaptures(calldata []byte, senderDID string, visibleTo []string, parsed abi.ABI) ([]CapturedWrite, error) {
 	if len(calldata) < 4 {
 		return nil, nil
-	}
-	parsed, err := abi.JSON(strings.NewReader(contractABI))
-	if err != nil {
-		return nil, fmt.Errorf("method policy: parse ABI: %w", err)
 	}
 	m, err := parsed.MethodById(calldata[:4])
 	if err != nil {
@@ -580,13 +572,13 @@ func (d *MethodPolicyDocument) EvaluateAccess(
 	caller CallerIdentity,
 	captured []CapturedField,
 	resolveReturn func() ([]common.Address, error),
-	contractABI string,
+	parsed abi.ABI,
 ) (Decision, error) {
 	if d == nil {
 		return Decision{Allow: false}, nil
 	}
-	rt, spec, ok, gerr := d.GatedReader(calldata, contractABI)
-	if gerr != nil || !ok || rt != recordType {
+	rt, spec, ok := d.GatedReader(calldata, parsed)
+	if !ok || rt != recordType {
 		// Not gated (or record-type mismatch) — caller decides passthrough;
 		// this function is only invoked for gated readers, so treat a
 		// mismatch as fail-closed deny.
@@ -604,32 +596,11 @@ func (d *MethodPolicyDocument) EvaluateAccess(
 		byField[c.Field] = append(byField[c.Field], c.Value)
 	}
 
-	hasReturnRule := false
-	for _, rule := range spec.Allow {
-		if rule.Return != nil {
-			hasReturnRule = true // where is not permitted on return rules (Validate)
-			continue
-		}
-		// A where condition further-restricts this rule: skip it entirely when
-		// the record's captured scalar does not satisfy the comparison.
-		if rule.Where != nil && !evalWhere(rule.Where, byField) {
-			continue
-		}
-		for _, f := range rule.Fields {
-			if vals, ok := byField[f]; ok {
-				for _, v := range vals {
-					if caller.matches(v) {
-						return Decision{Allow: true}, nil
-					}
-				}
-				continue
-			}
-			// Not a captured field → a literal principal (DID/address); match
-			// the caller directly. (Validate guarantees it is one or the other.)
-			if isLiteralPrincipal(f) && caller.matches(f) {
-				return Decision{Allow: true}, nil
-			}
-		}
+	// Capture side (shared with SimulateReader): a matched non-return rule admits
+	// immediately; otherwise fall through to the return-source resolution below.
+	matched, _, hasReturnRule := matchCaptureSide(spec, caller, byField)
+	if matched {
+		return Decision{Allow: true}, nil
 	}
 
 	if !hasReturnRule {
@@ -663,24 +634,14 @@ func (d *MethodPolicyDocument) EvaluateReader(
 	caller CallerIdentity,
 	loadCaptures func(recordType, recordKey string) ([]CapturedField, error),
 	resolveReturn func() ([]common.Address, error),
-	contractABI string,
+	parsed abi.ABI,
 ) (gated bool, dec Decision, err error) {
 	if d == nil {
 		return false, Decision{Allow: false}, nil
 	}
-	rt, spec, ok, gerr := d.GatedReader(calldata, contractABI)
-	if gerr != nil {
-		// Policy configured but the stored ABI won't parse → we cannot confirm
-		// this call is NOT a gated reader → fail closed (H2). Previously this
-		// collapsed into the !ok passthrough below and served the response raw.
-		return true, Decision{Allow: false}, nil
-	}
+	rt, spec, ok := d.GatedReader(calldata, parsed)
 	if !ok {
 		return false, Decision{Allow: false}, nil
-	}
-	parsed, perr := abi.JSON(strings.NewReader(contractABI))
-	if perr != nil {
-		return true, Decision{Allow: false}, nil // defensive: GatedReader already parsed OK
 	}
 	key, kerr := decodeRecordKey(spec.Key, calldata, parsed)
 	if kerr != nil {
@@ -690,7 +651,7 @@ func (d *MethodPolicyDocument) EvaluateReader(
 	if lerr != nil {
 		return true, Decision{Allow: false}, nil // store error → deny (M1)
 	}
-	decision, derr := d.EvaluateAccess(rt, calldata, caller, caps, resolveReturn, contractABI)
+	decision, derr := d.EvaluateAccess(rt, calldata, caller, caps, resolveReturn, parsed)
 	if derr != nil {
 		return true, Decision{Allow: false}, nil
 	}
@@ -747,30 +708,11 @@ func (d *MethodPolicyDocument) SimulateReader(
 	for _, c := range captured {
 		byField[c.Field] = append(byField[c.Field], c.Value)
 	}
-	for _, rule := range spec.Allow {
-		if rule.Return != nil {
-			res.HasReturnSource = true
-			continue
-		}
-		if rule.Where != nil && !evalWhere(rule.Where, byField) {
-			continue
-		}
-		for _, f := range rule.Fields {
-			if vals, ok := byField[f]; ok {
-				for _, v := range vals {
-					if caller.matches(v) {
-						res.Allow, res.MatchedRule = true, "captured:"+f
-						return res, true, nil
-					}
-				}
-				continue
-			}
-			if isLiteralPrincipal(f) && caller.matches(f) {
-				res.Allow, res.MatchedRule = true, "principal:"+f
-				return res, true, nil
-			}
-		}
-	}
+	// Capture side shared with the enforcer (EvaluateAccess) so the simulator can
+	// never drift from what a real read would decide. The simulator keeps the
+	// matched-rule label; the enforcer discards it.
+	matched, rule, hasReturn := matchCaptureSide(spec, caller, byField)
+	res.Allow, res.MatchedRule, res.HasReturnSource = matched, rule, hasReturn
 	return res, true, nil
 }
 
@@ -778,12 +720,12 @@ func (d *MethodPolicyDocument) SimulateReader(
 // gated reader's return-source allow rules (empty when the call is not gated or
 // has no return source). The request-path gate uses it to decode only the
 // declared address slots from the already-forwarded response.
-func (d *MethodPolicyDocument) ReturnAddressPaths(calldata []byte, contractABI string) []string {
+func (d *MethodPolicyDocument) ReturnAddressPaths(calldata []byte, parsed abi.ABI) []string {
 	if d == nil {
 		return nil
 	}
-	_, spec, ok, gerr := d.GatedReader(calldata, contractABI)
-	if gerr != nil || !ok {
+	_, spec, ok := d.GatedReader(calldata, parsed)
+	if !ok {
 		return nil
 	}
 	seen := map[string]bool{}
@@ -804,17 +746,14 @@ func (d *MethodPolicyDocument) ReturnAddressPaths(calldata []byte, contractABI s
 
 // DecodeReturnAddresses decodes the declared address output paths from a
 // reader's return bytes. Bounds the input (H2) and decodes the full output
-// tuple once, then selects only the named address outputs.
-func DecodeReturnAddresses(returnData []byte, calldata []byte, paths []string, contractABI string) ([]common.Address, error) {
+// tuple once, then selects only the named address outputs. The contract ABI is
+// parsed once by the caller and threaded in.
+func DecodeReturnAddresses(returnData []byte, calldata []byte, paths []string, parsed abi.ABI) ([]common.Address, error) {
 	const maxReturnBytes = 128 * 1024
 	if len(returnData) > maxReturnBytes {
 		return nil, errDecode
 	}
 	if len(calldata) < 4 {
-		return nil, errDecode
-	}
-	parsed, err := abi.JSON(strings.NewReader(contractABI))
-	if err != nil {
 		return nil, errDecode
 	}
 	m, err := parsed.MethodById(calldata[:4])
@@ -851,6 +790,46 @@ func DecodeReturnAddresses(returnData []byte, calldata []byte, paths []string, c
 }
 
 // ---- helpers ----
+
+// matchCaptureSide runs the capture-side allow evaluation shared by the enforcer
+// (EvaluateAccess) and the simulator (SimulateReader) so the two can never drift.
+// byField is the captured values indexed by field name (the poison check is the
+// caller's responsibility, since a poison verdict is authoritative before any
+// rule runs). It returns whether a non-return allow rule admitted the caller, the
+// human-readable matched-rule label ("captured:<field>" / "principal:<literal>"),
+// and whether the spec has ANY return-source rule (so the caller knows a
+// capture-side deny is not authoritative). The return-source rule itself is NOT
+// evaluated here: the enforcer resolves it against live return bytes, and the
+// simulator deliberately does not.
+func matchCaptureSide(spec AccessSpec, caller CallerIdentity, byField map[string][]string) (matched bool, matchedRule string, hasReturnSource bool) {
+	for _, rule := range spec.Allow {
+		if rule.Return != nil {
+			hasReturnSource = true // where is not permitted on return rules (Validate)
+			continue
+		}
+		// A where condition further-restricts this rule: skip it entirely when
+		// the record's captured scalar does not satisfy the comparison.
+		if rule.Where != nil && !evalWhere(rule.Where, byField) {
+			continue
+		}
+		for _, f := range rule.Fields {
+			if vals, ok := byField[f]; ok {
+				for _, v := range vals {
+					if caller.matches(v) {
+						return true, "captured:" + f, hasReturnSource
+					}
+				}
+				continue
+			}
+			// Not a captured field → a literal principal (DID/address); match
+			// the caller directly. (Validate guarantees it is one or the other.)
+			if isLiteralPrincipal(f) && caller.matches(f) {
+				return true, "principal:" + f, hasReturnSource
+			}
+		}
+	}
+	return false, "", hasReturnSource
+}
 
 func setOncePoisoned(captured []CapturedField) bool {
 	seen := map[string]string{} // field -> first set-once value
@@ -1055,18 +1034,12 @@ func canonicalizableType(t abi.Type) bool {
 	}
 }
 
+// looksLikeAddress reports whether s is a 0x-prefixed 40-hex ETH address literal.
+// common.IsHexAddress accepts an OPTIONAL 0x/0X prefix (and also a bare 40-hex
+// string); this classification requires the prefix be present, so AND it with a
+// prefix check to keep the original semantics exactly.
 func looksLikeAddress(s string) bool {
-	if len(s) != 42 || !strings.HasPrefix(s, "0x") && !strings.HasPrefix(s, "0X") {
-		return false
-	}
-	for _, c := range s[2:] {
-		switch {
-		case c >= '0' && c <= '9', c >= 'a' && c <= 'f', c >= 'A' && c <= 'F':
-		default:
-			return false
-		}
-	}
-	return true
+	return (strings.HasPrefix(s, "0x") || strings.HasPrefix(s, "0X")) && common.IsHexAddress(s)
 }
 
 func isZeroAddress(s string) bool {
