@@ -125,6 +125,46 @@ func TestMethodPolicy_Validate(t *testing.T) {
 			json:    `{"records":{"p":{"capture":[{"method":"createPayment(string,address,uint256)","key":{"source":"param","index":0},"remember":{"payee":{"source":"param","merge":"set_once"}}}],"access":[]}}}`,
 			wantErr: "requires an index",
 		},
+		{
+			name:    "empty record type",
+			json:    `{"records":{"":{"capture":[],"access":[]}}}`,
+			wantErr: "empty record type",
+		},
+		{
+			name:    "capture with no remembered fields",
+			json:    `{"records":{"p":{"capture":[{"method":"createPayment(string,address,uint256)","key":{"source":"param","index":0},"remember":{}}],"access":[]}}}`,
+			wantErr: "no remembered fields",
+		},
+		{
+			name:    "unknown remember source",
+			json:    `{"records":{"p":{"capture":[{"method":"createPayment(string,address,uint256)","key":{"source":"param","index":0},"remember":{"x":{"source":"cosmic","merge":"union"}}}],"access":[]}}}`,
+			wantErr: "unsupported field",
+		},
+		{
+			name:    "reader method not in ABI",
+			json:    `{"records":{"p":{"capture":[{"method":"createPayment(string,address,uint256)","key":{"source":"param","index":0},"remember":{"payer":{"source":"sender","merge":"set_once"}}}],"access":[{"method":"ghostReader(string)","key":{"source":"param","index":0},"allow":[{"callerIn":["payer"]}],"onNoRecord":"deny","else":"deny"}]}}}`,
+			wantErr: "access method \"ghostReader(string)\" not found in ABI",
+		},
+		{
+			name:    "reader with no allow rules",
+			json:    `{"records":{"p":{"capture":[{"method":"createPayment(string,address,uint256)","key":{"source":"param","index":0},"remember":{"payer":{"source":"sender","merge":"set_once"}}}],"access":[{"method":"getPaymentInfo(string)","key":{"source":"param","index":0},"allow":[],"onNoRecord":"deny","else":"deny"}]}}}`,
+			wantErr: "no allow rules",
+		},
+		{
+			name:    "onNoRecord other than deny",
+			json:    `{"records":{"p":{"capture":[{"method":"createPayment(string,address,uint256)","key":{"source":"param","index":0},"remember":{"payer":{"source":"sender","merge":"set_once"}}}],"access":[{"method":"getPaymentInfo(string)","key":{"source":"param","index":0},"allow":[{"callerIn":["payer"]}],"onNoRecord":"allow","else":"deny"}]}}}`,
+			wantErr: "onNoRecord",
+		},
+		{
+			name:    "return kind other than address",
+			json:    `{"records":{"p":{"capture":[],"access":[{"method":"getPaymentInfo(string)","key":{"source":"param","index":0},"allow":[{"callerIn":{"source":"return","paths":["payer"],"kind":"uint256"}}],"onNoRecord":"deny","else":"deny"}]}}}`,
+			wantErr: "return kind",
+		},
+		{
+			name:    "same reader selector under two record types",
+			json:    `{"records":{"a":{"capture":[],"access":[{"method":"getPaymentInfo(string)","key":{"source":"param","index":0},"allow":[{"callerIn":{"source":"return","paths":["payer"],"kind":"address"}}],"onNoRecord":"deny","else":"deny"}]},"b":{"capture":[],"access":[{"method":"getPaymentInfo(string)","key":{"source":"param","index":0},"allow":[{"callerIn":{"source":"return","paths":["payee"],"kind":"address"}}],"onNoRecord":"deny","else":"deny"}]}}}`,
+			wantErr: "more than one record type",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
