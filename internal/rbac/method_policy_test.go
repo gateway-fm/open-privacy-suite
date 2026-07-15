@@ -361,6 +361,64 @@ func TestMethodPolicy_CaptureOnly_NeverForwards(t *testing.T) {
 	}
 }
 
+// Example 2 (draft): a getter whose return contains NO addresses is gated by
+// captured fields only — the return resolver has nothing to compare against and
+// must never be consulted. Reproduces the draft's openTrade/getTradeStatus shape
+// using the address-less-return getTradeStatus(string) in the test ABI.
+func TestMethodPolicy_Example2_AddresslessReturn(t *testing.T) {
+	const policy = `{"records":{"trade":{
+      "capture":[{"method":"createPayment(string,address,uint256)","key":{"source":"param","index":0},
+        "remember":{
+          "initiator":{"source":"sender","merge":"set_once"},
+          "counterparty":{"source":"param","index":1,"merge":"set_once"},
+          "audience":{"source":"visibleTo","merge":"union"}}}],
+      "access":[{"method":"getTradeStatus(string)","key":{"source":"param","index":0},
+        "allow":[{"callerIn":["initiator","counterparty","audience"]}],
+        "onNoRecord":"deny","else":"deny"}]}}}`
+	doc, err := ParseMethodPolicyDocument([]byte(policy))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := doc.Validate(testPaymentABI); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	getStatus := encodeCall(t, "getTradeStatus", "TRADE-1")
+	captured := rows(
+		[2]string{"initiator", "did:test:alice"},
+		[2]string{"counterparty", strings.ToLower(payeeAddr)},
+		[2]string{"audience", "did:test:charlie"},
+	)
+
+	tests := []struct {
+		name       string
+		callerDID  string
+		callerAddr []string
+		wantAllow  bool
+	}{
+		{name: "initiator (captured sender DID)", callerDID: "did:test:alice", wantAllow: true},
+		{name: "counterparty (captured param address)", callerAddr: []string{payeeAddr}, wantAllow: true},
+		{name: "audience (captured visibleTo DID)", callerDID: "did:test:charlie", wantAllow: true},
+		{name: "unrelated denied", callerDID: "did:test:diana", callerAddr: []string{otherAddr}, wantAllow: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			forwarded := false
+			ret := func() ([]common.Address, error) { forwarded = true; return nil, nil }
+			dec, err := doc.EvaluateAccess("trade", getStatus, NewCallerIdentity(tc.callerDID, tc.callerAddr), captured, ret, testPaymentABI)
+			if err != nil {
+				t.Fatalf("evaluate: %v", err)
+			}
+			if dec.Allow != tc.wantAllow {
+				t.Fatalf("allow = %v, want %v", dec.Allow, tc.wantAllow)
+			}
+			// The getter's return has no addresses: the resolver must never run.
+			if forwarded {
+				t.Fatalf("address-less-return getter must never consult the return resolver")
+			}
+		})
+	}
+}
+
 // L3: zero / empty values never match a caller.
 func TestMethodPolicy_ZeroGuard(t *testing.T) {
 	doc, _ := ParseMethodPolicyDocument([]byte(testPaymentPolicyJSON))
