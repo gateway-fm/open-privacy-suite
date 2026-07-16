@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
   parseAbiFunctions,
+  parseAbiEvents,
+  eventsWithKeyableParam,
   compileWizard,
   decompileWizard,
   validateWizard,
@@ -14,11 +16,22 @@ const paymentABI = JSON.stringify([
     inputs: [{ name: "paymentIdentifier", type: "string" }, { name: "payee", type: "address" }, { name: "amount", type: "uint256" }], outputs: [] },
   { type: "function", name: "completePayment", stateMutability: "nonpayable",
     inputs: [{ name: "paymentIdentifier", type: "string" }], outputs: [] },
+  { type: "function", name: "processPayment", stateMutability: "nonpayable",
+    inputs: [{ name: "paymentIdentifier", type: "string" }, { name: "status", type: "uint8" }], outputs: [] },
   { type: "function", name: "getPaymentInfo", stateMutability: "view",
     inputs: [{ name: "paymentIdentifier", type: "string" }],
     outputs: [{ name: "amount", type: "uint256" }, { name: "payer", type: "address" }, { name: "payee", type: "address" }] },
+  // Event whose record key (paymentIdentifier) sits in the NON-indexed data —
+  // the clean, recoverable path.
+  { type: "event", name: "PaymentProcessed", anonymous: false,
+    inputs: [{ name: "paymentIdentifier", type: "string", indexed: false }, { name: "status", type: "uint8", indexed: false }] },
+  // Event with an INDEXED dynamic (string) key — its value is NOT recoverable
+  // from the topic (only keccak256(value) is stored).
+  { type: "event", name: "PaymentIndexed", anonymous: false,
+    inputs: [{ name: "paymentIdentifier", type: "string", indexed: true }, { name: "amount", type: "uint256", indexed: false }] },
 ]);
 const fns = parseAbiFunctions(paymentABI);
+const events = parseAbiEvents(paymentABI);
 
 // Full Partior record: two captures (create + complete) and one reader with a
 // captured-field rule AND a return rule.
@@ -200,5 +213,160 @@ describe("emptyRecord", () => {
     expect(r.captures).toHaveLength(1);
     expect(r.readers).toHaveLength(1);
     expect(r.readers[0].rules).toHaveLength(1);
+    expect(r.events).toEqual([]);
+    expect(r.transactions).toEqual([]);
+  });
+});
+
+// ---- RD-1206 event/transaction gating (additive) ----
+
+describe("parseAbiEvents", () => {
+  it("canonical event signatures (Go abi.Event.Sig form: no indexed keyword, no names)", () => {
+    expect(events.map((e) => e.signature).sort()).toEqual([
+      "PaymentIndexed(string,uint256)",
+      "PaymentProcessed(string,uint8)",
+    ]);
+    const proc = events.find((e) => e.name === "PaymentProcessed")!;
+    expect(proc.inputs).toEqual([
+      { name: "paymentIdentifier", type: "string", indexed: false },
+      { name: "status", type: "uint8", indexed: false },
+    ]);
+  });
+  it("[] for garbage", () => {
+    expect(parseAbiEvents("nope")).toEqual([]);
+  });
+  it("eventsWithKeyableParam drops an event whose only key is an indexed dynamic", () => {
+    // PaymentIndexed's string key is indexed (unrecoverable) and uint256 amount
+    // is fine, so it stays keyable via the amount param; PaymentProcessed stays
+    // via its non-indexed string. Both remain, but PaymentIndexed's index-0
+    // key is disabled in the picker (asserted via validation below).
+    expect(eventsWithKeyableParam(events).map((e) => e.name).sort()).toEqual(["PaymentIndexed", "PaymentProcessed"]);
+  });
+});
+
+// Full record: capture + access + one event + one transaction, all keyed on the
+// same string paymentIdentifier, admitting the captured audience.
+const partiorFull: WizardState = {
+  records: [{
+    recordType: "payment",
+    captures: [
+      { writerSig: "createPayment(string,address,uint256)", keyIndex: 0, remember: [
+        { field: "payer", source: "sender", merge: "set_once" },
+        { field: "audience", source: "visibleTo", merge: "union" },
+      ]},
+    ],
+    readers: [{ readerSig: "getPaymentInfo(string)", keyIndex: 0, rules: [
+      { kind: "callerIn", fields: ["payer", "audience"], principals: [], returnPaths: [], where: null },
+    ]}],
+    events: [
+      { eventSig: "PaymentProcessed(string,uint8)", keyIndex: 0, rules: [
+        { fields: ["audience"], principals: [], where: null },
+      ]},
+    ],
+    transactions: [
+      { methodSig: "processPayment(string,uint8)", keyIndex: 0, rules: [
+        { fields: ["audience"], principals: [], where: null },
+      ]},
+    ],
+  }],
+};
+
+describe("compileWizard — events + transactions", () => {
+  it("emits the EXACT locked schema (deep-equal)", () => {
+    const doc = compileWizard(partiorFull);
+    expect(doc.records.payment.events).toEqual([
+      { event: "PaymentProcessed(string,uint8)", key: { source: "eventParam", index: 0 }, allow: [{ callerIn: ["audience"] }] },
+    ]);
+    expect(doc.records.payment.transactions).toEqual([
+      { method: "processPayment(string,uint8)", key: { source: "param", index: 0 }, allow: [{ callerIn: ["audience"] }] },
+    ]);
+  });
+
+  it("omits events/transactions keys entirely when empty (matches Go omitempty)", () => {
+    const s: WizardState = { records: [{
+      recordType: "payment",
+      captures: partiorFull.records[0].captures,
+      readers: partiorFull.records[0].readers,
+      events: [],
+      transactions: [],
+    }]};
+    const rec = compileWizard(s).records.payment;
+    expect("events" in rec).toBe(false);
+    expect("transactions" in rec).toBe(false);
+  });
+
+  it("carries a literal principal + where into the audience allow rule", () => {
+    const s = structuredClone(partiorFull);
+    s.records[0].captures[0].remember.push({ field: "amount", source: "param", paramIndex: 2, merge: "set_once" });
+    s.records[0].events[0].rules = [
+      { fields: [], principals: ["did:test:compliance"], where: { field: "amount", op: "gte", value: "1000000" } },
+    ];
+    expect(compileWizard(s).records.payment.events![0].allow).toEqual([
+      { callerIn: ["did:test:compliance"], where: { field: "amount", op: "gte", value: "1000000" } },
+    ]);
+  });
+});
+
+describe("decompileWizard round-trip — events + transactions", () => {
+  it("compile → decompile → compile is stable", () => {
+    const doc = compileWizard(partiorFull);
+    const back = decompileWizard(doc);
+    expect(compileWizard(back)).toEqual(doc);
+  });
+});
+
+describe("validateWizard — events + transactions", () => {
+  it("passes the full record", () => {
+    expect(validateWizard(partiorFull, fns, events)).toBeNull();
+  });
+
+  it("rejects an event that is not in the ABI", () => {
+    const s = structuredClone(partiorFull);
+    s.records[0].events[0].eventSig = "GhostEvent(string)";
+    expect(validateWizard(s, fns, events)).toMatch(/choose an event that exists in the ABI/);
+  });
+
+  it("rejects an event key whose type disagrees with the record key type", () => {
+    const s = structuredClone(partiorFull);
+    // point the event key at param 1 (uint8) — disagrees with the string record key.
+    s.records[0].events[0].keyIndex = 1;
+    expect(validateWizard(s, fns, events)).toMatch(/key types must match/);
+  });
+
+  it("rejects an indexed dynamic event key param (unrecoverable from a topic)", () => {
+    const s = structuredClone(partiorFull);
+    s.records[0].events[0].eventSig = "PaymentIndexed(string,uint256)";
+    s.records[0].events[0].keyIndex = 0; // the indexed string
+    expect(validateWizard(s, fns, events)).toMatch(/indexed string.*not recoverable from a log topic/);
+  });
+
+  it("rejects an event allow field that isn't a captured field", () => {
+    const s = structuredClone(partiorFull);
+    s.records[0].events[0].rules = [{ fields: ["ghost"], principals: [], where: null }];
+    expect(validateWizard(s, fns, events)).toMatch(/allow field "ghost" is not a captured field/);
+  });
+
+  it("rejects a transaction method that is not in the ABI", () => {
+    const s = structuredClone(partiorFull);
+    s.records[0].transactions[0].methodSig = "ghostTx(string)";
+    expect(validateWizard(s, fns, events)).toMatch(/choose a transaction method that exists in the ABI/);
+  });
+
+  it("rejects a transaction key whose type disagrees with the record key type", () => {
+    const s = structuredClone(partiorFull);
+    s.records[0].transactions[0].keyIndex = 1; // uint8 vs string
+    expect(validateWizard(s, fns, events)).toMatch(/key types must match/);
+  });
+
+  it("rejects an event allow rule with no field and no principal", () => {
+    const s = structuredClone(partiorFull);
+    s.records[0].events[0].rules = [{ fields: [], principals: [], where: null }];
+    expect(validateWizard(s, fns, events)).toMatch(/needs at least one captured field or literal principal/);
+  });
+
+  it("rejects a non-principal literal in a transaction allow rule", () => {
+    const s = structuredClone(partiorFull);
+    s.records[0].transactions[0].rules = [{ fields: [], principals: ["compliance-desk"], where: null }];
+    expect(validateWizard(s, fns, events)).toMatch(/must be a did:/);
   });
 });

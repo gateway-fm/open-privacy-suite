@@ -3,20 +3,30 @@ import { rbacApi } from "@/api/rbac";
 import type { MethodPolicyDocument } from "@/types/rbac";
 import {
   parseAbiFunctions,
+  parseAbiEvents,
   functionsWithKeyableParam,
+  eventsWithKeyableParam,
   isCanonicalizableKeyType,
+  isDynamicType,
   compileWizard,
   decompileWizard,
   validateWizard,
   renderPolicy,
   emptyRecord,
+  emptyEvent,
+  emptyTransaction,
+  emptyAudienceRule,
   WHERE_OPS,
   type AbiFnInfo,
+  type AbiEventInfo,
   type WizardState,
   type WizardRecord,
   type WizardCapture,
   type WizardReader,
   type WizardAllowRule,
+  type WizardEvent,
+  type WizardTransaction,
+  type WizardAudienceRule,
 } from "@/lib/methodPolicy";
 import { Button } from "@/components/ui/button";
 import { ShieldAlert, ShieldCheck, Check, Loader2, Plus, X, Info, FlaskConical } from "lucide-react";
@@ -43,6 +53,8 @@ export function MethodPolicyManager({ orgId, contractAddress, contractAbi, initi
 
   const fns = useMemo(() => parseAbiFunctions(contractAbi), [contractAbi]);
   const keyableFns = useMemo(() => functionsWithKeyableParam(fns), [fns]);
+  const abiEvents = useMemo(() => parseAbiEvents(contractAbi), [contractAbi]);
+  const keyableEvents = useMemo(() => eventsWithKeyableParam(abiEvents), [abiEvents]);
   const rendered = policy ? renderPolicy(policy) : [];
   const noAbi = !contractAbi;
   // Tier-2 org-admin control (RD-1206): editable by any non-read-only admin,
@@ -57,7 +69,7 @@ export function MethodPolicyManager({ orgId, contractAddress, contractAbi, initi
       return null;
     }
   }, [w]);
-  const clientError = mode === "structured" ? validateWizard(w, fns) : null;
+  const clientError = mode === "structured" ? validateWizard(w, fns, abiEvents) : null;
 
   function resetBanners() {
     setError(null);
@@ -154,6 +166,12 @@ export function MethodPolicyManager({ orgId, contractAddress, contractAbi, initi
               {r.readers.map((rd, i) => (
                 <div key={i} className="text-neutral-600"><span className="font-mono">{rd.method}</span> readable by: {rd.allows.join("; ") || "(no one)"}</div>
               ))}
+              {r.events.map((ev, i) => (
+                <div key={`e${i}`} className="text-neutral-600">event <span className="font-mono">{ev.event}</span> admits: {ev.allows.join("; ") || "(no one)"}</div>
+              ))}
+              {r.transactions.map((t, i) => (
+                <div key={`t${i}`} className="text-neutral-600">tx <span className="font-mono">{t.method}</span> admits: {t.allows.join("; ") || "(no one)"}</div>
+              ))}
               {r.captures.map((c, i) => (
                 <div key={`c${i}`} className="text-neutral-500">captured on <span className="font-mono">{c.method}</span>: {c.fields.join(", ")}</div>
               ))}
@@ -165,8 +183,10 @@ export function MethodPolicyManager({ orgId, contractAddress, contractAbi, initi
       <div className="p-2 rounded bg-amber-50 border border-amber-200 flex items-start gap-2">
         <Info className="w-3.5 h-3.5 text-amber-600 mt-0.5 flex-shrink-0" />
         <p className="text-xs text-amber-700">
-          A method policy gates the <strong>getter</strong> only — not the record&apos;s event logs. Gate those with
-          event rules too. Use high-entropy, opaque record identifiers.
+          The <strong>access</strong> section gates record-reader getters. The <strong>events</strong> and{" "}
+          <strong>transactions</strong> sections additively admit the record&apos;s captured audience to matching
+          logs / transactions (they widen, never narrow, the deny-by-default baseline). Use high-entropy, opaque
+          record identifiers.
         </p>
       </div>
 
@@ -192,6 +212,8 @@ export function MethodPolicyManager({ orgId, contractAddress, contractAbi, initi
               rec={rec}
               fns={fns}
               keyableFns={keyableFns}
+              abiEvents={abiEvents}
+              keyableEvents={keyableEvents}
               onChange={(fn) => updateRecord(ri, fn)}
               onRemove={() => setW({ records: w.records.filter((_, i) => i !== ri) })}
             />
@@ -238,10 +260,13 @@ export function MethodPolicyManager({ orgId, contractAddress, contractAbi, initi
 }
 
 // ---- Record editor ----
-function RecordEditor({ rec, fns, keyableFns, onChange, onRemove }: {
+function RecordEditor({ rec, fns, keyableFns, abiEvents, keyableEvents, onChange, onRemove }: {
   rec: WizardRecord; fns: AbiFnInfo[]; keyableFns: AbiFnInfo[];
+  abiEvents: AbiEventInfo[]; keyableEvents: AbiEventInfo[];
   onChange: (fn: (r: WizardRecord) => WizardRecord) => void; onRemove: () => void;
 }) {
+  const events = rec.events ?? [];
+  const transactions = rec.transactions ?? [];
   return (
     <div className="border border-neutral-200 rounded p-2 space-y-2">
       <div className="flex items-center gap-2">
@@ -271,6 +296,28 @@ function RecordEditor({ rec, fns, keyableFns, onChange, onRemove }: {
       <Button variant="ghost" size="sm" onClick={() => onChange((r) => ({ ...r, readers: [...r.readers, { readerSig: "", keyIndex: 0, rules: [{ kind: "callerIn", fields: [], principals: [], returnPaths: [], where: null }] }] }))}>
         <Plus className="w-3 h-3" /> add reader
       </Button>
+
+      {/* Events (additive) */}
+      <div className="text-xs font-medium text-neutral-600">Event logs to gate (additive — admits the record audience)</div>
+      {events.map((ev, ei) => (
+        <EventEditor key={ei} ev={ev} keyableEvents={keyableEvents} abiEvents={abiEvents} rec={rec}
+          onChange={(fn) => onChange((r) => ({ ...r, events: (r.events ?? []).map((x, i) => (i === ei ? fn(x) : x)) }))}
+          onRemove={() => onChange((r) => ({ ...r, events: (r.events ?? []).filter((_, i) => i !== ei) }))} />
+      ))}
+      <Button variant="ghost" size="sm" onClick={() => onChange((r) => ({ ...r, events: [...(r.events ?? []), emptyEvent()] }))}>
+        <Plus className="w-3 h-3" /> add event
+      </Button>
+
+      {/* Transactions (additive) */}
+      <div className="text-xs font-medium text-neutral-600">Transactions to gate (additive — admits the record audience)</div>
+      {transactions.map((tx, ti) => (
+        <TransactionEditor key={ti} tx={tx} keyableFns={keyableFns} fns={fns} rec={rec}
+          onChange={(fn) => onChange((r) => ({ ...r, transactions: (r.transactions ?? []).map((x, i) => (i === ti ? fn(x) : x)) }))}
+          onRemove={() => onChange((r) => ({ ...r, transactions: (r.transactions ?? []).filter((_, i) => i !== ti) }))} />
+      ))}
+      <Button variant="ghost" size="sm" onClick={() => onChange((r) => ({ ...r, transactions: [...(r.transactions ?? []), emptyTransaction()] }))}>
+        <Plus className="w-3 h-3" /> add transaction
+      </Button>
     </div>
   );
 }
@@ -283,6 +330,24 @@ function KeyParamSelect({ fn, value, onChange, label }: { fn?: AbiFnInfo; value:
       {(fn?.inputs ?? []).map((p, i) => (
         <option key={i} value={i} disabled={!isCanonicalizableKeyType(p.type)}>{i}: {p.name} ({p.type})</option>
       ))}
+    </select>
+  );
+}
+
+// Event key select. An indexed dynamic param (indexed string/bytes) is not
+// recoverable from a log topic, so it is disabled with a hint.
+function EventKeyParamSelect({ ev, value, onChange, label }: { ev?: AbiEventInfo; value: number; onChange: (i: number) => void; label: string }) {
+  return (
+    <select className="border rounded px-2 py-1 text-sm" aria-label={label} value={value} onChange={(e) => onChange(Number(e.target.value))}>
+      {(ev?.inputs ?? []).map((p, i) => {
+        const indexedDynamic = p.indexed && isDynamicType(p.type);
+        const bad = !isCanonicalizableKeyType(p.type) || indexedDynamic;
+        return (
+          <option key={i} value={i} disabled={bad}>
+            {i}: {p.name} ({p.type}{p.indexed ? " indexed" : ""}){indexedDynamic ? " — not recoverable" : ""}
+          </option>
+        );
+      })}
     </select>
   );
 }
@@ -447,6 +512,116 @@ function RuleEditor({ rule, reader, fieldNames, onChange, onRemove }: {
             </label>
           ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+// ---- Event editor ----
+function EventEditor({ ev, keyableEvents, abiEvents, rec, onChange, onRemove }: {
+  ev: WizardEvent; keyableEvents: AbiEventInfo[]; abiEvents: AbiEventInfo[]; rec: WizardRecord;
+  onChange: (fn: (e: WizardEvent) => WizardEvent) => void; onRemove: () => void;
+}) {
+  const info = abiEvents.find((e) => e.signature === ev.eventSig);
+  const fieldNames = recordFieldNames(rec);
+  return (
+    <div className="border border-neutral-100 rounded p-2 space-y-1 bg-neutral-50">
+      <div className="flex flex-wrap items-center gap-1">
+        <select className="border rounded px-2 py-1 text-sm" aria-label="event" value={ev.eventSig}
+          onChange={(e) => onChange((x) => ({ ...x, eventSig: e.target.value, keyIndex: 0 }))}>
+          <option value="">event…</option>
+          {keyableEvents.map((e) => <option key={e.signature} value={e.signature}>{e.signature}</option>)}
+        </select>
+        <span className="text-xs text-neutral-500">key</span>
+        <EventKeyParamSelect ev={info} value={ev.keyIndex} onChange={(i) => onChange((x) => ({ ...x, keyIndex: i }))} label="event key parameter" />
+        <button type="button" aria-label="remove event" className="ml-auto" onClick={onRemove}><X className="w-3.5 h-3.5 text-neutral-400" /></button>
+      </div>
+      {ev.rules.map((rule, ui) => (
+        <AudienceRuleEditor key={ui} rule={rule} fieldNames={fieldNames} labelPrefix="event"
+          onChange={(fn) => onChange((x) => ({ ...x, rules: x.rules.map((r, i) => (i === ui ? fn(r) : r)) }))}
+          onRemove={() => onChange((x) => ({ ...x, rules: x.rules.filter((_, i) => i !== ui) }))} />
+      ))}
+      <Button variant="ghost" size="sm" onClick={() => onChange((x) => ({ ...x, rules: [...x.rules, emptyAudienceRule()] }))}>
+        <Plus className="w-3 h-3" /> allow rule
+      </Button>
+    </div>
+  );
+}
+
+// ---- Transaction editor ----
+function TransactionEditor({ tx, keyableFns, fns, rec, onChange, onRemove }: {
+  tx: WizardTransaction; keyableFns: AbiFnInfo[]; fns: AbiFnInfo[]; rec: WizardRecord;
+  onChange: (fn: (t: WizardTransaction) => WizardTransaction) => void; onRemove: () => void;
+}) {
+  const writer = methodBySig(fns, tx.methodSig);
+  const fieldNames = recordFieldNames(rec);
+  return (
+    <div className="border border-neutral-100 rounded p-2 space-y-1 bg-neutral-50">
+      <div className="flex flex-wrap items-center gap-1">
+        <select className="border rounded px-2 py-1 text-sm" aria-label="transaction method" value={tx.methodSig}
+          onChange={(e) => onChange((x) => ({ ...x, methodSig: e.target.value, keyIndex: 0 }))}>
+          <option value="">transaction method…</option>
+          {keyableFns.map((f) => <option key={f.signature} value={f.signature}>{f.signature}</option>)}
+        </select>
+        <span className="text-xs text-neutral-500">key</span>
+        <KeyParamSelect fn={writer} value={tx.keyIndex} onChange={(i) => onChange((x) => ({ ...x, keyIndex: i }))} label="transaction key parameter" />
+        <button type="button" aria-label="remove transaction" className="ml-auto" onClick={onRemove}><X className="w-3.5 h-3.5 text-neutral-400" /></button>
+      </div>
+      {tx.rules.map((rule, ui) => (
+        <AudienceRuleEditor key={ui} rule={rule} fieldNames={fieldNames} labelPrefix="transaction"
+          onChange={(fn) => onChange((x) => ({ ...x, rules: x.rules.map((r, i) => (i === ui ? fn(r) : r)) }))}
+          onRemove={() => onChange((x) => ({ ...x, rules: x.rules.filter((_, i) => i !== ui) }))} />
+      ))}
+      <Button variant="ghost" size="sm" onClick={() => onChange((x) => ({ ...x, rules: [...x.rules, emptyAudienceRule()] }))}>
+        <Plus className="w-3 h-3" /> allow rule
+      </Button>
+    </div>
+  );
+}
+
+// ---- Audience rule editor (callerIn-only; events/transactions) ----
+function AudienceRuleEditor({ rule, fieldNames, labelPrefix, onChange, onRemove }: {
+  rule: WizardAudienceRule; fieldNames: string[]; labelPrefix: string;
+  onChange: (fn: (r: WizardAudienceRule) => WizardAudienceRule) => void; onRemove: () => void;
+}) {
+  return (
+    <div className="border-l-2 border-neutral-200 pl-2 ml-1 space-y-1">
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-neutral-500">admit when caller is a captured party / principal</span>
+        <button type="button" aria-label={`remove ${labelPrefix} rule`} className="ml-auto" onClick={onRemove}><X className="w-3 h-3 text-neutral-400" /></button>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {fieldNames.map((f) => (
+          <label key={f} className="text-xs flex items-center gap-1">
+            <input type="checkbox" aria-label={`${labelPrefix} allow field ${f}`} checked={rule.fields.includes(f)}
+              onChange={(e) => onChange((r) => ({ ...r, fields: e.target.checked ? [...r.fields, f] : r.fields.filter((x) => x !== f) }))} />
+            {f}
+          </label>
+        ))}
+      </div>
+      <input className="border rounded px-2 py-1 text-xs w-full" aria-label={`${labelPrefix} literal principals`}
+        placeholder="literal principals (comma-separated did:… or 0x…)" value={rule.principals.join(", ")}
+        onChange={(e) => onChange((r) => ({ ...r, principals: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) }))} />
+      {rule.where ? (
+        <div className="flex flex-wrap items-center gap-1">
+          <span className="text-xs text-neutral-500">and</span>
+          <select className="border rounded px-1 py-0.5 text-xs" aria-label={`${labelPrefix} where field`} value={rule.where.field}
+            onChange={(e) => onChange((r) => ({ ...r, where: { ...r.where!, field: e.target.value } }))}>
+            <option value="">field…</option>
+            {fieldNames.map((f) => <option key={f} value={f}>{f}</option>)}
+          </select>
+          <select className="border rounded px-1 py-0.5 text-xs" aria-label={`${labelPrefix} where op`} value={rule.where.op}
+            onChange={(e) => onChange((r) => ({ ...r, where: { ...r.where!, op: e.target.value } }))}>
+            {WHERE_OPS.map((o) => <option key={o} value={o}>{o}</option>)}
+          </select>
+          <input className="border rounded px-2 py-0.5 text-xs w-32" aria-label={`${labelPrefix} where value`} placeholder="value" value={rule.where.value}
+            onChange={(e) => onChange((r) => ({ ...r, where: { ...r.where!, value: e.target.value } }))} />
+          <button type="button" aria-label={`remove ${labelPrefix} where`} onClick={() => onChange((r) => ({ ...r, where: null }))}><X className="w-3 h-3 text-neutral-400" /></button>
+        </div>
+      ) : (
+        <Button variant="ghost" size="sm" onClick={() => onChange((r) => ({ ...r, where: { field: fieldNames[0] ?? "", op: "gte", value: "" } }))}>
+          <Plus className="w-3 h-3" /> add condition (where)
+        </Button>
       )}
     </div>
   );

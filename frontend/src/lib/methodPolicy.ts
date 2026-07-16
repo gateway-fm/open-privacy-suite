@@ -5,10 +5,11 @@
 // produces the exact Solidity canonical form the Go backend uses
 // (abi.Method.Sig) — including nested tuples — so a UI-built policy validates
 // server-side on the first save.
-import { toFunctionSignature, type Abi, type AbiFunction } from "viem";
+import { toFunctionSignature, toEventSignature, type Abi, type AbiFunction, type AbiEvent } from "viem";
 import type {
   MethodPolicyDocument,
   MethodPolicyAllowRule,
+  MethodPolicyStringAllowRule,
   MethodPolicyWhere,
 } from "@/types/rbac";
 
@@ -23,6 +24,24 @@ export interface AbiFnInfo {
   inputs: AbiParam[];
   outputs: AbiParam[];
   addressOutputs: AbiParam[]; // subset of outputs whose type is "address"
+}
+
+export interface AbiEventParam extends AbiParam {
+  indexed: boolean;
+}
+
+export interface AbiEventInfo {
+  name: string;
+  signature: string; // canonical topic0 preimage, matches Go abi.Event.Sig
+  inputs: AbiEventParam[];
+}
+
+// An ABI type that is dynamic (its indexed topic holds keccak256(value), not
+// the value) and so cannot be recovered as a record key from a log topic.
+const DYNAMIC_TYPE = /^(string|bytes)$/; // bytesN (fixed) is static and fine
+
+export function isDynamicType(t: string): boolean {
+  return DYNAMIC_TYPE.test(t);
 }
 
 // Types the backend can canonicalize as a record key (must match
@@ -70,6 +89,49 @@ export function functionsWithKeyableParam(fns: AbiFnInfo[]): AbiFnInfo[] {
   return fns.filter((f) => f.inputs.some((p) => isCanonicalizableKeyType(p.type)));
 }
 
+// parseAbiEvents lists the contract's events with their canonical signatures.
+// toEventSignature yields the exact `Name(t1,t2)` topic0-preimage form Go uses
+// (abi.Event.Sig — no `indexed` keyword, no param names), so a UI-built events
+// policy validates server-side on the first save.
+export function parseAbiEvents(abiJSON?: string): AbiEventInfo[] {
+  if (!abiJSON) return [];
+  let abi: Abi;
+  try {
+    abi = JSON.parse(abiJSON) as Abi;
+  } catch {
+    return [];
+  }
+  const out: AbiEventInfo[] = [];
+  for (const item of abi) {
+    if (item.type !== "event") continue;
+    const ev = item as AbiEvent;
+    let signature: string;
+    try {
+      signature = toEventSignature(ev);
+    } catch {
+      continue;
+    }
+    out.push({
+      name: ev.name,
+      signature,
+      inputs: (ev.inputs ?? []).map((i, idx) => ({
+        name: i.name || String(idx),
+        type: i.type,
+        indexed: Boolean((i as { indexed?: boolean }).indexed),
+      })),
+    });
+  }
+  return out;
+}
+
+// Events with at least one recoverable (canonicalizable, and not an indexed
+// dynamic) key parameter can be gated by a record key.
+export function eventsWithKeyableParam(events: AbiEventInfo[]): AbiEventInfo[] {
+  return events.filter((e) =>
+    e.inputs.some((p) => isCanonicalizableKeyType(p.type) && !(p.indexed && isDynamicType(p.type)))
+  );
+}
+
 // describeAllowRule renders one allow rule for the display.
 export function describeAllowRule(rule: MethodPolicyAllowRule): string {
   let base: string;
@@ -88,6 +150,15 @@ export interface RenderedRecord {
   recordType: string;
   readers: { method: string; keyParam: string; allows: string[] }[];
   captures: { method: string; keyParam: string; fields: string[] }[];
+  events: { event: string; keyParam: string; allows: string[] }[];
+  transactions: { method: string; keyParam: string; allows: string[] }[];
+}
+
+// describeStringAllowRule renders one callerIn-only rule (events/transactions).
+export function describeStringAllowRule(rule: MethodPolicyStringAllowRule): string {
+  let base = `caller is one of: ${(rule.callerIn ?? []).join(", ")}`;
+  if (rule.where) base += ` — and ${rule.where.field} ${rule.where.op} ${rule.where.value}`;
+  return base;
 }
 
 // ---- Structured wizard model (array-based; full schema) ----
@@ -126,10 +197,38 @@ export interface WizardReader {
   rules: WizardAllowRule[];
 }
 
+// An audience rule for events/transactions: captured-field / literal-principal
+// membership with an optional where. There is NO return kind here (a log/tx has
+// no return value), so this is the callerIn-only subset of WizardAllowRule.
+export interface WizardAudienceRule {
+  fields: string[]; // captured field names
+  principals: string[]; // literal did:/0x principals
+  where?: { field: string; op: string; value: string } | null;
+}
+
+// A gated event log. keyIndex is the index into the event's parameters.
+export interface WizardEvent {
+  eventSig: string;
+  keyIndex: number;
+  rules: WizardAudienceRule[];
+}
+
+// A gated writer transaction. keyIndex is the index into the writer's calldata.
+export interface WizardTransaction {
+  methodSig: string;
+  keyIndex: number;
+  rules: WizardAudienceRule[];
+}
+
 export interface WizardRecord {
   recordType: string;
   captures: WizardCapture[];
   readers: WizardReader[];
+  // NEW — additive event/transaction gating (RD-1206). Optional so a legacy
+  // capture/access-only record literal type-checks; emptyRecord/decompileWizard
+  // always populate them (defaulted to [] on read for hand-built states).
+  events?: WizardEvent[];
+  transactions?: WizardTransaction[];
 }
 
 export interface WizardState {
@@ -186,9 +285,43 @@ function declaredKinds(
   return { kinds, merges, err: null };
 }
 
+// validateAudienceRule checks one callerIn-only rule (events/transactions):
+// captured-field / literal-principal membership with an optional where. Mirrors
+// the callerIn branch of the reader validation. Returns null when valid.
+function validateAudienceRule(
+  rule: WizardAudienceRule,
+  kinds: Map<string, string>,
+  ctx: string
+): string | null {
+  if (rule.fields.length === 0 && rule.principals.length === 0) {
+    return `${ctx}: an allow rule needs at least one captured field or literal principal.`;
+  }
+  for (const f of rule.fields) {
+    if (!kinds.has(f)) return `${ctx}: allow field "${f}" is not a captured field.`;
+  }
+  for (const p of rule.principals) {
+    if (!isLiteralPrincipal(p)) return `${ctx}: principal "${p}" must be a did:… or 0x… address.`;
+  }
+  if (rule.where) {
+    const w = rule.where;
+    if (!w.field) return `${ctx}: where.field is required.`;
+    const k = kinds.get(w.field);
+    if (!k) return `${ctx}: where.field "${w.field}" is not a captured field.`;
+    if (!WHERE_OPS.includes(w.op as (typeof WHERE_OPS)[number])) return `${ctx}: where.op "${w.op}" is invalid.`;
+    if (NUMERIC_WHERE_OPS.has(w.op)) {
+      if (!isNumericKind(k)) return `${ctx}: where op ${w.op} needs a numeric field, but "${w.field}" is ${k}.`;
+      if (!/^-?\d+$/.test(w.value.trim())) return `${ctx}: where.value "${w.value}" must be an integer for op ${w.op}.`;
+    }
+    if (!w.value && w.op !== "eq" && w.op !== "neq") return `${ctx}: where.value is required.`;
+  }
+  return null;
+}
+
 // validateWizard mirrors every backend invariant so the UI cannot Save a policy
-// the backend would reject. Returns null when valid.
-export function validateWizard(s: WizardState, fns: AbiFnInfo[]): string | null {
+// the backend would reject. Returns null when valid. `events` is the contract's
+// parsed event list (needed to validate the events section); defaults to [] so
+// legacy callers that only gate readers keep working.
+export function validateWizard(s: WizardState, fns: AbiFnInfo[], events: AbiEventInfo[] = []): string | null {
   if (s.records.length === 0) return "Add at least one record type.";
   const recordNames = new Set<string>();
   for (const rec of s.records) {
@@ -199,16 +332,21 @@ export function validateWizard(s: WizardState, fns: AbiFnInfo[]): string | null 
     if (rec.captures.length === 0) return `Record "${rt}": add at least one capture.`;
     if (rec.readers.length === 0) return `Record "${rt}": add at least one reader method to gate.`;
 
-    // key type must agree across every capture + reader of the record.
+    // key type must agree across every capture + reader (and every gated
+    // event/tx) of the record — this parity is what makes the log's decoded key
+    // canonicalize to the exact record_key string that capture stored.
     let keyType = "";
+    const checkKeyType = (t: string, sig: string, what: string): string | null => {
+      if (keyType === "") keyType = t;
+      else if (keyType !== t) return `Record "${rt}": key types must match across ${what} ${sig} (${t} vs ${keyType}).`;
+      return null;
+    };
     const checkKey = (sig: string, idx: number, what: string): string | null => {
       const fn = fns.find((f) => f.signature === sig);
       if (!fn) return `Record "${rt}": choose a ${what} method.`;
       const p = fn.inputs[idx];
       if (!p || !isCanonicalizableKeyType(p.type)) return `Record "${rt}": choose a valid record-key parameter on ${what} ${sig}.`;
-      if (keyType === "") keyType = p.type;
-      else if (keyType !== p.type) return `Record "${rt}": key types must match across methods (${p.type} vs ${keyType}).`;
-      return null;
+      return checkKeyType(p.type, sig, what);
     };
     for (const cap of rec.captures) {
       const e = checkKey(cap.writerSig, cap.keyIndex, "writer");
@@ -268,8 +406,60 @@ export function validateWizard(s: WizardState, fns: AbiFnInfo[]): string | null 
         }
       }
     }
+
+    // Events (additive gating). The event must exist in the ABI; the key param
+    // index/type must be valid, must NOT be an indexed dynamic (unrecoverable
+    // from a log topic), and must agree with the record's key type. Rules are
+    // callerIn-only (no return, no where-on-return).
+    for (const ev of rec.events ?? []) {
+      const ctx = `Record "${rt}" event ${ev.eventSig || "?"}`;
+      const info = events.find((e) => e.signature === ev.eventSig);
+      if (!info) return `Record "${rt}": choose an event that exists in the ABI.`;
+      const p = info.inputs[ev.keyIndex];
+      if (!p || !isCanonicalizableKeyType(p.type)) return `${ctx}: choose a valid record-key parameter.`;
+      if (p.indexed && isDynamicType(p.type)) {
+        return `${ctx}: key parameter "${p.name}" is an indexed ${p.type} — its value is not recoverable from a log topic; use a non-indexed key.`;
+      }
+      const e = checkKeyType(p.type, ev.eventSig, "event");
+      if (e) return e;
+      if (ev.rules.length === 0) return `${ctx}: add at least one allow rule.`;
+      for (const rule of ev.rules) {
+        const re = validateAudienceRule(rule, kinds, ctx);
+        if (re) return re;
+      }
+    }
+
+    // Transactions (additive gating). The writer method must exist; the key
+    // param index/type must be valid and agree with the record's key type.
+    for (const tx of rec.transactions ?? []) {
+      const ctx = `Record "${rt}" transaction ${tx.methodSig || "?"}`;
+      const fn = fns.find((f) => f.signature === tx.methodSig);
+      if (!fn) return `Record "${rt}": choose a transaction method that exists in the ABI.`;
+      const p = fn.inputs[tx.keyIndex];
+      if (!p || !isCanonicalizableKeyType(p.type)) return `${ctx}: choose a valid record-key parameter.`;
+      const e = checkKeyType(p.type, tx.methodSig, "transaction");
+      if (e) return e;
+      if (tx.rules.length === 0) return `${ctx}: add at least one allow rule.`;
+      for (const rule of tx.rules) {
+        const re = validateAudienceRule(rule, kinds, ctx);
+        if (re) return re;
+      }
+    }
   }
   return null;
+}
+
+// compileAudienceRules turns the callerIn-only wizard rules (events/tx) into the
+// backend allow-rule array: a string callerIn (fields + principals) plus an
+// optional where. There is no return form here.
+function compileAudienceRules(rules: WizardAudienceRule[]): MethodPolicyStringAllowRule[] {
+  return rules.map((rule) => {
+    const entry: MethodPolicyStringAllowRule = { callerIn: [...rule.fields, ...rule.principals] };
+    if (rule.where && rule.where.field) {
+      entry.where = { field: rule.where.field, op: rule.where.op as MethodPolicyWhere["op"], value: rule.where.value };
+    }
+    return entry;
+  });
 }
 
 // compileWizard emits the exact backend policy document from the wizard state.
@@ -301,7 +491,26 @@ export function compileWizard(s: WizardState): MethodPolicyDocument {
       }
       return { method: rd.readerSig, key: { source: "param" as const, index: rd.keyIndex }, allow, onNoRecord: "deny" as const, else: "deny" as const };
     });
-    records[rec.recordType.trim()] = { capture, access };
+    const out: MethodPolicyDocument["records"][string] = { capture, access };
+    // Additive sections: omit the key entirely when there are no rules, so the
+    // compiled document deep-equals the backend's `omitempty` marshaling.
+    const evs = rec.events ?? [];
+    if (evs.length > 0) {
+      out.events = evs.map((ev) => ({
+        event: ev.eventSig,
+        key: { source: "eventParam" as const, index: ev.keyIndex },
+        allow: compileAudienceRules(ev.rules),
+      }));
+    }
+    const txs = rec.transactions ?? [];
+    if (txs.length > 0) {
+      out.transactions = txs.map((tx) => ({
+        method: tx.methodSig,
+        key: { source: "param" as const, index: tx.keyIndex },
+        allow: compileAudienceRules(tx.rules),
+      }));
+    }
+    records[rec.recordType.trim()] = out;
   }
   return { records };
 }
@@ -328,28 +537,62 @@ export function decompileWizard(doc: MethodPolicyDocument | null | undefined): W
       keyIndex: a.key.index,
       rules: (a.allow ?? []).map((r): WizardAllowRule => {
         if (Array.isArray(r.callerIn)) {
-          const fields: string[] = [];
-          const principals: string[] = [];
-          for (const c of r.callerIn) {
-            if (isLiteralPrincipal(c)) principals.push(c);
-            else fields.push(c);
-          }
+          const { fields, principals } = splitCallerIn(r.callerIn);
           return { kind: "callerIn", fields, principals, returnPaths: [], where: r.where ?? null };
         }
         return { kind: "return", fields: [], principals: [], returnPaths: [...r.callerIn.paths] };
       }),
     }));
-    records.push({ recordType, captures, readers });
+    const events: WizardEvent[] = (rec.events ?? []).map((ev) => ({
+      eventSig: ev.event,
+      keyIndex: ev.key.index,
+      rules: (ev.allow ?? []).map(decompileAudienceRule),
+    }));
+    const transactions: WizardTransaction[] = (rec.transactions ?? []).map((tx) => ({
+      methodSig: tx.method,
+      keyIndex: tx.key.index,
+      rules: (tx.allow ?? []).map(decompileAudienceRule),
+    }));
+    records.push({ recordType, captures, readers, events, transactions });
   }
   return { records };
 }
 
+function splitCallerIn(callerIn: string[]): { fields: string[]; principals: string[] } {
+  const fields: string[] = [];
+  const principals: string[] = [];
+  for (const c of callerIn) {
+    if (isLiteralPrincipal(c)) principals.push(c);
+    else fields.push(c);
+  }
+  return { fields, principals };
+}
+
+function decompileAudienceRule(r: MethodPolicyStringAllowRule): WizardAudienceRule {
+  const { fields, principals } = splitCallerIn(r.callerIn ?? []);
+  return { fields, principals, where: r.where ?? null };
+}
+
 // Factory helpers for the UI.
+export function emptyAudienceRule(): WizardAudienceRule {
+  return { fields: [], principals: [], where: null };
+}
+
+export function emptyEvent(): WizardEvent {
+  return { eventSig: "", keyIndex: 0, rules: [emptyAudienceRule()] };
+}
+
+export function emptyTransaction(): WizardTransaction {
+  return { methodSig: "", keyIndex: 0, rules: [emptyAudienceRule()] };
+}
+
 export function emptyRecord(): WizardRecord {
   return {
     recordType: "",
     captures: [{ writerSig: "", keyIndex: 0, remember: [{ field: "", source: "sender", merge: "set_once" }] }],
     readers: [{ readerSig: "", keyIndex: 0, rules: [{ kind: "callerIn", fields: [], principals: [], returnPaths: [], where: null }] }],
+    events: [],
+    transactions: [],
   };
 }
 
@@ -372,6 +615,16 @@ export function renderPolicy(doc: MethodPolicyDocument): RenderedRecord[] {
             f.source === "param" ? `param ${f.index}` : f.source;
           return `${name} = ${src} (${f.merge})`;
         }),
+      })),
+      events: (rec.events ?? []).map((e) => ({
+        event: e.event,
+        keyParam: `eventParam ${e.key.index}`,
+        allows: (e.allow ?? []).map(describeStringAllowRule),
+      })),
+      transactions: (rec.transactions ?? []).map((t) => ({
+        method: t.method,
+        keyParam: `param ${t.key.index}`,
+        allows: (t.allow ?? []).map(describeStringAllowRule),
       })),
     });
   }

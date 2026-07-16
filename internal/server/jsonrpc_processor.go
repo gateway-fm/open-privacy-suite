@@ -1097,6 +1097,14 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 		// Pass the internal user UUID (result.UserID), not the JWT DID.
 		// viewerUUID() guards against nil result (visibleTo-only path).
 		adminMap := p.viewerAdminContracts(ctx, viewerUUID(result), extractContractAddressesFromResponse(responseBody))
+		// RD-1206 rule 71: the receipt's logs inherit the additive record-audience
+		// gate (FilterReceiptLogsWithEventRules delegates to FilterEventLogs).
+		if gate := p.newRecordAudienceGate(ctx, req.UserID, addrs); gate != nil {
+			if visCtx == nil {
+				visCtx = &rbac.TxVisibilityContext{ViewerDID: req.UserID}
+			}
+			visCtx.RecordAudience = gate
+		}
 		return FilterReceiptLogsWithEventRules(responseBody, addrs, perms, p.contractABIProvider(ctx), visCtx, adminMap)
 
 	case strings.EqualFold(m, rbac.MethodGetLogs):
@@ -1127,6 +1135,14 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 		// the JWT DID — viewerAdminContracts queries user_memberships
 		// by UUID FK. viewerUUID() guards against nil result.
 		adminMap := p.viewerAdminContracts(ctx, viewerUUID(result), extractContractAddressesFromResponse(responseBody))
+		// RD-1206 rule 71: attach the additive record-audience gate (independent
+		// of visibleTo — see newRecordAudienceGate).
+		if gate := p.newRecordAudienceGate(ctx, req.UserID, addrs); gate != nil {
+			if visCtx == nil {
+				visCtx = &rbac.TxVisibilityContext{ViewerDID: req.UserID}
+			}
+			visCtx.RecordAudience = gate
+		}
 		return FilterLogsWithEventRules(responseBody, addrs, perms, p.contractABIProvider(ctx), visCtx, adminMap)
 
 	case strings.EqualFold(m, rbac.MethodGetTransactionByBlockHashAndIndex),

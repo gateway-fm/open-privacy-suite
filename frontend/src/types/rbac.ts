@@ -102,6 +102,13 @@ export interface MethodPolicyKeySpec {
   index: number;
 }
 
+// Event key spec (RD-1206 event gating): the record key is decoded from an
+// event log parameter. source is always "eventParam" in phase 1.
+export interface MethodPolicyEventKeySpec {
+  source: "eventParam";
+  index: number;
+}
+
 export interface MethodPolicyRememberField {
   source: "sender" | "param" | "visibleTo";
   index?: number; // required when source === "param"
@@ -145,9 +152,38 @@ export interface MethodPolicyAccessSpec {
   else?: "deny";
 }
 
+// Events/transactions gating (RD-1206, additive). These share the AllowRule
+// shape with access, but the return-source callerIn form is NOT allowed here
+// (a log/tx has no "return" value), so callerIn is always a string array of
+// captured-field names and/or literal DID/0x principals. There is also no
+// onNoRecord/else — these surfaces are additive (admit-or-abstain), not a
+// narrowing override.
+export interface MethodPolicyStringAllowRule {
+  callerIn: string[];
+  where?: MethodPolicyWhere;
+}
+
+// EventPolicy gates a contract's event LOGS by the record's captured audience.
+export interface MethodPolicyEventSpec {
+  event: string; // canonical event signature, e.g. "PaymentProcessed(string,uint8)"
+  key: MethodPolicyEventKeySpec;
+  allow: MethodPolicyStringAllowRule[];
+}
+
+// TransactionPolicy gates a writer transaction (and its receipt envelope).
+export interface MethodPolicyTransactionSpec {
+  method: string; // canonical writer signature, e.g. "processPayment(string,uint8)"
+  key: MethodPolicyKeySpec; // source is always "param" (of the tx's own calldata)
+  allow: MethodPolicyStringAllowRule[];
+}
+
 export interface MethodPolicyRecord {
   capture: MethodPolicyCaptureSpec[];
   access: MethodPolicyAccessSpec[];
+  // NEW — additive event/transaction gating. Omitted (not just empty) when
+  // there are no rules, matching how the backend marshals `omitempty`.
+  events?: MethodPolicyEventSpec[];
+  transactions?: MethodPolicyTransactionSpec[];
 }
 
 export interface MethodPolicyDocument {

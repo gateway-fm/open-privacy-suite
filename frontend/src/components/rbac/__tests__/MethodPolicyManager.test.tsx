@@ -11,9 +11,13 @@ vi.mock("@/api/rbac", () => ({
 const paymentABI = JSON.stringify([
   { type: "function", name: "createPayment", stateMutability: "nonpayable",
     inputs: [{ name: "paymentIdentifier", type: "string" }, { name: "payee", type: "address" }, { name: "amount", type: "uint256" }], outputs: [] },
+  { type: "function", name: "processPayment", stateMutability: "nonpayable",
+    inputs: [{ name: "paymentIdentifier", type: "string" }, { name: "status", type: "uint8" }], outputs: [] },
   { type: "function", name: "getPaymentInfo", stateMutability: "view",
     inputs: [{ name: "paymentIdentifier", type: "string" }],
     outputs: [{ name: "amount", type: "uint256" }, { name: "payer", type: "address" }, { name: "payee", type: "address" }] },
+  { type: "event", name: "PaymentProcessed", anonymous: false,
+    inputs: [{ name: "paymentIdentifier", type: "string", indexed: false }, { name: "status", type: "uint8", indexed: false }] },
 ]);
 const baseProps = { orgId: "org-1", contractAddress: "0xabc", contractAbi: paymentABI };
 
@@ -22,10 +26,10 @@ beforeEach(() => {
 });
 
 describe("MethodPolicyManager", () => {
-  it("empty state + getter-only caveat", () => {
+  it("empty state + additive events/transactions caveat", () => {
     render(<MethodPolicyManager {...baseProps} initialPolicy={null} />);
     expect(screen.getByText(/No method policies configured/i)).toBeInTheDocument();
-    expect(screen.getByText(/not the record's event logs/i)).toBeInTheDocument();
+    expect(screen.getByText(/additively admit the record's captured audience/i)).toBeInTheDocument();
   });
 
   it("C1: read-only admin → read-only (no configure, no PUT)", () => {
@@ -63,6 +67,45 @@ describe("MethodPolicyManager", () => {
         },
       },
     });
+  });
+
+  it("renders the events + transactions wizard sections", async () => {
+    const u = userEvent.setup();
+    render(<MethodPolicyManager {...baseProps} initialPolicy={null} />);
+    await u.click(screen.getByRole("button", { name: /configure a policy/i }));
+    const editor = screen.getByTestId("method-policy-structured");
+    expect(within(editor).getByRole("button", { name: /add event/i })).toBeInTheDocument();
+    expect(within(editor).getByRole("button", { name: /add transaction/i })).toBeInTheDocument();
+  });
+
+  it("builds an events gate and saves it in the exact locked schema", async () => {
+    const u = userEvent.setup();
+    (rbacApi.contracts.updateMethodPolicies as ReturnType<typeof vi.fn>).mockResolvedValue({});
+    render(<MethodPolicyManager {...baseProps} initialPolicy={null} />);
+
+    await u.click(screen.getByRole("button", { name: /configure a policy/i }));
+    const editor = screen.getByTestId("method-policy-structured");
+    // Minimal record: name, one capture (audience from visibleTo), one reader.
+    await u.type(within(editor).getByLabelText("record type name"), "payment");
+    await u.selectOptions(within(editor).getByLabelText("writer method"), "createPayment(string,address,uint256)");
+    await u.type(within(editor).getByLabelText("capture field 0 name"), "audience");
+    await u.selectOptions(within(editor).getByLabelText("capture field 0 source"), "visibleTo");
+    await u.selectOptions(within(editor).getByLabelText("reader method"), "getPaymentInfo(string)");
+    await u.click(within(editor).getByLabelText("allow field audience"));
+
+    // Add an event gate: pick the event, tick the captured "audience".
+    await u.click(within(editor).getByRole("button", { name: /add event/i }));
+    await u.selectOptions(within(editor).getByLabelText("event"), "PaymentProcessed(string,uint8)");
+    await u.click(within(editor).getByLabelText("event allow field audience"));
+
+    await u.click(screen.getByRole("button", { name: /save policy/i }));
+    await waitFor(() => expect(rbacApi.contracts.updateMethodPolicies).toHaveBeenCalledTimes(1));
+    const [, , doc] = (rbacApi.contracts.updateMethodPolicies as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(doc.records.payment.events).toEqual([
+      { event: "PaymentProcessed(string,uint8)", key: { source: "eventParam", index: 0 }, allow: [{ callerIn: ["audience"] }] },
+    ]);
+    // no transactions section was added → key omitted entirely.
+    expect("transactions" in doc.records.payment).toBe(false);
   });
 
   it("surfaces a backend 400 verbatim (via clear path)", async () => {

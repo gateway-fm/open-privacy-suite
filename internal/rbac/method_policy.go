@@ -51,9 +51,39 @@ type MethodPolicyDocument struct {
 
 // RecordPolicy groups capture (writer) and access (reader) rules for one
 // logical record type on a contract.
+//
+// Capture + Access implement the eth_call reader gate (RD-1206): the reader
+// baseline is permissive (group grant allows the call), so Access NARROWS it to
+// the record's audience.
+//
+// Events + Transactions implement the write-side subject gate (rules 71/72): the
+// event/tx baseline is deny-by-default (only sender/receiver/visibleTo/admin see),
+// so these ADD the record's captured audience as an extra admit path — they never
+// remove a viewer the baseline already admits and are bounded by contract
+// eligibility. See docs/method-policy-event-gating-design.md §5.
 type RecordPolicy struct {
-	Capture []CaptureSpec `json:"capture"`
-	Access  []AccessSpec  `json:"access"`
+	Capture      []CaptureSpec     `json:"capture"`
+	Access       []AccessSpec      `json:"access"`
+	Events       []EventSpec       `json:"events,omitempty"`
+	Transactions []TransactionSpec `json:"transactions,omitempty"`
+}
+
+// EventSpec gives a contract's event LOGS an additive audience (rule 71): a
+// caller in the record's captured audience may see the log even when the
+// deny-by-default event baseline would drop it. No return source (a log has no
+// return), no onNoRecord/else (additive: admit-or-abstain, never deny).
+type EventSpec struct {
+	Event string      `json:"event"` // canonical event signature "Name(t1,t2)"
+	Key   KeySpec     `json:"key"`   // Source "eventParam"
+	Allow []AllowRule `json:"allow"`
+}
+
+// TransactionSpec gives a transaction (and its receipt envelope) an additive
+// audience (rule 72), keyed by a parameter of the tx's OWN calldata.
+type TransactionSpec struct {
+	Method string      `json:"method"`
+	Key    KeySpec     `json:"key"` // Source "param"
+	Allow  []AllowRule `json:"allow"`
 }
 
 // CaptureSpec remembers values from a writer call under a record key.
@@ -439,11 +469,119 @@ func (d *MethodPolicyDocument) Validate(contractABI string) error {
 				}
 			}
 		}
+
+		// Events (rule 71): additive audience gate on the contract's event logs.
+		for _, ev := range rec.Events {
+			methodCount++
+			evABI, ok := eventBySig(parsed, ev.Event)
+			if !ok {
+				return fmt.Errorf("event %q not found in ABI", ev.Event)
+			}
+			// topic0 uniqueness across record types (event namespace, distinct from
+			// the method-selector namespace claimSelector guards).
+			evKey := "evt:" + strings.ToLower(evABI.ID.Hex())
+			if owner, seen := selectorOwners[evKey]; seen && owner != recType {
+				return fmt.Errorf("event %q claimed by more than one record type (%q and %q)", ev.Event, owner, recType)
+			}
+			selectorOwners[evKey] = recType
+
+			if ev.Key.Source != "eventParam" {
+				return fmt.Errorf("event %q: key source %q unsupported (only eventParam)", ev.Event, ev.Key.Source)
+			}
+			if ev.Key.Index < 0 || ev.Key.Index >= len(evABI.Inputs) {
+				return fmt.Errorf("event %q: key index %d out of range", ev.Event, ev.Key.Index)
+			}
+			kin := evABI.Inputs[ev.Key.Index]
+			if !canonicalizableType(kin.Type) {
+				return fmt.Errorf("event %q: key type %q is not canonicalizable", ev.Event, kin.Type.String())
+			}
+			// An indexed dynamic value (string/bytes/array) is stored in the topic
+			// as keccak(value) — unrecoverable from the log, so it can never match a
+			// captured plaintext key. Reject at write time.
+			if kin.Indexed && isDynamicABIType(kin.Type) {
+				return fmt.Errorf("event %q: key param %q is indexed+dynamic (a topic hash, not decodable); use a non-indexed key param", ev.Event, kin.Name)
+			}
+			if kt := kin.Type.String(); keyType == "" {
+				keyType = kt
+			} else if keyType != kt {
+				return fmt.Errorf("record %q: event key type %q disagrees with %q", recType, kin.Type.String(), keyType)
+			}
+			if err := validateAudienceAllow(ev.Allow, declared, "event "+ev.Event, recType); err != nil {
+				return err
+			}
+		}
+
+		// Transactions (rule 72): additive audience gate on a tx (and its receipt),
+		// keyed by a parameter of the tx's own calldata.
+		for _, tx := range rec.Transactions {
+			methodCount++
+			if _, ok := methodBySig(parsed, tx.Method); !ok {
+				return fmt.Errorf("transaction method %q not found in ABI", tx.Method)
+			}
+			if err := claimSelector(tx.Method); err != nil {
+				return err
+			}
+			kt, err := keyTypeOf(tx.Method, tx.Key)
+			if err != nil {
+				return err
+			}
+			if keyType == "" {
+				keyType = kt
+			} else if keyType != kt {
+				return fmt.Errorf("record %q: transaction key type %q disagrees with %q", recType, kt, keyType)
+			}
+			if err := validateAudienceAllow(tx.Allow, declared, "transaction "+tx.Method, recType); err != nil {
+				return err
+			}
+		}
 	}
 	if methodCount > MethodPolicyMaxMethods {
 		return fmt.Errorf("method policy: too many gated methods (%d > %d)", methodCount, MethodPolicyMaxMethods)
 	}
 	return nil
+}
+
+// validateAudienceAllow validates the allow rules of an additive (event /
+// transaction) subject: audience-only — a return source is rejected (a log/tx
+// has no return), each callerIn entry must be a declared captured field or a
+// literal principal, and an optional where must be coherent.
+func validateAudienceAllow(allow []AllowRule, declared map[string]string, subject, recType string) error {
+	if len(allow) == 0 {
+		return fmt.Errorf("%s: no allow rules", subject)
+	}
+	for _, rule := range allow {
+		if rule.Return != nil {
+			return fmt.Errorf("%s: a return-source callerIn is not supported on an event/transaction rule (a log/tx has no return)", subject)
+		}
+		if len(rule.Fields) == 0 {
+			return fmt.Errorf("%s: empty allow rule", subject)
+		}
+		for _, f := range rule.Fields {
+			if _, ok := declared[f]; ok {
+				continue
+			}
+			if !isLiteralPrincipal(f) {
+				return fmt.Errorf("%s: callerIn %q is neither a captured field of record %q nor a literal DID/address principal", subject, f, recType)
+			}
+		}
+		if rule.Where != nil {
+			if err := validateWhere(rule.Where, declared, subject, recType); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// eventBySig returns the ABI event whose canonical signature ("Name(t1,t2)")
+// matches sig.
+func eventBySig(parsed abi.ABI, sig string) (abi.Event, bool) {
+	for _, ev := range parsed.Events {
+		if ev.Sig == sig {
+			return ev, true
+		}
+	}
+	return abi.Event{}, false
 }
 
 // ValidateForClient validates the document against the ABI and returns a
@@ -598,7 +736,7 @@ func (d *MethodPolicyDocument) EvaluateAccess(
 
 	// Capture side (shared with SimulateReader): a matched non-return rule admits
 	// immediately; otherwise fall through to the return-source resolution below.
-	matched, _, hasReturnRule := matchCaptureSide(spec, caller, byField)
+	matched, _, hasReturnRule := matchCaptureSide(spec.Allow, caller, byField)
 	if matched {
 		return Decision{Allow: true}, nil
 	}
@@ -711,7 +849,7 @@ func (d *MethodPolicyDocument) SimulateReader(
 	// Capture side shared with the enforcer (EvaluateAccess) so the simulator can
 	// never drift from what a real read would decide. The simulator keeps the
 	// matched-rule label; the enforcer discards it.
-	matched, rule, hasReturn := matchCaptureSide(spec, caller, byField)
+	matched, rule, hasReturn := matchCaptureSide(spec.Allow, caller, byField)
 	res.Allow, res.MatchedRule, res.HasReturnSource = matched, rule, hasReturn
 	return res, true, nil
 }
@@ -801,8 +939,8 @@ func DecodeReturnAddresses(returnData []byte, calldata []byte, paths []string, p
 // capture-side deny is not authoritative). The return-source rule itself is NOT
 // evaluated here: the enforcer resolves it against live return bytes, and the
 // simulator deliberately does not.
-func matchCaptureSide(spec AccessSpec, caller CallerIdentity, byField map[string][]string) (matched bool, matchedRule string, hasReturnSource bool) {
-	for _, rule := range spec.Allow {
+func matchCaptureSide(allow []AllowRule, caller CallerIdentity, byField map[string][]string) (matched bool, matchedRule string, hasReturnSource bool) {
+	for _, rule := range allow {
 		if rule.Return != nil {
 			hasReturnSource = true // where is not permitted on return rules (Validate)
 			continue
@@ -972,14 +1110,23 @@ func decodeRecordKey(key KeySpec, calldata []byte, parsed abi.ABI) (string, erro
 	return k, nil
 }
 
-// canonicalizeArg renders a decoded ABI argument to its canonical string form,
-// operating on the DECODED typed value (never the raw calldata slice) so
-// distinct logical values never collide (M2).
+// canonicalizeArg renders a decoded ABI argument at index to its canonical
+// string form. Thin bounds-checking wrapper over canonicalizeValue.
 func canonicalizeArg(args []any, index int) (string, error) {
 	if index < 0 || index >= len(args) {
 		return "", fmt.Errorf("method policy: arg index %d out of range (%d args)", index, len(args))
 	}
-	switch v := args[index].(type) {
+	return canonicalizeValue(args[index])
+}
+
+// canonicalizeValue renders a single decoded ABI value to its canonical string
+// form, operating on the DECODED typed value (never raw bytes) so distinct
+// logical values never collide (M2). Reused by capture-key decoding and by
+// event/transaction key decoding so a record key produces the SAME string
+// regardless of which subject it was decoded from — the parity the audience
+// lookup depends on.
+func canonicalizeValue(v any) (string, error) {
+	switch v := v.(type) {
 	case string:
 		return v, nil
 	case common.Address:
