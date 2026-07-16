@@ -213,16 +213,23 @@ describe("MethodPolicyManager", () => {
     expect(within(panel).getByText(/did:test:alice/)).toBeInTheDocument();
   });
 
-  it("what-if mode simulates against hypothetical parties (no record needed)", async () => {
+  it("what-if mode shows a who-can-read table: the party allows, a non-party control denies", async () => {
     const u = userEvent.setup();
-    (rbacApi.contracts.simulateMethodPolicy as ReturnType<typeof vi.fn>).mockResolvedValue({
-      data: { result: "allow", record_type: "payment", matched_rule: "captured:payer", has_return_source: false, poisoned: false, captured: { payer: ["did:test:alice"] } },
-    });
+    // The gate allows iff the caller DID is one of the supplied parties.
+    (rbacApi.contracts.simulateMethodPolicy as ReturnType<typeof vi.fn>).mockImplementation(
+      (_o: string, _a: string, body: { caller_did: string; captured?: Record<string, string[]> }) => {
+        const partyVals = Object.values(body.captured ?? {}).flat();
+        const isParty = partyVals.includes(body.caller_did);
+        return Promise.resolve({
+          data: { result: isParty ? "allow" : "deny", record_type: "payment", matched_rule: isParty ? "captured:payer" : undefined, has_return_source: false, poisoned: false, captured: body.captured ?? {} },
+        });
+      },
+    );
     const configured = {
       records: {
         payment: {
-          capture: [{ method: "createPayment(string,address,uint256)", key: { source: "param", index: 0 }, remember: { payer: { source: "sender", merge: "set_once" }, audience: { source: "visibleTo", merge: "union" } } }],
-          access: [{ method: "getPaymentInfo(string)", key: { source: "param", index: 0 }, allow: [{ callerIn: ["payer", "audience"] }], onNoRecord: "deny", else: "deny" }],
+          capture: [{ method: "createPayment(string,address,uint256)", key: { source: "param", index: 0 }, remember: { payer: { source: "sender", merge: "set_once" } } }],
+          access: [{ method: "getPaymentInfo(string)", key: { source: "param", index: 0 }, allow: [{ callerIn: ["payer"] }], onNoRecord: "deny", else: "deny" }],
         },
       },
     };
@@ -230,16 +237,20 @@ describe("MethodPolicyManager", () => {
     await u.click(screen.getByRole("button", { name: /simulate/i }));
     const panel = screen.getByTestId("method-policy-simulate");
 
-    // Switch to what-if. The single gated reader is auto-selected, so we only
-    // supply a hypothetical party + a caller to test against it — no record.
+    // Switch to what-if; the single gated reader is auto-selected. Fill one party,
+    // Simulate → a verdict row per candidate (the party + a non-party control).
     await u.click(within(panel).getByRole("button", { name: /what-if parties/i }));
     await u.type(within(panel).getByLabelText("whatif party payer"), "did:test:alice");
-    await u.type(within(panel).getByLabelText("simulate caller did"), "did:test:alice");
     await u.click(within(panel).getByRole("button", { name: /^simulate$/i }));
 
-    await waitFor(() => expect(rbacApi.contracts.simulateMethodPolicy).toHaveBeenCalledTimes(1));
+    const verdicts = await within(panel).findByTestId("whatif-verdicts");
+    expect(within(verdicts).getByText("did:test:alice")).toBeInTheDocument();
+    expect(within(verdicts).getByText("did:example:outsider")).toBeInTheDocument();
+    // the party is admitted, the control is not
+    expect(within(verdicts).getAllByText("allow").length).toBeGreaterThanOrEqual(1);
+    expect(within(verdicts).getAllByText("deny").length).toBeGreaterThanOrEqual(1);
+    // hypothetical parties were sent as `captured`
     const [, , body] = (rbacApi.contracts.simulateMethodPolicy as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(body.captured).toEqual({ payer: ["did:test:alice"] });
-    expect(within(panel).getByText("allow")).toBeInTheDocument();
   });
 });

@@ -676,7 +676,9 @@ function SimulatorPanel({ orgId, contractAddress, readerMethods, captureFields, 
   const [dids, setDids] = useState<string[]>([]); // dev test-identity DIDs, for the picker
   const [running, setRunning] = useState(false);
   type SimResult = { result: string; matched_rule?: string; note?: string; captured: Record<string, string[]> };
-  const [result, setResult] = useState<SimResult | null>(null);
+  type Verdict = { id: string; role: string; result: string; via?: string };
+  const [result, setResult] = useState<SimResult | null>(null); // existing-record: one caller
+  const [verdicts, setVerdicts] = useState<Verdict[] | null>(null); // what-if: who-can-read table
   const [err, setErr] = useState<string | null>(null);
 
   // Populate a DID datalist from the dev identity picker (mockauth only; 403 in
@@ -698,30 +700,61 @@ function SimulatorPanel({ orgId, contractAddress, readerMethods, captureFields, 
     }
     return out;
   };
+  const callerArgs = (id: string) =>
+    id.startsWith("0x") ? { caller_did: "", caller_eth_addresses: [id] } : { caller_did: id, caller_eth_addresses: [] };
+  const reset = () => { setErr(null); setResult(null); setVerdicts(null); };
 
-  async function run() {
+  // Existing-record mode: does this one caller pass the gate for a real record?
+  async function runRecord() {
     setRunning(true);
-    setErr(null);
-    setResult(null);
+    reset();
     try {
       const res = await rbacApi.contracts.simulateMethodPolicy(orgId, contractAddress, {
         method,
         record_key: recordKey,
         caller_did: callerDID,
         caller_eth_addresses: callerETH.split(",").map((s) => s.trim()).filter(Boolean),
-        ...(whatIf ? { captured: capturedMap() } : {}),
       });
       setResult(res.data as SimResult);
     } catch (e: unknown) {
-      const ee = e as { response?: { data?: { error?: string } } };
-      setErr(ee?.response?.data?.error ?? "Simulation failed.");
+      setErr((e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? "Simulation failed.");
     } finally {
       setRunning(false);
     }
   }
 
-  const badge = result?.result === "allow" ? "bg-emerald-100 text-emerald-800"
-    : result?.result === "deny" ? "bg-error-light text-error-dark" : "bg-amber-100 text-amber-800";
+  // What-if mode: given the parties, show WHO the policy admits — every party
+  // plus a non-party control (which must deny). A party that shows deny means
+  // the reader's allow rule doesn't include that captured field.
+  async function runWhatIf() {
+    setRunning(true);
+    reset();
+    const captured = capturedMap();
+    const roleMap = new Map<string, string[]>();
+    for (const [field, raw] of Object.entries(parties))
+      for (const v of raw.split(",").map((s) => s.trim()).filter(Boolean)) {
+        const roles = roleMap.get(v) ?? [];
+        if (!roles.includes(field)) roles.push(field);
+        roleMap.set(v, roles);
+      }
+    const candidates = [...roleMap.entries()].map(([id, roles]) => ({ id, role: roles.join(" + ") }));
+    candidates.push({ id: "did:example:outsider", role: "not a party (control)" });
+    try {
+      const rows: Verdict[] = [];
+      for (const c of candidates) {
+        const res = await rbacApi.contracts.simulateMethodPolicy(orgId, contractAddress, { method, record_key: "", ...callerArgs(c.id), captured });
+        const d = res.data as SimResult;
+        rows.push({ id: c.id, role: c.role, result: d.result, via: d.matched_rule });
+      }
+      setVerdicts(rows);
+    } catch (e: unknown) {
+      setErr((e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? "Simulation failed.");
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  const badgeCls = (r: string) => r === "allow" ? "bg-emerald-100 text-emerald-800" : r === "deny" ? "bg-error-light text-error-dark" : "bg-amber-100 text-amber-800";
   const canRun = !running && !!method && (whatIf ? whatIfHasParties : !!recordKey);
   const tab = (active: boolean) => `px-2 py-0.5 rounded border ${active ? "bg-primary text-white border-primary" : "bg-neutral-50 text-neutral-600 border-neutral-200"}`;
 
@@ -749,23 +782,25 @@ function SimulatorPanel({ orgId, contractAddress, readerMethods, captureFields, 
             {readerOptions.map((sig) => <option key={sig} value={sig}>{sig}</option>)}
           </select>
         </div>
-        {mode === "record" ? (
+        {mode === "record" && (
           <div className="space-y-0.5">
             <div className="text-xs text-neutral-500">Record key — an existing record</div>
             <input className="border rounded px-2 py-1 text-sm w-full" aria-label="simulate record key" placeholder="PAY-1" value={recordKey} onChange={(e) => setRecordKey(e.target.value)} />
           </div>
-        ) : (
-          <div />
         )}
-        <div className="space-y-0.5">
-          <div className="text-xs text-neutral-500">Caller DID — the identity to test</div>
-          <input className="border rounded px-2 py-1 text-sm w-full" list="sim-did-list" aria-label="simulate caller did" placeholder="did:test:alice" value={callerDID} onChange={(e) => setCallerDID(e.target.value)} />
-        </div>
-        <div className="space-y-0.5">
-          <div className="text-xs text-neutral-500">Caller ETH address(es) — for address-typed parties</div>
-          <input className="border rounded px-2 py-1 text-sm w-full" aria-label="simulate caller eth" placeholder="0x… (comma-sep; e.g. the payee address)" value={callerETH} onChange={(e) => setCallerETH(e.target.value)} />
-        </div>
       </div>
+      {mode === "record" && (
+        <div className="grid grid-cols-2 gap-2">
+          <div className="space-y-0.5">
+            <div className="text-xs text-neutral-500">Caller DID — the identity to test</div>
+            <input className="border rounded px-2 py-1 text-sm w-full" list="sim-did-list" aria-label="simulate caller did" placeholder="did:test:alice" value={callerDID} onChange={(e) => setCallerDID(e.target.value)} />
+          </div>
+          <div className="space-y-0.5">
+            <div className="text-xs text-neutral-500">Caller ETH address(es) — for address-typed parties</div>
+            <input className="border rounded px-2 py-1 text-sm w-full" aria-label="simulate caller eth" placeholder="0x… (comma-sep; e.g. the payee address)" value={callerETH} onChange={(e) => setCallerETH(e.target.value)} />
+          </div>
+        </div>
+      )}
       {whatIf && (
         <div className="space-y-1 border-t border-neutral-100 pt-2" data-testid="whatif-parties">
           <div className="text-xs font-medium text-neutral-600">Hypothetical parties — as if a record were created with these</div>
@@ -780,19 +815,36 @@ function SimulatorPanel({ orgId, contractAddress, readerMethods, captureFields, 
       )}
       <p className="text-xs text-neutral-400">
         {whatIf
-          ? "Fill the record's parties, then set a Caller DID/ETH to check who they admit — no record needs to exist yet."
+          ? "Fill the parties, then Simulate to see who the policy admits — each party plus a non-party control (which must be denied)."
           : "Uses a real captured record. A party captured as an address (e.g. payee) matches on the caller's ETH address, not the DID — fill both to test it."}
       </p>
       {err && <p className="text-xs text-amber-700">{err}</p>}
-      {result && (
+      {result && !whatIf && (
         <div className="text-xs space-y-1">
-          <div><span className={`px-2 py-0.5 rounded font-medium ${badge}`}>{result.result}</span>{result.matched_rule ? <span className="ml-2 text-neutral-500">via {result.matched_rule}</span> : null}</div>
+          <div><span className={`px-2 py-0.5 rounded font-medium ${badgeCls(result.result)}`}>{result.result}</span>{result.matched_rule ? <span className="ml-2 text-neutral-500">via {result.matched_rule}</span> : null}</div>
           {result.note && <p className="text-amber-700">{result.note}</p>}
-          <div className="text-neutral-500">{whatIf ? "parties" : "record admit-set"}: {Object.entries(result.captured || {}).map(([k, v]) => `${k}=[${v.join(", ")}]`).join("; ") || "(none)"}</div>
+          <div className="text-neutral-500">record admit-set: {Object.entries(result.captured || {}).map(([k, v]) => `${k}=[${v.join(", ")}]`).join("; ") || "(none)"}</div>
+        </div>
+      )}
+      {verdicts && whatIf && (
+        <div className="text-xs space-y-1 border-t border-neutral-100 pt-2" data-testid="whatif-verdicts">
+          <div className="font-medium text-neutral-600">Who can read <span className="font-mono">{method}</span> with these parties?</div>
+          <table className="w-full">
+            <tbody>
+              {verdicts.map((v) => (
+                <tr key={v.id} className="align-top">
+                  <td className="font-mono pr-2 py-0.5 break-all">{v.id}</td>
+                  <td className="text-neutral-500 pr-2 py-0.5 whitespace-nowrap">{v.role}</td>
+                  <td className="py-0.5"><span className={`px-2 py-0.5 rounded font-medium ${badgeCls(v.result)}`}>{v.result}</span>{v.via ? <span className="ml-1 text-neutral-400">via {v.via}</span> : null}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="text-neutral-400">A captured party showing <span className="text-error-dark">deny</span> means the reader&apos;s allow rule doesn&apos;t include that field.</p>
         </div>
       )}
       <div className="flex gap-2">
-        <Button size="sm" disabled={!canRun} onClick={() => void run()}>{running ? <Loader2 className="w-3 h-3 animate-spin" /> : <FlaskConical className="w-3 h-3" />} Simulate</Button>
+        <Button size="sm" disabled={!canRun} onClick={() => void (whatIf ? runWhatIf() : runRecord())}>{running ? <Loader2 className="w-3 h-3 animate-spin" /> : <FlaskConical className="w-3 h-3" />} Simulate</Button>
         <Button variant="ghost" size="sm" onClick={onClose}>Close</Button>
       </div>
     </div>
