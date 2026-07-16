@@ -137,10 +137,30 @@ live return-address rule is **not** simulated, so a capture-side "deny" on a
 reader that also has a return rule is reported as *indeterminate* rather than a
 definitive no. Simulate is org-admin (tier-2) only and audit-logged.
 
+## Gating a record's events and transactions
+
+Beyond the getter, a policy can gate a record's **event logs** and its
+**transactions** by the same captured audience — so a workflow's participants see
+its events and transactions without anyone re-listing them on each call:
+
+- **`events`** — an event log (`eth_getLogs`, receipt logs) whose record key
+  matches a captured record is shown to that record's audience. Configure the
+  event, the key parameter (the record id in the event data), and the audience
+  fields. The record key must be a **non-indexed** event parameter (an indexed
+  string/bytes is stored as a hash and can't be matched).
+- **`transactions`** — a transaction (fetched by hash, with its receipt) whose
+  calldata carries a matching record key is shown to that record's audience.
+
+These are **additive**: they only *add* the record's audience to who can already
+see the log/transaction (its sender, the parties, anyone the sender put in
+`visibleTo`, admins). They never hide anything those already reveal, and they only
+admit callers who already hold the contract grant. The audience is the one
+captured when the record was created — no extra on-chain lookups.
+
 <Callout type="warning">
-  A method policy gates the **getter** only. The same record's data reachable by
-  other means — the events its creating transaction emitted — is governed by
-  [event rules and `visibleTo`](/docs/security/response-filtering), not by the
-  method policy. If a record must stay confidential, gate its **events**
-  (per-record event rules) as well as its getter.
+  Event/transaction gating **adds** the record audience on top of the contract's
+  existing event and transaction visibility — it does not restrict an
+  already-permissive [event rule](/docs/security/response-filtering). For "only
+  the record's participants see it," keep the contract's event baseline
+  deny-by-default and let the policy add the audience.
 </Callout>

@@ -34,13 +34,13 @@ import (
 //     to a non-nil resolver. Reflection-based so a future Set5Resolver
 //     method auto-fails until wireExplorerRedactor learns about it.
 //  2. The wired engine actually enforces the rules end-to-end:
-//       - null event_rules ⇒ deny (RD-888 fix is alive)
-//       - allowlist ⇒ only listed topic0 passes
-//       - allowlist + ParamRule(must_be:self) ⇒ topic1 must encode
-//         the viewer's address (this fact alone failed in pre-fix
-//         code because EventRuleInfo had no ParamRules field)
-//       - tier-2 org admin ⇒ ABI-less contract logs visible
-//       - non-admin viewer + ABI-less contract ⇒ logs dropped
+//     - null event_rules ⇒ deny (RD-888 fix is alive)
+//     - allowlist ⇒ only listed topic0 passes
+//     - allowlist + ParamRule(must_be:self) ⇒ topic1 must encode
+//     the viewer's address (this fact alone failed in pre-fix
+//     code because EventRuleInfo had no ParamRules field)
+//     - tier-2 org admin ⇒ ABI-less contract logs visible
+//     - non-admin viewer + ABI-less contract ⇒ logs dropped
 //
 // If any of these regresses, this test stays red, and so does the PR.
 //
@@ -145,7 +145,7 @@ func TestExplorerRedactorWiring_FullStack(t *testing.T) {
 	// resolver-style setter to RedactionEngine without updating
 	// wireExplorerRedactor (and this list), this assertion fires —
 	// before the gap can ship as another silently-disabled resolver.
-	expectedSetters := []string{"SetABIResolver", "SetAdminContractsResolver", "SetDynamicPayloadAllowedResolver", "SetEventRuleChecker", "SetLogParticipantStore", "SetVisibleToUnlockResolver"}
+	expectedSetters := []string{"SetABIResolver", "SetAdminContractsResolver", "SetCapturedAudienceResolver", "SetDynamicPayloadAllowedResolver", "SetEventRuleChecker", "SetLogParticipantStore", "SetVisibleToUnlockResolver"}
 	require.Equal(t, sortedStrings(expectedSetters), interfaceTypedSetters(engine),
 		"wireExplorerRedactor must wire every interface-typed Set* method on RedactionEngine; mismatch means a setter was added/removed without updating the helper. See wireExplorerRedactor doc-comment.")
 
@@ -159,11 +159,11 @@ func TestExplorerRedactorWiring_FullStack(t *testing.T) {
 
 	logs := []explorer.Log{
 		{ID: 1, Address: contractRules, TxHash: "0xtx1", Topic0: &tr, Topic1: &otherTopic, Data: "0x"},
-		{ID: 2, Address: contractRules, TxHash: "0xtx2", Topic0: &ap, Topic1: &otherTopic, Data: "0x"}, // not allowlisted
+		{ID: 2, Address: contractRules, TxHash: "0xtx2", Topic0: &ap, Topic1: &otherTopic, Data: "0x"},  // not allowlisted
 		{ID: 3, Address: contractParam, TxHash: "0xtx3", Topic0: &tr, Topic1: &viewerTopic, Data: "0x"}, // self => pass
-		{ID: 4, Address: contractParam, TxHash: "0xtx4", Topic0: &tr, Topic1: &otherTopic, Data: "0x"}, // not self => drop
-		{ID: 5, Address: contractDeny, TxHash: "0xtx5", Topic0: &tr, Topic1: &otherTopic, Data: "0x"},  // null rules => drop
-		{ID: 6, Address: contractNoABI, TxHash: "0xtx6", Topic0: &tr, Topic1: &otherTopic, Data: "0x"}, // no ABI => drop for non-admin
+		{ID: 4, Address: contractParam, TxHash: "0xtx4", Topic0: &tr, Topic1: &otherTopic, Data: "0x"},  // not self => drop
+		{ID: 5, Address: contractDeny, TxHash: "0xtx5", Topic0: &tr, Topic1: &otherTopic, Data: "0x"},   // null rules => drop
+		{ID: 6, Address: contractNoABI, TxHash: "0xtx6", Topic0: &tr, Topic1: &otherTopic, Data: "0x"},  // no ABI => drop for non-admin
 	}
 
 	// Regular viewer.
@@ -193,6 +193,105 @@ func TestExplorerRedactorWiring_FullStack(t *testing.T) {
 		gotIDs[l.ID] = true
 	}
 	require.True(t, gotIDs[6], "org admin on contractNoABI — must bypass deny gate (RD-890)")
+}
+
+// TestExplorerRedactorWiring_RecordAudience is the explorer half of the RD-1206
+// rule-71 symmetry guard. It proves the explorer redactor admits/hides a governed
+// dynamic-payload event log identically to the RPC filter — the parity asserted
+// by TestFilterEventLogs_RecordAudienceAdditive (internal/rbac) and
+// TestRecordAudienceGate_EventLogAdmits (internal/server) on the RPC side.
+//
+// Setup mirrors those tests: a contract with a method policy governing
+// PaymentProcessed(string,uint8) (whose `string` param is dynamic → M15 would
+// drop the log for a non-admin viewer) and a captured audience for record PAY-1.
+// Two viewers both hold a wildcard-event grant on the contract (VisibilityFull —
+// the eligibility bound), so the ONLY thing that decides visibility is the
+// record-audience admit:
+//   - a viewer IN the captured audience sees the log (additive admit, M15 bypassed);
+//   - a viewer NOT in the audience does not (falls through to the M15 drop).
+//
+// This is the coherence the rule-71 handoff requires: same event, same verdict
+// via eth_getLogs and the explorer, through the ONE shared decision
+// rbac.EventAudienceAdmits.
+func TestExplorerRedactorWiring_RecordAudience(t *testing.T) {
+	ctx := context.Background()
+
+	dbURL := sharedTestDBURL(t)
+	database, err := db.New(dbURL)
+	require.NoError(t, err)
+	t.Cleanup(func() { database.Close() })
+	require.NoError(t, db.ResetTestDatabase(database))
+
+	orgID := uuid.New().String()
+	require.NoError(t, database.CreateOrganization(ctx, &rbac.Organization{
+		ID: orgID, Slug: "audience-test", Name: "AudienceTest", Settings: map[string]any{},
+	}))
+
+	// One group, granted (wildcard events) on the policied contract. Both
+	// viewers join it so both clear the VisibilityFull eligibility gate; only
+	// the captured audience separates them.
+	grantedGID := wiringCreateGroup(t, database, orgID, "audience-granted", nil, false)
+
+	contractAudience := "0x5555555555555555555555555555555555555555"
+	audienceCID := wiringCreateContractWithABI(t, database, orgID, contractAudience, "Audience", audienceEventsABI)
+	// Attach the method policy (CreateContract does not persist it).
+	require.NoError(t, database.UpdateContractMethodPolicies(ctx, audienceCID, []byte(audienceEventsPolicy)))
+
+	// Wildcard event grant → both viewers get VisibilityFull on the contract.
+	wiringCreateGrant(t, database, audienceCID, grantedGID, &rbac.EventRulesField{Wildcard: true})
+
+	// Two viewers: alice is in PAY-1's captured audience, eve is not. Both are
+	// members of the granted group (both eligible / VisibilityFull).
+	wiringCreateUserInGroup(t, database, "did:viewer:alice", grantedGID)
+	wiringCreateUserInGroup(t, database, "did:viewer:eve", grantedGID)
+
+	// Seed PAY-1's captured audience = {alice} via the real outbox → promote
+	// path (the same storage the capture half writes at settle time).
+	require.NoError(t, database.EnqueuePendingRecordCaptures(ctx, "0xseedtx", orgID, contractAudience, "did:viewer:alice",
+		[]rbac.CapturedWrite{{RecordType: "payment", RecordKey: "PAY-1", Field: "audience", Value: "did:viewer:alice", Merge: "union"}}))
+	pending, err := database.ListDuePendingRecordCaptures(ctx, 10)
+	require.NoError(t, err)
+	require.Len(t, pending, 1)
+	require.NoError(t, database.PromoteRecordCapture(ctx, pending[0]))
+
+	// Wire the redactor exactly as production does.
+	accessCtrl := rbac.NewAccessController(database, 1*time.Minute)
+	t.Cleanup(accessCtrl.Stop)
+	engine := explorer.NewRedactionEngine(noopContractStore{}, database)
+	wireExplorerRedactor(engine, database, accessCtrl, noopLogParticipantStore{}, nil)
+
+	// Build the governed PaymentProcessed(PAY-1, status=1) log. Its `string`
+	// param is dynamic → M15 drops it for a non-admin viewer unless the
+	// record-audience admit fires first.
+	topics, dataHex := audienceProcessedLog(t, "PAY-1")
+	require.NotEmpty(t, topics)
+	topic0 := topics[0]
+	log := explorer.Log{ID: 1, Address: contractAudience, TxHash: "0xtxpay1", Topic0: &topic0, Data: dataHex}
+
+	// Sanity: baseline (before the audience admit) drops the dynamic-payload
+	// log even for an eligible viewer. Prove it by asking for eve, who is
+	// eligible (VisibilityFull) but NOT in the audience — she must not see it.
+	outEve, err := engine.RedactLogs(ctx, []explorer.Log{log}, "did:viewer:eve")
+	require.NoError(t, err)
+	eveSees := false
+	for _, l := range outEve {
+		if l.ID == 1 {
+			eveSees = true
+		}
+	}
+	require.False(t, eveSees, "eligible viewer NOT in the captured audience must NOT see the governed dynamic-payload log (M15 drop; record gate abstains)")
+
+	// alice is in the captured audience → the additive admit passes the log
+	// through unredacted, bypassing M15.
+	outAlice, err := engine.RedactLogs(ctx, []explorer.Log{log}, "did:viewer:alice")
+	require.NoError(t, err)
+	aliceSees := false
+	for _, l := range outAlice {
+		if l.ID == 1 {
+			aliceSees = true
+		}
+	}
+	require.True(t, aliceSees, "viewer IN the captured audience must see the governed event log (RD-1206 rule 71 explorer parity)")
 }
 
 // interfaceTypedSetters returns the names of every Set* method on

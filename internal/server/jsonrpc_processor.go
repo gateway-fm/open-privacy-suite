@@ -1078,9 +1078,18 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 			}
 		}
 		filtered := FilterTransactionByHash(responseBody, addrs, isAdminOnTo)
-		// If participant + admin check returned null, check visibleTo as fallback
-		if isNullResult(filtered) && p.isResponseTxVisibleTo(ctx, req.UserID, responseBody) {
-			return responseBody
+		// If the participant + admin check returned null, additive fallbacks: the
+		// tx's visibleTo, then (RD-1206 rule 72) the tx's per-record captured
+		// audience — decode the record key from the tx's OWN calldata and admit if
+		// the caller is in it. Both only ADD; neither hides a tx the participant /
+		// admin check already showed.
+		if isNullResult(filtered) {
+			if p.isResponseTxVisibleTo(ctx, req.UserID, responseBody) {
+				return responseBody
+			}
+			if p.txResponseRecordAudienceAdmits(ctx, req.UserID, addrs, result, responseBody) {
+				return responseBody
+			}
 		}
 		return filtered
 
@@ -1162,9 +1171,18 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 			}
 		}
 		filtered := FilterTransactionByHash(responseBody, addrs, isAdminOnTo)
-		// If participant + admin check returned null, check visibleTo as fallback
-		if isNullResult(filtered) && p.isResponseTxVisibleTo(ctx, req.UserID, responseBody) {
-			return responseBody
+		// If the participant + admin check returned null, additive fallbacks: the
+		// tx's visibleTo, then (RD-1206 rule 72) the tx's per-record captured
+		// audience — decode the record key from the tx's OWN calldata and admit if
+		// the caller is in it. Both only ADD; neither hides a tx the participant /
+		// admin check already showed.
+		if isNullResult(filtered) {
+			if p.isResponseTxVisibleTo(ctx, req.UserID, responseBody) {
+				return responseBody
+			}
+			if p.txResponseRecordAudienceAdmits(ctx, req.UserID, addrs, result, responseBody) {
+				return responseBody
+			}
 		}
 		return filtered
 

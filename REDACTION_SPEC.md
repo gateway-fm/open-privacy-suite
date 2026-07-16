@@ -738,17 +738,44 @@ change, so an ABI edit cannot silently disable the gate (revised 2026-07-15 from
 tier-1; the policy only narrows and fails closed, so it belongs at the same tier
 as the contract's other controls).
 
-### Surface asymmetry — what a method policy does NOT cover
+### 9.2 Record-scoped event & transaction gating (rules 71/72)
 
-A method policy gates the **getter** (`eth_call`) only. The *same record's data
-reachable by other means* — the writer transaction's emitted **event logs**
-(`eth_getLogs`, receipt logs) — is governed by the event-rule engine (§3.4.1)
-and `visibleTo` (§3.7.1, §7), **not** by the method policy. An operator who
-locks `getPaymentInfo` but whose `createPayment` emits a stakeholder-bearing
-event must gate that event separately (per-record `param_rules`), or the record
-is still observable via logs. This is not an RPC/explorer invariant violation:
-`eth_call` has no explorer counterpart, and the policy only *narrows* an
-already-`CheckAccess`-allowed call — it never touches `GetBatchVisibility`.
+A method policy gates three subjects of a record, keyed by the same record key
+and the same captured audience:
+
+- **`access`** (readers, `eth_call`): the reader baseline is *permissive* (the
+  group grant allows the call), so `access` **narrows** it to the record's
+  audience (§9, deny-by-default at the response).
+- **`events`** (logs, `eth_getLogs` + receipt logs — rule 71) and
+  **`transactions`** (a tx/receipt by hash — rule 72): the write-side baseline is
+  *deny-by-default* (only sender/receiver/`visibleTo`/admin see), so these
+  **additively ADD** the record's captured audience as an extra admit path.
+
+**Additive semantics (events/transactions).** The record-audience branch admits a
+log/tx when: the contract is grant-eligible for the viewer (bounds it — the gate
+only ADDS viewers who already hold the grant, never widens past it), the subject
+is governed by an `events`/`transactions` rule, the record key decodes from the
+log (a non-indexed event param; an indexed *dynamic* key is a topic hash and is
+rejected at write time) or from the tx's own calldata, and the caller's DID/linked
+address is in that record's captured audience. It runs **before** the M15
+dynamic-payload drop and the event-rule allowlist and bypasses them for admitted
+logs (exactly like the RD-874 `visibleTo` unlock — the record's initiating call
+explicitly designated this audience). It **never removes** a viewer the baseline
+already admits, and fails closed (abstains) on any decode/lookup error. No upstream
+node call: the audience is a local `contract_record_captures` lookup, keyed by the
+record id already present in the subject.
+
+The audience reflects the participant set **as captured** (from the initiating
+call's `visibleTo`/params), which is historically correct — a participant set that
+changes on-chain after capture is not retroactively applied. The proxy never calls
+a `getParticipants`-style resolver itself; the client-managed alternative (call the
+gated getter, repeat DIDs in `visibleTo`) stays supported and orthogonal.
+
+**Symmetry.** The same decision (`rbac.MethodPolicyDocument.EventAudienceAdmits`)
+is invoked by both the RPC filter (`FilterEventLogs`, via `RecordAudienceGate` on
+`TxVisibilityContext`) and the explorer redactor (`RedactLogs`, via a resolver
+wired at `wireExplorerRedactor`) — one seam, guarded by
+`TestExplorerRedactorWiring_FullStack`.
 
 **Gating scope (aliases):** the gate fires for `eth_call` (and any method alias
 that `ResolveMethodAlias` maps to `eth_call`). A chain-specific read method
