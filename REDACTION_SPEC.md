@@ -695,3 +695,132 @@ The hash means private addresses or signed-tx blobs in params never persist; rev
 - Dashboard "View as user" / browse-as flow — Phase 2, deferred (see RD-872).
 - Tier-3 admin / Read-Only Admin / super-admin dry-run — explicit NO. Each adds real attack surface that the tier-2-only argument doesn't cover.
 - JWT minting / impersonation tokens — never. The synthetic principal is a per-request struct; if it leaked, it would be a bug.
+
+## 9. Method access policies (RD-1206)
+
+Per-record access control for record-reader `eth_call`s (e.g.
+`getPaymentInfo(id)`). A contract grant authorizes a function all-or-nothing;
+this layer binds the *call* to the *record*, so only a record's stakeholders may
+read it. Operator-facing docs: `site/.../docs/security/method-policies`.
+
+**Where it runs.** The read gate is `applyMethodPolicyGate`
+(`internal/server/method_policy_gate.go`), invoked from `applyResponseFilter`
+for `eth_call` — i.e. **post-forward**. It decodes the caller's OWN
+already-fetched response; it never issues a second upstream call, so allow and
+deny share the timing profile (no per-record existence oracle). The engine is
+`internal/rbac/method_policy.go` (`Validate`, `DecodeCaptures`, `EvaluateReader`,
+`EvaluateAccess`, `DecodeReturnAddresses`).
+
+**Model.** Per contract, `contracts.method_policies` (JSONB, nullable). Two
+halves, both validated against the registered ABI at write time:
+
+- **capture** (writer methods): remember `param(i)` / `sender` / `visibleTo`
+  under a record key, written via the receipt-confirmed outbox
+  (`pending_record_captures` → `contract_record_captures`, promoted by the
+  visibility reconciler only when the source tx's receipt is status 1).
+- **access** (reader methods): allow when the authenticated caller matches the
+  record's captured fields/audience, OR an address decoded from the reader's
+  return. Union of the two resolvers.
+
+**Fail-closed, everywhere.** No policy → passthrough (unchanged). Policy but a
+DB/parse/decode error, owner-org mismatch, missing capture, or set-once poison
+→ opaque deny. Zero/empty values never match a caller. Keys canonicalize on the
+decoded typed value; capture and access key types must agree. Only narrows —
+the method allowlist / grant / claims / function-selector list / RD-915 tracing
+all run first and unchanged.
+
+**Admin.** `GET`/`PUT /api/v1/admin/orgs/{org}/contracts/{address}/method-policies`.
+PUT is **tier-2 org-admin** (`denyOperatorOrgScoped`, same tier as
+`visibleto-unlock` / grants / ABI — a per-contract, per-org control; the operator
+token is rejected), ABI-validated, audit-logged before/after. `updateContractABI`
+re-validates any configured policy against a new ABI and rejects a breaking
+change, so an ABI edit cannot silently disable the gate (revised 2026-07-15 from
+tier-1; the policy only narrows and fails closed, so it belongs at the same tier
+as the contract's other controls).
+
+### 9.2 Record-scoped event & transaction gating (rules 71/72)
+
+A method policy gates three subjects of a record, keyed by the same record key
+and the same captured audience:
+
+- **`access`** (readers, `eth_call`): the reader baseline is *permissive* (the
+  group grant allows the call), so `access` **narrows** it to the record's
+  audience (§9, deny-by-default at the response).
+- **`events`** (logs, `eth_getLogs` + receipt logs — rule 71) and
+  **`transactions`** (a tx/receipt by hash — rule 72): the write-side baseline is
+  *deny-by-default* (only sender/receiver/`visibleTo`/admin see), so these
+  **additively ADD** the record's captured audience as an extra admit path.
+
+**Additive semantics (events/transactions).** The record-audience branch admits a
+log/tx when: the contract is grant-eligible for the viewer (bounds it — the gate
+only ADDS viewers who already hold the grant, never widens past it), the subject
+is governed by an `events`/`transactions` rule, the record key decodes from the
+log (a non-indexed event param; an indexed *dynamic* key is a topic hash and is
+rejected at write time) or from the tx's own calldata, and the caller's DID/linked
+address is in that record's captured audience. It runs **before** the M15
+dynamic-payload drop and the event-rule allowlist and bypasses them for admitted
+logs (exactly like the RD-874 `visibleTo` unlock — the record's initiating call
+explicitly designated this audience). It **never removes** a viewer the baseline
+already admits, and fails closed (abstains) on any decode/lookup error. No upstream
+node call: the audience is a local `contract_record_captures` lookup, keyed by the
+record id already present in the subject.
+
+The audience reflects the participant set **as captured** (from the initiating
+call's `visibleTo`/params), which is historically correct — a participant set that
+changes on-chain after capture is not retroactively applied. The proxy never calls
+a `getParticipants`-style resolver itself; the client-managed alternative (call the
+gated getter, repeat DIDs in `visibleTo`) stays supported and orthogonal.
+
+**Symmetry.** The same decision (`rbac.MethodPolicyDocument.EventAudienceAdmits`)
+is invoked by both the RPC filter (`FilterEventLogs`, via `RecordAudienceGate` on
+`TxVisibilityContext`) and the explorer redactor (`RedactLogs`, via a resolver
+wired at `wireExplorerRedactor`) — one seam, guarded by
+`TestExplorerRedactorWiring_FullStack`.
+
+**Gating scope (aliases):** the gate fires for `eth_call` (and any method alias
+that `ResolveMethodAlias` maps to `eth_call`). A chain-specific read method
+exposed via a wildcard namespace that is NOT aliased to `eth_call` bypasses the
+gate, like every other response filter — if an operator adds a `*_call`-style
+method, it must be aliased to `eth_call` to inherit method-policy gating.
+
+**Trace twin (`debug_traceCall`).** `debug_traceCall` executes the same getter as
+`eth_call` and its top frame carries the return data, so it is gated through the
+**same** per-record policy (shared `methodPolicyDecision`): a caller who would be
+denied the `eth_call` cannot read the record by tracing it. The return-address
+resolver is neutralized when the call carries a state override (`eth_call`
+params[2]/[3], or `debug_traceCall` `stateOverrides`), since an overridden return
+is attacker-forgeable; capture-based rules are unaffected. `debug_traceTransaction`
+(a historical replay, not a caller-initiated read) is out of scope.
+
+### 9.1 where-conditions and the simulator (RD-1206 addendum)
+
+**where** (`AllowRule.Where{field,op,value}`): a captured-field allow rule may be
+further restricted by a comparison on a captured scalar (Example 4 — e.g. a
+compliance principal reads a payment only when `amount >= 1000000`). AND-combined
+with `callerIn`; a where can only narrow, never widen. Numeric ops
+(`lt/lte/gt/gte`) compare as `big.Int` (never lexical); `eq/neq` fall back to
+canonical-string equality. Fail-closed on absent/multi/unparsable/non-numeric —
+the rule does not admit. `where` is rejected on return-source rules (keeps the
+single-forward property) and validated against the ABI at write time
+(field is a captured scalar; numeric op ⇒ numeric field; value parses).
+
+**callerIn literal principals:** a `callerIn` list entry is either a captured
+field name or a literal DID/ETH-address principal matched directly against the
+caller (a non-declared, non-literal entry is rejected — typos can't become inert
+literals).
+
+**Simulator** (`POST .../method-policies/simulate`, tier-2 org-admin, org-scoped,
+audit-logged): capture-side evaluation of "would caller X read record K?" —
+allow / deny / **indeterminate_return_source**. It performs NO node call, so the
+live return-address resolver is not simulated; a capture-side deny on a reader
+that has a return rule is reported as indeterminate, never an authoritative deny.
+Returns the record's captured admit-set (a tenant-read the org admin already has
+via GET; the operator token is rejected). This is the
+*intent* check — validators prove structure/safety, the simulator surfaces
+over/under-exposure.
+
+**Invariant consolidation:** all safety invariants live in `Validate` (not just
+the UI), so raw-JSON authoring is exactly as safe as the structured editor:
+key-type agreement, `visibleTo⇒union`, cross-capture (kind,merge) consistency,
+`callerIn` ⊆ captured∪literal, return paths are top-level address outputs,
+deny-only outcomes, and the where checks above.

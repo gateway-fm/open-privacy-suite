@@ -82,6 +82,23 @@ type TxVisibilityContext struct {
 	// sender via a batched upstream eth_getTransactionByHash. Empty/nil = no
 	// participant admission (backward compatible).
 	ParticipantTxHashes map[string]bool
+
+	// RecordAudience (RD-1206 rule 71), when set, admits a log whose governed
+	// event's captured record audience includes the viewer. It is ADDITIVE
+	// (admit-or-abstain, never deny) and independent of the visibleTo machinery
+	// above — a record's audience is captured from a PRIOR call, not this log's
+	// tx. nil = event-audience gating off.
+	RecordAudience RecordAudienceGate
+}
+
+// RecordAudienceGate decides whether the viewer is in a log's governed event's
+// captured record audience. The implementation loads the contract's policy +
+// captures (RD-1206) and delegates to MethodPolicyDocument.EventAudienceAdmits,
+// so the RPC filter and the explorer redactor share one decision. Must be
+// fail-safe: return false on any decode/lookup failure (the log then falls
+// through to the baseline). contractABI is the already-resolved ABI.
+type RecordAudienceGate interface {
+	EventLogAdmits(contractAddr, contractABI string, topics []string, data string) bool
 }
 
 // logEntry is the minimal structure needed to inspect an Ethereum log for
@@ -206,6 +223,23 @@ func FilterEventLogs(
 			}
 		}
 
+		access := perms.GetContractAccess(contractAddr)
+
+		// RD-1206 rule 71: additive record-audience admit. When a method policy
+		// governs this log's event AND the caller is in the record's captured
+		// audience, the log passes — bypassing the M15 dynamic-payload gate and
+		// the event-rule allowlist below, exactly like the RD-874 visibleTo
+		// unlock (the record's initiating call explicitly designated this
+		// audience). Bounded by contract eligibility (access != nil): the record
+		// gate only ADDS viewers who already hold the contract grant, never
+		// widens past it. Fail-safe: the gate returns false on any decode/lookup
+		// failure, so the log falls through to the deny-by-default baseline.
+		if access != nil && visCtx != nil && visCtx.RecordAudience != nil &&
+			visCtx.RecordAudience.EventLogAdmits(contractAddr, contractABI, entry.Topics, entry.Data) {
+			filtered = append(filtered, rawLog)
+			continue
+		}
+
 		// M15 dynamic-payload drop (security audit follow-up to RD-915):
 		// drop logs whose matching event declares any dynamic non-indexed
 		// param (`bytes`, `string`, dynamic arrays, dynamic structs) for
@@ -242,8 +276,6 @@ func FilterEventLogs(
 				continue
 			}
 		}
-
-		access := perms.GetContractAccess(contractAddr)
 
 		// RD-1162: participant/sender bypass of the event-rule allowlist.
 		// If the caller is a participant (from/to) of this log's transaction

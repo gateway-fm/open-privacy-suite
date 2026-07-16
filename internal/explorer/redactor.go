@@ -245,6 +245,37 @@ type LogParticipantStore interface {
 	FindLogParticipantTxs(ctx context.Context, viewerAddrs []string, txHashes []string) (map[string]bool, error)
 }
 
+// CapturedAudienceResolver decides whether a viewer is in a log's governed
+// event's captured record audience (RD-1206 rule 71). It mirrors the RPC layer's
+// rbac.RecordAudienceGate: both delegate to the SAME shared decision
+// (rbac.MethodPolicyDocument.EventAudienceAdmits over the local
+// contract_record_captures table), so eth_getLogs and the explorer log endpoint
+// admit/hide a governed event identically and cannot drift.
+//
+// The result is ADDITIVE: true means "the record audience admits this viewer"
+// (Phase 4 passes the log through unredacted, bypassing the M15 dynamic-payload
+// gate and the event-rule allowlist, exactly like rbac.FilterEventLogs). It never
+// hides a log the baseline already shows. Implementations MUST be fail-safe:
+// return false on any decode / lookup / org-scoping failure so the log simply
+// falls through to the existing phases (never admitted on error, never
+// un-admitted). contractABI is the ABI the redactor already resolved for the
+// emitting contract; topics/data are the log's raw topic hexes and data hex.
+//
+// Bounded by contract eligibility at the call site (see RedactLogs): the resolver
+// is only consulted for a viewer whose visibility on the emitting contract is
+// VisibilityFull. Note VisibilityFull is reached by a real contract grant OR by
+// the participant / visibleTo upgrades — so it is slightly WIDER than the RPC
+// path's `access != nil` (grant-only). This is not a widening of the record gate:
+// a viewer who reached Full via participant/visibleTo already sees the log through
+// that same upgrade regardless of this resolver, so the resolver adds nothing new
+// for them (it only ADDS the record's declared audience to grant/eligible
+// viewers). The residual RPC-vs-explorer difference for a no-grant participant of
+// a dynamic-payload event is a pre-existing M15/participant-admission asymmetry,
+// independent of this feature (audit F1) — not introduced here.
+type CapturedAudienceResolver interface {
+	EventLogAdmits(ctx context.Context, viewerDID, contractAddr, contractABI string, topics []string, data string) bool
+}
+
 // RedactionEngine handles the bulk redaction of explorer data based on user grants
 type RedactionEngine struct {
 	store                         ContractStore
@@ -254,6 +285,7 @@ type RedactionEngine struct {
 	adminContractsResolver        AdminContractsResolver
 	visibleToUnlockResolver       VisibleToUnlockResolver
 	dynamicPayloadAllowedResolver DynamicPayloadAllowedResolver
+	capturedAudienceResolver      CapturedAudienceResolver
 	logParticipantStore           LogParticipantStore
 	pseudonymKey                  []byte // RD-1164 #8: HMAC key for address pseudonyms (nil = unkeyed HMAC, still non-reversible)
 }
@@ -325,6 +357,21 @@ func (r *RedactionEngine) SetVisibleToUnlockResolver(resolver VisibleToUnlockRes
 // the gate.
 func (r *RedactionEngine) SetDynamicPayloadAllowedResolver(resolver DynamicPayloadAllowedResolver) {
 	r.dynamicPayloadAllowedResolver = resolver
+}
+
+// SetCapturedAudienceResolver wires the RD-1206 rule-71 record-audience resolver.
+// When set, Phase 4 of RedactLogs admits a governed dynamic-payload event log for
+// a viewer who is in the log's captured record audience — the ADDITIVE admit that
+// mirrors rbac.FilterEventLogs's RecordAudience branch at the RPC layer, so the
+// two surfaces stay coherent (a governed event is visible/hidden identically via
+// eth_getLogs and the explorer). Bounded by contract eligibility (VisibilityFull)
+// so it only adds eligible viewers.
+//
+// Without this resolver wired, the record-audience admit path is disabled and the
+// redactor falls back to its existing phases (fail-safe: strictly less visible,
+// never more). Production server startup wires it via wireExplorerRedactor.
+func (r *RedactionEngine) SetCapturedAudienceResolver(resolver CapturedAudienceResolver) {
+	r.capturedAudienceResolver = resolver
 }
 
 // SetABIResolver wires the unified ABI resolver (RD-889 / Stage 2 of the
@@ -2240,6 +2287,44 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 		// pre-RD-890 explorer-stricter-than-RPC asymmetry).
 		if r.abiResolver != nil && !adminContracts[contractAddr] {
 			if r.abiResolver.Resolve(ctx, contractAddr) == "" {
+				continue
+			}
+		}
+
+		// RD-1206 rule 71: additive record-audience admit. When a method
+		// policy governs this log's event AND the viewer is in the record's
+		// captured audience, pass the log through unredacted — bypassing the
+		// M15 dynamic-payload gate and the event-rule allowlist below, exactly
+		// like rbac.FilterEventLogs's RecordAudience branch at the RPC layer
+		// (same precedence: after the deny-when-no-ABI gate, before M15). The
+		// record's initiating call explicitly designated this audience.
+		//
+		// Bounded by contract eligibility: only VisibilityFull viewers reach
+		// this branch. VisibilityFull for an org-owned contract means the
+		// viewer holds a contract grant on it (GetBatchVisibility Step 2) —
+		// the explorer equivalent of the RPC path's access != nil (a
+		// ContractAccess entry). The record gate therefore only ADDS the
+		// record's declared audience among viewers who already hold the grant;
+		// it never widens past the grant (a Redacted-only viewer — org member
+		// with no grant — is not consulted, matching access == nil on RPC).
+		//
+		// Fail-safe: the resolver returns false on any decode / lookup /
+		// org-scoping failure, so the log falls through to the phases below
+		// (never admitted on error, never un-admitted). Anonymous events (no
+		// topic0) carry no governed key and are left to the baseline.
+		if r.capturedAudienceResolver != nil && viewerDID != "" &&
+			level == VisibilityFull && l.Topic0 != nil {
+			var abiForAudience string
+			if raw, ok := contractABIs[contractAddr]; ok && len(raw) > 0 {
+				abiForAudience = string(raw)
+			} else if r.abiResolver != nil {
+				abiForAudience = r.abiResolver.Resolve(ctx, contractAddr)
+			}
+			if abiForAudience != "" &&
+				r.capturedAudienceResolver.EventLogAdmits(ctx, viewerDID, contractAddr, abiForAudience, collectLogTopics(l), l.Data) {
+				redacted := l
+				redacted.AddressMetadata = make(map[string]VisibilityReason)
+				result = append(result, redacted)
 				continue
 			}
 		}

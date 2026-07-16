@@ -174,6 +174,13 @@ type ProcessRequest struct {
 	// admin Access Logs view shows WHY, not just the status. Set at the denial
 	// site right before logAccess; empty for success/unclassified => NULL.
 	denialReason string
+
+	// methodPolicyDenied is set by applyMethodPolicyGate (RD-1206) when a
+	// per-record policy denies an otherwise-permitted eth_call. The upstream call
+	// already returned 200, so the wire stays a 200 JSON-RPC error; this flag lets
+	// the caller record the access-log row as a real denial (403) rather than a
+	// served read.
+	methodPolicyDenied bool
 }
 
 // ProcessResult represents the result of processing a JSON-RPC request.
@@ -980,10 +987,37 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 		}
 	}
 
+	// RD-1206: enqueue method-policy record captures for this send (independent
+	// of visibleTo — a create still captures payer/payee from sender/params).
+	// Gate on eth_sendTransaction ONLY: this runs in the shared Process() body
+	// that also serves eth_call / eth_estimateGas, whose 200 "result" is return
+	// data / a gas estimate — NOT a tx hash. Enqueuing those would pollute the
+	// outbox with un-mineable hashes, and a return value that happened to equal a
+	// real mined tx hash could plant a forged capture row. eth_sendRawTransaction
+	// captures on its own path (processRawTransaction).
+	if statusCode == http.StatusOK && req.Method == "eth_sendTransaction" {
+		if txHash := extractTxHashFromResult(responseBody); txHash != "" {
+			_, to, data, _ := extractTxParams(req.Params)
+			p.enqueueMethodPolicyCaptures(ctx, req, to, data, visibleTo, txHash)
+		}
+	}
+
 	// Apply response-level privacy filtering based on method.
 	// This filters responses to prevent cross-participant data leakage
 	// within the same organization.
 	responseBody = p.applyResponseFilter(ctx, req, result, responseBody)
+
+	// RD-1206: a per-record method-policy denial keeps the upstream 200 on the
+	// wire (JSON-RPC error body) but must be recorded as a denial in the access
+	// log, not a served read. denialReason was stamped by the gate.
+	if req.methodPolicyDenied {
+		p.recordRPCOutcome(req.Method, "method_policy_denied", start)
+		p.logAccess(ctx, req, http.StatusForbidden, statusCode)
+		return &ProcessResult{
+			StatusCode:   statusCode,
+			ResponseBody: responseBody,
+		}
+	}
 
 	// Log successful access
 	p.recordRPCOutcome(req.Method, "success", start)
@@ -1051,9 +1085,18 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 			}
 		}
 		filtered := FilterTransactionByHash(responseBody, addrs, isAdminOnTo)
-		// If participant + admin check returned null, check visibleTo as fallback
-		if isNullResult(filtered) && p.isResponseTxVisibleTo(ctx, req.UserID, responseBody) {
-			return responseBody
+		// If the participant + admin check returned null, additive fallbacks: the
+		// tx's visibleTo, then (RD-1206 rule 72) the tx's per-record captured
+		// audience — decode the record key from the tx's OWN calldata and admit if
+		// the caller is in it. Both only ADD; neither hides a tx the participant /
+		// admin check already showed.
+		if isNullResult(filtered) {
+			if p.isResponseTxVisibleTo(ctx, req.UserID, responseBody) {
+				return responseBody
+			}
+			if p.txResponseRecordAudienceAdmits(ctx, req.UserID, addrs, result, responseBody) {
+				return responseBody
+			}
 		}
 		return filtered
 
@@ -1070,6 +1113,14 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 		// Pass the internal user UUID (result.UserID), not the JWT DID.
 		// viewerUUID() guards against nil result (visibleTo-only path).
 		adminMap := p.viewerAdminContracts(ctx, viewerUUID(result), extractContractAddressesFromResponse(responseBody))
+		// RD-1206 rule 71: the receipt's logs inherit the additive record-audience
+		// gate (FilterReceiptLogsWithEventRules delegates to FilterEventLogs).
+		if gate := p.newRecordAudienceGate(ctx, req.UserID, addrs); gate != nil {
+			if visCtx == nil {
+				visCtx = &rbac.TxVisibilityContext{ViewerDID: req.UserID}
+			}
+			visCtx.RecordAudience = gate
+		}
 		return FilterReceiptLogsWithEventRules(responseBody, addrs, perms, p.contractABIProvider(ctx), visCtx, adminMap)
 
 	case strings.EqualFold(m, rbac.MethodGetLogs):
@@ -1100,6 +1151,14 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 		// the JWT DID — viewerAdminContracts queries user_memberships
 		// by UUID FK. viewerUUID() guards against nil result.
 		adminMap := p.viewerAdminContracts(ctx, viewerUUID(result), extractContractAddressesFromResponse(responseBody))
+		// RD-1206 rule 71: attach the additive record-audience gate (independent
+		// of visibleTo — see newRecordAudienceGate).
+		if gate := p.newRecordAudienceGate(ctx, req.UserID, addrs); gate != nil {
+			if visCtx == nil {
+				visCtx = &rbac.TxVisibilityContext{ViewerDID: req.UserID}
+			}
+			visCtx.RecordAudience = gate
+		}
 		return FilterLogsWithEventRules(responseBody, addrs, perms, p.contractABIProvider(ctx), visCtx, adminMap)
 
 	case strings.EqualFold(m, rbac.MethodGetTransactionByBlockHashAndIndex),
@@ -1119,9 +1178,18 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 			}
 		}
 		filtered := FilterTransactionByHash(responseBody, addrs, isAdminOnTo)
-		// If participant + admin check returned null, check visibleTo as fallback
-		if isNullResult(filtered) && p.isResponseTxVisibleTo(ctx, req.UserID, responseBody) {
-			return responseBody
+		// If the participant + admin check returned null, additive fallbacks: the
+		// tx's visibleTo, then (RD-1206 rule 72) the tx's per-record captured
+		// audience — decode the record key from the tx's OWN calldata and admit if
+		// the caller is in it. Both only ADD; neither hides a tx the participant /
+		// admin check already showed.
+		if isNullResult(filtered) {
+			if p.isResponseTxVisibleTo(ctx, req.UserID, responseBody) {
+				return responseBody
+			}
+			if p.txResponseRecordAudienceAdmits(ctx, req.UserID, addrs, result, responseBody) {
+				return responseBody
+			}
 		}
 		return filtered
 
@@ -1161,6 +1229,13 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 			addrs = nil
 		}
 		return FilterBlockReceipts(responseBody, addrs)
+
+	case strings.EqualFold(m, rbac.MethodCall):
+		// RD-1206: per-record method access policy. Gates the already-forwarded
+		// eth_call response by the target contract's policy (no second upstream
+		// call). Passthrough when the contract has no policy or the method is
+		// not a gated reader.
+		return p.applyMethodPolicyGate(ctx, req, responseBody)
 	}
 	return responseBody
 }
@@ -1736,6 +1811,15 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 						"tx", txHash, "recipients", len(rawTxVisibleTo), "sender", req.UserID, "org", result.OrgID, "error", err)
 				}
 			}
+		}
+	}
+
+	// RD-1206: enqueue method-policy record captures for this raw send. `to` and
+	// `data` were decoded from the signed tx above; captures ride the same
+	// receipt-confirmed outbox as visibleTo.
+	if statusCode == http.StatusOK {
+		if txHash := extractTxHashFromResult(responseBody); txHash != "" {
+			p.enqueueMethodPolicyCaptures(ctx, req, to, data, rawTxVisibleTo, txHash)
 		}
 	}
 

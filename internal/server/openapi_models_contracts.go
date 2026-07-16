@@ -13,6 +13,8 @@ package server
 // constructed at runtime — annotation references only.
 
 import (
+	"encoding/json"
+
 	"privacy-proxy/internal/db"
 	"privacy-proxy/internal/rbac"
 )
@@ -137,6 +139,51 @@ type contractVisibleToUnlockRequest struct {
 // /orgs/{org_id}/contracts/{address}/events-allow-dynamic-payload body.
 type contractEventsAllowDynamicPayloadRequest struct {
 	EventsAllowDynamicPayload *bool `json:"events_allow_dynamic_payload" example:"false"`
+}
+
+// contractMethodPoliciesRequest is the PUT
+// /orgs/{org_id}/contracts/{address}/method-policies body (RD-1206). The
+// method_policies object is a per-record access policy validated against the
+// contract's registered ABI; send null to clear it (feature off).
+type contractMethodPoliciesRequest struct {
+	MethodPolicies json.RawMessage `json:"method_policies" swaggertype:"object"`
+}
+
+// contractMethodPoliciesResponse is the GET
+// /orgs/{org_id}/contracts/{address}/method-policies body: the currently
+// configured policy document, or null when none is set.
+type contractMethodPoliciesResponse struct {
+	MethodPolicies json.RawMessage `json:"method_policies" swaggertype:"object"`
+}
+
+// methodPolicySimulateRequest is the POST .../method-policies/simulate body:
+// "would this caller be allowed to read this record via this method?" (RD-1206).
+type methodPolicySimulateRequest struct {
+	Method    string   `json:"method"`     // canonical reader signature, e.g. "getPaymentInfo(string)"
+	RecordKey string   `json:"record_key"` // the record identifier value (live mode)
+	CallerDID string   `json:"caller_did"`
+	CallerETH []string `json:"caller_eth_addresses"`
+	// Captured, when non-empty, evaluates the policy against these HYPOTHETICAL
+	// captured parties (captured-field name → values, e.g. {"payer":["did:…"],
+	// "payee":["0x…"]}) instead of the live record — so a freshly authored policy
+	// can be validated before any record exists on-chain. record_key is then
+	// optional (used only to label the audit entry). The admin supplies the
+	// parties, so this reads no tenant data.
+	Captured map[string][]string `json:"captured,omitempty"`
+}
+
+// methodPolicySimulateResponse is the simulator result. Result is tri-state:
+// "allow" / "deny" / "indeterminate_return_source" — the last means the
+// capture side denies but the reader has a return-address rule whose live
+// result is not simulated (a getter-returned address could additionally admit).
+type methodPolicySimulateResponse struct {
+	Result          string              `json:"result"`
+	RecordType      string              `json:"record_type"`
+	MatchedRule     string              `json:"matched_rule,omitempty"`
+	HasReturnSource bool                `json:"has_return_source"`
+	Poisoned        bool                `json:"poisoned"`
+	Captured        map[string][]string `json:"captured"` // full admit-set (super-admin only)
+	Note            string              `json:"note,omitempty"`
 }
 
 // contractSyncDeleteRequest is the POST

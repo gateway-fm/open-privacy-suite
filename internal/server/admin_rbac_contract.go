@@ -345,6 +345,26 @@ func (s *Server) updateContractABI(c *gin.Context) {
 		return
 	}
 
+	// RD-1206 (H2): if a method policy is configured, the new ABI must still
+	// satisfy it. A gated reader whose selector/signature no longer resolves
+	// against the ABI fails OPEN at the gate (it looks "not gated" and the
+	// response is served unfiltered), so a breaking ABI change would silently
+	// disable per-record read gating. Re-validate and reject; the policy must be
+	// updated or cleared (same tier) first.
+	if len(contract.MethodPolicies) > 0 {
+		doc, perr := rbac.ParseMethodPolicyDocument(contract.MethodPolicies)
+		if perr != nil {
+			respondBadRequestAndLog(c, "contract has a method policy that cannot be re-validated against the new ABI; clear the method policy first",
+				"admin_rbac_contract: stored method policy unreadable on ABI update",
+				"contract_id", contract.ID, "err", perr)
+			return
+		}
+		if reason := doc.ValidateForClient(input.ABI); reason != "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "this ABI change would disable the configured method policy (" + reason + "); update or clear the method policy first"})
+			return
+		}
+	}
+
 	if err := s.db.UpdateContractABI(c.Request.Context(), contract.ID, input.ABI); err != nil {
 		respondInternalErrorAndLog(c, "failed to update contract ABI",
 			"admin_rbac_contract: UpdateContractABI failed",
@@ -550,6 +570,308 @@ func (s *Server) updateContractEventsAllowDynamicPayload(c *gin.Context) {
 
 	contract.EventsAllowDynamicPayload = *input.EventsAllowDynamicPayload
 	c.JSON(http.StatusOK, contract)
+}
+
+// getContractMethodPolicies returns the contract's configured method access
+// policy document (RD-1206), or null when none is set.
+//
+// @Summary      Get a contract's method access policies
+// @Description  Returns the per-record method access policy document (RD-1206) configured on the contract, or null when unset. Scoped to {org_id}; the restricted operator token is rejected (tenant read).
+// @Tags         Admin: RBAC
+// @Produce      json
+// @Param        org_id path string true "Organization ID"
+// @Param        address path string true "Contract address (0x-prefixed hex)"
+// @Success      200 {object} contractMethodPoliciesResponse
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "operator token cannot read tenant data, or caller is out of org scope"
+// @Failure      404 {object} APIError "contract not found"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id}/contracts/{address}/method-policies [get]
+func (s *Server) getContractMethodPolicies(c *gin.Context) {
+	if denyOperatorTenantRead(c) {
+		return
+	}
+	orgID := c.Param("org_id")
+	address := c.Param("address")
+	contract, err := s.db.GetContractByAddress(c.Request.Context(), orgID, address)
+	if err != nil {
+		respondInternalErrorAndLog(c, "failed to read contract",
+			"admin_rbac_contract: GetContractByAddress failed (getContractMethodPolicies)",
+			"org_id", orgID, "address", address, "err", err)
+		return
+	}
+	if contract == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "contract not found"})
+		return
+	}
+	c.JSON(http.StatusOK, contractMethodPoliciesResponse{MethodPolicies: contract.MethodPolicies})
+}
+
+// updateContractMethodPolicies sets or clears the per-record method access
+// policy document (RD-1206). Send method_policies:null to clear.
+//
+// PUT /orgs/:org_id/contracts/:address/method-policies
+//
+// **Tier-2 org-admin** (org-scoped JWT; the restricted operator token is
+// rejected). A method policy is per-contract, per-org configuration — the same
+// scope as the contract's grants, groups, ABI and the RD-874 visibleto-unlock
+// toggle, all of which the org admin already owns. It only ever NARROWS an
+// already-permitted read and fails closed, so a malformed policy denies rather
+// than leaks. The policy is validated against the contract's registered ABI on
+// write, so a policy can never validate here and then misbehave at read time;
+// and updateContractABI re-validates any configured policy against a new ABI so
+// an ABI change cannot silently disable the gate. Audit-logged with before/after
+// state.
+//
+// @Summary      Set a contract's method access policies
+// @Description  Sets or clears (method_policies:null) the per-record method access policy (RD-1206), gating record-reader eth_calls to a record's stakeholders. Validated against the contract's registered ABI. Tier-2 org-admin (the restricted operator token is rejected) — it is per-contract, per-org configuration that only narrows reads; the change is audit-logged with before/after state.
+// @Tags         Admin: RBAC
+// @Accept       json
+// @Produce      json
+// @Param        org_id path string true "Organization ID"
+// @Param        address path string true "Contract address (0x-prefixed hex)"
+// @Param        request body contractMethodPoliciesRequest true "policy document, or null to clear"
+// @Success      200 {object} rbac.Contract
+// @Failure      400 {object} APIError "invalid body, policy fails ABI validation, or no ABI registered"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "operator token cannot manage tenant data, or caller is out of org scope"
+// @Failure      404 {object} APIError "contract not found"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id}/contracts/{address}/method-policies [put]
+func (s *Server) updateContractMethodPolicies(c *gin.Context) {
+	if denyOperatorOrgScoped(c) {
+		return
+	}
+	orgID := c.Param("org_id")
+	address := c.Param("address")
+
+	contract, err := s.db.GetContractByAddress(c.Request.Context(), orgID, address)
+	if err != nil {
+		respondInternalErrorAndLog(c, "failed to read contract",
+			"admin_rbac_contract: GetContractByAddress failed (updateContractMethodPolicies)",
+			"org_id", orgID, "address", address, "err", err)
+		return
+	}
+	if contract == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "contract not found"})
+		return
+	}
+
+	var input contractMethodPoliciesRequest
+	if err := c.ShouldBindJSON(&input); err != nil {
+		respondBadRequestAndLog(c, "invalid request body",
+			"admin_rbac_contract: invalid updateContractMethodPolicies body",
+			"contract_id", contract.ID, "err", err)
+		return
+	}
+
+	var toStore []byte
+	clearing := len(input.MethodPolicies) == 0 || string(input.MethodPolicies) == "null"
+	if !clearing {
+		if contract.ABI == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "register the contract ABI before setting method policies"})
+			return
+		}
+		doc, perr := rbac.ParseMethodPolicyDocument(input.MethodPolicies)
+		if perr != nil {
+			// Generic client message (avoid echoing raw JSON-parser output);
+			// the detail is logged for operator diagnostics (RD-934).
+			respondBadRequestAndLog(c, "malformed method policy document",
+				"admin_rbac_contract: method policy parse failed",
+				"contract_id", contract.ID, "err", perr)
+			return
+		}
+		// ValidateForClient returns a curated, ABI-derived reason (safe to
+		// surface — see its doc); the sanitization boundary lives in rbac.
+		if reason := doc.ValidateForClient(contract.ABI); reason != "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "method policy failed ABI validation: " + reason})
+			return
+		}
+		toStore = input.MethodPolicies
+	}
+
+	if err := s.db.UpdateContractMethodPolicies(c.Request.Context(), contract.ID, toStore); err != nil {
+		respondInternalErrorAndLog(c, "failed to update method policies",
+			"admin_rbac_contract: UpdateContractMethodPolicies failed",
+			"contract_id", contract.ID, "err", err)
+		return
+	}
+
+	if s.rbacAccessCtrl != nil {
+		s.rbacAccessCtrl.InvalidateOrg(c.Request.Context(), orgID)
+	}
+
+	// Audit with full before/after policy JSON — the change-management artifact
+	// for a security-relevant read-enforcement config.
+	s.recordAuditActionScoped(c, rbac.AuditActionUpdate, rbac.ResourceTypeContract, contract.ID, contract.Name, orgID,
+		map[string]any{"method_policies": rawOrNull(contract.MethodPolicies)},
+		map[string]any{"method_policies": rawOrNull(toStore), "address": contract.Address})
+
+	contract.MethodPolicies = toStore
+	c.JSON(http.StatusOK, contract)
+}
+
+// rawOrNull renders raw JSON for the audit log, or nil when empty.
+func rawOrNull(b []byte) any {
+	if len(b) == 0 {
+		return nil
+	}
+	return json.RawMessage(b)
+}
+
+// simulateContractMethodPolicy answers "would this caller be allowed to read
+// this record via this method?" from the stored captures (RD-1206). It performs
+// NO node call — the return-address resolver is not simulated; when the reader
+// has a return rule and the capture side denies, the result is
+// "indeterminate_return_source" so a capture-side deny is never mistaken for an
+// authoritative deny.
+//
+// **Tier-2 org-admin** (the restricted operator token is rejected) — it
+// discloses the record's captured admit-set (stakeholder DIDs/addresses) and is
+// a per-caller allow/deny oracle over the org's own contract, the same tenant-read
+// tier as GET method-policies. Org-scoped by the path org_id (never a global
+// address lookup); opaque 404 for a missing or other-org contract (no cross-org
+// existence probe). Audit-logged.
+//
+// @Summary      Simulate a method access policy decision
+// @Description  Evaluates the capture side of a contract's method policy for a given caller + record, returning allow / deny / indeterminate_return_source plus the record's captured admit-set. No node call; the live return-address resolver is not simulated. Supply `captured` (field→values) to dry-run against HYPOTHETICAL parties instead of a live record — validating a policy before any record exists (record_key then optional). Tier-2 org-admin (the restricted operator token is rejected); org-scoped; audit-logged.
+// @Tags         Admin: RBAC
+// @Accept       json
+// @Produce      json
+// @Param        org_id path string true "Organization ID"
+// @Param        address path string true "Contract address (0x-prefixed hex)"
+// @Param        request body methodPolicySimulateRequest true "caller + record to simulate"
+// @Success      200 {object} methodPolicySimulateResponse
+// @Failure      400 {object} APIError "invalid body, or no policy configured"
+// @Failure      401 {object} APIError "missing or invalid admin token"
+// @Failure      403 {object} APIError "operator token cannot read tenant data, or caller is out of org scope"
+// @Failure      404 {object} APIError "contract not found"
+// @Failure      500 {object} APIError
+// @Security     AdminToken
+// @Router       /api/v1/admin/orgs/{org_id}/contracts/{address}/method-policies/simulate [post]
+func (s *Server) simulateContractMethodPolicy(c *gin.Context) {
+	if denyOperatorTenantRead(c) {
+		return
+	}
+	orgID := c.Param("org_id")
+	address := c.Param("address")
+
+	// Org-scoped lookup (never GetContractByAddressGlobal): a missing or
+	// other-org contract returns the same opaque 404 — no cross-org probe.
+	contract, err := s.db.GetContractByAddress(c.Request.Context(), orgID, address)
+	if err != nil {
+		respondInternalErrorAndLog(c, "failed to read contract",
+			"admin_rbac_contract: GetContractByAddress failed (simulateContractMethodPolicy)",
+			"org_id", orgID, "address", address, "err", err)
+		return
+	}
+	if contract == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "contract not found"})
+		return
+	}
+	if len(contract.MethodPolicies) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no method policy configured for this contract"})
+		return
+	}
+
+	var input methodPolicySimulateRequest
+	if err := c.ShouldBindJSON(&input); err != nil {
+		respondBadRequestAndLog(c, "invalid request body",
+			"admin_rbac_contract: invalid simulateContractMethodPolicy body",
+			"contract_id", contract.ID, "err", err)
+		return
+	}
+	if input.Method == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "method is required"})
+		return
+	}
+	if input.RecordKey == "" && len(input.Captured) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "record_key (live) or captured (what-if) is required"})
+		return
+	}
+
+	doc, perr := rbac.ParseMethodPolicyDocument(contract.MethodPolicies)
+	if perr != nil {
+		respondInternalErrorAndLog(c, "stored policy is unreadable",
+			"admin_rbac_contract: stored method policy failed to parse (simulate)",
+			"contract_id", contract.ID, "err", perr)
+		return
+	}
+
+	caller := rbac.NewCallerIdentity(input.CallerDID, input.CallerETH)
+	var capturedRows []rbac.CapturedField
+	// What-if mode (admin supplies `captured`): evaluate against hypothetical
+	// parties with NO DB read, so a policy can be validated before any record is
+	// created. Live mode: load the record's real captured rows.
+	whatIf := len(input.Captured) > 0
+	res, gated, serr := doc.SimulateReader(input.Method, caller, func(recordType string) ([]rbac.CapturedField, error) {
+		if whatIf {
+			capturedRows = hypotheticalCaptures(input.Captured)
+			return capturedRows, nil
+		}
+		rows, e := s.db.GetRecordCaptures(c.Request.Context(), contract.OrgID, contract.Address, recordType, input.RecordKey)
+		capturedRows = rows
+		return rows, e
+	})
+	if serr != nil {
+		respondInternalErrorAndLog(c, "failed to load captures",
+			"admin_rbac_contract: GetRecordCaptures failed (simulate)",
+			"contract_id", contract.ID, "err", serr)
+		return
+	}
+	if !gated {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "method is not a gated reader in this contract's policy"})
+		return
+	}
+
+	result := "deny"
+	note := ""
+	switch {
+	case res.Poisoned:
+		result, note = "deny", "record key is poisoned (conflicting set-once captures) — all reads denied"
+	case res.Allow:
+		result = "allow"
+	case res.HasReturnSource:
+		result = "indeterminate_return_source"
+		note = "capture side denies, but this reader has a return-address rule; the live getPaymentInfo return could additionally admit this caller (not simulated)"
+	}
+
+	captured := map[string][]string{}
+	for _, cf := range capturedRows {
+		captured[cf.Field] = append(captured[cf.Field], cf.Value)
+	}
+
+	// Audit the simulation (it surfaces stakeholder identities) — log the query,
+	// not the admit-set, so the harvest is itself auditable.
+	s.recordAuditActionScoped(c, rbac.AuditActionAccess, rbac.ResourceTypeContract, contract.ID, contract.Name, orgID,
+		nil,
+		map[string]any{"simulate": true, "what_if": whatIf, "method": input.Method, "record_key": input.RecordKey, "caller_did": input.CallerDID, "result": result})
+
+	c.JSON(http.StatusOK, methodPolicySimulateResponse{
+		Result:          result,
+		RecordType:      res.RecordType,
+		MatchedRule:     res.MatchedRule,
+		HasReturnSource: res.HasReturnSource,
+		Poisoned:        res.Poisoned,
+		Captured:        captured,
+		Note:            note,
+	})
+}
+
+// hypotheticalCaptures turns an admin-supplied {field: [values]} map into
+// capture rows for the what-if simulator. Merge is "union" so multiple values
+// per field never trip set-once poisoning (a what-if run tests "given these
+// parties, who is admitted?", not accumulation semantics).
+func hypotheticalCaptures(m map[string][]string) []rbac.CapturedField {
+	var out []rbac.CapturedField
+	for field, vals := range m {
+		for _, v := range vals {
+			out = append(out, rbac.CapturedField{Field: field, Value: v, Merge: "union"})
+		}
+	}
+	return out
 }
 
 // listContractEvents parses the stored ABI and returns the list of events with

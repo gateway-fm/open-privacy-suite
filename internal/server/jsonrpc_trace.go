@@ -737,6 +737,25 @@ func (p *JSONRPCProcessor) processDebugTrace(ctx context.Context, req *ProcessRe
 		return &ProcessResult{Error: &ProcessError{StatusCode: http.StatusBadGateway, Message: "failed to forward trace request"}}
 	}
 
+	// RD-1206: debug_traceCall is the trace twin of eth_call — it executes the
+	// same getter and its top frame carries the return data. Gate it through the
+	// SAME per-record method policy so it cannot be used to read a record the
+	// eth_call gate would deny (debug_traceTransaction replays a historical mined
+	// tx and is out of scope). Fail-closed conditions deny opaquely, matching the
+	// eth_call gate; the denial is stamped into the access log.
+	if req.Method == "debug_traceCall" {
+		_, _, data, _ := extractTxParams(req.Params)
+		returnData := extractTraceCallOutputBytes(responseBody)
+		overridden := debugTraceCallHasStateOverride(req.Params)
+		if gated, denied := p.methodPolicyDecision(ctx, req, debugCallTarget, data, returnData, overridden); gated && denied {
+			req.methodPolicyDenied = true
+			req.denialReason = ReasonMethodPolicyDenied
+			p.recordRPCOutcome(req.Method, "method_policy_denied", start)
+			p.logAccess(ctx, req, http.StatusForbidden, statusCode)
+			return &ProcessResult{Error: &ProcessError{StatusCode: http.StatusForbidden, Message: "not authorized to read this record"}}
+		}
+	}
+
 	p.recordRPCOutcome(req.Method, "success", start)
 	p.logAccess(ctx, req, statusCode)
 

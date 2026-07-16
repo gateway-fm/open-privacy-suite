@@ -1271,6 +1271,16 @@ components:
         group:
           $ref: '#/components/schemas/privacy-proxy_internal_rbac.Group'
       type: object
+    internal_server.contractMethodPoliciesRequest:
+      properties:
+        method_policies:
+          type: object
+      type: object
+    internal_server.contractMethodPoliciesResponse:
+      properties:
+        method_policies:
+          type: object
+      type: object
     internal_server.contractSyncCheckResponse:
       properties:
         errors:
@@ -1571,6 +1581,57 @@ components:
           $ref: '#/components/schemas/privacy-proxy_internal_rbac.Group'
         membership:
           $ref: '#/components/schemas/privacy-proxy_internal_rbac.UserMembership'
+      type: object
+    internal_server.methodPolicySimulateRequest:
+      properties:
+        caller_did:
+          type: string
+        caller_eth_addresses:
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+        captured:
+          additionalProperties:
+            items:
+              type: string
+            type: array
+          description: |-
+            Captured, when non-empty, evaluates the policy against these HYPOTHETICAL
+            captured parties (captured-field name → values, e.g. {"payer":["did:…"],
+            "payee":["0x…"]}) instead of the live record — so a freshly authored policy
+            can be validated before any record exists on-chain. record_key is then
+            optional (used only to label the audit entry). The admin supplies the
+            parties, so this reads no tenant data.
+          type: object
+        method:
+          description: canonical reader signature, e.g. "getPaymentInfo(string)"
+          type: string
+        record_key:
+          description: the record identifier value (live mode)
+          type: string
+      type: object
+    internal_server.methodPolicySimulateResponse:
+      properties:
+        captured:
+          additionalProperties:
+            items:
+              type: string
+            type: array
+          description: full admit-set (super-admin only)
+          type: object
+        has_return_source:
+          type: boolean
+        matched_rule:
+          type: string
+        note:
+          type: string
+        poisoned:
+          type: boolean
+        record_type:
+          type: string
+        result:
+          type: string
       type: object
     internal_server.oauthAuthorizeJSONResponse:
       properties:
@@ -2883,6 +2944,18 @@ components:
         metadata:
           additionalProperties: {}
           type: object
+        method_policies:
+          description: |-
+            MethodPolicies is the raw per-contract method-access policy document
+            (RD-1206; contracts.method_policies JSONB). Nil when unset (feature off
+            for the contract). Kept raw here — the request path parses it via
+            ParseMethodPolicyDocument and fails closed on a parse error, so a
+            corrupt policy denies only that contract's gated reads rather than
+            breaking every contract load.
+          items:
+            type: integer
+          type: array
+          uniqueItems: false
         name:
           type: string
         org_id:
@@ -6892,6 +6965,210 @@ paths:
       security:
       - AdminToken: []
       summary: Update a contract grant
+      tags:
+      - 'Admin: RBAC'
+  /api/v1/admin/orgs/{org_id}/contracts/{address}/method-policies:
+    get:
+      description: Returns the per-record method access policy document (RD-1206)
+        configured on the contract, or null when unset. Scoped to {org_id}; the restricted
+        operator token is rejected (tenant read).
+      parameters:
+      - description: Organization ID
+        in: path
+        name: org_id
+        required: true
+        schema:
+          type: string
+      - description: Contract address (0x-prefixed hex)
+        in: path
+        name: address
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/internal_server.contractMethodPoliciesResponse'
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/internal_server.APIError'
+          description: missing or invalid admin token
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/internal_server.APIError'
+          description: operator token cannot read tenant data, or caller is out of
+            org scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/internal_server.APIError'
+          description: contract not found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/internal_server.APIError'
+          description: Internal Server Error
+      security:
+      - AdminToken: []
+      summary: Get a contract's method access policies
+      tags:
+      - 'Admin: RBAC'
+    put:
+      description: Sets or clears (method_policies:null) the per-record method access
+        policy (RD-1206), gating record-reader eth_calls to a record's stakeholders.
+        Validated against the contract's registered ABI. Tier-2 org-admin (the restricted
+        operator token is rejected) — it is per-contract, per-org configuration that
+        only narrows reads; the change is audit-logged with before/after state.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: org_id
+        required: true
+        schema:
+          type: string
+      - description: Contract address (0x-prefixed hex)
+        in: path
+        name: address
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/internal_server.contractMethodPoliciesRequest'
+                description: policy document, or null to clear
+                summary: request
+        description: policy document, or null to clear
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/privacy-proxy_internal_rbac.Contract'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/internal_server.APIError'
+          description: invalid body, policy fails ABI validation, or no ABI registered
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/internal_server.APIError'
+          description: missing or invalid admin token
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/internal_server.APIError'
+          description: operator token cannot manage tenant data, or caller is out
+            of org scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/internal_server.APIError'
+          description: contract not found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/internal_server.APIError'
+          description: Internal Server Error
+      security:
+      - AdminToken: []
+      summary: Set a contract's method access policies
+      tags:
+      - 'Admin: RBAC'
+  /api/v1/admin/orgs/{org_id}/contracts/{address}/method-policies/simulate:
+    post:
+      description: Evaluates the capture side of a contract's method policy for a
+        given caller + record, returning allow / deny / indeterminate_return_source
+        plus the record's captured admit-set. No node call; the live return-address
+        resolver is not simulated. Supply `captured` (field→values) to dry-run against
+        HYPOTHETICAL parties instead of a live record — validating a policy before
+        any record exists (record_key then optional). Tier-2 org-admin (the restricted
+        operator token is rejected); org-scoped; audit-logged.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: org_id
+        required: true
+        schema:
+          type: string
+      - description: Contract address (0x-prefixed hex)
+        in: path
+        name: address
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/internal_server.methodPolicySimulateRequest'
+                description: caller + record to simulate
+                summary: request
+        description: caller + record to simulate
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/internal_server.methodPolicySimulateResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/internal_server.APIError'
+          description: invalid body, or no policy configured
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/internal_server.APIError'
+          description: missing or invalid admin token
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/internal_server.APIError'
+          description: operator token cannot read tenant data, or caller is out of
+            org scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/internal_server.APIError'
+          description: contract not found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/internal_server.APIError'
+          description: Internal Server Error
+      security:
+      - AdminToken: []
+      summary: Simulate a method access policy decision
       tags:
       - 'Admin: RBAC'
   /api/v1/admin/orgs/{org_id}/contracts/{address}/visibleto-unlock:

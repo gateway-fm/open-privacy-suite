@@ -7,6 +7,7 @@ import type {
   GroupAccess,
   Contract,
   ContractGrant,
+  MethodPolicyDocument,
   EffectivePermissions,
   AccessCheckRequest,
   AccessCheckResult,
@@ -153,6 +154,42 @@ export const rbacApi = {
       api.put<Contract>(`/orgs/${orgId}/contracts/${address}/visibleto-unlock`, {
         allow_visibleto_unlock: allow,
       }),
+    // RD-1206: per-record method access policies. getMethodPolicies returns
+    // the current document (or null); updateMethodPolicies sets it (or clears
+    // with null). PUT is super-admin only and validated against the ABI
+    // server-side — surface the 400 message verbatim on failure.
+    getMethodPolicies: (orgId: string, address: string) =>
+      api.get<{ method_policies: MethodPolicyDocument | null }>(
+        `/orgs/${orgId}/contracts/${address}/method-policies`
+      ),
+    updateMethodPolicies: (orgId: string, address: string, doc: MethodPolicyDocument | null) =>
+      api.put<Contract>(`/orgs/${orgId}/contracts/${address}/method-policies`, {
+        method_policies: doc,
+      }),
+    // RD-1206 simulator: "would this caller read this record?" — capture-side,
+    // no node call. Super-admin only; returns allow/deny/indeterminate + admit-set.
+    simulateMethodPolicy: (
+      orgId: string,
+      address: string,
+      body: {
+        method: string;
+        record_key: string;
+        caller_did: string;
+        caller_eth_addresses?: string[];
+        // What-if: evaluate against hypothetical captured parties (field → values)
+        // instead of a live record — validate a policy before any record exists.
+        captured?: Record<string, string[]>;
+      }
+    ) =>
+      api.post<{
+        result: string;
+        record_type: string;
+        matched_rule?: string;
+        has_return_source: boolean;
+        poisoned: boolean;
+        captured: Record<string, string[]>;
+        note?: string;
+      }>(`/orgs/${orgId}/contracts/${address}/method-policies/simulate`, body),
     // Event signatures from ABI (for event rules UI)
     listEvents: (orgId: string, address: string) =>
       api.get<{ events: EventSignature[]; message?: string }>(`/orgs/${orgId}/contracts/${address}/events`),

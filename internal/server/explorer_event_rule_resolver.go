@@ -63,6 +63,16 @@ func wireExplorerRedactor(redactor *explorer.RedactionEngine, store rbac.Store, 
 		redactor.SetAdminContractsResolver(newDBAdminContractsResolver(accessCtrl))
 		redactor.SetEventRuleChecker(newDBEventRuleChecker(accessCtrl))
 		redactor.SetVisibleToUnlockResolver(newDBVisibleToUnlockResolver(accessCtrl))
+		// RD-1206 rule 71: explorer parity for the record-audience event gate.
+		// Only wired when the store satisfies the capture-store capability
+		// (production *db.DB does; lightweight test harnesses may not) —
+		// mirroring the RPC path's methodPolicyStore() gate. When absent the
+		// resolver stays unset and the additive admit is simply disabled
+		// (fail-safe: baseline only), which the wiring-completeness test below
+		// tolerates because it wires a real *db.DB.
+		if r := newDBCapturedAudienceResolver(accessCtrl); r != nil {
+			redactor.SetCapturedAudienceResolver(r)
+		}
 	}
 	if logParticipants != nil {
 		// RD-939 Stage A. In production this is the explorer backend
@@ -194,3 +204,63 @@ func (r *dbEventRuleChecker) GetEventRulesForContract(ctx context.Context, viewe
 
 // Compile-time assertion that *dbEventRuleChecker satisfies explorer.EventRuleChecker.
 var _ explorer.EventRuleChecker = (*dbEventRuleChecker)(nil)
+
+// dbCapturedAudienceResolver implements explorer.CapturedAudienceResolver
+// (RD-1206 rule 71 explorer parity). It builds the SAME request-scoped
+// recordAudienceGate the RPC path uses (newRecordAudienceGate) and delegates to
+// its EventLogAdmits, which in turn calls the one shared decision
+// rbac.MethodPolicyDocument.EventAudienceAdmits. There is no reimplemented
+// audience logic here, so the explorer log endpoint and eth_getLogs cannot
+// diverge on whether a governed event is visible.
+//
+// A fresh gate per call: the gate is not safe for concurrent use and the
+// explorer redactor is shared across requests, so we cannot hold one. The
+// per-log DB work is a single local captures lookup (no upstream node call),
+// matching the design's "one client request = one node request; only added work
+// is a local, batched DB lookup." Org-scoping and fail-safe behaviour are owned
+// by the gate + EventAudienceAdmits (captures are keyed by the contract's owning
+// org via GetContractByAddressGlobal → contract.OrgID).
+type dbCapturedAudienceResolver struct {
+	store rbac.Store
+	caps  methodPolicyCaptureStore
+}
+
+// newDBCapturedAudienceResolver builds the resolver, or nil when the store lacks
+// the capture-store capability (mirrors JSONRPCProcessor.methodPolicyStore()):
+// without it there is no captures table to read, so the additive gate cannot
+// apply and stays disabled (fail-safe — baseline redaction only).
+func newDBCapturedAudienceResolver(access *rbac.AccessController) *dbCapturedAudienceResolver {
+	if access == nil {
+		return nil
+	}
+	caps, ok := access.Store().(methodPolicyCaptureStore)
+	if !ok {
+		return nil
+	}
+	return &dbCapturedAudienceResolver{store: access.Store(), caps: caps}
+}
+
+// EventLogAdmits implements explorer.CapturedAudienceResolver. Fail-safe: any
+// miss (no identity, no policy, decode/lookup error, caller not in audience)
+// returns false so the log falls through to the redactor's baseline phases.
+func (r *dbCapturedAudienceResolver) EventLogAdmits(ctx context.Context, viewerDID, contractAddr, contractABI string, topics []string, data string) bool {
+	if r == nil || viewerDID == "" {
+		return false
+	}
+	// Build the caller identity from the viewer's DID + linked addresses,
+	// exactly as the RPC gate does (JSONRPCProcessor.linkedAddresses →
+	// GetLinkedEthAddresses), so both surfaces match the audience against the
+	// identical identity set.
+	addrs, err := r.store.GetLinkedEthAddresses(ctx, viewerDID)
+	if err != nil {
+		return false // fail-safe: a lookup error must not admit
+	}
+	gate := newRecordAudienceGate(ctx, r.store, r.caps, viewerDID, addrs)
+	if gate == nil {
+		return false
+	}
+	return gate.EventLogAdmits(contractAddr, contractABI, topics, data)
+}
+
+// Compile-time assertion that *dbCapturedAudienceResolver satisfies the interface.
+var _ explorer.CapturedAudienceResolver = (*dbCapturedAudienceResolver)(nil)

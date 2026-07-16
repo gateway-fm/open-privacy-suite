@@ -36,21 +36,21 @@ func (d *DB) CreateContract(ctx context.Context, contract *rbac.Contract) error 
 }
 
 func (d *DB) GetContract(ctx context.Context, id string) (*rbac.Contract, error) {
-	query := `SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, allow_visibleto_unlock, events_allow_dynamic_payload, created_at, updated_at
+	query := `SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, allow_visibleto_unlock, events_allow_dynamic_payload, method_policies, created_at, updated_at
 	          FROM contracts WHERE id = $1`
 
 	return scanContract(d.conn.QueryRowContext(ctx, query, id))
 }
 
 func (d *DB) GetContractByAddress(ctx context.Context, orgID, address string) (*rbac.Contract, error) {
-	query := `SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, allow_visibleto_unlock, events_allow_dynamic_payload, created_at, updated_at
+	query := `SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, allow_visibleto_unlock, events_allow_dynamic_payload, method_policies, created_at, updated_at
 	          FROM contracts WHERE org_id = $1 AND lower(address) = $2`
 
 	return scanContract(d.conn.QueryRowContext(ctx, query, orgID, strings.ToLower(address)))
 }
 
 func (d *DB) GetContractByAddressGlobal(ctx context.Context, address string) (*rbac.Contract, error) {
-	query := `SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, allow_visibleto_unlock, events_allow_dynamic_payload, created_at, updated_at
+	query := `SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, allow_visibleto_unlock, events_allow_dynamic_payload, method_policies, created_at, updated_at
 	          FROM contracts WHERE lower(address) = $1`
 
 	return scanContract(d.conn.QueryRowContext(ctx, query, strings.ToLower(address)))
@@ -61,7 +61,7 @@ func (d *DB) GetContractsByIDs(ctx context.Context, ids []string) (map[string]*r
 		return make(map[string]*rbac.Contract), nil
 	}
 
-	query := `SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, allow_visibleto_unlock, events_allow_dynamic_payload, created_at, updated_at
+	query := `SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, allow_visibleto_unlock, events_allow_dynamic_payload, method_policies, created_at, updated_at
 	          FROM contracts WHERE id = ANY($1)`
 
 	rows, err := d.conn.QueryContext(ctx, query, pq.Array(ids))
@@ -77,11 +77,12 @@ func (d *DB) GetContractsByIDs(ctx context.Context, ids []string) (map[string]*r
 		var deployedByUserID sql.NullString
 		var deployedAt sql.NullTime
 		var metadata []byte
+		var methodPolicies []byte
 
 		err := rows.Scan(
 			&contract.ID, &contract.OrgID, &contract.Address, &name, &abi,
 			&deployedByUserID, &deployedAt, &metadata, &contract.AllowVisibleToUnlock, &contract.EventsAllowDynamicPayload,
-			&contract.CreatedAt, &contract.UpdatedAt,
+			&methodPolicies, &contract.CreatedAt, &contract.UpdatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan contract: %w", err)
@@ -97,6 +98,9 @@ func (d *DB) GetContractsByIDs(ctx context.Context, ids []string) (map[string]*r
 		}
 		if len(metadata) > 0 {
 			_ = json.Unmarshal(metadata, &contract.Metadata)
+		}
+		if len(methodPolicies) > 0 {
+			contract.MethodPolicies = methodPolicies
 		}
 
 		result[contract.ID] = contract
@@ -128,7 +132,7 @@ func (d *DB) UpdateContract(ctx context.Context, contract *rbac.Contract) error 
 }
 
 func (d *DB) ListContracts(ctx context.Context, orgID string) ([]*rbac.Contract, error) {
-	query := `SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, allow_visibleto_unlock, events_allow_dynamic_payload, created_at, updated_at
+	query := `SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, allow_visibleto_unlock, events_allow_dynamic_payload, method_policies, created_at, updated_at
 	          FROM contracts WHERE org_id = $1 ORDER BY created_at DESC`
 
 	rows, err := d.conn.QueryContext(ctx, query, orgID)
@@ -149,7 +153,7 @@ func (d *DB) ListContractsPaginated(ctx context.Context, orgID string, limit, of
 	}
 
 	// Get paginated results
-	query := `SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, allow_visibleto_unlock, events_allow_dynamic_payload, created_at, updated_at
+	query := `SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, allow_visibleto_unlock, events_allow_dynamic_payload, method_policies, created_at, updated_at
 	          FROM contracts WHERE org_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`
 
 	rows, err := d.conn.QueryContext(ctx, query, orgID, limit, offset)
@@ -168,8 +172,8 @@ func (d *DB) ListContractsPaginated(ctx context.Context, orgID string, limit, of
 
 // ContractListFilter contains optional filters for listing contracts.
 type ContractListFilter struct {
-	Search       string // ILIKE filter on name or address
-	CreatedAfter string // ISO8601 date — only contracts created on or after this date
+	Search        string // ILIKE filter on name or address
+	CreatedAfter  string // ISO8601 date — only contracts created on or after this date
 	CreatedBefore string // ISO8601 date — only contracts created before this date
 }
 
@@ -201,7 +205,7 @@ func (d *DB) ListContractsFiltered(ctx context.Context, orgID string, limit, off
 		return nil, 0, fmt.Errorf("failed to count contracts: %w", err)
 	}
 
-	query := fmt.Sprintf(`SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, allow_visibleto_unlock, events_allow_dynamic_payload, created_at, updated_at
+	query := fmt.Sprintf(`SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, allow_visibleto_unlock, events_allow_dynamic_payload, method_policies, created_at, updated_at
 	          FROM contracts WHERE %s ORDER BY created_at DESC LIMIT $%d OFFSET $%d`, where, argIdx, argIdx+1)
 	args = append(args, limit, offset)
 
@@ -256,6 +260,21 @@ func (d *DB) UpdateContractAllowVisibleToUnlock(ctx context.Context, id string, 
 	_, err := d.conn.ExecContext(ctx,
 		`UPDATE contracts SET allow_visibleto_unlock = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
 		id, allow)
+	return err
+}
+
+// UpdateContractMethodPolicies persists (or clears) the per-contract method
+// access policy document (RD-1206). policies is the raw validated JSON, or nil
+// to clear (feature off). Validation against the contract's ABI happens in the
+// admin handler before this is called; the store just persists.
+func (d *DB) UpdateContractMethodPolicies(ctx context.Context, id string, policies []byte) error {
+	var arg any
+	if len(policies) > 0 {
+		arg = policies
+	} // else nil → SQL NULL
+	_, err := d.conn.ExecContext(ctx,
+		`UPDATE contracts SET method_policies = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+		id, arg)
 	return err
 }
 
@@ -424,17 +443,21 @@ func scanContract(row *sql.Row) (*rbac.Contract, error) {
 	var deployedByUserID sql.NullString
 	var deployedAt sql.NullTime
 	var metadata []byte
+	var methodPolicies []byte
 
 	err := row.Scan(
 		&contract.ID, &contract.OrgID, &contract.Address, &name, &abi,
 		&deployedByUserID, &deployedAt, &metadata, &contract.AllowVisibleToUnlock, &contract.EventsAllowDynamicPayload,
-		&contract.CreatedAt, &contract.UpdatedAt,
+		&methodPolicies, &contract.CreatedAt, &contract.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan contract: %w", err)
+	}
+	if len(methodPolicies) > 0 {
+		contract.MethodPolicies = methodPolicies
 	}
 
 	if name.Valid {
@@ -465,13 +488,17 @@ func scanContracts(rows *sql.Rows) ([]*rbac.Contract, error) {
 		var deployedByUserID sql.NullString
 		var deployedAt sql.NullTime
 		var metadata []byte
+		var methodPolicies []byte
 
 		if err := rows.Scan(
 			&contract.ID, &contract.OrgID, &contract.Address, &name, &abi,
 			&deployedByUserID, &deployedAt, &metadata, &contract.AllowVisibleToUnlock, &contract.EventsAllowDynamicPayload,
-			&contract.CreatedAt, &contract.UpdatedAt,
+			&methodPolicies, &contract.CreatedAt, &contract.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan contract: %w", err)
+		}
+		if len(methodPolicies) > 0 {
+			contract.MethodPolicies = methodPolicies
 		}
 
 		if name.Valid {

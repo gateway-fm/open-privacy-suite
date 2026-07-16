@@ -87,8 +87,107 @@ export interface Contract {
   // bypassing event_rules and param_rules for that one tx. Default
   // false. Admin-only flag; flip via the dedicated endpoint.
   allow_visibleto_unlock: boolean;
+  // RD-1206: per-record method access policy document, or null/absent when
+  // unset (getters gated by the contract grant only). Configured via the
+  // super-admin method-policies endpoint.
+  method_policies?: MethodPolicyDocument | null;
   created_at: string;
   updated_at: string;
+}
+
+// Method access policies (RD-1206). Mirrors the Go schema exactly so a
+// UI-built document validates on the first save.
+export interface MethodPolicyKeySpec {
+  source: "param";
+  index: number;
+}
+
+// Event key spec (RD-1206 event gating): the record key is decoded from an
+// event log parameter. source is always "eventParam" in phase 1.
+export interface MethodPolicyEventKeySpec {
+  source: "eventParam";
+  index: number;
+}
+
+export interface MethodPolicyRememberField {
+  source: "sender" | "param" | "visibleTo";
+  index?: number; // required when source === "param"
+  merge: "set_once" | "union";
+}
+
+export interface MethodPolicyCaptureSpec {
+  method: string; // canonical ABI signature, e.g. "createPayment(string,address,uint256)"
+  key: MethodPolicyKeySpec;
+  remember: Record<string, MethodPolicyRememberField>;
+}
+
+export interface MethodPolicyReturnSource {
+  source: "return";
+  paths: string[];
+  kind: "address";
+}
+
+// callerIn is EITHER a list of captured field names / literal principals OR a
+// return source.
+export type MethodPolicyCallerIn = string[] | MethodPolicyReturnSource;
+
+// where further-restricts an allow rule by a captured scalar comparison
+// (RD-1206 Example 4). Only valid on callerIn-list rules, not return rules.
+export interface MethodPolicyWhere {
+  field: string;
+  op: "eq" | "neq" | "lt" | "lte" | "gt" | "gte";
+  value: string;
+}
+
+export interface MethodPolicyAllowRule {
+  callerIn: MethodPolicyCallerIn;
+  where?: MethodPolicyWhere;
+}
+
+export interface MethodPolicyAccessSpec {
+  method: string;
+  key: MethodPolicyKeySpec;
+  allow: MethodPolicyAllowRule[];
+  onNoRecord?: "deny";
+  else?: "deny";
+}
+
+// Events/transactions gating (RD-1206, additive). These share the AllowRule
+// shape with access, but the return-source callerIn form is NOT allowed here
+// (a log/tx has no "return" value), so callerIn is always a string array of
+// captured-field names and/or literal DID/0x principals. There is also no
+// onNoRecord/else — these surfaces are additive (admit-or-abstain), not a
+// narrowing override.
+export interface MethodPolicyStringAllowRule {
+  callerIn: string[];
+  where?: MethodPolicyWhere;
+}
+
+// EventPolicy gates a contract's event LOGS by the record's captured audience.
+export interface MethodPolicyEventSpec {
+  event: string; // canonical event signature, e.g. "PaymentProcessed(string,uint8)"
+  key: MethodPolicyEventKeySpec;
+  allow: MethodPolicyStringAllowRule[];
+}
+
+// TransactionPolicy gates a writer transaction (and its receipt envelope).
+export interface MethodPolicyTransactionSpec {
+  method: string; // canonical writer signature, e.g. "processPayment(string,uint8)"
+  key: MethodPolicyKeySpec; // source is always "param" (of the tx's own calldata)
+  allow: MethodPolicyStringAllowRule[];
+}
+
+export interface MethodPolicyRecord {
+  capture: MethodPolicyCaptureSpec[];
+  access: MethodPolicyAccessSpec[];
+  // NEW — additive event/transaction gating. Omitted (not just empty) when
+  // there are no rules, matching how the backend marshals `omitempty`.
+  events?: MethodPolicyEventSpec[];
+  transactions?: MethodPolicyTransactionSpec[];
+}
+
+export interface MethodPolicyDocument {
+  records: Record<string, MethodPolicyRecord>;
 }
 
 
