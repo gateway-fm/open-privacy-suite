@@ -736,7 +736,7 @@ func rawOrNull(b []byte) any {
 // existence probe). Audit-logged.
 //
 // @Summary      Simulate a method access policy decision
-// @Description  Evaluates the capture side of a contract's method policy for a given caller + record, returning allow / deny / indeterminate_return_source plus the record's captured admit-set. No node call; the live return-address resolver is not simulated. Tier-2 org-admin (the restricted operator token is rejected); org-scoped; audit-logged.
+// @Description  Evaluates the capture side of a contract's method policy for a given caller + record, returning allow / deny / indeterminate_return_source plus the record's captured admit-set. No node call; the live return-address resolver is not simulated. Supply `captured` (field→values) to dry-run against HYPOTHETICAL parties instead of a live record — validating a policy before any record exists (record_key then optional). Tier-2 org-admin (the restricted operator token is rejected); org-scoped; audit-logged.
 // @Tags         Admin: RBAC
 // @Accept       json
 // @Produce      json
@@ -783,8 +783,12 @@ func (s *Server) simulateContractMethodPolicy(c *gin.Context) {
 			"contract_id", contract.ID, "err", err)
 		return
 	}
-	if input.Method == "" || input.RecordKey == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "method and record_key are required"})
+	if input.Method == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "method is required"})
+		return
+	}
+	if input.RecordKey == "" && len(input.Captured) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "record_key (live) or captured (what-if) is required"})
 		return
 	}
 
@@ -798,7 +802,15 @@ func (s *Server) simulateContractMethodPolicy(c *gin.Context) {
 
 	caller := rbac.NewCallerIdentity(input.CallerDID, input.CallerETH)
 	var capturedRows []rbac.CapturedField
+	// What-if mode (admin supplies `captured`): evaluate against hypothetical
+	// parties with NO DB read, so a policy can be validated before any record is
+	// created. Live mode: load the record's real captured rows.
+	whatIf := len(input.Captured) > 0
 	res, gated, serr := doc.SimulateReader(input.Method, caller, func(recordType string) ([]rbac.CapturedField, error) {
+		if whatIf {
+			capturedRows = hypotheticalCaptures(input.Captured)
+			return capturedRows, nil
+		}
 		rows, e := s.db.GetRecordCaptures(c.Request.Context(), contract.OrgID, contract.Address, recordType, input.RecordKey)
 		capturedRows = rows
 		return rows, e
@@ -835,7 +847,7 @@ func (s *Server) simulateContractMethodPolicy(c *gin.Context) {
 	// not the admit-set, so the harvest is itself auditable.
 	s.recordAuditActionScoped(c, rbac.AuditActionAccess, rbac.ResourceTypeContract, contract.ID, contract.Name, orgID,
 		nil,
-		map[string]any{"simulate": true, "method": input.Method, "record_key": input.RecordKey, "caller_did": input.CallerDID, "result": result})
+		map[string]any{"simulate": true, "what_if": whatIf, "method": input.Method, "record_key": input.RecordKey, "caller_did": input.CallerDID, "result": result})
 
 	c.JSON(http.StatusOK, methodPolicySimulateResponse{
 		Result:          result,
@@ -846,6 +858,20 @@ func (s *Server) simulateContractMethodPolicy(c *gin.Context) {
 		Captured:        captured,
 		Note:            note,
 	})
+}
+
+// hypotheticalCaptures turns an admin-supplied {field: [values]} map into
+// capture rows for the what-if simulator. Merge is "union" so multiple values
+// per field never trip set-once poisoning (a what-if run tests "given these
+// parties, who is admitted?", not accumulation semantics).
+func hypotheticalCaptures(m map[string][]string) []rbac.CapturedField {
+	var out []rbac.CapturedField
+	for field, vals := range m {
+		for _, v := range vals {
+			out = append(out, rbac.CapturedField{Field: field, Value: v, Merge: "union"})
+		}
+	}
+	return out
 }
 
 // listContractEvents parses the stored ABI and returns the list of events with

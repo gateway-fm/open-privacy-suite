@@ -596,6 +596,18 @@ export function emptyRecord(): WizardRecord {
   };
 }
 
+// wizardStarterRecord is emptyRecord without the flat form's phantom empty
+// reader — the guided wizard adds readers by checkbox, so it must start clean.
+export function wizardStarterRecord(): WizardRecord {
+  return {
+    recordType: "",
+    captures: [{ writerSig: "", keyIndex: 0, remember: [{ field: "", source: "sender", merge: "set_once" }] }],
+    readers: [],
+    events: [],
+    transactions: [],
+  };
+}
+
 // renderPolicy flattens a document into a display-friendly structure.
 export function renderPolicy(doc: MethodPolicyDocument): RenderedRecord[] {
   const out: RenderedRecord[] = [];

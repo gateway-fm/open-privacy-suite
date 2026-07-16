@@ -171,7 +171,15 @@ export const rbacApi = {
     simulateMethodPolicy: (
       orgId: string,
       address: string,
-      body: { method: string; record_key: string; caller_did: string; caller_eth_addresses?: string[] }
+      body: {
+        method: string;
+        record_key: string;
+        caller_did: string;
+        caller_eth_addresses?: string[];
+        // What-if: evaluate against hypothetical captured parties (field → values)
+        // instead of a live record — validate a policy before any record exists.
+        captured?: Record<string, string[]>;
+      }
     ) =>
       api.post<{
         result: string;

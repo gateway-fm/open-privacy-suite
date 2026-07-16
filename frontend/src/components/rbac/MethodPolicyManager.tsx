@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { rbacApi } from "@/api/rbac";
 import type { MethodPolicyDocument } from "@/types/rbac";
 import {
@@ -13,6 +13,7 @@ import {
   validateWizard,
   renderPolicy,
   emptyRecord,
+  wizardStarterRecord,
   emptyEvent,
   emptyTransaction,
   emptyAudienceRule,
@@ -28,8 +29,9 @@ import {
   type WizardTransaction,
   type WizardAudienceRule,
 } from "@/lib/methodPolicy";
+import { MethodPolicyWizard } from "./MethodPolicyWizard";
 import { Button } from "@/components/ui/button";
-import { ShieldAlert, ShieldCheck, Check, Loader2, Plus, X, Info, FlaskConical } from "lucide-react";
+import { ShieldAlert, ShieldCheck, Check, Loader2, Plus, X, Info, FlaskConical, Wand2 } from "lucide-react";
 
 interface Props {
   orgId: string;
@@ -39,7 +41,7 @@ interface Props {
   isReadonlyAdmin?: boolean;
 }
 
-type Mode = "none" | "structured" | "json" | "simulate";
+type Mode = "none" | "wizard" | "structured" | "json" | "simulate";
 
 export function MethodPolicyManager({ orgId, contractAddress, contractAbi, initialPolicy, isReadonlyAdmin }: Props) {
   const [policy, setPolicy] = useState<MethodPolicyDocument | null>(initialPolicy ?? null);
@@ -55,6 +57,17 @@ export function MethodPolicyManager({ orgId, contractAddress, contractAbi, initi
   const keyableFns = useMemo(() => functionsWithKeyableParam(fns), [fns]);
   const abiEvents = useMemo(() => parseAbiEvents(contractAbi), [contractAbi]);
   const keyableEvents = useMemo(() => eventsWithKeyableParam(abiEvents), [abiEvents]);
+  // The gated readers the simulator can test — the policy's access methods.
+  const readerMethods = useMemo(
+    () => (policy ? [...new Set(Object.values(policy.records ?? {}).flatMap((r) => (r.access ?? []).map((a) => a.method)))] : []),
+    [policy],
+  );
+  // The record's captured field names (payer/payee/audience…) — the what-if
+  // simulator generates one hypothetical-party input per field.
+  const captureFields = useMemo(
+    () => (policy ? [...new Set(Object.values(policy.records ?? {}).flatMap((r) => (r.capture ?? []).flatMap((c) => Object.keys(c.remember ?? {}))))] : []),
+    [policy],
+  );
   const rendered = policy ? renderPolicy(policy) : [];
   const noAbi = !contractAbi;
   // Tier-2 org-admin control (RD-1206): editable by any non-read-only admin,
@@ -98,6 +111,12 @@ export function MethodPolicyManager({ orgId, contractAddress, contractAbi, initi
     }
   }
 
+  function openWizard() {
+    const recs = policy ? decompileWizard(policy).records : [];
+    setW({ records: recs.length ? recs : [wizardStarterRecord()] });
+    resetBanners();
+    setMode("wizard");
+  }
   function openStructured() {
     setW(policy ? decompileWizard(policy) : { records: [emptyRecord()] });
     resetBanners();
@@ -192,7 +211,8 @@ export function MethodPolicyManager({ orgId, contractAddress, contractAbi, initi
 
       {canEdit && mode === "none" && (
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" size="sm" onClick={openStructured} disabled={noAbi}>{policy ? "Edit policy" : "Configure a policy"}</Button>
+          <Button variant="outline" size="sm" onClick={openWizard} disabled={noAbi}><Wand2 className="w-3 h-3" /> {policy ? "Edit policy" : "Configure a policy"}</Button>
+          <Button variant="ghost" size="sm" onClick={openStructured} disabled={noAbi}>Form editor (advanced)</Button>
           <Button variant="ghost" size="sm" onClick={openJson} disabled={noAbi}>Edit JSON (advanced)</Button>
           {policy && <Button variant="ghost" size="sm" onClick={() => { resetBanners(); setMode("simulate"); }}><FlaskConical className="w-3 h-3" /> Simulate</Button>}
           {policy && <Button variant="ghost" size="sm" onClick={clearPolicy} disabled={saving}>Clear policy</Button>}
@@ -202,6 +222,21 @@ export function MethodPolicyManager({ orgId, contractAddress, contractAbi, initi
         <p className="text-xs text-neutral-500">Editing method policies requires org-admin (non-read-only) access; this view is read-only.</p>
       )}
       {canEdit && noAbi && <p className="text-xs text-neutral-500">Register the contract ABI first to configure method policies.</p>}
+
+      {/* Guided wizard (primary) */}
+      {mode === "wizard" && (
+        <MethodPolicyWizard
+          fns={fns}
+          keyableFns={keyableFns}
+          abiEvents={abiEvents}
+          keyableEvents={keyableEvents}
+          initialRecord={w.records[0] ?? wizardStarterRecord()}
+          otherRecords={w.records.slice(1)}
+          saving={saving}
+          onSave={(doc) => void save(doc)}
+          onCancel={() => setMode("none")}
+        />
+      )}
 
       {/* Structured editor */}
       {mode === "structured" && (
@@ -253,7 +288,7 @@ export function MethodPolicyManager({ orgId, contractAddress, contractAbi, initi
 
       {/* Simulator */}
       {mode === "simulate" && (
-        <SimulatorPanel orgId={orgId} contractAddress={contractAddress} fns={fns} onClose={() => setMode("none")} />
+        <SimulatorPanel orgId={orgId} contractAddress={contractAddress} readerMethods={readerMethods} captureFields={captureFields} fns={fns} onClose={() => setMode("none")} />
       )}
     </div>
   );
@@ -628,15 +663,41 @@ function AudienceRuleEditor({ rule, fieldNames, labelPrefix, onChange, onRemove 
 }
 
 // ---- Simulator panel ----
-function SimulatorPanel({ orgId, contractAddress, fns, onClose }: { orgId: string; contractAddress: string; fns: AbiFnInfo[]; onClose: () => void }) {
-  const [method, setMethod] = useState("");
+function SimulatorPanel({ orgId, contractAddress, readerMethods, captureFields, fns, onClose }: { orgId: string; contractAddress: string; readerMethods: string[]; captureFields: string[]; fns: AbiFnInfo[]; onClose: () => void }) {
+  // Offer the policy's gated readers (fall back to all functions if none parsed);
+  // auto-select when there's exactly one — the common case.
+  const readerOptions = readerMethods.length ? readerMethods : fns.map((f) => f.signature);
+  const [mode, setMode] = useState<"record" | "whatif">("record");
+  const [method, setMethod] = useState(readerMethods.length === 1 ? readerMethods[0] : "");
   const [recordKey, setRecordKey] = useState("");
   const [callerDID, setCallerDID] = useState("");
   const [callerETH, setCallerETH] = useState("");
+  const [parties, setParties] = useState<Record<string, string>>({}); // captureField → comma-sep values (what-if)
+  const [dids, setDids] = useState<string[]>([]); // dev test-identity DIDs, for the picker
   const [running, setRunning] = useState(false);
   type SimResult = { result: string; matched_rule?: string; note?: string; captured: Record<string, string[]> };
   const [result, setResult] = useState<SimResult | null>(null);
   const [err, setErr] = useState<string | null>(null);
+
+  // Populate a DID datalist from the dev identity picker (mockauth only; 403 in
+  // production → empty list → the fields stay plain free-text).
+  useEffect(() => {
+    fetch("/api/v1/dev/test-identities")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => { if (data?.identities) setDids(data.identities.map((i: { did: string }) => i.did)); })
+      .catch(() => {});
+  }, []);
+
+  const whatIf = mode === "whatif";
+  const whatIfHasParties = Object.values(parties).some((v) => v.trim());
+  const capturedMap = () => {
+    const out: Record<string, string[]> = {};
+    for (const [field, raw] of Object.entries(parties)) {
+      const vals = raw.split(",").map((s) => s.trim()).filter(Boolean);
+      if (vals.length) out[field] = vals;
+    }
+    return out;
+  };
 
   async function run() {
     setRunning(true);
@@ -648,6 +709,7 @@ function SimulatorPanel({ orgId, contractAddress, fns, onClose }: { orgId: strin
         record_key: recordKey,
         caller_did: callerDID,
         caller_eth_addresses: callerETH.split(",").map((s) => s.trim()).filter(Boolean),
+        ...(whatIf ? { captured: capturedMap() } : {}),
       });
       setResult(res.data as SimResult);
     } catch (e: unknown) {
@@ -660,29 +722,77 @@ function SimulatorPanel({ orgId, contractAddress, fns, onClose }: { orgId: strin
 
   const badge = result?.result === "allow" ? "bg-emerald-100 text-emerald-800"
     : result?.result === "deny" ? "bg-error-light text-error-dark" : "bg-amber-100 text-amber-800";
+  const canRun = !running && !!method && (whatIf ? whatIfHasParties : !!recordKey);
+  const tab = (active: boolean) => `px-2 py-0.5 rounded border ${active ? "bg-primary text-white border-primary" : "bg-neutral-50 text-neutral-600 border-neutral-200"}`;
 
   return (
     <div className="p-3 rounded-lg border border-neutral-300 bg-white space-y-2" data-testid="method-policy-simulate">
-      <div className="text-xs text-neutral-600 flex items-center gap-1"><FlaskConical className="w-3.5 h-3.5" /> Simulate: would a caller be allowed to read a record? (no on-chain call; the live return-address rule is not simulated)</div>
-      <div className="grid grid-cols-2 gap-2">
-        <select className="border rounded px-2 py-1 text-sm" aria-label="simulate method" value={method} onChange={(e) => setMethod(e.target.value)}>
-          <option value="">reader method…</option>
-          {fns.map((f) => <option key={f.signature} value={f.signature}>{f.signature}</option>)}
-        </select>
-        <input className="border rounded px-2 py-1 text-sm" aria-label="simulate record key" placeholder="record key (PAY-123)" value={recordKey} onChange={(e) => setRecordKey(e.target.value)} />
-        <input className="border rounded px-2 py-1 text-sm" aria-label="simulate caller did" placeholder="caller DID (did:…)" value={callerDID} onChange={(e) => setCallerDID(e.target.value)} />
-        <input className="border rounded px-2 py-1 text-sm" aria-label="simulate caller eth" placeholder="caller ETH addresses (0x…, comma-sep)" value={callerETH} onChange={(e) => setCallerETH(e.target.value)} />
+      <datalist id="sim-did-list">{dids.map((d) => <option key={d} value={d} />)}</datalist>
+      <div className="text-xs text-neutral-600 flex items-start gap-1">
+        <FlaskConical className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+        <span>
+          Dry-run the <strong>reader gate</strong>: would this caller be allowed to read a record? It checks the saved
+          policy against the record&apos;s parties — <strong>no on-chain call</strong>, it does not run <code>createPayment</code>{" "}
+          or any method. (Events / transactions and the live return-address rule aren&apos;t simulated.)
+        </span>
       </div>
+      {/* mode: test an existing record, or hypothetical parties (validate before any record exists) */}
+      <div className="flex gap-1 text-xs">
+        <button type="button" className={tab(mode === "record")} onClick={() => { setMode("record"); setResult(null); }}>Existing record</button>
+        <button type="button" className={tab(mode === "whatif")} onClick={() => { setMode("whatif"); setResult(null); }}>What-if parties</button>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <div className="space-y-0.5">
+          <div className="text-xs text-neutral-500">Reader method to test</div>
+          <select className="border rounded px-2 py-1 text-sm w-full" aria-label="simulate method" value={method} onChange={(e) => setMethod(e.target.value)}>
+            <option value="">reader method…</option>
+            {readerOptions.map((sig) => <option key={sig} value={sig}>{sig}</option>)}
+          </select>
+        </div>
+        {mode === "record" ? (
+          <div className="space-y-0.5">
+            <div className="text-xs text-neutral-500">Record key — an existing record</div>
+            <input className="border rounded px-2 py-1 text-sm w-full" aria-label="simulate record key" placeholder="PAY-1" value={recordKey} onChange={(e) => setRecordKey(e.target.value)} />
+          </div>
+        ) : (
+          <div />
+        )}
+        <div className="space-y-0.5">
+          <div className="text-xs text-neutral-500">Caller DID — the identity to test</div>
+          <input className="border rounded px-2 py-1 text-sm w-full" list="sim-did-list" aria-label="simulate caller did" placeholder="did:test:alice" value={callerDID} onChange={(e) => setCallerDID(e.target.value)} />
+        </div>
+        <div className="space-y-0.5">
+          <div className="text-xs text-neutral-500">Caller ETH address(es) — for address-typed parties</div>
+          <input className="border rounded px-2 py-1 text-sm w-full" aria-label="simulate caller eth" placeholder="0x… (comma-sep; e.g. the payee address)" value={callerETH} onChange={(e) => setCallerETH(e.target.value)} />
+        </div>
+      </div>
+      {whatIf && (
+        <div className="space-y-1 border-t border-neutral-100 pt-2" data-testid="whatif-parties">
+          <div className="text-xs font-medium text-neutral-600">Hypothetical parties — as if a record were created with these</div>
+          {captureFields.length === 0 && <p className="text-xs text-neutral-400">This policy captures no fields.</p>}
+          {captureFields.map((f) => (
+            <div key={f} className="flex items-center gap-2">
+              <span className="text-xs text-neutral-500 w-24 shrink-0 font-mono">{f}</span>
+              <input className="border rounded px-2 py-1 text-sm w-full" list="sim-did-list" aria-label={`whatif party ${f}`} placeholder="did:… or 0x… (comma-sep)" value={parties[f] ?? ""} onChange={(e) => setParties((p) => ({ ...p, [f]: e.target.value }))} />
+            </div>
+          ))}
+        </div>
+      )}
+      <p className="text-xs text-neutral-400">
+        {whatIf
+          ? "Fill the record's parties, then set a Caller DID/ETH to check who they admit — no record needs to exist yet."
+          : "Uses a real captured record. A party captured as an address (e.g. payee) matches on the caller's ETH address, not the DID — fill both to test it."}
+      </p>
       {err && <p className="text-xs text-amber-700">{err}</p>}
       {result && (
         <div className="text-xs space-y-1">
           <div><span className={`px-2 py-0.5 rounded font-medium ${badge}`}>{result.result}</span>{result.matched_rule ? <span className="ml-2 text-neutral-500">via {result.matched_rule}</span> : null}</div>
           {result.note && <p className="text-amber-700">{result.note}</p>}
-          <div className="text-neutral-500">record admit-set: {Object.entries(result.captured || {}).map(([k, v]) => `${k}=[${v.join(", ")}]`).join("; ") || "(none captured)"}</div>
+          <div className="text-neutral-500">{whatIf ? "parties" : "record admit-set"}: {Object.entries(result.captured || {}).map(([k, v]) => `${k}=[${v.join(", ")}]`).join("; ") || "(none)"}</div>
         </div>
       )}
       <div className="flex gap-2">
-        <Button size="sm" disabled={running || !method || !recordKey} onClick={() => void run()}>{running ? <Loader2 className="w-3 h-3 animate-spin" /> : <FlaskConical className="w-3 h-3" />} Simulate</Button>
+        <Button size="sm" disabled={!canRun} onClick={() => void run()}>{running ? <Loader2 className="w-3 h-3 animate-spin" /> : <FlaskConical className="w-3 h-3" />} Simulate</Button>
         <Button variant="ghost" size="sm" onClick={onClose}>Close</Button>
       </div>
     </div>

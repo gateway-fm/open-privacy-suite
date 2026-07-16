@@ -1591,11 +1591,24 @@ components:
             type: string
           type: array
           uniqueItems: false
+        captured:
+          additionalProperties:
+            items:
+              type: string
+            type: array
+          description: |-
+            Captured, when non-empty, evaluates the policy against these HYPOTHETICAL
+            captured parties (captured-field name → values, e.g. {"payer":["did:…"],
+            "payee":["0x…"]}) instead of the live record — so a freshly authored policy
+            can be validated before any record exists on-chain. record_key is then
+            optional (used only to label the audit entry). The admin supplies the
+            parties, so this reads no tenant data.
+          type: object
         method:
           description: canonical reader signature, e.g. "getPaymentInfo(string)"
           type: string
         record_key:
-          description: the record identifier value
+          description: the record identifier value (live mode)
           type: string
       type: object
     internal_server.methodPolicySimulateResponse:
@@ -7087,8 +7100,10 @@ paths:
       description: Evaluates the capture side of a contract's method policy for a
         given caller + record, returning allow / deny / indeterminate_return_source
         plus the record's captured admit-set. No node call; the live return-address
-        resolver is not simulated. Tier-2 org-admin (the restricted operator token
-        is rejected); org-scoped; audit-logged.
+        resolver is not simulated. Supply `captured` (field→values) to dry-run against
+        HYPOTHETICAL parties instead of a live record — validating a policy before
+        any record exists (record_key then optional). Tier-2 org-admin (the restricted
+        operator token is rejected); org-scoped; audit-logged.
       parameters:
       - description: Organization ID
         in: path

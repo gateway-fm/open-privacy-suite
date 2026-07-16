@@ -41,12 +41,53 @@ describe("MethodPolicyManager", () => {
     expect(rbacApi.contracts.updateMethodPolicies).not.toHaveBeenCalled();
   });
 
+  it("guided wizard builds and saves a capture+reader policy in the exact schema", async () => {
+    const u = userEvent.setup();
+    (rbacApi.contracts.updateMethodPolicies as ReturnType<typeof vi.fn>).mockResolvedValue({});
+    render(<MethodPolicyManager {...baseProps} initialPolicy={null} />);
+
+    // "Configure a policy" now opens the guided wizard.
+    await u.click(screen.getByRole("button", { name: /configure a policy/i }));
+    const wiz = screen.getByTestId("method-policy-wizard");
+
+    // Step 1 — record identity (key parameter defaults to index 0: paymentIdentifier).
+    await u.type(within(wiz).getByLabelText("record type name"), "payment");
+    await u.selectOptions(within(wiz).getByLabelText("creating method"), "createPayment(string,address,uint256)");
+    await u.click(within(wiz).getByRole("button", { name: /^next/i }));
+
+    // Step 2 — parties: name the first party "payer" (source defaults to sender/set_once).
+    await u.type(within(wiz).getByLabelText("party 0 name"), "payer");
+    await u.click(within(wiz).getByRole("button", { name: /^next/i }));
+
+    // Step 3 — readers: gate getPaymentInfo; the "payer" party is auto-ticked.
+    await u.click(within(wiz).getByLabelText("gate reader getPaymentInfo(string)"));
+    expect(within(wiz).getByLabelText("reader getPaymentInfo(string) allow payer")).toBeChecked();
+    await u.click(within(wiz).getByRole("button", { name: /^next/i }));
+
+    // Step 4 (events) + Step 5 (transactions) — optional, skip both.
+    await u.click(within(wiz).getByRole("button", { name: /^skip/i }));
+    await u.click(within(wiz).getByRole("button", { name: /^skip/i }));
+
+    // Step 6 — review → save.
+    await u.click(within(wiz).getByRole("button", { name: /save policy/i }));
+    await waitFor(() => expect(rbacApi.contracts.updateMethodPolicies).toHaveBeenCalledTimes(1));
+    const [, , doc] = (rbacApi.contracts.updateMethodPolicies as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(doc).toEqual({
+      records: {
+        payment: {
+          capture: [{ method: "createPayment(string,address,uint256)", key: { source: "param", index: 0 }, remember: { payer: { source: "sender", merge: "set_once" } } }],
+          access: [{ method: "getPaymentInfo(string)", key: { source: "param", index: 0 }, allow: [{ callerIn: ["payer"] }], onNoRecord: "deny", else: "deny" }],
+        },
+      },
+    });
+  });
+
   it("structured editor builds and saves a capture+reader policy in exact schema", async () => {
     const u = userEvent.setup();
     (rbacApi.contracts.updateMethodPolicies as ReturnType<typeof vi.fn>).mockResolvedValue({});
     render(<MethodPolicyManager {...baseProps} initialPolicy={null} />);
 
-    await u.click(screen.getByRole("button", { name: /configure a policy/i }));
+    await u.click(screen.getByRole("button", { name: /form editor/i }));
     const editor = screen.getByTestId("method-policy-structured");
     await u.type(within(editor).getByLabelText("record type name"), "payment");
     await u.selectOptions(within(editor).getByLabelText("writer method"), "createPayment(string,address,uint256)");
@@ -72,7 +113,7 @@ describe("MethodPolicyManager", () => {
   it("renders the events + transactions wizard sections", async () => {
     const u = userEvent.setup();
     render(<MethodPolicyManager {...baseProps} initialPolicy={null} />);
-    await u.click(screen.getByRole("button", { name: /configure a policy/i }));
+    await u.click(screen.getByRole("button", { name: /form editor/i }));
     const editor = screen.getByTestId("method-policy-structured");
     expect(within(editor).getByRole("button", { name: /add event/i })).toBeInTheDocument();
     expect(within(editor).getByRole("button", { name: /add transaction/i })).toBeInTheDocument();
@@ -83,7 +124,7 @@ describe("MethodPolicyManager", () => {
     (rbacApi.contracts.updateMethodPolicies as ReturnType<typeof vi.fn>).mockResolvedValue({});
     render(<MethodPolicyManager {...baseProps} initialPolicy={null} />);
 
-    await u.click(screen.getByRole("button", { name: /configure a policy/i }));
+    await u.click(screen.getByRole("button", { name: /form editor/i }));
     const editor = screen.getByTestId("method-policy-structured");
     // Minimal record: name, one capture (audience from visibleTo), one reader.
     await u.type(within(editor).getByLabelText("record type name"), "payment");
@@ -170,5 +211,35 @@ describe("MethodPolicyManager", () => {
     await waitFor(() => expect(rbacApi.contracts.simulateMethodPolicy).toHaveBeenCalledTimes(1));
     expect(within(panel).getByText("allow")).toBeInTheDocument();
     expect(within(panel).getByText(/did:test:alice/)).toBeInTheDocument();
+  });
+
+  it("what-if mode simulates against hypothetical parties (no record needed)", async () => {
+    const u = userEvent.setup();
+    (rbacApi.contracts.simulateMethodPolicy as ReturnType<typeof vi.fn>).mockResolvedValue({
+      data: { result: "allow", record_type: "payment", matched_rule: "captured:payer", has_return_source: false, poisoned: false, captured: { payer: ["did:test:alice"] } },
+    });
+    const configured = {
+      records: {
+        payment: {
+          capture: [{ method: "createPayment(string,address,uint256)", key: { source: "param", index: 0 }, remember: { payer: { source: "sender", merge: "set_once" }, audience: { source: "visibleTo", merge: "union" } } }],
+          access: [{ method: "getPaymentInfo(string)", key: { source: "param", index: 0 }, allow: [{ callerIn: ["payer", "audience"] }], onNoRecord: "deny", else: "deny" }],
+        },
+      },
+    };
+    render(<MethodPolicyManager {...baseProps} initialPolicy={configured} />);
+    await u.click(screen.getByRole("button", { name: /simulate/i }));
+    const panel = screen.getByTestId("method-policy-simulate");
+
+    // Switch to what-if. The single gated reader is auto-selected, so we only
+    // supply a hypothetical party + a caller to test against it — no record.
+    await u.click(within(panel).getByRole("button", { name: /what-if parties/i }));
+    await u.type(within(panel).getByLabelText("whatif party payer"), "did:test:alice");
+    await u.type(within(panel).getByLabelText("simulate caller did"), "did:test:alice");
+    await u.click(within(panel).getByRole("button", { name: /^simulate$/i }));
+
+    await waitFor(() => expect(rbacApi.contracts.simulateMethodPolicy).toHaveBeenCalledTimes(1));
+    const [, , body] = (rbacApi.contracts.simulateMethodPolicy as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(body.captured).toEqual({ payer: ["did:test:alice"] });
+    expect(within(panel).getByText("allow")).toBeInTheDocument();
   });
 });
