@@ -13,7 +13,9 @@ edge-tts>=6.1.0
 anthropic>=0.7.0
 
 # Image processing
-Pillow>=10.0.0
+# Floor is 10.2.0: Aikido reports CVE-2023-50447 against the 10.0.0 the old
+# floor allowed, and names 10.2.0 as the patched version.
+Pillow>=10.2.0
 
 # CLI
 click>=8.1.0
