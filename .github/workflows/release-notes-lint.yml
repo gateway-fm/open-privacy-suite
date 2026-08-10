@@ -21,6 +21,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # Aikido: this job never pushes, so the checkout token is not needed.
+          persist-credentials: false
           # A release event defaults checkout to the release's tag. Editing an
           # older release (tag predates this workflow/script) would check out a
           # tree without scripts/lint-release-notes.sh and fail before linting.

@@ -50,6 +50,9 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        # Aikido: this job never pushes, so the checkout token is not needed.
+        with:
+          persist-credentials: false
 
       # Run the Playwright lane through the same isolated harness used on a
       # developer machine. `make e2e` is intentionally broader (Go, browser,
@@ -81,6 +84,8 @@ jobs:
       - name: Checkout Open Privacy Suite
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # Aikido: this job never pushes, so the checkout token is not needed.
+          persist-credentials: false
           path: privacy-proxy
 
       - name: Initialize Foundry submodule

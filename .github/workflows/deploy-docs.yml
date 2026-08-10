@@ -29,6 +29,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # Aikido: this job never pushes, so the checkout token is not needed.
+          persist-credentials: false
           # Full history + tags so `git describe --tags` can resolve the
           # release version below (the default shallow clone omits tags).
           fetch-depth: 0
