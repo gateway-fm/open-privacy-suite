@@ -20,6 +20,11 @@ import (
 //     no second request is issued to the Location target.
 //  2. do() re-asserts Scheme/Host/User from the trusted base URL on every call,
 //     so the outbound request can only ever address the configured upstream.
+//  3. doAs() rejects dot segments in the caller-supplied path, so a tool
+//     argument interpolated into a path (org ID, address, group ID) cannot
+//     climb out of the intended /api/v1/... namespace via "../" — url.JoinPath
+//     resolves dot segments, so without this the request would still land on
+//     the trusted host but at an unrelated endpoint.
 //
 // These tests exercise the real request path (get()/do(), the lowest-level
 // methods that drive the shared client) and assert the metadata sentinel is
@@ -148,5 +153,60 @@ func TestSSRF_NewClientNeverFollowsRedirect(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodGet, "https://upstream.invalid/x", nil)
 	if err := client.http.CheckRedirect(req, nil); err != http.ErrUseLastResponse {
 		t.Fatalf("CheckRedirect returned %v, want http.ErrUseLastResponse (do-not-follow)", err)
+	}
+}
+
+// TestSSRF_PathConfinedToNamespace is mitigation (3). Host re-pinning keeps the
+// request on the trusted upstream, but the path is still assembled from tool
+// arguments — e.g. fmt.Sprintf("/api/v1/admin/orgs/%s/compliance/config",
+// args.OrgID) in compliance.go. url.JoinPath resolves dot segments, so an OrgID
+// of "../.." would rewrite the request onto a different endpoint of the same
+// (privileged, admin-token-bearing) upstream. The request must be refused
+// before it is issued.
+func TestSSRF_PathConfinedToNamespace(t *testing.T) {
+	var reqPaths []string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reqPaths = append(reqPaths, r.URL.Path)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer upstream.Close()
+
+	client, err := newHTTPClient(upstream.URL, "test-admin-token")
+	if err != nil {
+		t.Fatalf("newHTTPClient: %v", err)
+	}
+
+	// Each entry is a path built from a hostile tool argument.
+	traversals := []string{
+		"/api/v1/admin/orgs/../../../internal/debug",  // climb out of the admin namespace
+		"/api/v1/admin/orgs/..%2f..%2fdebug/config",   // percent-encoded dot segments
+		"/api/v1/admin/orgs/./././secret",             // single-dot segments
+		"/api/v1/admin/orgs/../x/compliance?limit=10", // traversal alongside a query string
+	}
+
+	for _, p := range traversals {
+		t.Run(p, func(t *testing.T) {
+			if _, err := client.get(p); err == nil {
+				t.Fatalf("path %q was accepted; a dot segment must be refused before the request is issued", p)
+			}
+		})
+	}
+
+	if len(reqPaths) != 0 {
+		t.Fatalf("upstream received %d request(s) %v — traversal paths must never reach the network", len(reqPaths), reqPaths)
+	}
+
+	// A legitimate path with the same shape must still work: the guard rejects
+	// dot segments only, not ordinary IDs, queries or hyphenated segments.
+	for _, p := range []string{
+		"/api/v1/admin/orgs/org-123/compliance/config",
+		"/api/v1/admin/orgs/org-123/compliance/logs?limit=10&offset=0",
+	} {
+		if _, err := client.get(p); err != nil {
+			t.Fatalf("legitimate path %q was rejected: %v", p, err)
+		}
+	}
+	if len(reqPaths) != 2 {
+		t.Fatalf("upstream received %d legitimate request(s), want 2", len(reqPaths))
 	}
 }

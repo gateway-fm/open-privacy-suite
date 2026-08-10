@@ -68,7 +68,41 @@ func (c *httpClient) do(method, path string, payload any) (json.RawMessage, erro
 	return c.doAs(method, path, payload, "")
 }
 
+// rejectDotSegments guards the caller-supplied portion of a request path.
+// doAs pins scheme/host/userinfo to the configured base, so a caller can never
+// retarget a different origin. It could still climb out of the intended
+// /api/v1/... namespace with a "../" segment, because url.JoinPath resolves dot
+// segments before the request is sent — reaching an unrelated endpoint on the
+// trusted upstream. Tool arguments (org IDs, addresses, group IDs) are
+// interpolated into these paths by the callers in this package, so every
+// segment is untrusted. No legitimate API path contains a dot segment.
+//
+// The path is unescaped before it is split: JoinPath decodes percent-encoded
+// separators, so "..%2f..%2fdebug" is one literal segment here but three
+// segments by the time the request goes out. Checking the decoded form is what
+// makes the guard match what the request actually does.
+func rejectDotSegments(path string) error {
+	decoded, err := url.PathUnescape(path)
+	if err != nil {
+		return fmt.Errorf("invalid request path %q: %w", path, err)
+	}
+	for seg := range strings.SplitSeq(decoded, "/") {
+		if seg == "." || seg == ".." {
+			return fmt.Errorf("invalid request path %q: dot segments are not allowed", path)
+		}
+	}
+	return nil
+}
+
 func (c *httpClient) doAs(method, path string, payload any, viewerJWT string) (json.RawMessage, error) {
+	pathOnly := path
+	if i := strings.Index(pathOnly, "?"); i >= 0 {
+		pathOnly = pathOnly[:i]
+	}
+	if err := rejectDotSegments(pathOnly); err != nil {
+		return nil, err
+	}
+
 	var body io.Reader
 	if payload != nil {
 		data, err := json.Marshal(payload)

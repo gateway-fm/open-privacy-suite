@@ -43,14 +43,14 @@ func NewProxyClient(baseURL, token string) (*ProxyClient, error) {
 
 // PrepareDeployment registers a deployment plan with the proxy.
 func (c *ProxyClient) PrepareDeployment(orgID string, req *PrepareRequest) (*PrepareResponse, error) {
-	url := fmt.Sprintf("%s/orgs/%s/deployments/prepare", c.baseURL, orgID)
+	endpoint := fmt.Sprintf("%s/orgs/%s/deployments/prepare", c.baseURL, url.PathEscape(orgID))
 
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequest("POST", url, bytes.NewReader(body))
+	httpReq, err := http.NewRequest("POST", endpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -93,9 +93,9 @@ type Deployment struct {
 
 // GetDeployment retrieves a deployment by ID.
 func (c *ProxyClient) GetDeployment(deploymentID string) (*Deployment, error) {
-	url := fmt.Sprintf("%s/deployments/%s", c.baseURL, deploymentID)
+	endpoint := fmt.Sprintf("%s/deployments/%s", c.baseURL, url.PathEscape(deploymentID))
 
-	httpReq, err := http.NewRequest("GET", url, nil)
+	httpReq, err := http.NewRequest("GET", endpoint, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -133,12 +133,12 @@ type ListDeploymentsResponse struct {
 
 // ListDeployments lists deployments for an organization.
 func (c *ProxyClient) ListDeployments(orgID string, status string) (*ListDeploymentsResponse, error) {
-	url := fmt.Sprintf("%s/orgs/%s/deployments", c.baseURL, orgID)
+	endpoint := fmt.Sprintf("%s/orgs/%s/deployments", c.baseURL, url.PathEscape(orgID))
 	if status != "" {
-		url += "?status=" + status
+		endpoint += "?status=" + url.QueryEscape(status)
 	}
 
-	httpReq, err := http.NewRequest("GET", url, nil)
+	httpReq, err := http.NewRequest("GET", endpoint, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -192,9 +192,9 @@ type ContractVerificationResult struct {
 
 // VerifyDeployment verifies that a deployment matches its registration.
 func (c *ProxyClient) VerifyDeployment(deploymentID string) (*VerifyDeploymentResponse, error) {
-	url := fmt.Sprintf("%s/deployments/%s/verify", c.baseURL, deploymentID)
+	endpoint := fmt.Sprintf("%s/deployments/%s/verify", c.baseURL, url.PathEscape(deploymentID))
 
-	httpReq, err := http.NewRequest("POST", url, nil)
+	httpReq, err := http.NewRequest("POST", endpoint, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
