@@ -94,10 +94,46 @@ func rejectDotSegments(path string) error {
 	return nil
 }
 
+// Defence in depth against path truncation, NOT a complete fix.
+//
+// A caller-interpolated value containing "?" is read as the start of a query string,
+// silently retargeting the request: an OrgID of "victim?ignored" turns
+// /api/v1/admin/orgs/{id}/compliance/config into an admin-authenticated request for
+// /api/v1/admin/orgs/victim, with "ignored/compliance/config" demoted into RawQuery -
+// a different endpoint entirely.
+//
+// Every query this client legitimately builds is a flat k=v(&k=v)* list, so a query
+// position that is not key=value is smuggled path and is rejected here. A "/" inside a
+// query *value* is legitimate (e.g. ?next=http://host/path) and is left alone; the
+// host re-pinning below neutralises those.
+//
+// Residual gap: a value crafted as "victim?a=b/rest" still parses as key=value, so it
+// still truncates the path. Closing that completely requires escaping dynamic segments
+// at their ~40 call sites in mcp/*.go so a "?" can never enter the path string. Tracked
+// separately - see the PR discussion.
+func rejectSmuggledQuery(query string) error {
+	if strings.ContainsAny(query, "?#") {
+		return fmt.Errorf("invalid request query %q: must not contain %q or %q", query, "?", "#")
+	}
+	for pair := range strings.SplitSeq(query, "&") {
+		if pair == "" {
+			continue
+		}
+		key, _, ok := strings.Cut(pair, "=")
+		if !ok || key == "" {
+			return fmt.Errorf("invalid request query %q: expected key=value pairs", query)
+		}
+	}
+	return nil
+}
+
 func (c *httpClient) doAs(method, path string, payload any, viewerJWT string) (json.RawMessage, error) {
 	pathOnly := path
 	if i := strings.Index(pathOnly, "?"); i >= 0 {
 		pathOnly = pathOnly[:i]
+		if err := rejectSmuggledQuery(path[i+1:]); err != nil {
+			return nil, err
+		}
 	}
 	if err := rejectDotSegments(pathOnly); err != nil {
 		return nil, err

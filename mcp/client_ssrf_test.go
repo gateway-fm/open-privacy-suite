@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
@@ -111,11 +112,11 @@ func TestSSRF_HostRepinned(t *testing.T) {
 	// Each of these tries, in a different way, to escape the configured upstream
 	// and address the evil host instead.
 	maliciousPaths := []string{
-		"http://" + evilHost + "/latest/meta-data/", // absolute URL with attacker host
-		"https://" + evilHost + "/x",                // absolute https URL
-		"//" + evilHost + "/x",                      // scheme-relative authority
+		"http://" + evilHost + "/latest/meta-data/",  // absolute URL with attacker host
+		"https://" + evilHost + "/x",                 // absolute https URL
+		"//" + evilHost + "/x",                       // scheme-relative authority
 		"/api/v1/admin/orgs?next=http://" + evilHost, // attacker host smuggled in query
-		"user:pass@" + evilHost + "/x",              // embedded credentials + host
+		"user:pass@" + evilHost + "/x",               // embedded credentials + host
 	}
 
 	for _, p := range maliciousPaths {
@@ -208,5 +209,41 @@ func TestSSRF_PathConfinedToNamespace(t *testing.T) {
 	}
 	if len(reqPaths) != 2 {
 		t.Fatalf("upstream received %d legitimate request(s), want 2", len(reqPaths))
+	}
+}
+
+// TestSSRF_QuerySmuggling covers the path-truncation hole reported in review on #439:
+// a caller-interpolated identifier containing "?" splits the path, so an
+// admin-authenticated request lands on a shorter, different endpoint with the intended
+// suffix demoted into the query string.
+func TestSSRF_QuerySmuggling(t *testing.T) {
+	rejected := []string{
+		// The reported payload: OrgID = "victim?ignored".
+		"/api/v1/admin/orgs/victim?ignored/compliance/config",
+		"/api/v1/admin/orgs/victim?a",
+		"/api/v1/admin/orgs/victim?=novalue",
+		"/api/v1/admin/orgs/victim?ignored#frag",
+	}
+	for _, path := range rejected {
+		t.Run("reject"+path, func(t *testing.T) {
+			if err := rejectSmuggledQuery(path[strings.Index(path, "?")+1:]); err == nil {
+				t.Fatalf("query smuggling not rejected for %q", path)
+			}
+		})
+	}
+
+	// Legitimate queries this client actually builds must still pass, including a URL
+	// in a value - host re-pinning is what neutralises those.
+	allowed := []string{
+		"limit=50&offset=0",
+		"next=http://127.0.0.1:8080/callback",
+		"",
+	}
+	for _, q := range allowed {
+		t.Run("allow/"+q, func(t *testing.T) {
+			if err := rejectSmuggledQuery(q); err != nil {
+				t.Fatalf("legitimate query %q rejected: %v", q, err)
+			}
+		})
 	}
 }

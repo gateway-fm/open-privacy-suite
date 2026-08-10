@@ -41,9 +41,29 @@ func NewProxyClient(baseURL, token string) (*ProxyClient, error) {
 	}, nil
 }
 
+// url.PathEscape leaves "." and ".." untouched - both are unreserved path characters -
+// so escaping alone does not stop "/orgs/../deployments/prepare" being normalised to a
+// different endpoint by a proxy or server. These identifiers are documented as UUIDs,
+// so validate rather than escape-and-hope.
+func safePathSegment(kind, value string) (string, error) {
+	switch {
+	case value == "":
+		return "", fmt.Errorf("%s must not be empty", kind)
+	case value == "." || value == "..":
+		return "", fmt.Errorf("invalid %s %q: dot segments are not allowed", kind, value)
+	case strings.ContainsAny(value, "/\\"):
+		return "", fmt.Errorf("invalid %s %q: must not contain a path separator", kind, value)
+	}
+	return url.PathEscape(value), nil
+}
+
 // PrepareDeployment registers a deployment plan with the proxy.
 func (c *ProxyClient) PrepareDeployment(orgID string, req *PrepareRequest) (*PrepareResponse, error) {
-	endpoint := fmt.Sprintf("%s/orgs/%s/deployments/prepare", c.baseURL, url.PathEscape(orgID))
+	org, err := safePathSegment("org_id", orgID)
+	if err != nil {
+		return nil, err
+	}
+	endpoint := fmt.Sprintf("%s/orgs/%s/deployments/prepare", c.baseURL, org)
 
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -93,7 +113,11 @@ type Deployment struct {
 
 // GetDeployment retrieves a deployment by ID.
 func (c *ProxyClient) GetDeployment(deploymentID string) (*Deployment, error) {
-	endpoint := fmt.Sprintf("%s/deployments/%s", c.baseURL, url.PathEscape(deploymentID))
+	dep, err := safePathSegment("deployment_id", deploymentID)
+	if err != nil {
+		return nil, err
+	}
+	endpoint := fmt.Sprintf("%s/deployments/%s", c.baseURL, dep)
 
 	httpReq, err := http.NewRequest("GET", endpoint, nil)
 	if err != nil {
@@ -133,7 +157,11 @@ type ListDeploymentsResponse struct {
 
 // ListDeployments lists deployments for an organization.
 func (c *ProxyClient) ListDeployments(orgID string, status string) (*ListDeploymentsResponse, error) {
-	endpoint := fmt.Sprintf("%s/orgs/%s/deployments", c.baseURL, url.PathEscape(orgID))
+	org, err := safePathSegment("org_id", orgID)
+	if err != nil {
+		return nil, err
+	}
+	endpoint := fmt.Sprintf("%s/orgs/%s/deployments", c.baseURL, org)
 	if status != "" {
 		endpoint += "?status=" + url.QueryEscape(status)
 	}
@@ -175,24 +203,28 @@ type VerifyDeploymentRequest struct {
 
 // VerifyDeploymentResponse represents the response from verifying a deployment.
 type VerifyDeploymentResponse struct {
-	Verified  bool                      `json:"verified"`
+	Verified  bool                         `json:"verified"`
 	Contracts []ContractVerificationResult `json:"contracts"`
-	Errors    []string                  `json:"errors,omitempty"`
+	Errors    []string                     `json:"errors,omitempty"`
 }
 
 // ContractVerificationResult represents the verification result for a single contract.
 type ContractVerificationResult struct {
-	Name             string `json:"name"`
-	ExpectedAddress  string `json:"expected_address"`
-	ActualAddress    string `json:"actual_address,omitempty"`
-	Verified         bool   `json:"verified"`
-	BytecodeMatch    bool   `json:"bytecode_match"`
-	Error            string `json:"error,omitempty"`
+	Name            string `json:"name"`
+	ExpectedAddress string `json:"expected_address"`
+	ActualAddress   string `json:"actual_address,omitempty"`
+	Verified        bool   `json:"verified"`
+	BytecodeMatch   bool   `json:"bytecode_match"`
+	Error           string `json:"error,omitempty"`
 }
 
 // VerifyDeployment verifies that a deployment matches its registration.
 func (c *ProxyClient) VerifyDeployment(deploymentID string) (*VerifyDeploymentResponse, error) {
-	endpoint := fmt.Sprintf("%s/deployments/%s/verify", c.baseURL, url.PathEscape(deploymentID))
+	dep, err := safePathSegment("deployment_id", deploymentID)
+	if err != nil {
+		return nil, err
+	}
+	endpoint := fmt.Sprintf("%s/deployments/%s/verify", c.baseURL, dep)
 
 	httpReq, err := http.NewRequest("POST", endpoint, nil)
 	if err != nil {
