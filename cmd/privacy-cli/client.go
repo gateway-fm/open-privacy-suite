@@ -41,29 +41,34 @@ func NewProxyClient(baseURL, token string) (*ProxyClient, error) {
 	}, nil
 }
 
-// url.PathEscape leaves "." and ".." untouched - both are unreserved path characters -
-// so escaping alone does not stop "/orgs/../deployments/prepare" being normalised to a
-// different endpoint by a proxy or server. These identifiers are documented as UUIDs,
-// so validate rather than escape-and-hope.
-func safePathSegment(kind, value string) (string, error) {
+// validatePathSegment rejects what escaping cannot fix. url.PathEscape leaves "." and
+// ".." untouched - both are unreserved path characters - so escaping alone does not stop
+// "/orgs/../deployments/prepare" being normalised to a different endpoint by a proxy or
+// server. These identifiers are documented as UUIDs, so validate them.
+//
+// Validation only, deliberately: the url.PathEscape call stays inline at each call site.
+// Returning a pre-escaped string from here instead hid the sanitiser from static
+// analysis, which re-rated those call sites as high-severity SSRF even though the
+// behaviour was identical. Keeping the escape visible next to the fmt.Sprintf costs
+// nothing and keeps both the scanner and a human reader able to see it.
+func validatePathSegment(kind, value string) error {
 	switch {
 	case value == "":
-		return "", fmt.Errorf("%s must not be empty", kind)
+		return fmt.Errorf("%s must not be empty", kind)
 	case value == "." || value == "..":
-		return "", fmt.Errorf("invalid %s %q: dot segments are not allowed", kind, value)
+		return fmt.Errorf("invalid %s %q: dot segments are not allowed", kind, value)
 	case strings.ContainsAny(value, "/\\"):
-		return "", fmt.Errorf("invalid %s %q: must not contain a path separator", kind, value)
+		return fmt.Errorf("invalid %s %q: must not contain a path separator", kind, value)
 	}
-	return url.PathEscape(value), nil
+	return nil
 }
 
 // PrepareDeployment registers a deployment plan with the proxy.
 func (c *ProxyClient) PrepareDeployment(orgID string, req *PrepareRequest) (*PrepareResponse, error) {
-	org, err := safePathSegment("org_id", orgID)
-	if err != nil {
+	if err := validatePathSegment("org_id", orgID); err != nil {
 		return nil, err
 	}
-	endpoint := fmt.Sprintf("%s/orgs/%s/deployments/prepare", c.baseURL, org)
+	endpoint := fmt.Sprintf("%s/orgs/%s/deployments/prepare", c.baseURL, url.PathEscape(orgID))
 
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -113,11 +118,10 @@ type Deployment struct {
 
 // GetDeployment retrieves a deployment by ID.
 func (c *ProxyClient) GetDeployment(deploymentID string) (*Deployment, error) {
-	dep, err := safePathSegment("deployment_id", deploymentID)
-	if err != nil {
+	if err := validatePathSegment("deployment_id", deploymentID); err != nil {
 		return nil, err
 	}
-	endpoint := fmt.Sprintf("%s/deployments/%s", c.baseURL, dep)
+	endpoint := fmt.Sprintf("%s/deployments/%s", c.baseURL, url.PathEscape(deploymentID))
 
 	httpReq, err := http.NewRequest("GET", endpoint, nil)
 	if err != nil {
@@ -157,11 +161,10 @@ type ListDeploymentsResponse struct {
 
 // ListDeployments lists deployments for an organization.
 func (c *ProxyClient) ListDeployments(orgID string, status string) (*ListDeploymentsResponse, error) {
-	org, err := safePathSegment("org_id", orgID)
-	if err != nil {
+	if err := validatePathSegment("org_id", orgID); err != nil {
 		return nil, err
 	}
-	endpoint := fmt.Sprintf("%s/orgs/%s/deployments", c.baseURL, org)
+	endpoint := fmt.Sprintf("%s/orgs/%s/deployments", c.baseURL, url.PathEscape(orgID))
 	if status != "" {
 		endpoint += "?status=" + url.QueryEscape(status)
 	}
@@ -220,11 +223,10 @@ type ContractVerificationResult struct {
 
 // VerifyDeployment verifies that a deployment matches its registration.
 func (c *ProxyClient) VerifyDeployment(deploymentID string) (*VerifyDeploymentResponse, error) {
-	dep, err := safePathSegment("deployment_id", deploymentID)
-	if err != nil {
+	if err := validatePathSegment("deployment_id", deploymentID); err != nil {
 		return nil, err
 	}
-	endpoint := fmt.Sprintf("%s/deployments/%s/verify", c.baseURL, dep)
+	endpoint := fmt.Sprintf("%s/deployments/%s/verify", c.baseURL, url.PathEscape(deploymentID))
 
 	httpReq, err := http.NewRequest("POST", endpoint, nil)
 	if err != nil {
