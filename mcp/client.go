@@ -144,7 +144,35 @@ func rejectDotSegments(path string) error {
 	return nil
 }
 
+// rejectEncodedSeparators refuses a path in which a dynamic argument contained a
+// path separator.
+//
+// Escaping is not enough for this one. pathf turns "victim/contracts" into
+// "victim%2Fcontracts", which is correct on the wire — but net/http decodes %2F back
+// into URL.Path, and this upstream runs Gin with the default UseRawPath=false, so it
+// routes on the decoded form. The request therefore matches
+// /orgs/:org_id/contracts instead of the intended endpoint, with the admin token
+// attached. Percent-encoding a separator only hides it from the client, not from the
+// router.
+//
+// Checked here rather than in pathf because pathf has no error return and every call
+// funnels through doAs anyway. It is precise: %2F and %5C only ever appear in a path
+// built by pathf when an argument really did contain a separator — no hand-written
+// literal path in this package contains an encoded slash.
+func rejectEncodedSeparators(path string) error {
+	lower := strings.ToLower(path)
+	for _, enc := range []string{"%2f", "%5c"} {
+		if strings.Contains(lower, enc) {
+			return fmt.Errorf("invalid request path %q: a path argument must not contain a separator", path)
+		}
+	}
+	return nil
+}
+
 func (c *httpClient) doAs(method string, path apiPath, query url.Values, payload any, viewerJWT string) (json.RawMessage, error) {
+	if err := rejectEncodedSeparators(string(path)); err != nil {
+		return nil, err
+	}
 	if err := rejectDotSegments(string(path)); err != nil {
 		return nil, err
 	}

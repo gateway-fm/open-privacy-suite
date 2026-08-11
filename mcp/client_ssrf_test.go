@@ -211,15 +211,17 @@ func TestSSRF_PathConfinedToNamespace(t *testing.T) {
 	}
 }
 
-// TestSSRF_PathConfinement is the regression test for the review finding on #439:
-// a tool argument containing "?", "/" or "#" must stay inside the path segment it
-// was interpolated into, and must never truncate the path or start a query.
+// TestSSRF_PathConfinement is the regression test for the review findings on #439.
 //
-// This is exercised through pathf() + the real client, because the fix lives in how
-// the path is built, not in a validator bolted on afterwards.
+// It asserts on r.URL.Path — the DECODED path, which is what a router matches on.
+// An earlier version of this test compared against the escaped form and therefore
+// passed while "victim/contracts" was still reaching a different endpoint: %2F is
+// decoded by net/http, and this upstream runs Gin with the default UseRawPath=false,
+// so the router sees a real separator. Escaping alone never confined that case.
 func TestSSRF_PathConfinement(t *testing.T) {
 	var gotPath, gotQuery string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// r.URL.Path, not RawPath: this is the value Gin routes on.
 		gotPath, gotQuery = r.URL.Path, r.URL.RawQuery
 		_, _ = w.Write([]byte(`{}`))
 	}))
@@ -230,25 +232,49 @@ func TestSSRF_PathConfinement(t *testing.T) {
 		t.Fatalf("newHTTPClient: %v", err)
 	}
 
-	hostile := []string{
-		"victim?ignored/compliance/config", // truncate the path, demote the rest to a query
-		"victim?a=b/rest",                  // same, but parses as a real key=value pair
-		"victim/contracts",                 // add a path segment
-		"victim#frag",                      // fragment
+	// Confined: escaping keeps these inside their segment, and the escaping survives
+	// decoding because none of them decode to a separator.
+	confined := []string{
+		"victim?ignored",     // would truncate the path and demote the rest to a query
+		"victim?a=b",         // same, but parses as a real key=value pair
+		"victim#frag",        // fragment
+		"vic tim",            // space
+		"victim%2Fcontracts", // caller pre-encoded a slash: double-encoded, stays one segment
 	}
-	for _, orgID := range hostile {
-		t.Run(orgID, func(t *testing.T) {
+	for _, orgID := range confined {
+		t.Run("confined/"+orgID, func(t *testing.T) {
 			gotPath, gotQuery = "", ""
-			_, err := client.get(pathf("/api/v1/admin/orgs/%s/compliance/config", orgID))
-			if err != nil {
+			if _, err := client.get(pathf("/api/v1/admin/orgs/%s/compliance/config", orgID)); err != nil {
 				t.Fatalf("request failed: %v", err)
 			}
 			want := "/api/v1/admin/orgs/" + orgID + "/compliance/config"
 			if gotPath != want {
-				t.Fatalf("endpoint confinement broken:\n  server saw path %q\n  want           %q", gotPath, want)
+				t.Fatalf("endpoint confinement broken:\n  router saw %q\n  want        %q", gotPath, want)
 			}
 			if gotQuery != "" {
 				t.Fatalf("hostile segment leaked into the query: %q", gotQuery)
+			}
+		})
+	}
+
+	// Rejected: a separator cannot be made safe by escaping, because the server
+	// decodes it back before routing. These must never reach the network at all.
+	rejected := []string{
+		"victim/contracts",                 // would match /orgs/:org_id/contracts instead
+		"victim?ignored/compliance/config", // the original review payload: "?" plus separators
+		"victim?a=b/rest",                  // key=value shape, still carries a separator
+		"victim\\contracts",                // backslash
+		"..",                               // dot segment
+		"../../debug",                      // traversal
+	}
+	for _, orgID := range rejected {
+		t.Run("rejected/"+orgID, func(t *testing.T) {
+			gotPath = ""
+			if _, err := client.get(pathf("/api/v1/admin/orgs/%s/compliance/config", orgID)); err == nil {
+				t.Fatalf("argument %q was accepted; the router would have seen %q", orgID, gotPath)
+			}
+			if gotPath != "" {
+				t.Fatalf("request reached the upstream despite rejection: %q", gotPath)
 			}
 		})
 	}
