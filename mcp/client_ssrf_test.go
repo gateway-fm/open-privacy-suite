@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"strings"
 	"sync/atomic"
 	"testing"
 )
@@ -123,7 +122,7 @@ func TestSSRF_HostRepinned(t *testing.T) {
 		t.Run(p, func(t *testing.T) {
 			gotHost = ""
 			// We don't care about the response here, only where the request went.
-			_, _ = client.get(p)
+			_, _ = client.get(apiPath(p))
 
 			if gotHost != wantHost {
 				t.Fatalf("SSRF: request for path %q reached host %q, want trusted upstream %q", p, gotHost, wantHost)
@@ -187,7 +186,7 @@ func TestSSRF_PathConfinedToNamespace(t *testing.T) {
 
 	for _, p := range traversals {
 		t.Run(p, func(t *testing.T) {
-			if _, err := client.get(p); err == nil {
+			if _, err := client.get(apiPath(p)); err == nil {
 				t.Fatalf("path %q was accepted; a dot segment must be refused before the request is issued", p)
 			}
 		})
@@ -203,7 +202,7 @@ func TestSSRF_PathConfinedToNamespace(t *testing.T) {
 		"/api/v1/admin/orgs/org-123/compliance/config",
 		"/api/v1/admin/orgs/org-123/compliance/logs?limit=10&offset=0",
 	} {
-		if _, err := client.get(p); err != nil {
+		if _, err := client.get(apiPath(p)); err != nil {
 			t.Fatalf("legitimate path %q was rejected: %v", p, err)
 		}
 	}
@@ -212,38 +211,59 @@ func TestSSRF_PathConfinedToNamespace(t *testing.T) {
 	}
 }
 
-// TestSSRF_QuerySmuggling covers the path-truncation hole reported in review on #439:
-// a caller-interpolated identifier containing "?" splits the path, so an
-// admin-authenticated request lands on a shorter, different endpoint with the intended
-// suffix demoted into the query string.
-func TestSSRF_QuerySmuggling(t *testing.T) {
-	rejected := []string{
-		// The reported payload: OrgID = "victim?ignored".
-		"/api/v1/admin/orgs/victim?ignored/compliance/config",
-		"/api/v1/admin/orgs/victim?a",
-		"/api/v1/admin/orgs/victim?=novalue",
-		"/api/v1/admin/orgs/victim?ignored#frag",
+// TestSSRF_PathConfinement is the regression test for the review finding on #439:
+// a tool argument containing "?", "/" or "#" must stay inside the path segment it
+// was interpolated into, and must never truncate the path or start a query.
+//
+// This is exercised through pathf() + the real client, because the fix lives in how
+// the path is built, not in a validator bolted on afterwards.
+func TestSSRF_PathConfinement(t *testing.T) {
+	var gotPath, gotQuery string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotQuery = r.URL.Path, r.URL.RawQuery
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer upstream.Close()
+
+	client, err := newHTTPClient(upstream.URL, "test-admin-token")
+	if err != nil {
+		t.Fatalf("newHTTPClient: %v", err)
 	}
-	for _, path := range rejected {
-		t.Run("reject"+path, func(t *testing.T) {
-			if err := rejectSmuggledQuery(path[strings.Index(path, "?")+1:]); err == nil {
-				t.Fatalf("query smuggling not rejected for %q", path)
+
+	hostile := []string{
+		"victim?ignored/compliance/config", // truncate the path, demote the rest to a query
+		"victim?a=b/rest",                  // same, but parses as a real key=value pair
+		"victim/contracts",                 // add a path segment
+		"victim#frag",                      // fragment
+	}
+	for _, orgID := range hostile {
+		t.Run(orgID, func(t *testing.T) {
+			gotPath, gotQuery = "", ""
+			_, err := client.get(pathf("/api/v1/admin/orgs/%s/compliance/config", orgID))
+			if err != nil {
+				t.Fatalf("request failed: %v", err)
+			}
+			want := "/api/v1/admin/orgs/" + orgID + "/compliance/config"
+			if gotPath != want {
+				t.Fatalf("endpoint confinement broken:\n  server saw path %q\n  want           %q", gotPath, want)
+			}
+			if gotQuery != "" {
+				t.Fatalf("hostile segment leaked into the query: %q", gotQuery)
 			}
 		})
 	}
 
-	// Legitimate queries this client actually builds must still pass, including a URL
-	// in a value - host re-pinning is what neutralises those.
-	allowed := []string{
-		"limit=50&offset=0",
-		"next=http://127.0.0.1:8080/callback",
-		"",
-	}
-	for _, q := range allowed {
-		t.Run("allow/"+q, func(t *testing.T) {
-			if err := rejectSmuggledQuery(q); err != nil {
-				t.Fatalf("legitimate query %q rejected: %v", q, err)
-			}
-		})
-	}
+	// A legitimate structured query must still arrive intact.
+	t.Run("legitimate query survives", func(t *testing.T) {
+		gotPath, gotQuery = "", ""
+		if _, err := client.get("/api/v1/admin/orgs", pageQuery(10, 20)); err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		if gotPath != "/api/v1/admin/orgs" {
+			t.Fatalf("path = %q", gotPath)
+		}
+		if gotQuery != "limit=10&offset=20" {
+			t.Fatalf("query = %q, want limit=10&offset=20", gotQuery)
+		}
+	})
 }

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -40,32 +41,81 @@ func newHTTPClient(rawURL, adminToken string) (*httpClient, error) {
 	}, nil
 }
 
-func (c *httpClient) get(path string) (json.RawMessage, error) {
-	return c.doAs(http.MethodGet, path, nil, "")
+// apiPath is a request path that is safe to send. Its underlying type is string,
+// so an untyped constant — a literal path like "/api/v1/admin/orgs" — still assigns
+// to it directly and needs no ceremony. A *typed* string does not, which means
+// `client.get(fmt.Sprintf(...))` no longer compiles: interpolating an untrusted
+// value into a path is now a build error rather than a review question. Use pathf.
+type apiPath string
+
+// pathf builds a request path, percent-escaping every string argument so a tool
+// argument stays inside the path segment it was interpolated into.
+//
+// This is the whole fix. url.PathEscape turns "/" into %2F, "?" into %3F and "#"
+// into %23, and JoinPath preserves those, so a hostile org ID can no longer add
+// segments, truncate the path, or start a query. Non-string arguments (%d limits
+// and offsets) pass through untouched.
+//
+// Dot segments are NOT escapable — url.PathEscape leaves "." and ".." alone
+// because they are unreserved characters, and JoinPath then resolves them. They are
+// rejected in doAs instead, on the decoded path, where one check covers every call.
+func pathf(format string, args ...any) apiPath {
+	escaped := make([]any, len(args))
+	for i, a := range args {
+		if s, ok := a.(string); ok {
+			escaped[i] = url.PathEscape(s)
+			continue
+		}
+		escaped[i] = a
+	}
+	return apiPath(fmt.Sprintf(format, escaped...))
+}
+
+// pageQuery is the limit/offset pair almost every list endpoint takes. Building it
+// here rather than formatting "?limit=%d&offset=%d" into the path keeps the query a
+// structured value that url.Values escapes on encode.
+func pageQuery(limit, offset int) url.Values {
+	q := url.Values{}
+	q.Set("limit", strconv.Itoa(limit))
+	if offset != 0 {
+		q.Set("offset", strconv.Itoa(offset))
+	}
+	return q
+}
+
+func (c *httpClient) get(path apiPath, query ...url.Values) (json.RawMessage, error) {
+	return c.doAs(http.MethodGet, path, firstQuery(query), nil, "")
 }
 
 // getAs issues a GET with a viewer JWT in the Authorization header. Explorer
 // endpoints resolve the viewer identity ONLY from a validated JWT (RD-1164 #7),
 // so privacy-filtered responses need the user's token — the admin token alone
 // yields the anonymous (empty/redacted) view.
-func (c *httpClient) getAs(path, viewerJWT string) (json.RawMessage, error) {
-	return c.doAs(http.MethodGet, path, nil, viewerJWT)
+func (c *httpClient) getAs(path apiPath, viewerJWT string, query ...url.Values) (json.RawMessage, error) {
+	return c.doAs(http.MethodGet, path, firstQuery(query), nil, viewerJWT)
 }
 
-func (c *httpClient) post(path string, payload any) (json.RawMessage, error) {
+func (c *httpClient) post(path apiPath, payload any) (json.RawMessage, error) {
 	return c.do(http.MethodPost, path, payload)
 }
 
-func (c *httpClient) put(path string, payload any) (json.RawMessage, error) {
+func (c *httpClient) put(path apiPath, payload any) (json.RawMessage, error) {
 	return c.do(http.MethodPut, path, payload)
 }
 
-func (c *httpClient) del(path string) (json.RawMessage, error) {
+func (c *httpClient) del(path apiPath) (json.RawMessage, error) {
 	return c.do(http.MethodDelete, path, nil)
 }
 
-func (c *httpClient) do(method, path string, payload any) (json.RawMessage, error) {
-	return c.doAs(method, path, payload, "")
+func (c *httpClient) do(method string, path apiPath, payload any) (json.RawMessage, error) {
+	return c.doAs(method, path, nil, payload, "")
+}
+
+func firstQuery(q []url.Values) url.Values {
+	if len(q) == 0 {
+		return nil
+	}
+	return q[0]
 }
 
 // rejectDotSegments guards the caller-supplied portion of a request path.
@@ -94,48 +144,8 @@ func rejectDotSegments(path string) error {
 	return nil
 }
 
-// Defence in depth against path truncation, NOT a complete fix.
-//
-// A caller-interpolated value containing "?" is read as the start of a query string,
-// silently retargeting the request: an OrgID of "victim?ignored" turns
-// /api/v1/admin/orgs/{id}/compliance/config into an admin-authenticated request for
-// /api/v1/admin/orgs/victim, with "ignored/compliance/config" demoted into RawQuery -
-// a different endpoint entirely.
-//
-// Every query this client legitimately builds is a flat k=v(&k=v)* list, so a query
-// position that is not key=value is smuggled path and is rejected here. A "/" inside a
-// query *value* is legitimate (e.g. ?next=http://host/path) and is left alone; the
-// host re-pinning below neutralises those.
-//
-// Residual gap: a value crafted as "victim?a=b/rest" still parses as key=value, so it
-// still truncates the path. Closing that completely requires escaping dynamic segments
-// at their ~40 call sites in mcp/*.go so a "?" can never enter the path string. Tracked
-// separately - see the PR discussion.
-func rejectSmuggledQuery(query string) error {
-	if strings.ContainsAny(query, "?#") {
-		return fmt.Errorf("invalid request query %q: must not contain %q or %q", query, "?", "#")
-	}
-	for pair := range strings.SplitSeq(query, "&") {
-		if pair == "" {
-			continue
-		}
-		key, _, ok := strings.Cut(pair, "=")
-		if !ok || key == "" {
-			return fmt.Errorf("invalid request query %q: expected key=value pairs", query)
-		}
-	}
-	return nil
-}
-
-func (c *httpClient) doAs(method, path string, payload any, viewerJWT string) (json.RawMessage, error) {
-	pathOnly := path
-	if i := strings.Index(pathOnly, "?"); i >= 0 {
-		pathOnly = pathOnly[:i]
-		if err := rejectSmuggledQuery(path[i+1:]); err != nil {
-			return nil, err
-		}
-	}
-	if err := rejectDotSegments(pathOnly); err != nil {
+func (c *httpClient) doAs(method string, path apiPath, query url.Values, payload any, viewerJWT string) (json.RawMessage, error) {
+	if err := rejectDotSegments(string(path)); err != nil {
 		return nil, err
 	}
 
@@ -148,11 +158,14 @@ func (c *httpClient) doAs(method, path string, payload any, viewerJWT string) (j
 		body = bytes.NewReader(data)
 	}
 
-	target := c.baseURL.JoinPath(path)
-	if strings.Contains(path, "?") {
-		parts := strings.SplitN(path, "?", 2)
-		target = c.baseURL.JoinPath(parts[0])
-		target.RawQuery = parts[1]
+	// The query is a separate, structured argument. It used to be smuggled inside
+	// the path string and recovered by splitting on the first "?", which is exactly
+	// how a tool argument containing "?" could truncate the path and retarget the
+	// request at a different endpoint. net/url escapes "?" inside a path for free;
+	// the split was undoing that.
+	target := c.baseURL.JoinPath(string(path))
+	if len(query) > 0 {
+		target.RawQuery = query.Encode()
 	}
 	// SSRF mitigation: pin the request to the configured base host. JoinPath
 	// preserves the base scheme/host/userinfo, but re-asserting them here ensures

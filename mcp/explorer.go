@@ -55,7 +55,7 @@ func registerExplorerBlocks(s *mcp.Server, client *httpClient) {
 		if limit == 0 {
 			limit = 20
 		}
-		raw, err := client.getAs(fmt.Sprintf("/api/v1/explorer/blocks?limit=%d&offset=%d", limit, args.Offset), args.ViewerJWT)
+		raw, err := client.getAs("/api/v1/explorer/blocks", args.ViewerJWT, pageQuery(limit, args.Offset))
 		if err != nil {
 			return errorResult("listing blocks: %v", err)
 		}
@@ -94,7 +94,7 @@ func registerExplorerBlock(s *mcp.Server, client *httpClient) {
 		if args.Number == "" {
 			return errorResult("number is required")
 		}
-		raw, err := client.getAs("/api/v1/explorer/blocks/"+url.PathEscape(args.Number), args.ViewerJWT)
+		raw, err := client.getAs(pathf("/api/v1/explorer/blocks/%s", args.Number), args.ViewerJWT)
 		if err != nil {
 			return errorResult("getting block: %v", err)
 		}
@@ -111,7 +111,7 @@ func registerExplorerTransactions(s *mcp.Server, client *httpClient) {
 		if limit == 0 {
 			limit = 20
 		}
-		raw, err := client.getAs(fmt.Sprintf("/api/v1/explorer/transactions?limit=%d&offset=%d", limit, args.Offset), args.ViewerJWT)
+		raw, err := client.getAs("/api/v1/explorer/transactions", args.ViewerJWT, pageQuery(limit, args.Offset))
 		if err != nil {
 			return errorResult("listing transactions: %v", err)
 		}
@@ -154,7 +154,7 @@ func registerExplorerTransaction(s *mcp.Server, client *httpClient) {
 		if args.Hash == "" {
 			return errorResult("hash is required")
 		}
-		raw, err := client.getAs("/api/v1/explorer/transactions/"+url.PathEscape(args.Hash), args.ViewerJWT)
+		raw, err := client.getAs(pathf("/api/v1/explorer/transactions/%s", args.Hash), args.ViewerJWT)
 		if err != nil {
 			return errorResult("getting transaction: %v", err)
 		}
@@ -175,7 +175,7 @@ func registerExplorerAddress(s *mcp.Server, client *httpClient) {
 		if args.Address == "" {
 			return errorResult("address is required")
 		}
-		raw, err := client.getAs("/api/v1/explorer/addresses/"+url.PathEscape(args.Address)+"/stats", args.ViewerJWT)
+		raw, err := client.getAs(pathf("/api/v1/explorer/addresses/%s/stats", args.Address), args.ViewerJWT)
 		if err != nil {
 			return errorResult("getting address stats: %v", err)
 		}
@@ -202,7 +202,7 @@ func registerExplorerAddressTxs(s *mcp.Server, client *httpClient) {
 		if limit == 0 {
 			limit = 20
 		}
-		raw, err := client.getAs(fmt.Sprintf("/api/v1/explorer/addresses/%s/transactions?limit=%d&offset=%d", url.PathEscape(args.Address), limit, args.Offset), args.ViewerJWT)
+		raw, err := client.getAs(pathf("/api/v1/explorer/addresses/%s/transactions", args.Address), args.ViewerJWT, pageQuery(limit, args.Offset))
 		if err != nil {
 			return errorResult("getting address transactions: %v", err)
 		}
@@ -218,7 +218,7 @@ func registerExplorerAddressBalance(s *mcp.Server, client *httpClient) {
 		if args.Address == "" {
 			return errorResult("address is required")
 		}
-		raw, err := client.getAs("/api/v1/explorer/addresses/"+url.PathEscape(args.Address)+"/balance", args.ViewerJWT)
+		raw, err := client.getAs(pathf("/api/v1/explorer/addresses/%s/balance", args.Address), args.ViewerJWT)
 		if err != nil {
 			return errorResult("getting balance: %v", err)
 		}
@@ -235,7 +235,7 @@ func registerExplorerTokens(s *mcp.Server, client *httpClient) {
 		if limit == 0 {
 			limit = 20
 		}
-		raw, err := client.getAs(fmt.Sprintf("/api/v1/explorer/tokens?limit=%d&offset=%d", limit, args.Offset), args.ViewerJWT)
+		raw, err := client.getAs("/api/v1/explorer/tokens", args.ViewerJWT, pageQuery(limit, args.Offset))
 		if err != nil {
 			return errorResult("listing tokens: %v", err)
 		}
@@ -257,11 +257,11 @@ func registerViewableAddresses(s *mcp.Server, client *httpClient) {
 			return errorResult("viewer_jwt is required (the viewer is resolved from the validated JWT; without it the response is always empty)")
 		}
 
-		path := "/api/v1/explorer/viewable-addresses"
+		q := url.Values{}
 		if args.Wallet != "" {
-			path += "?wallet=" + url.QueryEscape(args.Wallet)
+			q.Set("wallet", args.Wallet)
 		}
-		raw, err := client.getAs(path, args.ViewerJWT)
+		raw, err := client.getAs("/api/v1/explorer/viewable-addresses", args.ViewerJWT, q)
 		if err != nil {
 			return errorResult("getting viewable addresses: %v", err)
 		}
@@ -269,4 +269,3 @@ func registerViewableAddresses(s *mcp.Server, client *httpClient) {
 		return textResult(section("Viewable Addresses"), prettyJSON(json.RawMessage(raw)))
 	})
 }
-

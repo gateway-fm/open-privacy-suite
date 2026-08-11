@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"strconv"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -39,15 +40,17 @@ func registerListUsers(s *mcp.Server, client *httpClient) {
 		if limit == 0 {
 			limit = 50
 		}
-		path := fmt.Sprintf("/api/v1/admin/users?limit=%d&offset=%d", limit, args.Offset)
+		q := url.Values{}
+		q.Set("limit", strconv.Itoa(limit))
+		q.Set("offset", strconv.Itoa(args.Offset))
 		if args.OrgID != "" {
-			path += "&org_id=" + url.QueryEscape(args.OrgID)
+			q.Set("org_id", args.OrgID)
 		}
 		if args.Search != "" {
-			path += "&search=" + url.QueryEscape(args.Search)
+			q.Set("search", args.Search)
 		}
 
-		raw, err := client.get(path)
+		raw, err := client.get("/api/v1/admin/users", q)
 		if err != nil {
 			return errorResult("listing users: %v", err)
 		}
@@ -89,7 +92,7 @@ func registerGetUser(s *mcp.Server, client *httpClient) {
 		if args.UserID == "" {
 			return errorResult("user_id is required")
 		}
-		raw, err := client.get("/api/v1/admin/users/" + args.UserID)
+		raw, err := client.get(pathf("/api/v1/admin/users/%s", args.UserID))
 		if err != nil {
 			return errorResult("getting user: %v", err)
 		}
@@ -123,7 +126,10 @@ func registerResolveUser(s *mcp.Server, client *httpClient) {
 		if args.Query == "" {
 			return errorResult("query is required")
 		}
-		raw, err := client.get("/api/v1/admin/users?search=" + url.QueryEscape(args.Query) + "&limit=10")
+		q := url.Values{}
+		q.Set("search", args.Query)
+		q.Set("limit", "10")
+		raw, err := client.get("/api/v1/admin/users", q)
 		if err != nil {
 			return errorResult("searching users: %v", err)
 		}
@@ -182,7 +188,7 @@ func registerUpdateUser(s *mcp.Server, client *httpClient) {
 			body["note"] = args.Note
 		}
 
-		raw, err := client.put("/api/v1/admin/users/"+args.UserID, body)
+		raw, err := client.put(pathf("/api/v1/admin/users/%s", args.UserID), body)
 		if err != nil {
 			return errorResult("updating user: %v", err)
 		}
@@ -232,7 +238,7 @@ func registerDeleteUser(s *mcp.Server, client *httpClient, confirms *Confirmatio
 			return errorResult("confirmation failed: %v", err)
 		}
 
-		_, err = client.del("/api/v1/admin/users/" + confirmParam(params, "user_id"))
+		_, err = client.del(pathf("/api/v1/admin/users/%s", confirmParam(params, "user_id")))
 		if err != nil {
 			return errorResult("deleting user: %v", err)
 		}
@@ -248,7 +254,7 @@ func registerUserAddresses(s *mcp.Server, client *httpClient) {
 		if args.UserID == "" {
 			return errorResult("user_id is required")
 		}
-		raw, err := client.get("/api/v1/admin/users/" + args.UserID + "/linked-addresses")
+		raw, err := client.get(pathf("/api/v1/admin/users/%s/linked-addresses", args.UserID))
 		if err != nil {
 			return errorResult("getting addresses: %v", err)
 		}
@@ -292,7 +298,7 @@ func registerUserMemberships(s *mcp.Server, client *httpClient) {
 		if args.UserID == "" {
 			return errorResult("user_id is required")
 		}
-		raw, err := client.get("/api/v1/admin/users/" + args.UserID + "/memberships")
+		raw, err := client.get(pathf("/api/v1/admin/users/%s/memberships", args.UserID))
 		if err != nil {
 			return errorResult("getting memberships: %v", err)
 		}
@@ -344,7 +350,7 @@ func registerAddMembership(s *mcp.Server, client *httpClient) {
 		if args.UserID == "" || args.GroupID == "" {
 			return errorResult("user_id and group_id are required")
 		}
-		raw, err := client.post("/api/v1/admin/users/"+args.UserID+"/memberships", map[string]any{
+		raw, err := client.post(pathf("/api/v1/admin/users/%s/memberships", args.UserID), map[string]any{
 			"group_id": args.GroupID,
 		})
 		if err != nil {
@@ -400,7 +406,7 @@ func registerRemoveMembership(s *mcp.Server, client *httpClient, confirms *Confi
 			return errorResult("confirmation failed: %v", err)
 		}
 
-		_, err = client.del(fmt.Sprintf("/api/v1/admin/users/%s/memberships/%s", confirmParam(params, "user_id"), confirmParam(params, "membership_id")))
+		_, err = client.del(pathf("/api/v1/admin/users/%s/memberships/%s", confirmParam(params, "user_id"), confirmParam(params, "membership_id")))
 		if err != nil {
 			return errorResult("removing membership: %v", err)
 		}
@@ -421,12 +427,12 @@ func registerEffectivePermissions(s *mcp.Server, client *httpClient) {
 		if args.UserID == "" {
 			return errorResult("user_id is required")
 		}
-		path := "/api/v1/admin/users/" + args.UserID + "/effective-permissions"
+		q := url.Values{}
 		if args.Org != "" {
-			path += "?org=" + url.QueryEscape(args.Org)
+			q.Set("org", args.Org)
 		}
 
-		raw, err := client.get(path)
+		raw, err := client.get(pathf("/api/v1/admin/users/%s/effective-permissions", args.UserID), q)
 		if err != nil {
 			return errorResult("getting permissions: %v", err)
 		}
@@ -510,7 +516,7 @@ func registerCheckAccess(s *mcp.Server, client *httpClient) {
 			status = "ALLOWED"
 		}
 
-		lines := section("Access Check: " + status) + "\n"
+		lines := section("Access Check: "+status) + "\n"
 		lines += joinLines(
 			kvf("Allowed", boolYesNo(allowed)),
 			kvf("Reason", getString(result, "reason")),

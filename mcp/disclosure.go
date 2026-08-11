@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/url"
+	"strconv"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -104,12 +104,14 @@ func registerListDisclosureRequests(s *mcp.Server, client *httpClient) {
 		if limit == 0 {
 			limit = 50
 		}
-		path := fmt.Sprintf("/api/v1/admin/disclosure/requests?limit=%d&offset=%d", limit, args.Offset)
+		q := url.Values{}
+		q.Set("limit", strconv.Itoa(limit))
+		q.Set("offset", strconv.Itoa(args.Offset))
 		if args.Status != "" {
-			path += "&status=" + url.QueryEscape(args.Status)
+			q.Set("status", args.Status)
 		}
 
-		raw, err := client.get(path)
+		raw, err := client.get("/api/v1/admin/disclosure/requests", q)
 		if err != nil {
 			return errorResult("listing disclosure requests: %v", err)
 		}
@@ -129,7 +131,7 @@ func registerGetDisclosureRequest(s *mcp.Server, client *httpClient) {
 		if args.RequestID == "" {
 			return errorResult("request_id is required")
 		}
-		raw, err := client.get("/api/v1/admin/disclosure/requests/" + args.RequestID)
+		raw, err := client.get(pathf("/api/v1/admin/disclosure/requests/%s", args.RequestID))
 		if err != nil {
 			return errorResult("getting disclosure request: %v", err)
 		}
@@ -164,7 +166,7 @@ func registerDeleteDisclosureRequest(s *mcp.Server, client *httpClient, confirms
 		if err != nil {
 			return errorResult("confirmation failed: %v", err)
 		}
-		_, err = client.del("/api/v1/admin/disclosure/requests/" + confirmParam(params, "request_id"))
+		_, err = client.del(pathf("/api/v1/admin/disclosure/requests/%s", confirmParam(params, "request_id")))
 		if err != nil {
 			return errorResult("deleting disclosure request: %v", err)
 		}
@@ -212,7 +214,7 @@ func registerRevokeDisclosureGrant(s *mcp.Server, client *httpClient, confirms *
 		if err != nil {
 			return errorResult("confirmation failed: %v", err)
 		}
-		_, err = client.post("/api/v1/admin/disclosure/grants/"+confirmParam(params, "grant_id")+"/revoke", nil)
+		_, err = client.post(pathf("/api/v1/admin/disclosure/grants/%s/revoke", confirmParam(params, "grant_id")), nil)
 		if err != nil {
 			return errorResult("revoking disclosure grant: %v", err)
 		}
@@ -233,7 +235,7 @@ func registerDisclosureCheckAccess(s *mcp.Server, client *httpClient) {
 		if args.DID == "" || args.UserID == "" {
 			return errorResult("did and user_id are required")
 		}
-		raw, err := client.get(fmt.Sprintf("/api/v1/admin/disclosure/check-access?did=%s&user_id=%s", url.QueryEscape(args.DID), url.QueryEscape(args.UserID)))
+		raw, err := client.get("/api/v1/admin/disclosure/check-access", url.Values{"did": {args.DID}, "user_id": {args.UserID}})
 		if err != nil {
 			return errorResult("checking disclosure access: %v", err)
 		}
@@ -253,7 +255,7 @@ func registerDisclosureGrantLogs(s *mcp.Server, client *httpClient) {
 		if args.GrantID == "" {
 			return errorResult("grant_id is required")
 		}
-		raw, err := client.get("/api/v1/admin/disclosure/grants/" + args.GrantID + "/logs")
+		raw, err := client.get(pathf("/api/v1/admin/disclosure/grants/%s/logs", args.GrantID))
 		if err != nil {
 			return errorResult("getting grant logs: %v", err)
 		}
@@ -274,7 +276,7 @@ func registerDisclosureGrantReport(s *mcp.Server, client *httpClient) {
 		if args.GrantID == "" || args.ReportType == "" {
 			return errorResult("grant_id and report_type are required")
 		}
-		raw, err := client.get(fmt.Sprintf("/api/v1/admin/disclosure/grants/%s/report/%s", args.GrantID, args.ReportType))
+		raw, err := client.get(pathf("/api/v1/admin/disclosure/grants/%s/report/%s", args.GrantID, args.ReportType))
 		if err != nil {
 			return errorResult("getting report: %v", err)
 		}
@@ -294,7 +296,7 @@ func registerDisclosureGrantSummary(s *mcp.Server, client *httpClient) {
 		if args.GrantID == "" {
 			return errorResult("grant_id is required")
 		}
-		raw, err := client.get("/api/v1/admin/disclosure/grants/" + url.QueryEscape(args.GrantID) + "/summary")
+		raw, err := client.get(pathf("/api/v1/admin/disclosure/grants/%s/summary", args.GrantID))
 		if err != nil {
 			return errorResult("getting grant summary: %v", err)
 		}
@@ -314,7 +316,7 @@ func registerDisclosureGrantEvents(s *mcp.Server, client *httpClient) {
 		if args.GrantID == "" {
 			return errorResult("grant_id is required")
 		}
-		raw, err := client.get("/api/v1/admin/disclosure/grants/" + url.QueryEscape(args.GrantID) + "/events")
+		raw, err := client.get(pathf("/api/v1/admin/disclosure/grants/%s/events", args.GrantID))
 		if err != nil {
 			return errorResult("getting grant events: %v", err)
 		}

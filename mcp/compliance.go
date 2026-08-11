@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -42,7 +41,7 @@ func registerComplianceConfig(s *mcp.Server, client *httpClient) {
 		if args.OrgID == "" {
 			return errorResult("org_id is required")
 		}
-		raw, err := client.get(fmt.Sprintf("/api/v1/admin/orgs/%s/compliance/config", args.OrgID))
+		raw, err := client.get(pathf("/api/v1/admin/orgs/%s/compliance/config", args.OrgID))
 		if err != nil {
 			return errorResult("getting compliance config: %v", err)
 		}
@@ -71,7 +70,7 @@ func registerUpdateComplianceConfig(s *mcp.Server, client *httpClient) {
 		if args.ThresholdFiat != nil {
 			body["threshold_fiat"] = *args.ThresholdFiat
 		}
-		raw, err := client.put(fmt.Sprintf("/api/v1/admin/orgs/%s/compliance/config", args.OrgID), body)
+		raw, err := client.put(pathf("/api/v1/admin/orgs/%s/compliance/config", args.OrgID), body)
 		if err != nil {
 			return errorResult("updating compliance config: %v", err)
 		}
@@ -87,7 +86,7 @@ func registerListTokenPrices(s *mcp.Server, client *httpClient) {
 		if args.OrgID == "" {
 			return errorResult("org_id is required")
 		}
-		raw, err := client.get(fmt.Sprintf("/api/v1/admin/orgs/%s/compliance/tokens", args.OrgID))
+		raw, err := client.get(pathf("/api/v1/admin/orgs/%s/compliance/tokens", args.OrgID))
 		if err != nil {
 			return errorResult("listing token prices: %v", err)
 		}
@@ -129,7 +128,7 @@ func registerSetTokenPrice(s *mcp.Server, client *httpClient) {
 		if args.CoingeckoID != "" {
 			body["coingecko_id"] = args.CoingeckoID
 		}
-		raw, err := client.put(fmt.Sprintf("/api/v1/admin/orgs/%s/compliance/tokens/%s", args.OrgID, args.Address), body)
+		raw, err := client.put(pathf("/api/v1/admin/orgs/%s/compliance/tokens/%s", args.OrgID, args.Address), body)
 		if err != nil {
 			return errorResult("setting token price: %v", err)
 		}
@@ -159,7 +158,7 @@ func registerDeleteTokenPrice(s *mcp.Server, client *httpClient, confirms *Confi
 		if err != nil {
 			return errorResult("confirmation failed: %v", err)
 		}
-		_, err = client.del(fmt.Sprintf("/api/v1/admin/orgs/%s/compliance/tokens/%s", confirmParam(params, "org_id"), confirmParam(params, "address")))
+		_, err = client.del(pathf("/api/v1/admin/orgs/%s/compliance/tokens/%s", confirmParam(params, "org_id"), confirmParam(params, "address")))
 		if err != nil {
 			return errorResult("deleting token price: %v", err)
 		}
@@ -243,7 +242,7 @@ func registerDeleteSanction(s *mcp.Server, client *httpClient, confirms *Confirm
 		if err != nil {
 			return errorResult("confirmation failed: %v", err)
 		}
-		_, err = client.del("/api/v1/admin/compliance/sanctions/" + confirmParam(params, "id"))
+		_, err = client.del(pathf("/api/v1/admin/compliance/sanctions/%s", confirmParam(params, "id")))
 		if err != nil {
 			return errorResult("deleting sanction: %v", err)
 		}
@@ -264,7 +263,7 @@ func registerListAddressThresholds(s *mcp.Server, client *httpClient) {
 		if args.OrgID == "" {
 			return errorResult("org_id is required")
 		}
-		raw, err := client.get(fmt.Sprintf("/api/v1/admin/orgs/%s/compliance/address-thresholds", args.OrgID))
+		raw, err := client.get(pathf("/api/v1/admin/orgs/%s/compliance/address-thresholds", args.OrgID))
 		if err != nil {
 			return errorResult("listing address thresholds: %v", err)
 		}
@@ -286,7 +285,7 @@ func registerSetAddressThreshold(s *mcp.Server, client *httpClient) {
 		if args.OrgID == "" || args.Address == "" {
 			return errorResult("org_id and address are required")
 		}
-		raw, err := client.put(fmt.Sprintf("/api/v1/admin/orgs/%s/compliance/address-thresholds/%s", args.OrgID, args.Address), map[string]any{
+		raw, err := client.put(pathf("/api/v1/admin/orgs/%s/compliance/address-thresholds/%s", args.OrgID, args.Address), map[string]any{
 			"threshold_fiat": args.ThresholdFiat,
 		})
 		if err != nil {
@@ -318,7 +317,7 @@ func registerDeleteAddressThreshold(s *mcp.Server, client *httpClient, confirms 
 		if err != nil {
 			return errorResult("confirmation failed: %v", err)
 		}
-		_, err = client.del(fmt.Sprintf("/api/v1/admin/orgs/%s/compliance/address-thresholds/%s", confirmParam(params, "org_id"), confirmParam(params, "address")))
+		_, err = client.del(pathf("/api/v1/admin/orgs/%s/compliance/address-thresholds/%s", confirmParam(params, "org_id"), confirmParam(params, "address")))
 		if err != nil {
 			return errorResult("deleting address threshold: %v", err)
 		}
@@ -344,7 +343,7 @@ func registerComplianceLogs(s *mcp.Server, client *httpClient) {
 		if limit == 0 {
 			limit = 50
 		}
-		raw, err := client.get(fmt.Sprintf("/api/v1/admin/orgs/%s/compliance/logs?limit=%d&offset=%d", args.OrgID, limit, args.Offset))
+		raw, err := client.get(pathf("/api/v1/admin/orgs/%s/compliance/logs", args.OrgID), pageQuery(limit, args.Offset))
 		if err != nil {
 			return errorResult("getting compliance logs: %v", err)
 		}
@@ -393,7 +392,7 @@ func registerListTravelRuleRecords(s *mcp.Server, client *httpClient) {
 		if args.OrgID == "" {
 			return errorResult("org_id is required")
 		}
-		raw, err := client.get(fmt.Sprintf("/api/v1/admin/orgs/%s/compliance/travel-rule-records", args.OrgID))
+		raw, err := client.get(pathf("/api/v1/admin/orgs/%s/compliance/travel-rule-records", args.OrgID))
 		if err != nil {
 			return errorResult("listing travel rule records: %v", err)
 		}
@@ -414,7 +413,7 @@ func registerCreateTravelRuleRecord(s *mcp.Server, client *httpClient) {
 		if args.OrgID == "" || args.Data == nil {
 			return errorResult("org_id and data are required")
 		}
-		raw, err := client.post(fmt.Sprintf("/api/v1/admin/orgs/%s/compliance/travel-rule-records", args.OrgID), args.Data)
+		raw, err := client.post(pathf("/api/v1/admin/orgs/%s/compliance/travel-rule-records", args.OrgID), args.Data)
 		if err != nil {
 			return errorResult("creating travel rule record: %v", err)
 		}
@@ -444,7 +443,7 @@ func registerDeleteTravelRuleRecord(s *mcp.Server, client *httpClient, confirms 
 		if err != nil {
 			return errorResult("confirmation failed: %v", err)
 		}
-		_, err = client.del(fmt.Sprintf("/api/v1/admin/orgs/%s/compliance/travel-rule-records/%s", confirmParam(params, "org_id"), confirmParam(params, "id")))
+		_, err = client.del(pathf("/api/v1/admin/orgs/%s/compliance/travel-rule-records/%s", confirmParam(params, "org_id"), confirmParam(params, "id")))
 		if err != nil {
 			return errorResult("deleting travel rule record: %v", err)
 		}

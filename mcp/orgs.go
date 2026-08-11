@@ -30,7 +30,7 @@ func registerListOrgs(s *mcp.Server, client *httpClient) {
 		if limit == 0 {
 			limit = 50
 		}
-		raw, err := client.get(fmt.Sprintf("/api/v1/admin/orgs?limit=%d&offset=%d", limit, args.Offset))
+		raw, err := client.get("/api/v1/admin/orgs", pageQuery(limit, args.Offset))
 		if err != nil {
 			return errorResult("listing orgs: %v", err)
 		}
@@ -75,7 +75,7 @@ func registerGetOrg(s *mcp.Server, client *httpClient) {
 		if args.OrgID == "" {
 			return errorResult("org_id is required")
 		}
-		raw, err := client.get("/api/v1/admin/orgs/" + args.OrgID)
+		raw, err := client.get(pathf("/api/v1/admin/orgs/%s", args.OrgID))
 		if err != nil {
 			return errorResult("getting org: %v", err)
 		}
@@ -153,7 +153,7 @@ func registerUpdateOrg(s *mcp.Server, client *httpClient) {
 		if args.Settings != nil {
 			body["settings"] = args.Settings
 		}
-		raw, err := client.put("/api/v1/admin/orgs/"+args.OrgID, body)
+		raw, err := client.put(pathf("/api/v1/admin/orgs/%s", args.OrgID), body)
 		if err != nil {
 			return errorResult("updating org: %v", err)
 		}
@@ -205,7 +205,7 @@ func registerDeleteOrg(s *mcp.Server, client *httpClient, confirms *Confirmation
 		}
 		orgID := confirmParam(params, "org_id")
 
-		_, err = client.del("/api/v1/admin/orgs/" + orgID)
+		_, err = client.del(pathf("/api/v1/admin/orgs/%s", orgID))
 		if err != nil {
 			return errorResult("deleting org: %v", err)
 		}

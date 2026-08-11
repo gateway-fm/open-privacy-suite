@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"strconv"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -82,7 +83,7 @@ func registerDeleteSession(s *mcp.Server, client *httpClient, confirms *Confirma
 		if err != nil {
 			return errorResult("confirmation failed: %v", err)
 		}
-		_, err = client.del("/api/v1/admin/sessions/" + confirmParam(params, "session_id"))
+		_, err = client.del(pathf("/api/v1/admin/sessions/%s", confirmParam(params, "session_id")))
 		if err != nil {
 			return errorResult("revoking session: %v", err)
 		}
@@ -150,7 +151,7 @@ func registerGetAzureTenant(s *mcp.Server, client *httpClient) {
 		if args.ID == "" {
 			return errorResult("id is required")
 		}
-		raw, err := client.get("/api/v1/admin/azure-tenants/" + url.QueryEscape(args.ID))
+		raw, err := client.get(pathf("/api/v1/admin/azure-tenants/%s", args.ID))
 		if err != nil {
 			return errorResult("getting azure tenant: %v", err)
 		}
@@ -199,7 +200,7 @@ func registerUpdateAzureTenant(s *mcp.Server, client *httpClient) {
 		if args.AutoProvision != nil {
 			body["auto_provision"] = *args.AutoProvision
 		}
-		raw, err := client.put("/api/v1/admin/azure-tenants/"+url.QueryEscape(args.ID), body)
+		raw, err := client.put(pathf("/api/v1/admin/azure-tenants/%s", args.ID), body)
 		if err != nil {
 			return errorResult("updating azure tenant: %v", err)
 		}
@@ -290,7 +291,7 @@ func registerDeleteAzureTenant(s *mcp.Server, client *httpClient, confirms *Conf
 		if err != nil {
 			return errorResult("confirmation failed: %v", err)
 		}
-		_, err = client.del("/api/v1/admin/azure-tenants/" + confirmParam(params, "id"))
+		_, err = client.del(pathf("/api/v1/admin/azure-tenants/%s", confirmParam(params, "id")))
 		if err != nil {
 			return errorResult("deleting azure tenant: %v", err)
 		}
@@ -310,7 +311,7 @@ func registerAccessLogs(s *mcp.Server, client *httpClient) {
 		if limit == 0 {
 			limit = 50
 		}
-		raw, err := client.get(fmt.Sprintf("/api/v1/admin/logs?limit=%d", limit))
+		raw, err := client.get("/api/v1/admin/logs", pageQuery(limit, 0))
 		if err != nil {
 			return errorResult("getting logs: %v", err)
 		}
@@ -358,15 +359,16 @@ func registerAuditLogs(s *mcp.Server, client *httpClient) {
 		if limit == 0 {
 			limit = 100
 		}
-		path := fmt.Sprintf("/api/v1/admin/audit-logs?limit=%d", limit)
+		q := url.Values{}
+		q.Set("limit", strconv.Itoa(limit))
 		if a.ResourceType != "" {
-			path += "&resource_type=" + url.QueryEscape(a.ResourceType)
+			q.Set("resource_type", a.ResourceType)
 		}
 		if a.ActorID != "" {
-			path += "&actor_id=" + url.QueryEscape(a.ActorID)
+			q.Set("actor_id", a.ActorID)
 		}
 
-		raw, err := client.get(path)
+		raw, err := client.get("/api/v1/admin/audit-logs", q)
 		if err != nil {
 			return errorResult("getting audit logs: %v", err)
 		}

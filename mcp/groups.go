@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/url"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -39,7 +38,7 @@ func registerListGroups(s *mcp.Server, client *httpClient) {
 		if limit == 0 {
 			limit = 50
 		}
-		raw, err := client.get(fmt.Sprintf("/api/v1/admin/orgs/%s/groups?limit=%d&offset=%d", args.OrgID, limit, args.Offset))
+		raw, err := client.get(pathf("/api/v1/admin/orgs/%s/groups", args.OrgID), pageQuery(limit, args.Offset))
 		if err != nil {
 			return errorResult("listing groups: %v", err)
 		}
@@ -99,7 +98,7 @@ func registerGetGroup(s *mcp.Server, client *httpClient) {
 		if args.OrgID == "" || args.GroupID == "" {
 			return errorResult("org_id and group_id are required")
 		}
-		raw, err := client.get(fmt.Sprintf("/api/v1/admin/orgs/%s/groups/%s", args.OrgID, args.GroupID))
+		raw, err := client.get(pathf("/api/v1/admin/orgs/%s/groups/%s", args.OrgID, args.GroupID))
 		if err != nil {
 			return errorResult("getting group: %v", err)
 		}
@@ -153,7 +152,7 @@ func registerCreateGroup(s *mcp.Server, client *httpClient) {
 			body["is_org_admin"] = true
 		}
 
-		raw, err := client.post(fmt.Sprintf("/api/v1/admin/orgs/%s/groups", args.OrgID), body)
+		raw, err := client.post(pathf("/api/v1/admin/orgs/%s/groups", args.OrgID), body)
 		if err != nil {
 			return errorResult("creating group: %v", err)
 		}
@@ -199,7 +198,7 @@ func registerUpdateGroup(s *mcp.Server, client *httpClient) {
 			body["is_org_admin"] = *args.IsOrgAdmin
 		}
 
-		raw, err := client.put(fmt.Sprintf("/api/v1/admin/orgs/%s/groups/%s", args.OrgID, args.GroupID), body)
+		raw, err := client.put(pathf("/api/v1/admin/orgs/%s/groups/%s", args.OrgID, args.GroupID), body)
 		if err != nil {
 			return errorResult("updating group: %v", err)
 		}
@@ -249,7 +248,7 @@ func registerDeleteGroup(s *mcp.Server, client *httpClient, confirms *Confirmati
 			return errorResult("confirmation failed: %v", err)
 		}
 
-		_, err = client.del(fmt.Sprintf("/api/v1/admin/orgs/%s/groups/%s", confirmParam(params, "org_id"), confirmParam(params, "group_id")))
+		_, err = client.del(pathf("/api/v1/admin/orgs/%s/groups/%s", confirmParam(params, "org_id"), confirmParam(params, "group_id")))
 		if err != nil {
 			return errorResult("deleting group: %v", err)
 		}
@@ -265,7 +264,7 @@ func registerGetGroupAccess(s *mcp.Server, client *httpClient) {
 		if args.OrgID == "" || args.GroupID == "" {
 			return errorResult("org_id and group_id are required")
 		}
-		raw, err := client.get(fmt.Sprintf("/api/v1/admin/orgs/%s/groups/%s/access", args.OrgID, args.GroupID))
+		raw, err := client.get(pathf("/api/v1/admin/orgs/%s/groups/%s/access", args.OrgID, args.GroupID))
 		if err != nil {
 			return errorResult("getting group access: %v", err)
 		}
@@ -304,7 +303,7 @@ func registerSetGroupAccess(s *mcp.Server, client *httpClient) {
 			"claims":          args.Claims,
 		}
 
-		raw, err := client.put(fmt.Sprintf("/api/v1/admin/orgs/%s/groups/%s/access", args.OrgID, args.GroupID), body)
+		raw, err := client.put(pathf("/api/v1/admin/orgs/%s/groups/%s/access", args.OrgID, args.GroupID), body)
 		if err != nil {
 			return errorResult("setting group access: %v", err)
 		}
@@ -335,7 +334,7 @@ func registerBatchDeleteGroupsPreview(s *mcp.Server, client *httpClient) {
 		if args.OrgID == "" || len(args.GroupIDs) == 0 {
 			return errorResult("org_id and group_ids are required")
 		}
-		raw, err := client.post(fmt.Sprintf("/api/v1/admin/orgs/%s/groups/batch-delete-preview", url.QueryEscape(args.OrgID)), map[string]any{
+		raw, err := client.post(pathf("/api/v1/admin/orgs/%s/groups/batch-delete-preview", args.OrgID), map[string]any{
 			"group_ids": args.GroupIDs,
 		})
 		if err != nil {
@@ -393,7 +392,7 @@ func registerBatchDeleteGroups(s *mcp.Server, client *httpClient, confirms *Conf
 		if len(gidStrings) == 0 {
 			return errorResult("confirmation token missing group_ids")
 		}
-		raw, err := client.post(fmt.Sprintf("/api/v1/admin/orgs/%s/groups/batch-delete", url.QueryEscape(confirmParam(params, "org_id"))), map[string]any{
+		raw, err := client.post(pathf("/api/v1/admin/orgs/%s/groups/batch-delete", confirmParam(params, "org_id")), map[string]any{
 			"group_ids": gidStrings,
 		})
 		if err != nil {

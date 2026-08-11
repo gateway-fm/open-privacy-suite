@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/url"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -45,7 +44,7 @@ func registerListContracts(s *mcp.Server, client *httpClient) {
 		if limit == 0 {
 			limit = 50
 		}
-		raw, err := client.get(fmt.Sprintf("/api/v1/admin/orgs/%s/contracts?limit=%d&offset=%d", args.OrgID, limit, args.Offset))
+		raw, err := client.get(pathf("/api/v1/admin/orgs/%s/contracts", args.OrgID), pageQuery(limit, args.Offset))
 		if err != nil {
 			return errorResult("listing contracts: %v", err)
 		}
@@ -87,7 +86,7 @@ func registerGetContract(s *mcp.Server, client *httpClient) {
 		if args.OrgID == "" || args.Address == "" {
 			return errorResult("org_id and address are required")
 		}
-		raw, err := client.get(fmt.Sprintf("/api/v1/admin/orgs/%s/contracts/%s", args.OrgID, args.Address))
+		raw, err := client.get(pathf("/api/v1/admin/orgs/%s/contracts/%s", args.OrgID, args.Address))
 		if err != nil {
 			return errorResult("getting contract: %v", err)
 		}
@@ -131,7 +130,7 @@ func registerCreateContract(s *mcp.Server, client *httpClient) {
 			body["metadata"] = args.Metadata
 		}
 
-		raw, err := client.post(fmt.Sprintf("/api/v1/admin/orgs/%s/contracts", args.OrgID), body)
+		raw, err := client.post(pathf("/api/v1/admin/orgs/%s/contracts", args.OrgID), body)
 		if err != nil {
 			return errorResult("creating contract: %v", err)
 		}
@@ -172,7 +171,7 @@ func registerUpdateContract(s *mcp.Server, client *httpClient) {
 			body["metadata"] = args.Metadata
 		}
 
-		raw, err := client.put(fmt.Sprintf("/api/v1/admin/orgs/%s/contracts/%s", args.OrgID, args.Address), body)
+		raw, err := client.put(pathf("/api/v1/admin/orgs/%s/contracts/%s", args.OrgID, args.Address), body)
 		if err != nil {
 			return errorResult("updating contract: %v", err)
 		}
@@ -222,7 +221,7 @@ func registerDeleteContract(s *mcp.Server, client *httpClient, confirms *Confirm
 			return errorResult("confirmation failed: %v", err)
 		}
 
-		_, err = client.del(fmt.Sprintf("/api/v1/admin/orgs/%s/contracts/%s", confirmParam(params, "org_id"), confirmParam(params, "address")))
+		_, err = client.del(pathf("/api/v1/admin/orgs/%s/contracts/%s", confirmParam(params, "org_id"), confirmParam(params, "address")))
 		if err != nil {
 			return errorResult("deleting contract: %v", err)
 		}
@@ -238,7 +237,7 @@ func registerListGrants(s *mcp.Server, client *httpClient) {
 		if args.OrgID == "" || args.Address == "" {
 			return errorResult("org_id and address are required")
 		}
-		raw, err := client.get(fmt.Sprintf("/api/v1/admin/orgs/%s/contracts/%s/grants", args.OrgID, args.Address))
+		raw, err := client.get(pathf("/api/v1/admin/orgs/%s/contracts/%s/grants", args.OrgID, args.Address))
 		if err != nil {
 			return errorResult("listing grants: %v", err)
 		}
@@ -247,7 +246,7 @@ func registerListGrants(s *mcp.Server, client *httpClient) {
 			return errorResult("parsing response: %v", err)
 		}
 
-		lines := section("Contract Grants for " + args.Address) + "\n"
+		lines := section("Contract Grants for "+args.Address) + "\n"
 
 		if len(grants) == 0 {
 			lines += "No grants configured."
@@ -289,7 +288,7 @@ func registerCreateGrant(s *mcp.Server, client *httpClient) {
 		if args.OrgID == "" || args.Address == "" || args.GroupID == "" {
 			return errorResult("org_id, address, and group_id are required")
 		}
-		raw, err := client.post(fmt.Sprintf("/api/v1/admin/orgs/%s/contracts/%s/grants", args.OrgID, args.Address), map[string]any{
+		raw, err := client.post(pathf("/api/v1/admin/orgs/%s/contracts/%s/grants", args.OrgID, args.Address), map[string]any{
 			"group_id": args.GroupID,
 		})
 		if err != nil {
@@ -344,7 +343,7 @@ func registerDeleteGrant(s *mcp.Server, client *httpClient, confirms *Confirmati
 			return errorResult("confirmation failed: %v", err)
 		}
 
-		_, err = client.del(fmt.Sprintf("/api/v1/admin/orgs/%s/contracts/%s/grants/%s",
+		_, err = client.del(pathf("/api/v1/admin/orgs/%s/contracts/%s/grants/%s",
 			confirmParam(params, "org_id"), confirmParam(params, "address"), confirmParam(params, "group_id")))
 		if err != nil {
 			return errorResult("revoking grant: %v", err)
@@ -367,8 +366,8 @@ func registerUpdateContractABI(s *mcp.Server, client *httpClient) {
 		if args.OrgID == "" || args.Address == "" || args.ABI == "" {
 			return errorResult("org_id, address, and abi are required")
 		}
-		raw, err := client.put(fmt.Sprintf("/api/v1/admin/orgs/%s/contracts/%s/abi",
-			url.QueryEscape(args.OrgID), url.QueryEscape(args.Address)), map[string]any{
+		raw, err := client.put(pathf("/api/v1/admin/orgs/%s/contracts/%s/abi",
+			args.OrgID, args.Address), map[string]any{
 			"abi": args.ABI,
 		})
 		if err != nil {
@@ -390,7 +389,7 @@ func registerCheckContractsOnChain(s *mcp.Server, client *httpClient) {
 		if args.OrgID == "" {
 			return errorResult("org_id is required")
 		}
-		raw, err := client.post(fmt.Sprintf("/api/v1/admin/orgs/%s/contracts/sync-check", url.QueryEscape(args.OrgID)), nil)
+		raw, err := client.post(pathf("/api/v1/admin/orgs/%s/contracts/sync-check", args.OrgID), nil)
 		if err != nil {
 			return errorResult("checking contracts on chain: %v", err)
 		}
@@ -427,7 +426,7 @@ func registerDeleteStaleContracts(s *mcp.Server, client *httpClient, confirms *C
 		if err != nil {
 			return errorResult("confirmation failed: %v", err)
 		}
-		raw, err := client.post(fmt.Sprintf("/api/v1/admin/orgs/%s/contracts/sync-delete", url.QueryEscape(confirmParam(params, "org_id"))), nil)
+		raw, err := client.post(pathf("/api/v1/admin/orgs/%s/contracts/sync-delete", confirmParam(params, "org_id")), nil)
 		if err != nil {
 			return errorResult("deleting stale contracts: %v", err)
 		}
@@ -455,8 +454,8 @@ func registerUpdateGrant(s *mcp.Server, client *httpClient) {
 		if len(args.Functions) > 0 {
 			body["functions"] = args.Functions
 		}
-		raw, err := client.put(fmt.Sprintf("/api/v1/admin/orgs/%s/contracts/%s/grants/%s",
-			url.QueryEscape(args.OrgID), url.QueryEscape(args.Address), url.QueryEscape(args.GroupID)), body)
+		raw, err := client.put(pathf("/api/v1/admin/orgs/%s/contracts/%s/grants/%s",
+			args.OrgID, args.Address, args.GroupID), body)
 		if err != nil {
 			return errorResult("updating grant: %v", err)
 		}
@@ -522,7 +521,7 @@ func registerBatchMoveContracts(s *mcp.Server, client *httpClient, confirms *Con
 		if len(addrStrings) == 0 {
 			return errorResult("confirmation token missing addresses")
 		}
-		raw, err := client.post(fmt.Sprintf("/api/v1/admin/orgs/%s/contracts/batch-move", url.QueryEscape(confirmParam(params, "org_id"))), map[string]any{
+		raw, err := client.post(pathf("/api/v1/admin/orgs/%s/contracts/batch-move", confirmParam(params, "org_id")), map[string]any{
 			"addresses":     addrStrings,
 			"target_org_id": confirmParam(params, "target_org_id"),
 		})
@@ -545,7 +544,7 @@ func registerLookupContract(s *mcp.Server, client *httpClient) {
 		if args.Address == "" {
 			return errorResult("address is required")
 		}
-		raw, err := client.get("/api/v1/admin/contracts/by-address/" + args.Address)
+		raw, err := client.get(pathf("/api/v1/admin/contracts/by-address/%s", args.Address))
 		if err != nil {
 			return errorResult("looking up contract: %v", err)
 		}
@@ -558,7 +557,7 @@ func registerLookupContract(s *mcp.Server, client *httpClient) {
 		org := getMap(resp, "organization")
 		grants := getSlice(resp, "grants")
 
-		lines := section("Contract Lookup: " + args.Address) + "\n"
+		lines := section("Contract Lookup: "+args.Address) + "\n"
 		if contract != nil {
 			lines += joinLines(
 				kvf("Name", getString(contract, "name")),
@@ -597,7 +596,7 @@ func registerGrantSummary(s *mcp.Server, client *httpClient) {
 		if args.OrgID == "" {
 			return errorResult("org_id is required")
 		}
-		raw, err := client.get(fmt.Sprintf("/api/v1/admin/orgs/%s/contracts/grant-summary", args.OrgID))
+		raw, err := client.get(pathf("/api/v1/admin/orgs/%s/contracts/grant-summary", args.OrgID))
 		if err != nil {
 			return errorResult("getting grant summary: %v", err)
 		}
