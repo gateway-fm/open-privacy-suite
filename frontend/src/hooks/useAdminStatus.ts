@@ -26,6 +26,11 @@ export function useAdminStatus(): { isAdmin: boolean; loading: boolean } {
       return;
     }
 
+    // Re-arm on every probe. The effect re-runs when the token rotates, and
+    // without this `loading` stays false while the second request is in
+    // flight, so callers would read the previous token's answer as settled.
+    setLoading(true);
+
     let cancelled = false;
 
     async function check() {
@@ -39,7 +44,11 @@ export function useAdminStatus(): { isAdmin: boolean; loading: boolean } {
           return;
         }
         const data = await response.json();
-        setIsAdmin(Boolean(data.is_admin));
+        // Strict equality, not truthiness: a body that violates the endpoint
+        // schema (`"is_admin": "false"`, a non-empty string, a number) would
+        // otherwise read as admin — the opposite of the fail-closed behaviour
+        // this hook promises.
+        setIsAdmin(data?.is_admin === true);
       } catch {
         if (!cancelled) setIsAdmin(false);
       } finally {

@@ -121,6 +121,20 @@ describe('SuccessPage', () => {
       expect(screen.queryByTestId('go-to-admin-btn')).not.toBeInTheDocument();
     });
 
+    it('hides it when is_admin is a non-boolean, rather than trusting truthiness', async () => {
+      server.use(
+        http.get('/api/v1/me/admin-status', () =>
+          HttpResponse.json({ is_admin: 'false' })
+        )
+      );
+      renderSuccessPage();
+
+      await waitFor(() => {
+        expect(screen.getByText("You're All Set!")).toBeInTheDocument();
+      });
+      expect(screen.queryByTestId('go-to-admin-btn')).not.toBeInTheDocument();
+    });
+
     it('hides it when the admin-status probe fails, rather than linking to a denied page', async () => {
       server.use(
         http.get('/api/v1/me/admin-status', () => HttpResponse.error())

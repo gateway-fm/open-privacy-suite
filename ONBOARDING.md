@@ -60,12 +60,13 @@ Then look at the same data through other lenses:
 
 - **Web UI** — <http://localhost:5173>: the login page lists the demo
   personas as one-click buttons (dev identity picker). Log in as **Mia**
-  and open the **admin dashboard** at <http://localhost:5173/admin>: as
+  and follow the **Admin dashboard** button on the user page: as
   Meridian's org admin she can browse the bank's groups, users, contracts,
   grants and disclosure requests — and *only* Meridian's (org admins are
   tenant-scoped; Volta is invisible to her). The other personas are regular
   users (least privilege): they get the user-facing view, e.g. the
-  disclosure dashboard at `/disclosure`, and `/admin` denies them.
+  disclosure dashboard at `/disclosure`, no button, and `/admin` denies
+  them with a link back to their own dashboard.
   Tenant-independent operator tasks go through the admin API / MCP with
   `X-Admin-Token` (= `ADMIN_API_TOKEN` in `.env.quickstart`).
 - **Explorer API** — privacy-filtered per viewer: the same transaction list

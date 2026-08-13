@@ -63,7 +63,8 @@ export function RequireAdmin({ children }: RequireAdminProps) {
         }
 
         const data = await response.json();
-        if (data.is_admin) {
+        // Strict equality so a malformed body cannot read as admin.
+        if (data?.is_admin === true) {
           setAdminData({
             isAdmin: data.is_admin,
             isReadonlyAdmin: data.is_readonly_admin,
@@ -111,15 +112,19 @@ export function RequireAdmin({ children }: RequireAdminProps) {
           {/* Without a way out this screen is a dead end: signing out of an
               admin account and back in as a regular user lands on the
               remembered /admin URL, and the only escape was editing the
-              address bar. */}
-          <Button
-            onClick={() => navigate('/success', { replace: true })}
-            variant="outline"
-            className="mt-6"
-            data-testid="admin-denied-back-btn"
-          >
-            Go to your dashboard
-          </Button>
+              address bar. Only offered to a signed-in user — this branch also
+              covers "no token at all", where /success would bounce straight
+              back to the login page and the label would be a lie. */}
+          {accessToken && (
+            <Button
+              onClick={() => navigate('/success', { replace: true })}
+              variant="outline"
+              className="mt-6"
+              data-testid="admin-denied-back-btn"
+            >
+              Go to your dashboard
+            </Button>
+          )}
         </div>
       </div>
     );

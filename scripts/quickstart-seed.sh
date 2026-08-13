@@ -384,8 +384,6 @@ $(bold '================================================================')
 $(bold ' Open Privacy Suite demo is up — two banks + a regulator, mock auth')
 $(bold '================================================================')
 
-  Proxy RPC + API:   ${PROXY_URL}
-  Web UI:            http://localhost:${HOST_PORT_UI:-5173}   (admin dashboard: /admin — org-admin logins only)
   DEMO token:        ${TOKEN_ADDR}   (deployed by Meridian Bank)
 
 $(bold 'Personas') — the login page lists them as one-click buttons:
@@ -430,6 +428,10 @@ then open this repo in Claude Code / Cursor and ask things like:
   "Show the disclosure grants and their audit logs"
 
 More: ONBOARDING.md (guided tour) · docs/mcp.md (all MCP tools)
+
+$(bold 'Open these:')
+  Web UI:            http://localhost:${HOST_PORT_UI:-5173}
+  Proxy RPC + API:   ${PROXY_URL}
 EOF
 
 if [[ "$FAILURES" -gt 0 ]]; then

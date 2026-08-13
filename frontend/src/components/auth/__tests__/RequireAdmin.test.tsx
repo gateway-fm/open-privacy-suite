@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import userEvent from '@testing-library/user-event';
+import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
 import { AuthProvider } from '@/contexts/AuthContext';
@@ -37,6 +38,27 @@ function renderWithAuth(children: React.ReactNode) {
     <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <AuthProvider>
         <RequireAdmin>{children}</RequireAdmin>
+      </AuthProvider>
+    </MemoryRouter>,
+  );
+}
+
+/**
+ * Renders RequireAdmin at /admin with a real /success route, so a test can
+ * click an escape control and assert where it actually lands. Kept separate
+ * from renderWithAuth so the existing gate tests are unaffected.
+ */
+function renderWithRoutes(children: React.ReactNode) {
+  return render(
+    <MemoryRouter
+      future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+      initialEntries={['/admin']}
+    >
+      <AuthProvider>
+        <Routes>
+          <Route path="/admin" element={<RequireAdmin>{children}</RequireAdmin>} />
+          <Route path="/success" element={<div data-testid="user-dashboard">User Dashboard</div>} />
+        </Routes>
       </AuthProvider>
     </MemoryRouter>,
   );
@@ -145,11 +167,57 @@ describe('RequireAdmin', () => {
   it('gives a denied non-admin a way back to the user dashboard', async () => {
     // Signing out of an admin account and back in as a regular user lands on
     // the remembered /admin URL. Without this control the denial screen is a
-    // dead end and the only escape is editing the address bar.
+    // dead end and the only escape is editing the address bar. Click it: the
+    // assertion has to prove where it goes, not just that it renders.
     seedAuth(makeFakeJWT('did:test:regular-user'));
     server.use(
       http.get('/api/v1/me/admin-status', () =>
         HttpResponse.json({ is_admin: false }),
+      ),
+    );
+
+    renderWithRoutes(<div data-testid="child">Should not appear</div>);
+
+    await waitFor(() => {
+      expect(screen.getByText('Access Denied')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('child')).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByTestId('admin-denied-back-btn'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('user-dashboard')).toBeInTheDocument();
+    });
+  });
+
+  it('gives the same way out when the admin check errors', async () => {
+    seedAuth(makeFakeJWT('did:test:regular-user'));
+    server.use(
+      http.get('/api/v1/me/admin-status', () =>
+        HttpResponse.json({ error: 'internal' }, { status: 500 }),
+      ),
+    );
+
+    renderWithRoutes(<div data-testid="child">Should not appear</div>);
+
+    await waitFor(() => {
+      expect(screen.getByText('Unable to verify admin status')).toBeInTheDocument();
+    });
+
+    await userEvent.click(screen.getByTestId('admin-error-back-btn'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('user-dashboard')).toBeInTheDocument();
+    });
+  });
+
+  it('treats a malformed is_admin value as not an admin', async () => {
+    // The endpoint contract is a boolean. A truthiness check would read the
+    // string "false" as admin — deny instead.
+    seedAuth(makeFakeJWT('did:test:regular-user'));
+    server.use(
+      http.get('/api/v1/me/admin-status', () =>
+        HttpResponse.json({ is_admin: 'false' }),
       ),
     );
 
@@ -158,7 +226,6 @@ describe('RequireAdmin', () => {
     await waitFor(() => {
       expect(screen.getByText('Access Denied')).toBeInTheDocument();
     });
-    expect(screen.getByTestId('admin-denied-back-btn')).toBeInTheDocument();
     expect(screen.queryByTestId('child')).not.toBeInTheDocument();
   });
 
