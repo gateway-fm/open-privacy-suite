@@ -63,6 +63,9 @@ export function RequireAdmin({ children }: RequireAdminProps) {
         }
 
         const data = await response.json();
+        // Parsing the body is a second await — re-check before committing, so
+        // a probe superseded by a token change cannot decide this gate.
+        if (cancelled) return;
         // Strict equality so a malformed body cannot read as admin.
         if (data?.is_admin === true) {
           setAdminData({

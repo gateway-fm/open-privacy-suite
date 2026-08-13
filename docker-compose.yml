@@ -140,9 +140,13 @@ services:
       - /app/node_modules
     environment:
       - VITE_API_TARGET=http://proxy-backend:8080
-      # Overridable so a LAN or tunnel setup can show the address clients can
-      # actually reach; defaults to loopback for the normal local run.
-      - VITE_BACKEND_URL=${VITE_BACKEND_URL:-http://localhost:${HOST_PORT_PROXY:-8080}}
+      # Empty by default so the UI derives the RPC endpoint from the origin the
+      # browser actually used (config/rpc.ts). /rpc is proxied on the
+      # dashboard's own origin in every serving mode, so a hardcoded
+      # http://localhost here pointed remote browsers — and the Add-to-MetaMask
+      # network — at their own machine. Set it only for a split-origin
+      # deployment where the API is on a different host.
+      - VITE_BACKEND_URL=${VITE_BACKEND_URL:-}
       - VITE_ALLOW_MOCK_LOGIN=true
       # SECURITY: Do NOT pass ADMIN_API_TOKEN to the frontend — it would be
       # visible in the browser. Use JWT-based admin auth or paste the token

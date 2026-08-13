@@ -22,7 +22,7 @@ interface LinkState {
 export function LinkWalletPage() {
   const navigate = useNavigate();
   const { isAuthenticated, accessToken, logout, isLoading } = useAuth();
-  const { isAdmin } = useAdminStatus();
+  const { isAdmin, loading: adminStatusLoading } = useAdminStatus();
   const { address, isConnected } = useAccount();
   const { disconnect } = useDisconnect();
   const { signMessageAsync } = useSignMessage();
@@ -350,7 +350,7 @@ export function LinkWalletPage() {
               {/* Login lands here by default, not on the user page, so without
                   this an admin has to clear the wallet step before the way
                   into the dashboard is even visible. */}
-              {isAdmin && (
+              {!adminStatusLoading && isAdmin && (
                 <Button
                   onClick={() => navigate('/admin')}
                   variant="ghost"
