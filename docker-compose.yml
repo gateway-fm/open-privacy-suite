@@ -140,7 +140,9 @@ services:
       - /app/node_modules
     environment:
       - VITE_API_TARGET=http://proxy-backend:8080
-      - VITE_BACKEND_URL=http://localhost:${HOST_PORT_PROXY:-8080}
+      # Overridable so a LAN or tunnel setup can show the address clients can
+      # actually reach; defaults to loopback for the normal local run.
+      - VITE_BACKEND_URL=${VITE_BACKEND_URL:-http://localhost:${HOST_PORT_PROXY:-8080}}
       - VITE_ALLOW_MOCK_LOGIN=true
       # SECURITY: Do NOT pass ADMIN_API_TOKEN to the frontend — it would be
       # visible in the browser. Use JWT-based admin auth or paste the token
