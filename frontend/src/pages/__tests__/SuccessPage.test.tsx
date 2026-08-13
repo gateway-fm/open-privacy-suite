@@ -50,6 +50,7 @@ function renderSuccessPage(initialRoute = '/success') {
           <Route path="/success" element={<SuccessPage />} />
           <Route path="/login" element={<div data-testid="login-page">Login Page</div>} />
           <Route path="/link-wallet" element={<div data-testid="link-wallet-page">Link Wallet Page</div>} />
+          <Route path="/admin" element={<div data-testid="admin-area">Admin Area</div>} />
         </Routes>
       </AuthProvider>
     </MemoryRouter>
@@ -82,6 +83,54 @@ describe('SuccessPage', () => {
       await waitFor(() => {
         expect(screen.getByText("You're All Set!")).toBeInTheDocument();
       });
+    });
+  });
+
+  describe('Admin dashboard entry point', () => {
+    beforeEach(() => {
+      setupAuthenticated();
+    });
+
+    it('offers a way into the admin dashboard for an org admin', async () => {
+      server.use(
+        http.get('/api/v1/me/admin-status', () =>
+          HttpResponse.json({
+            is_admin: true,
+            is_readonly_admin: false,
+            admin_org_ids: ['org-1'],
+            readonly_admin_org_ids: [],
+          })
+        )
+      );
+      renderSuccessPage();
+
+      const btn = await screen.findByTestId('go-to-admin-btn');
+      await userEvent.click(btn);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('admin-area')).toBeInTheDocument();
+      });
+    });
+
+    it('hides it from a non-admin (default handler says is_admin=false)', async () => {
+      renderSuccessPage();
+
+      await waitFor(() => {
+        expect(screen.getByText("You're All Set!")).toBeInTheDocument();
+      });
+      expect(screen.queryByTestId('go-to-admin-btn')).not.toBeInTheDocument();
+    });
+
+    it('hides it when the admin-status probe fails, rather than linking to a denied page', async () => {
+      server.use(
+        http.get('/api/v1/me/admin-status', () => HttpResponse.error())
+      );
+      renderSuccessPage();
+
+      await waitFor(() => {
+        expect(screen.getByText("You're All Set!")).toBeInTheDocument();
+      });
+      expect(screen.queryByTestId('go-to-admin-btn')).not.toBeInTheDocument();
     });
   });
 

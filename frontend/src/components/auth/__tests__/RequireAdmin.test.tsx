@@ -142,6 +142,26 @@ describe('RequireAdmin', () => {
     expect(screen.queryByTestId('child')).not.toBeInTheDocument();
   });
 
+  it('gives a denied non-admin a way back to the user dashboard', async () => {
+    // Signing out of an admin account and back in as a regular user lands on
+    // the remembered /admin URL. Without this control the denial screen is a
+    // dead end and the only escape is editing the address bar.
+    seedAuth(makeFakeJWT('did:test:regular-user'));
+    server.use(
+      http.get('/api/v1/me/admin-status', () =>
+        HttpResponse.json({ is_admin: false }),
+      ),
+    );
+
+    renderWithAuth(<div data-testid="child">Should not appear</div>);
+
+    await waitFor(() => {
+      expect(screen.getByText('Access Denied')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('admin-denied-back-btn')).toBeInTheDocument();
+    expect(screen.queryByTestId('child')).not.toBeInTheDocument();
+  });
+
   it('shows access denied when no access token', async () => {
     // No seedAuth call — user is not authenticated.
     renderWithAuth(<div data-testid="child">Should not appear</div>);

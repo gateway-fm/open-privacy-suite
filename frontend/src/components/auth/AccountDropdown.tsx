@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { User, LogOut, ChevronDown } from 'lucide-react';
+import { User, LogOut, ChevronDown, ArrowLeftRight } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 
 function truncateDID(did: string): string {
@@ -106,6 +106,19 @@ export function AccountDropdown() {
             >
               <User className="h-4 w-4" />
               Account
+            </button>
+            {/* The counterpart to the "Admin dashboard" button on the user
+                page — an admin who switched over should not have to edit the
+                URL to get back. */}
+            <button
+              type="button"
+              onClick={() => { setOpen(false); navigate('/success'); }}
+              className="flex w-full items-center gap-2.5 px-4 py-2 text-sm text-neutral-700 transition-colors hover:bg-neutral-50"
+              role="menuitem"
+              data-testid="back-to-app-link"
+            >
+              <ArrowLeftRight className="h-4 w-4" />
+              User dashboard
             </button>
             <button
               type="button"

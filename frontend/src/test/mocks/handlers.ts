@@ -872,4 +872,15 @@ export const handlers = [
       message: `Base currency updated to ${body.currency.toUpperCase()}`,
     });
   }),
+
+  // Default: the signed-in user is NOT an admin, so user-facing pages render
+  // without the admin entry point. Tests covering the admin case override this.
+  http.get('/api/v1/me/admin-status', () => {
+    return HttpResponse.json({
+      is_admin: false,
+      is_readonly_admin: false,
+      admin_org_ids: [],
+      readonly_admin_org_ids: [],
+    });
+  }),
 ];

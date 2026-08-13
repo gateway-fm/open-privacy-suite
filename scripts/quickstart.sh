@@ -181,6 +181,11 @@ echo "    $(green 'Backend healthy.')"
 
 cat <<EOF
 
+$(bold 'Open these:')
+  Web UI:        http://localhost:${HOST_PORT_UI:-5173}
+  Admin:         http://localhost:${HOST_PORT_UI:-5173}/admin   (org-admin logins only)
+  Proxy API/RPC: ${PROXY_URL}
+
 $(bold 'Stack management:')
   make quickstart          re-run (idempotent; re-seeds and re-prints tokens)
   make quickstart-down     stop the stack

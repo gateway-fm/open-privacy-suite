@@ -1,5 +1,7 @@
 import { createContext, useContext, ReactNode, useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Loader2, ShieldAlert } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
 
 interface RequireAdminProps {
@@ -32,6 +34,7 @@ export function useAdmin() {
 
 export function RequireAdmin({ children }: RequireAdminProps) {
   const { accessToken, isLoading: authLoading } = useAuth();
+  const navigate = useNavigate();
   const [state, setState] = useState<AdminCheckState>('loading');
   const [adminData, setAdminData] = useState<AdminContextType | null>(null);
 
@@ -105,6 +108,18 @@ export function RequireAdmin({ children }: RequireAdminProps) {
           <p className="text-sm text-red-700">
             You don't have admin privileges. Contact your organization administrator.
           </p>
+          {/* Without a way out this screen is a dead end: signing out of an
+              admin account and back in as a regular user lands on the
+              remembered /admin URL, and the only escape was editing the
+              address bar. */}
+          <Button
+            onClick={() => navigate('/success', { replace: true })}
+            variant="outline"
+            className="mt-6"
+            data-testid="admin-denied-back-btn"
+          >
+            Go to your dashboard
+          </Button>
         </div>
       </div>
     );
@@ -119,6 +134,14 @@ export function RequireAdmin({ children }: RequireAdminProps) {
           <p className="text-sm text-amber-700">
             An error occurred while checking your permissions. Please try again later.
           </p>
+          <Button
+            onClick={() => navigate('/success', { replace: true })}
+            variant="outline"
+            className="mt-6"
+            data-testid="admin-error-back-btn"
+          >
+            Go to your dashboard
+          </Button>
         </div>
       </div>
     );

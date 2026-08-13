@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Shield, Copy, Check, Wallet, Key, RefreshCw, FileKey, Building2 } from 'lucide-react';
+import { Shield, Copy, Check, Wallet, Key, RefreshCw, FileKey, Building2, LayoutDashboard } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { AlertDialog } from '@/components/ui/ConfirmDialog';
 import { useAuth } from '@/contexts/AuthContext';
+import { useAdminStatus } from '@/hooks/useAdminStatus';
 import { ethLinkApiMethods, EthAddressResponse, userApiMethods, UserOrg } from '@/api/auth';
 import { getRpcEndpoint, getAddNetworkParams } from '@/config/rpc';
 
@@ -16,6 +17,7 @@ export function SuccessPage() {
   const [userOrgs, setUserOrgs] = useState<UserOrg[]>([]);
   const [isAddingNetwork, setIsAddingNetwork] = useState(false);
   const [showMetaMaskError, setShowMetaMaskError] = useState(false);
+  const { isAdmin } = useAdminStatus();
 
   const rpcEndpoint = getRpcEndpoint();
 
@@ -131,6 +133,22 @@ export function SuccessPage() {
           <p className="mt-2 text-neutral-500">
             Your authenticated RPC endpoint is ready to use
           </p>
+
+          {/* Org admins land here like everyone else; without this the admin
+              dashboard is only reachable by typing /admin into the address
+              bar. Rendered only when the admin-status probe says yes — the
+              route itself is still gated by RequireAdmin. */}
+          {isAdmin && (
+            <Button
+              onClick={() => navigate('/admin')}
+              variant="outline"
+              className="mt-4"
+              data-testid="go-to-admin-btn"
+            >
+              <LayoutDashboard className="mr-2 h-4 w-4" />
+              Admin dashboard
+            </Button>
+          )}
         </div>
 
         {/* RPC Endpoint Card */}

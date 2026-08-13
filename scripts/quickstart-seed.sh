@@ -395,9 +395,10 @@ $(bold 'Personas') — the login page lists them as one-click buttons:
   Rita   ${RITA_DID}    regulator        wallet ${RITA_ADDR}
   Mia    ${MIA_DID}     Meridian ADMIN   wallet ${MIA_ADDR}
 
-Log in as Mia and open /admin for the dashboard (org admin of Meridian —
-she sees only her own bank). The other personas are regular users: they
-get the user-facing view, /admin denies them.
+Log in as Mia for the admin dashboard (org admin of Meridian — she sees only
+her own bank): the user page shows an "Admin dashboard" button for accounts
+that have access. The other personas are regular users — no button, and
+/admin denies them with a link back to their own dashboard.
 
 $(bold 'Fresh JWTs') (also in ${STATE_FILE}; re-mint any time with
 'scripts/quickstart.sh --seed-only'):
