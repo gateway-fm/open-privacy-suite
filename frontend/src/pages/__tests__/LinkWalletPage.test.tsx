@@ -71,6 +71,7 @@ function renderLinkWalletPage(initialRoute = '/link-wallet') {
           <Route path="/link-wallet" element={<LinkWalletPage />} />
           <Route path="/login" element={<div data-testid="login-page">Login Page</div>} />
           <Route path="/success" element={<div data-testid="success-page">Success Page</div>} />
+          <Route path="/admin" element={<div data-testid="admin-area">Admin Area</div>} />
         </Routes>
       </AuthProvider>
     </MemoryRouter>
@@ -117,6 +118,38 @@ describe('LinkWalletPage', () => {
       await waitFor(() => {
         expect(screen.getByText('Link Your Wallet')).toBeInTheDocument();
       });
+    });
+  });
+
+  describe('Admin dashboard entry point', () => {
+    beforeEach(() => {
+      setupAuthenticated();
+    });
+
+    it('lets an admin reach the dashboard without clearing the wallet step first', async () => {
+      // Login lands here by default, so this is where an org admin actually
+      // arrives — not on /success.
+      server.use(
+        http.get('/api/v1/me/admin-status', () =>
+          HttpResponse.json({ is_admin: true, is_readonly_admin: false, admin_org_ids: ['org-1'], readonly_admin_org_ids: [] })
+        )
+      );
+      renderLinkWalletPage();
+
+      await userEvent.click(await screen.findByTestId('link-wallet-admin-btn'));
+
+      await waitFor(() => {
+        expect(screen.getByTestId('admin-area')).toBeInTheDocument();
+      });
+    });
+
+    it('does not show it to a regular user', async () => {
+      renderLinkWalletPage();
+
+      await waitFor(() => {
+        expect(screen.getByText('Link Your Wallet')).toBeInTheDocument();
+      });
+      expect(screen.queryByTestId('link-wallet-admin-btn')).not.toBeInTheDocument();
     });
   });
 

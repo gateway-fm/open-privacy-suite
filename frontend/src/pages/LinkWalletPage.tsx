@@ -2,10 +2,11 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAccount, useSignMessage, useDisconnect } from 'wagmi';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
-import { Wallet, Link2, Loader2, CheckCircle2, AlertCircle, ArrowRight, X, Copy, Check } from 'lucide-react';
+import { Wallet, Link2, Loader2, CheckCircle2, AlertCircle, ArrowRight, X, Copy, Check, LayoutDashboard } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
+import { useAdminStatus } from '@/hooks/useAdminStatus';
 import { ethLinkApiMethods, EthAddressResponse } from '@/api/auth';
 
 type LinkStep = 'connect' | 'signing' | 'verifying' | 'success' | 'error';
@@ -21,6 +22,7 @@ interface LinkState {
 export function LinkWalletPage() {
   const navigate = useNavigate();
   const { isAuthenticated, accessToken, logout, isLoading } = useAuth();
+  const { isAdmin } = useAdminStatus();
   const { address, isConnected } = useAccount();
   const { disconnect } = useDisconnect();
   const { signMessageAsync } = useSignMessage();
@@ -342,6 +344,22 @@ export function LinkWalletPage() {
                   data-testid="skip-btn"
                 >
                   Skip for now
+                </Button>
+              )}
+
+              {/* Login lands here by default, not on the user page, so without
+                  this an admin has to clear the wallet step before the way
+                  into the dashboard is even visible. */}
+              {isAdmin && (
+                <Button
+                  onClick={() => navigate('/admin')}
+                  variant="ghost"
+                  size="sm"
+                  className="w-full"
+                  data-testid="link-wallet-admin-btn"
+                >
+                  <LayoutDashboard className="mr-2 h-4 w-4" />
+                  Go to admin dashboard
                 </Button>
               )}
             </div>

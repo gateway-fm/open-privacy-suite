@@ -17,7 +17,7 @@ export function SuccessPage() {
   const [userOrgs, setUserOrgs] = useState<UserOrg[]>([]);
   const [isAddingNetwork, setIsAddingNetwork] = useState(false);
   const [showMetaMaskError, setShowMetaMaskError] = useState(false);
-  const { isAdmin } = useAdminStatus();
+  const { isAdmin, loading: adminStatusLoading } = useAdminStatus();
 
   const rpcEndpoint = getRpcEndpoint();
 
@@ -138,17 +138,22 @@ export function SuccessPage() {
               dashboard is only reachable by typing /admin into the address
               bar. Rendered only when the admin-status probe says yes — the
               route itself is still gated by RequireAdmin. */}
-          {isAdmin && (
-            <Button
-              onClick={() => navigate('/admin')}
-              variant="outline"
-              className="mt-4"
-              data-testid="go-to-admin-btn"
-            >
-              <LayoutDashboard className="mr-2 h-4 w-4" />
-              Admin dashboard
-            </Button>
-          )}
+          {/* Fixed-height slot: the admin probe resolves a round trip after
+              first paint, so rendering the button straight into the flow
+              would shove the whole page down once it lands. Reserving the
+              space costs regular users some whitespace and nobody a jump. */}
+          <div className="mt-4 flex h-10 items-center justify-center">
+            {!adminStatusLoading && isAdmin && (
+              <Button
+                onClick={() => navigate('/admin')}
+                variant="outline"
+                data-testid="go-to-admin-btn"
+              >
+                <LayoutDashboard className="mr-2 h-4 w-4" />
+                Admin dashboard
+              </Button>
+            )}
+          </div>
         </div>
 
         {/* RPC Endpoint Card */}
