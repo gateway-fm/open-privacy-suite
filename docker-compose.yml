@@ -8,8 +8,19 @@ services:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
       - POSTGRES_DB=privacy_proxy
+      # RD-1147: password for the restricted runtime role provisioned by
+      # scripts/init-audit-db.sh. Dev-only fixed value, same posture as the
+      # fixed POSTGRES_PASSWORD / Redis password in this file.
+      - AUDIT_APP_PASSWORD=${AUDIT_APP_PASSWORD:-audit-dev-only}
     volumes:
       - postgres-data:/var/lib/postgresql/data
+      # RD-1147: on first init the CONTAINER provisions the "<db>_audit"
+      # database (mirroring POSTGRES_DB). The backend never issues CREATE
+      # DATABASE — it connects to the already-provisioned audit DB and
+      # migrates it, and fails to start if the DB is absent. Every other
+      # compose file mounts this hook; without it here `make run` came up
+      # with a crash-looping backend on a fresh volume.
+      - ./scripts/init-audit-db.sh:/docker-entrypoint-initdb.d/10-init-audit-db.sh:ro
     networks:
       - internal
     healthcheck:
@@ -65,7 +76,9 @@ services:
         GIT_COMMIT: ${GIT_COMMIT:-none}
         BUILD_TIME: ${BUILD_TIME:-unknown}
     ports:
-      - "127.0.0.1:${HOST_PORT_PROXY:-8080}:8080"
+      # Loopback-only by default. Set HOST_BIND=0.0.0.0 to reach the stack
+      # from another device on your LAN (see docs: Getting Started → LAN access).
+      - "${HOST_BIND:-127.0.0.1}:${HOST_PORT_PROXY:-8080}:8080"
     environment:
       # Run the process in UTC (RD-1005): plain TIMESTAMP columns store
       # wall-clock components, so a non-UTC process tz would skew RBAC
@@ -121,7 +134,7 @@ services:
       dockerfile: Dockerfile
       target: dev
     ports:
-      - "127.0.0.1:${HOST_PORT_UI:-5173}:5173"
+      - "${HOST_BIND:-127.0.0.1}:${HOST_PORT_UI:-5173}:5173"
     volumes:
       - ./frontend:/app
       - /app/node_modules

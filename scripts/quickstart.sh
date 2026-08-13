@@ -21,6 +21,17 @@
 
 set -euo pipefail
 
+# Empty arrays are expanded below (PROFILE_ARGS when the explorer profile is
+# off). Under `set -u`, bash < 4.4 — which includes the bash 3.2 that macOS
+# still ships as /bin/bash — treats "${empty[@]}" as an unbound variable and
+# aborts. Every expansion of a possibly-empty array here uses the
+# "${arr[@]+"${arr[@]}"}" guard, which is portable back to 3.2.
+if [ "${BASH_VERSINFO[0]:-0}" -lt 3 ] \
+   || { [ "${BASH_VERSINFO[0]:-0}" -eq 3 ] && [ "${BASH_VERSINFO[1]:-0}" -lt 2 ]; }; then
+  echo "quickstart: needs bash >= 3.2 (found ${BASH_VERSION:-unknown})" >&2
+  exit 1
+fi
+
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
@@ -142,7 +153,7 @@ export GIT_COMMIT="${GIT_COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || ech
 export BUILD_TIME="${BUILD_TIME:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
 
 echo "$(bold '==>') $(green 'Building and starting the quickstart stack') (first build takes a few minutes)"
-docker compose "${COMPOSE_ARGS[@]}" "${PROFILE_ARGS[@]}" up -d --build
+docker compose "${COMPOSE_ARGS[@]}" ${PROFILE_ARGS[@]+"${PROFILE_ARGS[@]}"} up -d --build
 
 # --- Audit DB on pre-existing volumes ---------------------------------------
 # The init hook only runs when the postgres volume is first created. If this

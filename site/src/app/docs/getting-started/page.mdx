@@ -130,18 +130,50 @@ Stop with `docker compose -f docker-compose.privacy.dev.yml down`. Add `-v` to w
 
 ## LAN Access
 
-To access from other devices on your network:
+Every port binds to `127.0.0.1` by default, so nothing is reachable from other
+devices until you opt in. Set `HOST_BIND` to expose the app and API:
 
 ```bash
-BASE_URL="http://YOUR_LAN_IP:8080" make run
+HOST_BIND=0.0.0.0 make run
 ```
 
-Replace `localhost` with your LAN IP in all URLs.
+Then open `http://YOUR_LAN_IP:5173` on the other device. Find your IP with
+`ipconfig getifaddr en0` (macOS) or `hostname -I` (Linux).
+
+That is the only variable you need. In particular:
+
+- **`BASE_URL` is not required.** The browser sends its own origin with the
+  login request, and the backend derives the callback URL from it.
+- **`CORS_ALLOWED_ORIGINS` is not required.** The frontend proxies `/api` to the
+  backend server-side, so browser requests are same-origin.
+- **`FRONTEND_URL` is not required.** It is only used by the OAuth server flow.
+
+Postgres and the local chain node stay on loopback regardless of `HOST_BIND` —
+only the app and API are exposed. `HOST_BIND=0.0.0.0` puts an unauthenticated
+dev stack on your network; use it on a network you trust.
+
+The RPC endpoint shown in the UI still reads `localhost`. Set
+`VITE_BACKEND_URL=http://YOUR_LAN_IP:8080` if you need it to display the LAN
+address.
+
+### Wallet login from a phone
+
+The Privado ID wallet calls back to the **API** (port 8080), not the app, so
+8080 must be reachable too — `HOST_BIND=0.0.0.0` covers that on the same wifi.
+If the wallet will not accept a plain-http callback, tunnel the API and point
+`BASE_URL` at the tunnel:
+
+```bash
+ngrok http 8080
+BASE_URL=https://YOUR-TUNNEL.ngrok-free.app HOST_BIND=0.0.0.0 make run
+```
+
+Tunnel the API, not the app — tunnelling 5173 alone breaks the callback.
 
 ## Custom Ports
 
 ```bash
-BACKEND_HOST_PORT=8081 POSTGRES_HOST_PORT=5433 BASE_URL="http://YOUR_IP:8081" make run
+HOST_PORT_PROXY=8081 HOST_PORT_UI=5174 HOST_PORT_DB=5433 HOST_PORT_RPC=8546 make run
 ```
 
 ## Next Steps
