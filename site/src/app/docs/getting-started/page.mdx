@@ -185,6 +185,19 @@ BASE_URL=https://YOUR-TUNNEL.ngrok-free.app make run
 The phone only needs to reach the tunnel, so `HOST_BIND` is not required for
 this path. Tunnel the API — tunnelling 5173 instead breaks the callback.
 
+One tunnel is enough here because the wallet contacts exactly one address: the
+QR carries the whole authorization request inline, and the only URL inside it
+is the callback, which answers with JSON rather than a redirect.
+
+That is specific to wallet login. Two other sign-in flows redirect the browser
+to a second host and need that host reachable in its own right:
+
+- **Block explorer OAuth** — on completion the browser is sent to the client's
+  registered redirect URI.
+- **Microsoft Entra ID** — the browser leaves for Microsoft and returns to
+  `<origin>/auth/azure/callback`, so that origin must be reachable and
+  registered on the app registration.
+
 ## Custom Ports
 
 ```bash
