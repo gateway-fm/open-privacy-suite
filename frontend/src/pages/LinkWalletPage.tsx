@@ -350,18 +350,23 @@ export function LinkWalletPage() {
               {/* Login lands here by default, not on the user page, so without
                   this an admin has to clear the wallet step before the way
                   into the dashboard is even visible. */}
-              {!adminStatusLoading && isAdmin && (
-                <Button
-                  onClick={() => navigate('/admin')}
-                  variant="ghost"
-                  size="sm"
-                  className="w-full"
-                  data-testid="link-wallet-admin-btn"
-                >
-                  <LayoutDashboard className="mr-2 h-4 w-4" />
-                  Go to admin dashboard
-                </Button>
-              )}
+              {/* Fixed-height slot, same reasoning as SuccessPage: the probe
+                  resolves after first paint, so rendering straight into the
+                  flow would shift the buttons under the cursor. */}
+              <div className="flex h-8 items-center justify-center">
+                {!adminStatusLoading && isAdmin && (
+                  <Button
+                    onClick={() => navigate('/admin')}
+                    variant="ghost"
+                    size="sm"
+                    className="w-full"
+                    data-testid="link-wallet-admin-btn"
+                  >
+                    <LayoutDashboard className="mr-2 h-4 w-4" />
+                    Go to admin dashboard
+                  </Button>
+                )}
+              </div>
             </div>
           </CardContent>
         </Card>

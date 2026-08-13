@@ -44,8 +44,18 @@ export function RequireAdmin({ children }: RequireAdminProps) {
 
     if (!accessToken) {
       setState('denied');
+      setAdminData(null);
       return;
     }
+
+    // Re-arm the gate for every authenticated probe. Without this a token
+    // change leaves state==='admin', so the dashboard and the previous
+    // identity's adminData — including the org IDs the UI scopes itself by —
+    // stay rendered for the whole duration of the new token's check. The
+    // server re-authorises each request regardless, but the gate itself must
+    // not stay open across identities.
+    setState('loading');
+    setAdminData(null);
 
     let cancelled = false;
 

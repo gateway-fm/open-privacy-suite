@@ -178,19 +178,23 @@ and both nginx images).
 
 Tunnelling the **app** is the simpler of the two — open the tunnel URL in the
 browser and the backend derives the callback from that origin, so there is
-nothing else to set:
+nothing else to set. Start the stack first; `ngrok` holds the terminal:
 
 ```bash
-ngrok http 5173
-make run
+make run          # detached
+ngrok http 5173   # then open the tunnel URL on the phone
 ```
 
-Tunnelling the **API** works too, but then you must open the app at
+Tunnelling the **API** works too, but the stack needs the tunnel address at
+startup, so it takes two terminals — and you must then open the app at
 `http://localhost:5173` **on the machine running the stack** and scan the QR
 from the phone, because `BASE_URL` is only consulted for a localhost origin:
 
 ```bash
+# terminal 1 — leave running, copy the https URL it prints
 ngrok http 8080
+
+# terminal 2
 BASE_URL=https://YOUR-TUNNEL.ngrok-free.app make run
 ```
 
