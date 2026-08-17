@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -90,6 +91,7 @@ type dryRunFixture struct {
 	adminDID        string
 	userDID         string
 	otherOrgUserDID string
+	userGroupID     string
 	contractAddr    string
 }
 
@@ -130,6 +132,7 @@ func setupDryRunFixture(t *testing.T) *dryRunFixture {
 		adminDID:        adminDID,
 		userDID:         userDID,
 		otherOrgUserDID: otherOrgUserDID,
+		userGroupID:     userGroupID,
 		contractAddr:    contractAddr,
 	}
 }
@@ -257,6 +260,201 @@ func TestDryRun_DenyDecisionLoggedAndReturned(t *testing.T) {
 	assert.Equal(t, 1, count, "expected exactly one deny row in impersonation_log")
 }
 
+const (
+	dryRunBalanceOfABI      = `[{"name":"balanceOf","type":"function","inputs":[{"name":"owner","type":"address"}],"outputs":[{"name":"","type":"uint256"}]}]`
+	dryRunBalanceOfSelector = "0x70a08231"
+)
+
+// TestDryRun_FunctionLevelRules pins dry-run's verdict to the enforcement
+// path's on a contract whose grant carries function-level rules. Pre-fix the
+// handler left FunctionSelector unset, so validateFunctionSelector denied
+// every such contract with "function selector required" — a call the user may
+// make and one blocked by a param rule were indistinguishable.
+func TestDryRun_FunctionLevelRules(t *testing.T) {
+	f := setupDryRunFixture(t)
+	ctx := context.Background()
+
+	// Grant the user balanceOf(self) on a contract of its own, and give the
+	// param rule what it needs: an ABI to decode the argument with, and a
+	// linked address to compare it against.
+	selfAddr := "0x00000000000000000000000000000000000000a1"
+	otherAddr := "0x00000000000000000000000000000000000000b2"
+	contractAddr := "0x2222222222222222222222222222222222222222"
+	contractID := drCreateContract(t, f.srv.db, f.orgID, contractAddr, "DRFunctionRules")
+	require.NoError(t, f.srv.db.UpdateContractABI(ctx, contractID, dryRunBalanceOfABI))
+	require.NoError(t, f.srv.db.SystemLinkEthAddress(ctx, f.userDID, selfAddr))
+	require.NoError(t, f.srv.db.CreateContractGrant(ctx, &rbac.ContractGrant{
+		ID: uuid.New().String(), ContractID: contractID, GroupID: f.userGroupID,
+		Functions: []rbac.FunctionRule{{
+			Selector:   dryRunBalanceOfSelector,
+			ParamRules: []rbac.ParamRule{{Index: 0, MustBe: "self"}},
+		}},
+	}))
+
+	// The allow case forwards upstream, so the fixture needs a node to answer.
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":"0x1"}`))
+	}))
+	t.Cleanup(stub.Close)
+	f.srv.proxy = proxy.New(stub.URL)
+
+	tests := []struct {
+		name       string
+		argAddr    string
+		want       string
+		wantReason string
+	}{
+		{"own balance", selfAddr, "allow", ""},
+		{"another address", otherAddr, "deny", "parameter constraint violation"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rpc := dryRunRPCBlock{
+				Method: "eth_call",
+				Params: []any{
+					map[string]any{
+						"to":   contractAddr,
+						"data": dryRunBalanceOfSelector + "000000000000000000000000" + strings.TrimPrefix(tc.argAddr, "0x"),
+					},
+					"latest",
+				},
+			}
+			w := dryRunPost(t, f.srv, f.orgID, "jwt_admin", f.adminDID, map[string]any{
+				"user_did": f.userDID,
+				"rpc":      rpc,
+			})
+			require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+
+			var resp dryRunResponse
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			assert.Equal(t, tc.want, resp.Decision)
+			assert.Contains(t, resp.Reason, tc.wantReason)
+			assert.NotContains(t, resp.Reason, "function selector required")
+		})
+	}
+}
+
+// TestDryRunAccessRequest_MatchesEnforcementDerivation pins the fields the
+// builder derives to the values JSONRPCProcessor derives for the same call,
+// computed here from the params the way the enforcement path does rather than
+// through the builder itself.
+func TestDryRunAccessRequest_MatchesEnforcementDerivation(t *testing.T) {
+	// Checksummed on the wire: grants are keyed lowercase, so a target that
+	// keeps its mixed case matches no contract and denies a call the live
+	// path allows.
+	t.Run("eth_call with a checksummed target", func(t *testing.T) {
+		params := []any{map[string]any{
+			"to":   "0xAbC0000000000000000000000000000000000001",
+			"data": "0x70a08231ff",
+		}, "latest"}
+		got, err := dryRunAccessRequest("did:x", "org", dryRunRPCBlock{Method: "eth_call", Params: params})
+		require.NoError(t, err)
+		assert.Equal(t, rbac.ResolveMethodAlias("eth_call"), got.AccessMethod)
+		assert.Equal(t, rbac.GetTargetAddress("eth_call", params), got.TargetAddress)
+		assert.Equal(t, "0xabc0000000000000000000000000000000000001", got.TargetAddress)
+		assert.Equal(t, rbac.GetFunctionSelector("eth_call", params), got.FunctionSelector)
+	})
+
+	t.Run("eth_sendRawTransaction", func(t *testing.T) {
+		to := common.HexToAddress("0x3333333333333333333333333333333333333333")
+		rawHex := drSignedRawTx(t, &to, []byte{0x70, 0xa0, 0x82, 0x31})
+		got, err := dryRunAccessRequest("did:x", "org", dryRunRPCBlock{
+			Method: "eth_sendRawTransaction", Params: []any{rawHex},
+		})
+		require.NoError(t, err)
+
+		// processRawTransaction(): decode, then check as eth_sendTransaction
+		// against the decoded target and calldata selector.
+		from, wantTo, data, value, _, err := decodeRawTransaction(rawHex)
+		require.NoError(t, err)
+		assert.Equal(t, "eth_sendTransaction", got.Method)
+		assert.Equal(t, wantTo, got.TargetAddress)
+		assert.Equal(t, extractSelector(data), got.FunctionSelector)
+		assert.Equal(t, buildTxParams(from, wantTo, data, value), got.Params)
+	})
+
+	t.Run("undecodable raw tx is an error, not an empty target", func(t *testing.T) {
+		_, err := dryRunAccessRequest("did:x", "org", dryRunRPCBlock{
+			Method: "eth_sendRawTransaction", Params: []any{"0xnotrealhex"},
+		})
+		require.Error(t, err)
+	})
+}
+
+// TestDryRun_RawTransactionChecksDecodedTarget covers the raw-tx contract gate
+// end to end. eth_sendRawTransaction hides its target in the signed blob, so a
+// check built from the undecoded params has no target address and skips
+// validateContractAccess entirely — every raw tx reached the tracer whatever
+// contract it pointed at, and its emitted logs came back in logs_emitted.
+func TestDryRun_RawTransactionChecksDecodedTarget(t *testing.T) {
+	f := setupDryRunFixture(t)
+	ctx := context.Background()
+
+	// A group allowed to send transactions, granted on one contract only.
+	groupID := uuid.New().String()
+	require.NoError(t, f.srv.db.CreateGroup(ctx, &rbac.Group{
+		ID: groupID, OrgID: f.orgID, Slug: "dr-sender", Name: "dr-sender", Depth: 0, Path: "dr-sender",
+	}))
+	require.NoError(t, f.srv.db.CreateGroupAccess(ctx, &rbac.GroupAccess{
+		ID: uuid.New().String(), GroupID: groupID, AllowedMethods: []string{"eth_sendTransaction"},
+	}))
+	senderDID := "did:dr:sender"
+	drCreateUserInGroup(t, f.srv.db, senderDID, groupID)
+
+	grantedAddr := "0x4444444444444444444444444444444444444444"
+	ungrantedAddr := "0x5555555555555555555555555555555555555555"
+	drCreateGrant(t, f.srv.db, drCreateContract(t, f.srv.db, f.orgID, grantedAddr, "DRGranted"), groupID)
+	drCreateContract(t, f.srv.db, f.orgID, ungrantedAddr, "DRUngranted")
+
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{}}`))
+	}))
+	t.Cleanup(stub.Close)
+	f.srv.proxy = proxy.New(stub.URL)
+
+	tests := []struct {
+		name string
+		to   string
+		want string
+	}{
+		{"granted contract", grantedAddr, "allow"},
+		{"contract the group has no grant on", ungrantedAddr, "deny"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			to := common.HexToAddress(tc.to)
+			w := dryRunPost(t, f.srv, f.orgID, "jwt_admin", f.adminDID, map[string]any{
+				"user_did": senderDID,
+				"rpc": dryRunRPCBlock{
+					Method: "eth_sendRawTransaction",
+					Params: []any{drSignedRawTx(t, &to, []byte{0xab, 0xcd, 0xab, 0xcd})},
+				},
+			})
+			require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+			var resp dryRunResponse
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			assert.Equal(t, tc.want, resp.Decision, "reason: %s", resp.Reason)
+		})
+	}
+}
+
+// drSignedRawTx returns a signed legacy tx as 0x-prefixed hex, so tests reach
+// the production RLP decode + sender-recovery path.
+func drSignedRawTx(t *testing.T, to *common.Address, data []byte) string {
+	t.Helper()
+	key, err := crypto.GenerateKey()
+	require.NoError(t, err)
+	tx := types.NewTx(&types.LegacyTx{
+		Nonce: 0, GasPrice: big.NewInt(1_000_000_000), Gas: 100_000,
+		To: to, Value: big.NewInt(0), Data: data,
+	})
+	signed, err := types.SignTx(tx, types.LatestSignerForChainID(big.NewInt(1)), key)
+	require.NoError(t, err)
+	raw, err := signed.MarshalBinary()
+	require.NoError(t, err)
+	return "0x" + hex.EncodeToString(raw)
+}
+
 // TestDryRun_ParamsHashStable pins the params-hash invariant: same
 // method + params produce the same hash, different params don't. The
 // audit log uses this hash so reviewers can correlate without us ever
@@ -374,26 +572,80 @@ func TestDryRun_RawSendTransactionDecodes(t *testing.T) {
 	}
 }
 
-// TestDryRun_RawSendTransactionMalformedReturnsClearError confirms
-// the decode error path: a clearly invalid hex blob returns a
-// structured 4xx/5xx with a useful message, not a generic 500.
-func TestDryRun_RawSendTransactionMalformedReturnsClearError(t *testing.T) {
-	f := setupDryRunFixture(t)
-	body := map[string]any{
-		"user_did": f.userDID,
-		"rpc": map[string]any{
-			"method": "eth_sendRawTransaction",
-			"params": []any{"0xnotrealhex"},
-		},
-	}
-	w := dryRunPost(t, f.srv, f.orgID, "jwt_admin", f.adminDID, body)
-	// RBAC may deny first (no signature → no recovered sender → no
-	// linked address), or we may reach the trace path which then
-	// fails to decode. Either is acceptable — what we don't want is
-	// a generic 500 with no message.
-	if w.Code == http.StatusBadGateway {
-		assert.Contains(t, strings.ToLower(w.Body.String()), "decode")
-	}
+// TestDryRun_RawSendTransactionMalformedAudit confirms that malformed raw
+// transactions are recorded before the handler returns a client error, and
+// that an audit-write failure withholds that response.
+func TestDryRun_RawSendTransactionMalformedAudit(t *testing.T) {
+	const rawHex = "0xnotrealhex"
+
+	t.Run("records decode error before returning bad request", func(t *testing.T) {
+		f := setupDryRunFixture(t)
+		rpc := dryRunRPCBlock{
+			Method: "eth_sendRawTransaction",
+			Params: []any{rawHex},
+		}
+		w := dryRunPost(t, f.srv, f.orgID, "jwt_admin", f.adminDID, map[string]any{
+			"user_did": f.userDID,
+			"rpc":      rpc,
+		})
+
+		require.Equal(t, http.StatusBadRequest, w.Code, "body: %s", w.Body.String())
+		assert.Contains(t, w.Body.String(), "invalid raw transaction")
+
+		var method, paramsHash, decision, reason string
+		require.NoError(t, f.srv.db.Conn().QueryRowContext(context.Background(), `
+			SELECT method, params_hash, decision, reason
+			  FROM impersonation_log
+			 WHERE actor_did = $1 AND impersonated_did = $2 AND org_id = $3`,
+			f.adminDID, f.userDID, f.orgID,
+		).Scan(&method, &paramsHash, &decision, &reason))
+		assert.Equal(t, rpc.Method, method)
+		assert.Equal(t, dryRunParamsHash(rpc.Method, rpc.Params), paramsHash)
+		assert.Equal(t, "error", decision)
+		assert.Equal(t, "decode_error", reason)
+	})
+
+	t.Run("audit write failure is fail closed", func(t *testing.T) {
+		f := setupDryRunFixture(t)
+		ctx := context.Background()
+		conn := f.srv.db.Conn()
+
+		// NOT VALID avoids scanning existing audit rows but still enforces the
+		// constraint for this test's new insert.
+		_, err := conn.ExecContext(ctx, `
+			ALTER TABLE impersonation_log
+			ADD CONSTRAINT impersonation_log_reject_error_test
+			CHECK (decision <> 'error') NOT VALID`)
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			_, dropErr := conn.ExecContext(context.Background(), `
+				ALTER TABLE impersonation_log
+				DROP CONSTRAINT IF EXISTS impersonation_log_reject_error_test`)
+			assert.NoError(t, dropErr)
+		})
+
+		rpc := dryRunRPCBlock{
+			Method: "eth_sendRawTransaction",
+			Params: []any{rawHex},
+		}
+		w := dryRunPost(t, f.srv, f.orgID, "jwt_admin", f.adminDID, map[string]any{
+			"user_did": f.userDID,
+			"rpc":      rpc,
+		})
+
+		require.Equal(t, http.StatusInternalServerError, w.Code, "body: %s", w.Body.String())
+		assert.JSONEq(t, `{"error":"internal error"}`, w.Body.String())
+
+		var count int
+		require.NoError(t, conn.QueryRowContext(ctx, `
+			SELECT COUNT(*)
+			  FROM impersonation_log
+			 WHERE actor_did = $1 AND impersonated_did = $2 AND org_id = $3
+			   AND params_hash = $4`,
+			f.adminDID, f.userDID, f.orgID, dryRunParamsHash(rpc.Method, rpc.Params),
+		).Scan(&count))
+		assert.Zero(t, count)
+	})
 }
 
 // ---- fixture helpers -------------------------------------------------

@@ -443,9 +443,8 @@ func TestDryRun_ReadResponse_Passthrough_NoRedaction(t *testing.T) {
 			"no-redaction design at admin_dry_run.go:232-238")
 }
 
-// extractTargetAddressForDryRun is exercised indirectly by the
-// passthrough test (above) — eth_call's target address comes from
-// params[0].to. Verifying the read path runs end-to-end is enough;
-// the unit-level fork branches are covered by the existing
-// access-controller tests.
+// Target-address extraction is exercised indirectly by the passthrough
+// test (above) — eth_call's target address comes from params[0].to. It
+// now comes from rbac.GetTargetAddress, so the per-method branches are
+// covered by the existing access-controller tests.
 var _ = context.Background // keep package context import usable for future extensions

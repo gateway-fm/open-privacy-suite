@@ -235,14 +235,18 @@ func (s *Server) handleDryRun(c *gin.Context) {
 	// contracts. With OrgID set, CheckAccess scopes resolution to
 	// admin's org; cross-org contracts evaluate as if Bob were a
 	// non-member there (the safe answer).
-	target := extractTargetAddressForDryRun(req.RPC.Method, req.RPC.Params)
-	accessResult, err := s.rbacAccessCtrl.CheckAccess(ctx, &rbac.AccessCheckRequest{
-		UserExternalID: req.UserDID,
-		OrgID:          orgID,
-		Method:         req.RPC.Method,
-		Params:         req.RPC.Params,
-		TargetAddress:  target,
-	})
+	accessReq, err := dryRunAccessRequest(req.UserDID, orgID, req.RPC)
+	if err != nil {
+		slog.Warn("dry-run: could not build access check", "method", req.RPC.Method, "err", err)
+		if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "error", "decode_error", c.GetString("correlation_id")); logErr != nil {
+			slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+			return
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid raw transaction"})
+		return
+	}
+	accessResult, err := s.rbacAccessCtrl.CheckAccess(ctx, accessReq)
 	if err != nil {
 		// H12: audit log fail-closed. If recordImpersonation errors,
 		// refuse to return the response — a compromised admin who can
@@ -706,32 +710,45 @@ func dryRunParamsHash(method string, params []any) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// extractTargetAddressForDryRun pulls the target address out of an RPC
-// param list when it's an obvious place to look (eth_call's `to`,
-// eth_getTransactionReceipt has none, etc.). Mirrors the
-// access-checker's existing target-address extraction so
-// CheckAccess resolves the same way it does for a real request.
-func extractTargetAddressForDryRun(method string, params []any) string {
-	switch method {
-	case "eth_call", "eth_getCode", "eth_getBalance", "eth_getStorageAt":
-		if len(params) > 0 {
-			if obj, ok := params[0].(map[string]any); ok {
-				if to, ok := obj["to"].(string); ok {
-					return to
-				}
-			}
-			if s, ok := params[0].(string); ok {
-				return s
-			}
+// dryRunAccessRequest builds the access check for an impersonated call with
+// the same helpers JSONRPCProcessor.Process uses on a real request, so the
+// dry-run verdict matches enforcement. Without FunctionSelector, CheckAccess
+// denies every contract whose grant has function-level rules with "function
+// selector required", so a call the user may make and one blocked by a param
+// rule both came back as the same uninformative deny.
+//
+// eth_sendRawTransaction keeps its target and calldata inside the signed
+// blob, so it is decoded and checked as eth_sendTransaction exactly as
+// processRawTransaction does. Derived from the undecoded params it has no
+// target at all, which skips the contract gates entirely and waves every
+// raw tx through to the tracer whatever it points at.
+func dryRunAccessRequest(userDID, orgID string, rpc dryRunRPCBlock) (*rbac.AccessCheckRequest, error) {
+	method, params := rpc.Method, rpc.Params
+	if rbac.ResolveMethodAlias(method) == "eth_sendRawTransaction" {
+		rawHex, err := extractRawTxHex(params)
+		if err != nil {
+			return nil, err
 		}
-	case "eth_sendTransaction":
-		if len(params) > 0 {
-			if obj, ok := params[0].(map[string]any); ok {
-				if to, ok := obj["to"].(string); ok {
-					return to
-				}
-			}
+		from, to, data, value, _, err := decodeRawTransaction(rawHex)
+		if err != nil {
+			return nil, err
 		}
+		method, params = "eth_sendTransaction", buildTxParams(from, to, data, value)
 	}
-	return ""
+
+	accessMethod := rbac.ResolveMethodAlias(method)
+	var requiredClaims []rbac.Claim
+	if claim := rbac.ClassifyOperation(accessMethod, params); claim != "" {
+		requiredClaims = []rbac.Claim{claim}
+	}
+	return &rbac.AccessCheckRequest{
+		UserExternalID:   userDID,
+		OrgID:            orgID,
+		Method:           method,
+		AccessMethod:     accessMethod,
+		Params:           params,
+		TargetAddress:    rbac.GetTargetAddress(accessMethod, params),
+		FunctionSelector: rbac.GetFunctionSelector(accessMethod, params),
+		RequiredClaims:   requiredClaims,
+	}, nil
 }
