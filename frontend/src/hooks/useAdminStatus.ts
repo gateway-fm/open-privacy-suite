@@ -29,7 +29,10 @@ export function useAdminStatus(): { isAdmin: boolean; loading: boolean } {
     // Re-arm on every probe. The effect re-runs when the token rotates, and
     // without this `loading` stays false while the second request is in
     // flight, so callers would read the previous token's answer as settled.
+    // isAdmin drops with it: keeping the old answer visible would attribute
+    // one identity's access to whoever the new token belongs to.
     setLoading(true);
+    setIsAdmin(false);
 
     let cancelled = false;
 
@@ -44,6 +47,10 @@ export function useAdminStatus(): { isAdmin: boolean; loading: boolean } {
           return;
         }
         const data = await response.json();
+        // Re-check: parsing the body is a second await, so a probe superseded
+        // by a token change can land here after the newer one started. Without
+        // this the old identity's answer overwrites the new one's.
+        if (cancelled) return;
         // Strict equality, not truthiness: a body that violates the endpoint
         // schema (`"is_admin": "false"`, a non-empty string, a number) would
         // otherwise read as admin — the opposite of the fail-closed behaviour

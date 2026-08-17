@@ -152,9 +152,10 @@ Postgres and the local chain node stay on loopback regardless of `HOST_BIND` —
 only the app and API are exposed. `HOST_BIND=0.0.0.0` puts an unauthenticated
 dev stack on your network; use it on a network you trust.
 
-The RPC endpoint shown in the UI defaults to `localhost`. Pass
-`VITE_BACKEND_URL=http://YOUR_LAN_IP:8080` when starting the stack if you need
-it to display the LAN address for copy-paste.
+The RPC endpoint shown in the UI follows the address you opened the app at, so
+it is already correct on the LAN and can be copied straight into MetaMask. Set
+`VITE_BACKEND_URL` only for a split-origin deployment where the API is served
+from a different host than the dashboard.
 
 ### Wallet login from a phone
 
@@ -171,19 +172,34 @@ Nothing else to set:
 HOST_BIND=0.0.0.0 make run
 ```
 
-**Wallet needs https — tunnel the API.** Here you must open the app at
-`http://localhost:5173` **on the machine running the stack**, and scan the QR
-code from the phone. `BASE_URL` is only consulted for a localhost origin; open
-the app at a LAN address and the backend derives the callback from that origin
-instead and ignores `BASE_URL`, so the wallet never sees the tunnel.
+**Wallet needs https — tunnel.** Either port works, because the frontend
+proxies `/auth/callback` through to the API in every serving mode (dev server
+and both nginx images).
+
+Tunnelling the **app** is the simpler of the two — open the tunnel URL in the
+browser and the backend derives the callback from that origin, so there is
+nothing else to set. Start the stack first; `ngrok` holds the terminal:
 
 ```bash
+make run          # detached
+ngrok http 5173   # then open the tunnel URL on the phone
+```
+
+Tunnelling the **API** works too, but the stack needs the tunnel address at
+startup, so it takes two terminals — and you must then open the app at
+`http://localhost:5173` **on the machine running the stack** and scan the QR
+from the phone, because `BASE_URL` is only consulted for a localhost origin:
+
+```bash
+# terminal 1 — leave running, copy the https URL it prints
 ngrok http 8080
+
+# terminal 2
 BASE_URL=https://YOUR-TUNNEL.ngrok-free.app make run
 ```
 
-The phone only needs to reach the tunnel, so `HOST_BIND` is not required for
-this path. Tunnel the API — tunnelling 5173 instead breaks the callback.
+Either way the phone only needs to reach the tunnel, so `HOST_BIND` is not
+required for this path.
 
 One tunnel is enough here because the wallet contacts exactly one address: the
 QR carries the whole authorization request inline, and the only URL inside it
