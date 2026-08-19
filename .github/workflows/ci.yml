@@ -14,7 +14,7 @@ env:
   # Pinned to the patched toolchain (matches go.mod toolchain directive). The
   # stdlib CVEs govulncheck flags are fixed across the 1.25.x patch line, so a
   # floating '1.25' could regress; keep this in lockstep with go.mod.
-  GO_VERSION: '1.25.12'
+  GO_VERSION: '1.25.13'
   NODE_VERSION: '20'
   # Minimum coverage threshold (percentage).
   # Set to 44 because explorer/store.go (954 lines of SQL queries against the
