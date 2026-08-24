@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { http, HttpResponse } from 'msw';
+import { server } from '@/test/mocks/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { mockUser, mockOrganization } from '@/test/mocks/handlers';
@@ -76,11 +79,12 @@ describe('UserDetail self-ban guard (RD-1238)', () => {
     });
   });
 
-  it("disables the Banned checkbox on the signed-in admin's own record", async () => {
+  it("blocks the Banned checkbox on the signed-in admin's own record", async () => {
     mockUserDID.mockReturnValue(mockUser.external_id);
     renderUserDetail();
 
-    expect(await bannedCheckbox()).toBeDisabled();
+    // aria-disabled, not `disabled` — see the accessibility block below.
+    expect(await bannedCheckbox()).toHaveAttribute('aria-disabled', 'true');
   });
 
   it('leaves the Banned checkbox editable for another user', async () => {
@@ -94,7 +98,7 @@ describe('UserDetail self-ban guard (RD-1238)', () => {
     mockUserDID.mockReturnValue(mockUser.external_id.toUpperCase());
     renderUserDetail();
 
-    expect(await bannedCheckbox()).toBeDisabled();
+    expect(await bannedCheckbox()).toHaveAttribute('aria-disabled', 'true');
   });
 
   it('leaves the checkbox editable when the identity is unknown', async () => {
@@ -104,5 +108,83 @@ describe('UserDetail self-ban guard (RD-1238)', () => {
     renderUserDetail();
 
     expect(await bannedCheckbox()).toBeEnabled();
+  });
+
+  // A native `disabled` control is dropped from the tab order, so a keyboard or
+  // screen-reader user could never reach the tooltip explaining why the toggle
+  // is inert. Mirror the UserList treatment: aria-disabled keeps the control
+  // focusable, and the reason is a real associated description, not just a
+  // mouse-only `title`.
+  describe('keeps the reason reachable without a mouse', () => {
+    it('stays focusable and announces the reason as its accessible description', async () => {
+      mockUserDID.mockReturnValue(mockUser.external_id);
+      renderUserDetail();
+
+      const box = await bannedCheckbox();
+      expect(box).toHaveAttribute('aria-disabled', 'true');
+      // Not natively disabled — that is what removes it from the tab order.
+      expect(box).not.toBeDisabled();
+      expect(box).toHaveAccessibleDescription(/cannot ban your own account/i);
+
+      box.focus();
+      expect(box).toHaveFocus();
+    });
+
+    it('renders the reason as visible help text, not only a title tooltip', async () => {
+      mockUserDID.mockReturnValue(mockUser.external_id);
+      renderUserDetail();
+      await bannedCheckbox();
+
+      expect(screen.getByText(/cannot ban your own account/i)).toBeVisible();
+    });
+
+    it('is inert — toggling it neither checks the box nor saves', async () => {
+      mockUserDID.mockReturnValue(mockUser.external_id);
+      const updateSpy = vi.fn();
+      server.use(
+        http.put('/api/v1/admin/users/:id', async () => {
+          updateSpy();
+          return HttpResponse.json({ ...mockUser, banned: true });
+        })
+      );
+      renderUserDetail();
+
+      const box = await bannedCheckbox();
+      await userEvent.click(box);
+
+      expect(box).not.toBeChecked();
+      expect(updateSpy).not.toHaveBeenCalled();
+    });
+
+    it('stays inert when activated from the keyboard', async () => {
+      // The real keyboard path: tab to the checkbox, press Space. aria-disabled
+      // does not block activation on its own, so the guarded handler has to.
+      mockUserDID.mockReturnValue(mockUser.external_id);
+      const updateSpy = vi.fn();
+      server.use(
+        http.put('/api/v1/admin/users/:id', async () => {
+          updateSpy();
+          return HttpResponse.json({ ...mockUser, banned: true });
+        })
+      );
+      renderUserDetail();
+
+      const box = await bannedCheckbox();
+      box.focus();
+      await userEvent.keyboard(' ');
+
+      expect(box).not.toBeChecked();
+      expect(updateSpy).not.toHaveBeenCalled();
+    });
+
+    it('carries no description or help text for another user', async () => {
+      mockUserDID.mockReturnValue(mockUser.external_id);
+      renderUserDetail(otherUser);
+
+      const box = await bannedCheckbox();
+      expect(box).not.toHaveAttribute('aria-disabled');
+      expect(box).not.toHaveAccessibleDescription();
+      expect(screen.queryByText(/cannot ban your own account/i)).not.toBeInTheDocument();
+    });
   });
 });

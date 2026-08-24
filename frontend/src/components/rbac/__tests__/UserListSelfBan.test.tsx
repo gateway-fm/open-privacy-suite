@@ -76,6 +76,21 @@ describe('UserList self-ban guard (RD-1238)', () => {
     expect(banButton).toHaveAttribute('title', expect.stringMatching(/own account/i));
   });
 
+  it('exposes the reason as the button\'s accessible description', async () => {
+    // The button stays focusable (aria-disabled, not `disabled`), and `title`
+    // counts as its accessible description under accname — so assistive tech
+    // gets the reason here without extra markup. UserDetail cannot rely on that
+    // (its control is visually hidden), so it carries visible help text wired up
+    // with aria-describedby instead. Pinned so removing the title regresses.
+    mockUserDID.mockReturnValue(self.external_id);
+    serveUsers([self]);
+
+    renderWithRBACContext(<UserList />);
+
+    const banButton = await waitFor(() => screen.getByRole('button', { name: /ban/i }));
+    expect(banButton).toHaveAccessibleDescription(/cannot ban your own account/i);
+  });
+
   it('leaves the Ban button actionable for other users', async () => {
     mockUserDID.mockReturnValue(self.external_id);
     serveUsers([other]);

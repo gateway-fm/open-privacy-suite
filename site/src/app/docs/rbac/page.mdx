@@ -126,7 +126,7 @@ Banning revokes the target's refresh tokens immediately, and a banned user is re
 - **Banning other users is unaffected**, as is editing your own KYC status or note.
 - **The full admin token is not restricted** — it may ban any user, including an admin.
 
-In the dashboard the Ban control on your own row is inert and explains why on hover, both in the user list and on the user detail page. As always the server-side check is the boundary; the UI only avoids offering an action that would fail.
+In the dashboard the Ban control on your own account is inert and states the reason — as a tooltip on the user list row, and as help text beside the toggle on the user detail page. Both remain reachable by keyboard, so the explanation is not mouse-only. As always the server-side check is the boundary; the UI only avoids offering an action that would fail.
 
 To ban an admin, have another admin in the same organization do it, or use the full admin token.
 
