@@ -204,7 +204,7 @@ and governance flow replaces it.
 
 ## Part 2 — Day-to-day onboarding
 
-These are the **tier-2 org admin's** day-to-day operations, run with their session JWT — they manage their own org: groups, memberships, contract grants, KYC/ban. (Org creation and minting org admins are **not** here — those are the super-admin bootstrap in Part 1.)
+These are the **tier-2 org admin's** day-to-day operations, run with their session JWT — they manage their own org: groups, memberships, contract grants, KYC/ban. (Org creation and minting org admins are **not** here — those are the tier-1 bootstrap in Part 1.)
 
 ```bash
 # The org admin's session JWT, from logging in via Privado / Azure SSO.
@@ -414,11 +414,11 @@ Org admins can also use the [dry-run / "what would this user see"](/docs/rbac#ad
 
 ## Endpoint reference
 
-All paths are prefixed `/api/v1/admin`. Day-to-day endpoints (Part 2+) are driven by the tier-2 org admin's `Authorization: Bearer <JWT>`; the platform/bootstrap endpoints (Part 1 — create org, mint org admins) use the super-admin `X-Admin-Token`. The per-row **Auth** column below says which is which. All are gated to private-network source IPs (the IP check described in [Before you start](#before-you-start)).
+All paths are prefixed `/api/v1/admin`. Day-to-day endpoints (Part 2+) are driven by the tier-2 org admin's `Authorization: Bearer <JWT>`; the platform/bootstrap endpoints (Part 1 — create org, mint org admins) use a tier-1 `X-Admin-Token` — either `ADMIN_API_TOKEN` or `OPERATOR_API_TOKEN`. The per-row **Auth** column below says which is which. All are gated to private-network source IPs (the IP check described in [Before you start](#before-you-start)).
 
 | Purpose | Method & path | Auth |
 |---|---|---|
-| Create organization | `POST /orgs` | Super-admin only |
+| Create organization | `POST /orgs` | Tier-1 token (full admin or operator) |
 | Create group | `POST /orgs/:org_id/groups` | Tier-2 OK (except `is_org_admin` → tier-1 token) |
 | Set group access (methods, claims, RPC key) | `PUT /orgs/:org_id/groups/:group_id/access` | Tier-2 OK |
 | Onboard user by DID | `POST /orgs/:org_id/memberships/by-did` | Tier-2 OK |
