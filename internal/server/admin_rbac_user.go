@@ -789,7 +789,8 @@ func (s *Server) createUserMembership(c *gin.Context) {
 
 	// is_org_admin escalation gate (RD-1099): adding a member to an org-admin
 	// group mints a new org admin — a peer who could ban/demote the granter —
-	// so it is super-admin-only, mirroring the group-CRUD gates. After the
+	// so a tier-2 JWT is refused and an admin-tier token (full admin or
+	// operator) is required, mirroring the group-CRUD gates. After the
 	// foreign-org check so cross-tenant probes stay opaque.
 	if denyJWTAdminTouchOrgAdminGroup(c, group) {
 		return
@@ -1232,7 +1233,8 @@ func (s *Server) deleteMembershipByDID(c *gin.Context) {
 	}
 
 	// Escalation gates, onboard order: tier-2 JWT cannot touch org-admin groups
-	// (super-admin only); the operator is confined to admin-tier groups.
+	// (an admin-tier token — full admin or operator — is required); the operator
+	// is in turn confined to admin-tier groups.
 	if denyJWTAdminTouchOrgAdminGroup(c, group) {
 		return
 	}
@@ -1356,8 +1358,9 @@ func (s *Server) deleteUserMembership(c *gin.Context) {
 
 	// is_org_admin escalation gate (RD-1099): removing a member from an
 	// org-admin group demotes an org admin — the "ban or demote the granter"
-	// power the gate exists to prevent — so it is super-admin-only, symmetric
-	// with the add path. After the foreign-org check so probes stay opaque.
+	// power the gate exists to prevent — so a tier-2 JWT is refused and an
+	// admin-tier token (full admin or operator) is required, symmetric with the
+	// add path. After the foreign-org check so probes stay opaque.
 	if denyJWTAdminTouchOrgAdminGroup(c, group) {
 		return
 	}

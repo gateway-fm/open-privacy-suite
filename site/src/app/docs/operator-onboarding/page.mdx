@@ -4,7 +4,7 @@ import { Step } from "@/components/mdx/step";
 export const metadata = {
   title: "User Onboarding (Production)",
   description:
-    "Day-1 runbook for a fresh production deployment: bootstrap the first org and admin with the super-admin token, then create groups, set permissions, onboard users by DID, grant contract access, and connect Foundry tooling.",
+    "Day-1 runbook for a fresh production deployment: bootstrap the first org and admin with a tier-1 token, then create groups, set permissions, onboard users by DID, grant contract access, and connect Foundry tooling.",
 };
 
 # User Onboarding (Production)
@@ -25,7 +25,7 @@ This is **not** a "same host only" rule — you can call it remotely from anywhe
 
 You will need:
 
-- **`ADMIN_API_TOKEN`** — the bootstrap super-admin secret you set at deploy time. It is sent as the `X-Admin-Token` header. Source it from your secret store; never hard-code it in a script that lands in a repo.
+- **A tier-1 token** — either `ADMIN_API_TOKEN` (full admin) or `OPERATOR_API_TOKEN` (restricted onboarder; preferred when a third party runs the bootstrap — see below). Both are sent as the `X-Admin-Token` header, and the Part 1 examples work with either. Source it from your secret store; never hard-code it in a script that lands in a repo.
 - The proxy backend URL as reachable from where you run `curl` — `http://127.0.0.1:8080` on the host in a default prod compose.
 
 ```bash
@@ -35,31 +35,40 @@ ADMIN_API_TOKEN="$(your-secret-fetch privacy-proxy/admin-api-token)"
 PROXY=http://127.0.0.1:8080
 ```
 
-### Two ways to authenticate to the admin API
+### Three ways to authenticate to the admin API
 
 | Caller | Header | Can do | Cannot do |
 |---|---|---|---|
-| **Super-admin** (bootstrap / platform) | `X-Admin-Token: $ADMIN_API_TOKEN` | Platform lifecycle: create & manage orgs, mint each org's first `is_org_admin` group, fleet-wide maintenance config. | — |
+| **Super-admin** (bootstrap / platform) | `X-Admin-Token: $ADMIN_API_TOKEN` | Everything: org lifecycle, mint each org's first `is_org_admin` group, per-org tenant data, fleet-wide maintenance config. | — |
+| **Operator** (restricted onboarder) | `X-Admin-Token: $OPERATOR_API_TOKEN` | Exactly the Part 1 bootstrap: org lifecycle, mint `is_org_admin` / `is_org_readonly_admin` groups, set their access, add their first members. | Read or manage tenant data — regular groups, members, contracts, grants, audit logs, per-org compliance all return `403`. Fleet-wide settings and `is_system` group access. |
 | **Org admin** (tier-2) | `Authorization: Bearer <session-JWT>` | Manage their own org: create non-admin groups, set access, onboard users, grant contracts. | Create orgs, create other `is_org_admin` groups (escalation-blocked). |
 
-Tier-2 org admins normally use the **dashboard UI** — they obtain their JWT by logging in through Privado or Azure SSO like any user. **Part 1 (bootstrap) is super-admin-only** and uses `X-Admin-Token`; **Part 2 onward is the org admin's job** and uses their `Authorization: Bearer` token (the examples switch to it accordingly).
+Tier-2 org admins normally use the **dashboard UI** — they obtain their JWT by logging in through Privado or Azure SSO like any user. **Part 1 (bootstrap) needs a tier-1 token** (`X-Admin-Token`, either value); **Part 2 onward is the org admin's job** and uses their `Authorization: Bearer` token (the examples switch to it accordingly).
 
-### Who holds the super-admin token determines who runs the bootstrap
+### Which tier-1 token to hold, and who runs the bootstrap
 
-`ADMIN_API_TOKEN` is the only credential that can create orgs and mint org admins. Where it lives depends on how the Open Privacy Suite is operated for a given client — decide this up front, because it decides who runs **Part 1**:
+Both tier-1 credentials can run Part 1 — the operator token exists precisely so the bootstrap does not require a credential that can also read tenant data. Decide this up front, because it decides who runs **Part 1**:
 
-| Operating model | Who holds `ADMIN_API_TOKEN` | Who runs the bootstrap (Part 1) | Who runs day-to-day onboarding (Part 2+) |
+| Operating model | Which token, held by whom | Who runs the bootstrap (Part 1) | Who runs day-to-day onboarding (Part 2+) |
 |---|---|---|---|
-| **Operator-managed** | The platform operator | The platform operator creates the client's org and adds the client's first org admin(s) by DID. | The client's org admins, in the dashboard / with their JWT. |
-| **Client-self-managed** | The client | The client runs Part 1 themselves against their own deployment. | The client's org admins. |
+| **Operator-managed** | `OPERATOR_API_TOKEN`, held by the platform operator | The platform operator creates the org and adds its first org admin(s) by DID. | The org's own admins, in the dashboard / with their JWT. |
+| **Self-managed** | `ADMIN_API_TOKEN`, held by the deploying organization | Run Part 1 yourself against your own deployment. | Your org admins. |
 
-In both models, **Part 2 onward is the same** and is done by tier-2 org admins — the difference is only who performs the one-time super-admin bootstrap and who custodies the token long-term. If the platform operator manages the token, the handoff point is Step 4 (the operator onboards the client's first admin by DID; from there the client is self-sufficient and never needs `X-Admin-Token`). Whoever holds it must source it from a secret store and rotate it per the [credential-lifecycle guidance](/docs/security/audit-integrity#recommended-aws-secrets-manager-via-irsa-canonical).
+In both models, **Part 2 onward is identical** and is done by tier-2 org admins — the difference is only who performs the one-time bootstrap and which token they custody. The handoff point is Step 4 (the first admin is onboarded by DID; from there the org is self-sufficient and never needs `X-Admin-Token`).
+
+<Callout variant="warning" title="Prefer the operator token when a third party runs the bootstrap">
+
+If the party performing Part 1 is **not** inside your deployment's trust boundary, give them `OPERATOR_API_TOKEN`, not `ADMIN_API_TOKEN`. Both can create orgs and mint org admins, but the full admin token additionally reads and mutates every tenant's data, so handing it out grants far more than onboarding requires. See the [tier-1 credential breakdown](/docs/rbac#tier-1-token-credentials-admin--operator).
+
+</Callout>
+
+Whichever token you hold, source it from a secret store and rotate it per the [credential-lifecycle guidance](/docs/security/audit-integrity#recommended-aws-secrets-manager-via-irsa-canonical).
 
 ---
 
-## Part 1 — Bootstrap (super-admin, one time)
+## Part 1 — Bootstrap (tier-1 token, one time)
 
-These four steps stand up the first tenant and hand it to a human org admin. They are **super-admin-only** — the org-creation and `is_org_admin` endpoints reject tier-2 JWTs by design (escalation prevention).
+These four steps stand up the first tenant and hand it to a human org admin. They require a **tier-1 token** — the org-creation and `is_org_admin` endpoints reject tier-2 JWTs by design (escalation prevention). Either tier-1 credential works: the examples below show `$ADMIN_API_TOKEN`, and `$OPERATOR_API_TOKEN` is accepted identically on every Part 1 call.
 
 <Step number={1} title="Create the organization">
 
@@ -160,7 +169,7 @@ curl -sS -X DELETE "$PROXY/api/v1/admin/orgs/$ORG_ID/memberships/by-did" \
 What the operator credential can and cannot do here:
 
 - **Can:** add a DID to, and remove a DID from, `is_org_admin` groups.
-  Minting and revoking org admins is deliberately super-admin-only — a
+  Minting and revoking org admins deliberately requires a tier-1 token — a
   tier-2 org-admin JWT cannot mint or remove a peer who could then ban or
   demote them.
 - **Cannot:** manage regular-group memberships with the operator token —
@@ -214,7 +223,7 @@ These are the **role-distinguishing** methods only — every interactive group a
 | Standard user | `[]` | `eth_call`, `eth_getBalance`, `eth_getTransactionReceipt` + **read baseline** | Read / interact only. No sending, no deploy. |
 | Trader / writer | `[]` | above **+** `eth_sendTransaction` + **send baseline** | Can send txs (no claim needed — just the methods). |
 | Deployer | `["deploy"]` | trader methods **+** `eth_sendRawTransaction` | `deploy` gates contract creation; a member's first deploy auto-adds a grant to this group. |
-| Org admin | `[]` (implied) | at least one method | Use `is_org_admin: true` at create time — **super-admin only** (see Part 1). |
+| Org admin | `[]` (implied) | at least one method | Use `is_org_admin: true` at create time — **tier-1 token only** (see Part 1). |
 
 <Callout variant="info" title="Claims and methods must be consistent">
 The `admin` claim implies `deploy` + `upgrade`. Only those three claims gate anything; all other access — including trace methods like `debug_traceCall` / `debug_traceTransaction` — is the method allowlist's job (trace methods were decoupled from the `deploy` claim in RD-1121).
@@ -389,9 +398,9 @@ Org admins can also use the [dry-run / "what would this user see"](/docs/rbac#ad
 ## Day-1 checklist
 
 ```
-[ ] ADMIN_API_TOKEN sourced from secret store; admin API reached from an allowed private-network source IP (token + IP gate)
+[ ] Tier-1 token (ADMIN_API_TOKEN or OPERATOR_API_TOKEN) sourced from secret store; admin API reached from an allowed private-network source IP (token + IP gate)
 [ ] Created the organization                          (POST /orgs)
-[ ] Created the first org-admin group (is_org_admin)  (POST /orgs/:org/groups)   ← super-admin only
+[ ] Created the first org-admin group (is_org_admin)  (POST /orgs/:org/groups)   ← tier-1 token only
 [ ] Set the admin group's method allowlist            (PUT  .../access, claims: [])
 [ ] Onboarded the first human admin by DID            (POST .../memberships/by-did)
 [ ] Created standard / deployer / trader groups        + set each group's access

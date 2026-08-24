@@ -7435,9 +7435,10 @@ paths:
       description: 'Creates a group within the organization. Body: slug (required,
         URL-safe, unique per org), name (required), description, is_org_admin, is_org_readonly_admin.
         Admin-tier flags carry escalation gates: a tier-2 org-admin JWT cannot create
-        an is_org_admin group (super-admin only); the operator token cannot create
-        a regular group (org admin''s job). is_org_admin and is_org_readonly_admin
-        are mutually exclusive.'
+        an is_org_admin group (an admin-tier token — full admin or operator — is required),
+        though it may create an is_org_readonly_admin group; the operator token cannot
+        create a regular group (tenant management is the org admin''s job), only admin-tier
+        ones. is_org_admin and is_org_readonly_admin are mutually exclusive.'
       parameters:
       - description: Organization ID (UUID)
         in: path
@@ -7504,8 +7505,9 @@ paths:
     delete:
       description: Deletes a group. The group must belong to the path org (opaque
         403 otherwise). is_system groups cannot be deleted. A tier-2 org-admin JWT
-        cannot delete an is_org_admin group (super-admin only); the operator token
-        cannot delete a regular group.
+        cannot delete an is_org_admin group (an admin-tier token — full admin or operator
+        — is required); the operator token cannot delete a regular group (tenant management
+        is the org admin's job) but may delete admin-tier groups (is_org_admin / is_org_readonly_admin).
       parameters:
       - description: Organization ID (UUID)
         in: path
@@ -7604,9 +7606,11 @@ paths:
       description: 'Updates a group''s name, description, is_org_admin, and/or is_org_readonly_admin.
         All body fields are optional. is_system groups are identity-immutable (403).
         Escalation gates apply: a tier-2 org-admin JWT cannot change is_org_admin
-        in either direction (super-admin only); the operator token cannot edit a regular
-        group unless the update promotes it to an admin-tier group. The resulting
-        state cannot be both full and read-only org admin.'
+        in either direction (an admin-tier token — full admin or operator — is required);
+        the operator token cannot edit a regular group (tenant management is the org
+        admin''s job) but may edit admin-tier groups (is_org_admin / is_org_readonly_admin),
+        is_system groups, and the global default group. The resulting state cannot
+        be both full and read-only org admin.'
       parameters:
       - description: Organization ID (UUID)
         in: path
@@ -7731,12 +7735,14 @@ paths:
         ([]string; "*" expands to the full method list), claims ([]string of operational
         claims: deploy/upgrade/admin), rpc_api_key (encrypted at rest, never returned
         in clear), verbose_errors. is_system group access can only be modified by
-        the full admin token (X-Admin-Token; the operator token is rejected too here).
-        Reshaping an is_org_admin group''s access is rejected for a tier-2 org-admin
-        JWT (an admin-tier token — full admin or operator — is required); reshaping
-        a regular group''s access is rejected for the operator token (tenant management
-        is the org admin''s job). On is_org_admin groups claims must be empty and
-        at least one method is required. The returned rpc_api_key is masked.'
+        the full admin token (X-Admin-Token; unlike the other gates here, the operator
+        token is rejected for is_system too). Reshaping an is_org_admin group''s access
+        is rejected for a tier-2 org-admin JWT (an admin-tier token — full admin or
+        operator — is required); reshaping a regular group''s access is rejected for
+        the operator token (tenant management is the org admin''s job), which may
+        reshape admin-tier groups (is_org_admin / is_org_readonly_admin) and the global
+        default group. On is_org_admin groups claims must be empty and at least one
+        method is required. The returned rpc_api_key is masked.'
       parameters:
       - description: Organization ID (UUID)
         in: path
@@ -7806,8 +7812,9 @@ paths:
         transaction; if any group fails a check the whole batch rolls back. Body:
         group_ids ([]string, required, max 200). Every group must belong to the path
         org. A tier-2 org-admin JWT batch that includes any is_org_admin group is
-        rejected (super-admin only); the operator token is rejected if the batch includes
-        any regular group.'
+        rejected (an admin-tier token — full admin or operator — is required); the
+        operator token is rejected if the batch includes any regular group (tenant
+        management is the org admin''s job) — an all-admin-tier batch is accepted.'
       parameters:
       - description: Organization ID (UUID)
         in: path
