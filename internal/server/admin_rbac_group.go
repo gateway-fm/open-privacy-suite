@@ -604,7 +604,7 @@ func (s *Server) getGroupAccess(c *gin.Context) {
 // setGroupAccess replaces a group's RPC access settings.
 //
 // @Summary      Set group access
-// @Description  Creates or replaces the group's access settings. Body: allowed_methods ([]string; "*" expands to the full method list), claims ([]string of operational claims: deploy/upgrade/admin), rpc_api_key (encrypted at rest, never returned in clear), verbose_errors. is_system group access is super-admin-only (X-Admin-Token). Reshaping an is_org_admin group's access is super-admin-only; reshaping a regular group's access is rejected for the operator token. On is_org_admin groups claims must be empty and at least one method is required. The returned rpc_api_key is masked.
+// @Description  Creates or replaces the group's access settings. Body: allowed_methods ([]string; "*" expands to the full method list), claims ([]string of operational claims: deploy/upgrade/admin), rpc_api_key (encrypted at rest, never returned in clear), verbose_errors. is_system group access can only be modified by the full admin token (X-Admin-Token; the operator token is rejected too here). Reshaping an is_org_admin group's access is rejected for a tier-2 org-admin JWT (an admin-tier token — full admin or operator — is required); reshaping a regular group's access is rejected for the operator token (tenant management is the org admin's job). On is_org_admin groups claims must be empty and at least one method is required. The returned rpc_api_key is masked.
 // @Tags         Admin: RBAC
 // @Accept       json
 // @Produce      json

@@ -11675,7 +11675,7 @@
                 ]
             },
             "put": {
-                "description": "Creates or replaces the group's access settings. Body: allowed_methods ([]string; \"*\" expands to the full method list), claims ([]string of operational claims: deploy/upgrade/admin), rpc_api_key (encrypted at rest, never returned in clear), verbose_errors. is_system group access is super-admin-only (X-Admin-Token). Reshaping an is_org_admin group's access is super-admin-only; reshaping a regular group's access is rejected for the operator token. On is_org_admin groups claims must be empty and at least one method is required. The returned rpc_api_key is masked.",
+                "description": "Creates or replaces the group's access settings. Body: allowed_methods ([]string; \"*\" expands to the full method list), claims ([]string of operational claims: deploy/upgrade/admin), rpc_api_key (encrypted at rest, never returned in clear), verbose_errors. is_system group access can only be modified by the full admin token (X-Admin-Token; the operator token is rejected too here). Reshaping an is_org_admin group's access is rejected for a tier-2 org-admin JWT (an admin-tier token — full admin or operator — is required); reshaping a regular group's access is rejected for the operator token (tenant management is the org admin's job). On is_org_admin groups claims must be empty and at least one method is required. The returned rpc_api_key is masked.",
                 "parameters": [
                     {
                         "description": "Organization ID (UUID)",
@@ -11781,7 +11781,7 @@
         },
         "/api/v1/admin/orgs/{org_id}/memberships/by-did": {
             "delete": {
-                "description": "Removes a user identified by DID from a group in the path org (the symmetric counterpart of onboard-by-did). Body: did (required), group_id (required). Requires full (is_org_admin) scope over the path org; the target group must belong to that org (opaque 403 otherwise). Removing from an is_org_admin group is super-admin-only; a regular group is rejected for the operator token. A DID that is unknown, or has no membership in the target group, returns the SAME opaque 403 as a foreign-org group — no existence oracle. No tenant read is performed.",
+                "description": "Removes a user identified by DID from a group in the path org (the symmetric counterpart of onboard-by-did). Body: did (required), group_id (required). Requires full (is_org_admin) scope over the path org; the target group must belong to that org (opaque 403 otherwise). Removing from an is_org_admin group is rejected for a tier-2 org-admin JWT (an admin-tier token — full admin or operator — is required); removing from a regular group is rejected for the operator token (tenant management is the org admin's job). A DID that is unknown, or has no membership in the target group, returns the SAME opaque 403 as a foreign-org group — no existence oracle. No tenant read is performed.",
                 "parameters": [
                     {
                         "description": "Organization ID (UUID)",
@@ -11876,7 +11876,7 @@
                 ]
             },
             "post": {
-                "description": "Onboards a user identified by DID directly into a group in the path org, auto-provisioning the user if the DID is not yet known. Body: did (required, a syntactically valid W3C DID; iden3/Polygon-ID DIDs are checksum-verified), group_id (required), expires_at (optional RFC3339, future). Requires full (is_org_admin) scope over the path org; the target group must belong to that org (opaque 403 otherwise). Onboarding into an is_org_admin group is super-admin-only; a regular group is rejected for the operator token. Ban state is never revealed via this endpoint. ADD semantics — a new user is not also placed in the default group.",
+                "description": "Onboards a user identified by DID directly into a group in the path org, auto-provisioning the user if the DID is not yet known. Body: did (required, a syntactically valid W3C DID; iden3/Polygon-ID DIDs are checksum-verified), group_id (required), expires_at (optional RFC3339, future). Requires full (is_org_admin) scope over the path org; the target group must belong to that org (opaque 403 otherwise). Onboarding into an is_org_admin group is rejected for a tier-2 org-admin JWT (an admin-tier token — full admin or operator — is required); onboarding into a regular group is rejected for the operator token (tenant management is the org admin's job). Ban state is never revealed via this endpoint. ADD semantics — a new user is not also placed in the default group.",
                 "parameters": [
                     {
                         "description": "Organization ID (UUID)",
@@ -13659,7 +13659,7 @@
                 ]
             },
             "post": {
-                "description": "Adds an existing user to a group. Body: group_id (required) and expires_at (optional RFC3339, must be in the future — a time-boxed access window; omit for permanent). Requires full (is_org_admin) scope over the target group's org; the check runs before the body is read so the response is not a user-enumeration oracle. Adding a member to an is_org_admin group is super-admin-only; adding to a regular group is rejected for the operator token. To onboard a not-yet-provisioned DID, use the by-did endpoint instead.",
+                "description": "Adds an existing user to a group. Body: group_id (required) and expires_at (optional RFC3339, must be in the future — a time-boxed access window; omit for permanent). Requires full (is_org_admin) scope over the target group's org; the check runs before the body is read so the response is not a user-enumeration oracle. Adding a member to an is_org_admin group is rejected for a tier-2 org-admin JWT (an admin-tier token — full admin or operator — is required); adding to a regular group is rejected for the operator token (tenant management is the org admin's job). To onboard a not-yet-provisioned DID, use the by-did endpoint instead.",
                 "parameters": [
                     {
                         "description": "User ID (UUID)",
@@ -13766,7 +13766,7 @@
         },
         "/api/v1/admin/users/{user_id}/memberships/{membership_id}": {
             "delete": {
-                "description": "Removes a user's membership from a group. Requires full (is_org_admin) scope over the group's org; an unknown or out-of-scope membership returns an opaque 403. Removing a member from an is_org_admin group (a demotion) is super-admin-only; removing from a regular group is rejected for the operator token.",
+                "description": "Removes a user's membership from a group. Requires full (is_org_admin) scope over the group's org; an unknown or out-of-scope membership returns an opaque 403. Removing a member from an is_org_admin group (a demotion) is rejected for a tier-2 org-admin JWT (an admin-tier token — full admin or operator — is required); removing from a regular group is rejected for the operator token (tenant management is the org admin's job).",
                 "parameters": [
                     {
                         "description": "User ID (UUID)",
