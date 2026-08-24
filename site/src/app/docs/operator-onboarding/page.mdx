@@ -68,7 +68,7 @@ Whichever token you hold, source it from a secret store and rotate it per the [c
 
 ## Part 1 — Bootstrap (tier-1 token, one time)
 
-These four steps stand up the first tenant and hand it to a human org admin. They require a **tier-1 token** — the org-creation and `is_org_admin` endpoints reject tier-2 JWTs by design (escalation prevention). Either tier-1 credential works: the examples below show `$ADMIN_API_TOKEN`, and `$OPERATOR_API_TOKEN` is accepted identically on every Part 1 call.
+These four steps stand up the first tenant and hand it to a human org admin. They require a **tier-1 token** — the org-creation and `is_org_admin` endpoints reject tier-2 JWTs by design (escalation prevention). Either tier-1 credential works for the four steps themselves: the examples below show `$ADMIN_API_TOKEN`, and `$OPERATOR_API_TOKEN` is accepted on each of them. The one exception is DID *discovery* — `GET /api/v1/admin/users` is tenant-confidential and returns `403` for the operator token, so an operator-managed bootstrap must be given the new admin's DID out of band (see the callout after Step 4).
 
 <Step number={1} title="Create the organization">
 
@@ -102,7 +102,7 @@ curl -sS -X POST "$PROXY/api/v1/admin/orgs/$ORG_ID/groups" \
   }'
 ```
 
-Capture the returned group `id` as `ADMIN_GROUP_ID`. `is_org_admin: true` gives members all claims (`admin`/`deploy`/`upgrade`) on every contract in the org, plus dashboard access. Only a super-admin can create such a group.
+Capture the returned group `id` as `ADMIN_GROUP_ID`. `is_org_admin: true` gives members all claims (`admin`/`deploy`/`upgrade`) on every contract in the org, plus dashboard access. Creating such a group requires a tier-1 token — either `ADMIN_API_TOKEN` or `OPERATOR_API_TOKEN`; a tier-2 org-admin JWT is refused (escalation prevention).
 
 </Step>
 
@@ -146,12 +146,12 @@ That human can now log into the dashboard via Privado/Azure and run everything i
 </Step>
 
 <Callout variant="info" title="Where DIDs come from">
-A user's DID is established the first time they authenticate. If you don't have it yet, have the user log in once (Privado QR or Azure SSO); they're auto-provisioned into the system-wide default group, and you can then read their DID/UUID from `GET /api/v1/admin/users`. Privado users surface two DIDs (a genesis DID and a per-verifier profile DID) — onboard the **login DID** the user authenticates with.
+A user's DID is established the first time they authenticate. If you don't have it yet, have the user log in once (Privado QR or Azure SSO); they're auto-provisioned into the system-wide default group, and you can then read their DID/UUID from `GET /api/v1/admin/users`. That endpoint is tenant-confidential, so it works with `ADMIN_API_TOKEN` but returns `403` for `OPERATOR_API_TOKEN` — in an operator-managed bootstrap the incoming admin sends their own DID (visible on their account page after first login) to the operator instead. Privado users surface two DIDs (a genesis DID and a per-verifier profile DID) — onboard the **login DID** the user authenticates with.
 </Callout>
 
 ---
 
-## Removing an org admin by DID (super-admin)
+## Removing an org admin by DID (tier-1 token)
 
 Removal is the symmetric counterpart of bootstrap step 4 — same identifier,
 same body shape, same scope rules:
@@ -419,7 +419,7 @@ All paths are prefixed `/api/v1/admin`. Day-to-day endpoints (Part 2+) are drive
 | Purpose | Method & path | Auth |
 |---|---|---|
 | Create organization | `POST /orgs` | Super-admin only |
-| Create group | `POST /orgs/:org_id/groups` | Tier-2 OK (except `is_org_admin` → super-admin) |
+| Create group | `POST /orgs/:org_id/groups` | Tier-2 OK (except `is_org_admin` → tier-1 token) |
 | Set group access (methods, claims, RPC key) | `PUT /orgs/:org_id/groups/:group_id/access` | Tier-2 OK |
 | Onboard user by DID | `POST /orgs/:org_id/memberships/by-did` | Tier-2 OK |
 | List users | `GET /users` | Scoped to caller's orgs |

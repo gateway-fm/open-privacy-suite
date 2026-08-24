@@ -150,7 +150,7 @@ func (s *Server) listGroups(c *gin.Context) {
 // createGroup creates a group within an organization.
 //
 // @Summary      Create a group
-// @Description  Creates a group within the organization. Body: slug (required, URL-safe, unique per org), name (required), description, is_org_admin, is_org_readonly_admin. Admin-tier flags carry escalation gates: a tier-2 org-admin JWT cannot create an is_org_admin group (an admin-tier token — full admin or operator — is required), though it may create an is_org_readonly_admin group; the operator token cannot create a regular group (tenant management is the org admin's job), only admin-tier ones. is_org_admin and is_org_readonly_admin are mutually exclusive.
+// @Description  Creates a group within the organization. Body: slug (required, URL-safe, unique per org), name (required), description, is_org_admin, is_org_readonly_admin. Admin-tier flags carry escalation gates: a tier-2 org-admin JWT cannot create an is_org_admin group (an admin-tier token — full admin or operator — is required), though it may create an is_org_readonly_admin group; the operator token cannot create a regular group outside the system default org (tenant management is the org admin's job), only admin-tier ones. is_org_admin and is_org_readonly_admin are mutually exclusive.
 // @Tags         Admin: RBAC
 // @Accept       json
 // @Produce      json
@@ -347,7 +347,7 @@ func (s *Server) getGroup(c *gin.Context) {
 // updateGroup edits a group's name, description, and/or admin-tier flags.
 //
 // @Summary      Update a group
-// @Description  Updates a group's name, description, is_org_admin, and/or is_org_readonly_admin. All body fields are optional. is_system groups are identity-immutable (403). Escalation gates apply: a tier-2 org-admin JWT cannot change is_org_admin in either direction (an admin-tier token — full admin or operator — is required); the operator token cannot edit a regular group (tenant management is the org admin's job) but may edit admin-tier groups (is_org_admin / is_org_readonly_admin), is_system groups, and the global default group. The resulting state cannot be both full and read-only org admin.
+// @Description  Updates a group's name, description, is_org_admin, and/or is_org_readonly_admin. All body fields are optional. is_system groups are identity-immutable (403). Escalation gates apply: a tier-2 org-admin JWT cannot change is_org_admin in either direction (an admin-tier token — full admin or operator — is required); the operator token may only edit a group that is already admin-tier (is_org_admin / is_org_readonly_admin) or is being promoted to one by this very update — a plain regular-group edit is rejected (tenant management is the org admin's job). The resulting state cannot be both full and read-only org admin.
 // @Tags         Admin: RBAC
 // @Accept       json
 // @Produce      json
@@ -480,7 +480,7 @@ func (s *Server) updateGroup(c *gin.Context) {
 // deleteGroup deletes a group by ID.
 //
 // @Summary      Delete a group
-// @Description  Deletes a group. The group must belong to the path org (opaque 403 otherwise). is_system groups cannot be deleted. A tier-2 org-admin JWT cannot delete an is_org_admin group (an admin-tier token — full admin or operator — is required); the operator token cannot delete a regular group (tenant management is the org admin's job) but may delete admin-tier groups (is_org_admin / is_org_readonly_admin).
+// @Description  Deletes a group. The group must belong to the path org (opaque 403 otherwise). is_system groups cannot be deleted. A tier-2 org-admin JWT cannot delete an is_org_admin group (an admin-tier token — full admin or operator — is required); the operator token cannot delete a regular group (tenant management is the org admin's job) but may delete admin-tier groups (is_org_admin / is_org_readonly_admin) and the global default group.
 // @Tags         Admin: RBAC
 // @Produce      json
 // @Param        org_id path string true "Organization ID (UUID)"
@@ -952,7 +952,7 @@ func (s *Server) batchDeletePreview(c *gin.Context) {
 // POST /orgs/:org_id/groups/batch-delete
 //
 // @Summary      Batch-delete groups
-// @Description  Deletes multiple groups (and their dependencies) in a single atomic transaction; if any group fails a check the whole batch rolls back. Body: group_ids ([]string, required, max 200). Every group must belong to the path org. A tier-2 org-admin JWT batch that includes any is_org_admin group is rejected (an admin-tier token — full admin or operator — is required); the operator token is rejected if the batch includes any regular group (tenant management is the org admin's job) — an all-admin-tier batch is accepted.
+// @Description  Deletes multiple groups (and their dependencies) in a single atomic transaction; if any group fails a check the whole batch rolls back. Body: group_ids ([]string, required, max 200). Every group must belong to the path org. A tier-2 org-admin JWT batch that includes any is_org_admin group is rejected (an admin-tier token — full admin or operator — is required); the operator token is rejected if the batch includes any regular group (tenant management is the org admin's job) — an all-admin-tier batch is accepted. Note this path's gates are not identical to the per-group ones: the global default group counts as regular here (unlike single delete), and is_system groups are accepted (unlike single delete, which refuses them for every caller).
 // @Tags         Admin: RBAC
 // @Accept       json
 // @Produce      json
