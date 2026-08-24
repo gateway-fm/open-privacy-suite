@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { rbacApi } from '@/api/rbac';
 import type { User, GroupWithAccess, UserRoleFilter } from '@/types/rbac';
@@ -84,6 +84,14 @@ export default function UserList() {
   const [groupOptions, setGroupOptions] = useState<GroupWithAccess[]>([]);
   const [groupsLoadFailed, setGroupsLoadFailed] = useState(false);
 
+  // Monotonic id of the newest users request. Searches are debounced but not
+  // serialised, so two can be in flight at once and settle out of order. The
+  // empty-result branch below is read together with the CURRENT query, so a
+  // stale empty page would claim the currently-searched DID was never
+  // onboarded and prefill the onboard dialog with it — inviting a duplicate
+  // membership. Every state write in loadUsers is gated on still being newest.
+  const usersRequestIdRef = useRef(0);
+
   // Debounce search input
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -119,6 +127,8 @@ export default function UserList() {
 
   const loadUsers = useCallback(async (newOffset?: number) => {
     const currentOffset = newOffset ?? offset;
+    const requestId = ++usersRequestIdRef.current;
+    const isNewest = () => usersRequestIdRef.current === requestId;
 
     try {
       setLoading(true);
@@ -146,6 +156,9 @@ export default function UserList() {
         params.role = roleFilter;
       }
       const response = await rbacApi.users.list(params);
+      // A superseded response must not touch state: it would overwrite the
+      // newer query's rows and be re-interpreted against that newer query.
+      if (!isNewest()) return;
       const page = response.data;
       setUsers(page.data || []);
       setTotal(page.total);
@@ -155,12 +168,15 @@ export default function UserList() {
       }
     } catch (error) {
       console.error('Failed to load users:', error);
+      if (!isNewest()) return;
       setUsers([]);
       // A failed request must not render as "no such user" — that would invite
       // onboarding someone who may already exist.
       setLoadFailed(true);
     } finally {
-      setLoading(false);
+      // Not just cosmetic: clearing this for a superseded request presents the
+      // in-flight view as settled, flashing the stale page's empty state.
+      if (isNewest()) setLoading(false);
     }
   }, [selectedOrg, debouncedSearch, selectedGroupIds, roleFilter, offset]);
 

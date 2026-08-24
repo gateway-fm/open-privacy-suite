@@ -792,6 +792,163 @@ describe('UserList', () => {
     });
   });
 
+  // Out-of-order search responses are not a cosmetic glitch here: a stale empty
+  // page rendered against the *current* query makes the RD-1239 hint claim the
+  // searched DID was never onboarded, and prefills the onboard dialog with it —
+  // inviting a duplicate membership for a user who does exist.
+  //
+  // The 300ms debounce coalesces keystrokes, so simply pasting A then B issues
+  // ONE request for B. Every test below therefore waits for A to actually reach
+  // the server (proving two requests are genuinely in flight) before
+  // superseding it — otherwise the test would pass without reproducing anything.
+  describe('Superseded search responses (RD-1239)', () => {
+    const DID_A =
+      'did:iden3:privado:main:2qAAAAaaaaAAAAaaaaAAAAaaaaAAAAaaaaAAAAaaaaAAAA';
+    const DID_B =
+      'did:iden3:privado:main:2qBBBBbbbbBBBBbbbbBBBBbbbbBBBBbbbbBBBBbbbbBBBB';
+    const matched = { ...mockUserFull, external_id: DID_B };
+    const B_ROW = new RegExp(DID_B.slice(-8));
+
+    async function search(
+      user: ReturnType<typeof userEvent.setup>,
+      query: string
+    ) {
+      const input = screen.getByPlaceholderText('Search by DID or wallet address...');
+      await user.click(input);
+      await user.clear(input);
+      await user.paste(query);
+    }
+
+    // Holds A until released and answers B either immediately or on release.
+    // `seen` records every search actually issued, so a test can prove A was
+    // in flight before B superseded it.
+    function serveOutOfOrder(bImmediate: boolean, aResponse: () => Response) {
+      const seen: string[] = [];
+      let releaseA: () => void = () => {};
+      let releaseB: () => void = () => {};
+      const aGate = new Promise<void>(r => { releaseA = r; });
+      const bGate = new Promise<void>(r => { releaseB = r; });
+
+      server.use(
+        http.get('/api/v1/admin/users', async ({ request }) => {
+          const q = new URL(request.url).searchParams.get('search') ?? '';
+          seen.push(q);
+          if (q === DID_A) {
+            await aGate;
+            return aResponse();
+          }
+          if (q === DID_B) {
+            if (!bImmediate) await bGate;
+            return HttpResponse.json({ data: [matched], total: 1, limit: 25, offset: 0 });
+          }
+          return HttpResponse.json({ data: [mockUserFull], total: 1, limit: 25, offset: 0 });
+        })
+      );
+      return { seen, releaseA: () => releaseA(), releaseB: () => releaseB() };
+    }
+
+    it('a slow empty response for a superseded query does not overwrite the current match', async () => {
+      const user = userEvent.setup();
+      const { seen, releaseA } = serveOutOfOrder(true, () =>
+        HttpResponse.json({ data: [], total: 0, limit: 25, offset: 0 })
+      );
+
+      renderWithRBACContext(<UserList />);
+      await waitFor(() => {
+        expect(screen.getByText('Verified')).toBeInTheDocument();
+      });
+
+      await search(user, DID_A);
+      // Precondition: A really is in flight (past the debounce), so B genuinely
+      // supersedes an outstanding request rather than replacing a queued one.
+      await waitFor(() => {
+        expect(seen).toContain(DID_A);
+      });
+
+      await search(user, DID_B);
+      await waitFor(() => {
+        expect(screen.getByText(B_ROW)).toBeInTheDocument();
+      });
+
+      // Only now does the superseded request answer, with an empty page.
+      releaseA();
+
+      // It must not blank B's result, and must not fire the onboarding hint —
+      // which would tell the admin that DID_B has never been onboarded.
+      await waitFor(() => {
+        expect(screen.getByText(B_ROW)).toBeInTheDocument();
+      });
+      expect(screen.queryByTestId('users-empty-search')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('onboard-by-did-hint-button')).not.toBeInTheDocument();
+    });
+
+    it('a stale failure does not replace a current successful result', async () => {
+      const user = userEvent.setup();
+      const { seen, releaseA } = serveOutOfOrder(true, () => HttpResponse.error());
+
+      renderWithRBACContext(<UserList />);
+      await waitFor(() => {
+        expect(screen.getByText('Verified')).toBeInTheDocument();
+      });
+
+      await search(user, DID_A);
+      await waitFor(() => {
+        expect(seen).toContain(DID_A);
+      });
+
+      await search(user, DID_B);
+      await waitFor(() => {
+        expect(screen.getByText(B_ROW)).toBeInTheDocument();
+      });
+
+      releaseA();
+
+      // The superseded request's catch branch must not raise the error state
+      // over the result the admin is currently looking at.
+      await waitFor(() => {
+        expect(screen.getByText(B_ROW)).toBeInTheDocument();
+      });
+      expect(screen.queryByTestId('users-load-error')).not.toBeInTheDocument();
+    });
+
+    it('a stale response does not clear the spinner while the current request is in flight', async () => {
+      const user = userEvent.setup();
+      const { seen, releaseA, releaseB } = serveOutOfOrder(false, () =>
+        HttpResponse.json({ data: [], total: 0, limit: 25, offset: 0 })
+      );
+
+      renderWithRBACContext(<UserList />);
+      await waitFor(() => {
+        expect(screen.getByText('Verified')).toBeInTheDocument();
+      });
+
+      await search(user, DID_A);
+      await waitFor(() => {
+        expect(seen).toContain(DID_A);
+      });
+
+      await search(user, DID_B);
+      await waitFor(() => {
+        expect(seen).toContain(DID_B);
+      });
+
+      // Land A while B is still outstanding: a stale `finally` must not report
+      // the view as settled, which would flash A's empty page (and the hint)
+      // for query B.
+      releaseA();
+      await waitFor(() => {
+        expect(document.querySelector('.animate-spin')).toBeInTheDocument();
+      });
+      expect(screen.queryByTestId('users-empty-search')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('onboard-by-did-hint-button')).not.toBeInTheDocument();
+
+      releaseB();
+      await waitFor(() => {
+        expect(screen.getByText(B_ROW)).toBeInTheDocument();
+      });
+    });
+  });
+
   describe('Ban/Unban Button States', () => {
     it('shows "Ban" button for active users', async () => {
       server.use(
