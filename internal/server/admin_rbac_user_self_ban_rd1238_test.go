@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"privacy-proxy/internal/rbac"
@@ -202,4 +203,29 @@ func TestIsSelfBanAttempt_EmptyIdentityNeverMatches_RD1238(t *testing.T) {
 	// The real self-target case.
 	assert.True(t, isSelfBanAttempt(newCtx("jwt_admin", "u1"), "u1"))
 	assert.False(t, isSelfBanAttempt(newCtx("jwt_admin", "u1"), "u2"))
+}
+
+// The guard must key on the canonical UUID, not the raw path spelling.
+// PostgreSQL's uuid type accepts non-canonical input (upper-case here), so
+// GetUser and the scope check both resolve the caller's row while a raw
+// string comparison would not match — which would walk the self-ban straight
+// through the guard.
+func TestUpdateUser_SelfBan_NonCanonicalUUID_StillRejected_RD1238(t *testing.T) {
+	srv, _ := setupTieredAdminTestServer(t, "secret")
+	orgID, userID := createOrgAdminUser(t, srv)
+	router := jwtAdminRouterAsUser(srv, orgID, userID)
+
+	// Same UUID, upper-cased: a different string, the same row.
+	spoofed := strings.ToUpper(userID)
+	require.NotEqual(t, userID, spoofed, "fixture UUID must contain hex letters to vary by case")
+
+	w := putUserJSON(t, router, "/api/v1/admin/users/"+spoofed, map[string]any{"banned": true})
+
+	assert.Equal(t, http.StatusBadRequest, w.Code,
+		"non-canonical UUID must not bypass the self-ban guard: %s", w.Body.String())
+
+	user, err := srv.db.GetUser(t.Context(), userID)
+	require.NoError(t, err)
+	require.NotNil(t, user)
+	assert.False(t, user.Banned, "self-ban slipped through via a non-canonical UUID spelling")
 }

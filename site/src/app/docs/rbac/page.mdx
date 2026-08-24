@@ -116,6 +116,20 @@ Read-only admin (`is_org_readonly_admin`) groups are **not** restricted this way
 
 To match this, the dashboard hides org-admin groups from the user-onboarding and add-membership group pickers for tier-2 admins, so they are not offered an option the server would reject. The server-side `403` remains the enforced boundary regardless of the UI.
 
+### You Cannot Ban Your Own Account
+
+An org admin cannot ban themselves. Setting `banned` on your own user returns `400 Bad Request`.
+
+Banning revokes the target's refresh tokens immediately, and a banned user is rejected on every subsequent request — so banning yourself would end your own session on the spot, accidentally or otherwise. Because the restricted operator token is not permitted to modify users, undoing it requires the **full admin token**. In an organization with a single admin, that means the organization cannot restore its own access.
+
+- **Un-banning yourself is not blocked.** It is the recovery direction, and a banned admin cannot reach the endpoint anyway.
+- **Banning other users is unaffected**, as is editing your own KYC status or note.
+- **The full admin token is not restricted** — it may ban any user, including an admin.
+
+In the dashboard the Ban control on your own row is inert and explains why on hover, both in the user list and on the user detail page. As always the server-side check is the boundary; the UI only avoids offering an action that would fail.
+
+To ban an admin, have another admin in the same organization do it, or use the full admin token.
+
 ---
 
 ## Claims Hierarchy

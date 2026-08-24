@@ -61,18 +61,22 @@ describe('UserList self-ban guard (RD-1238)', () => {
     mockUserDID.mockReturnValue(null);
   });
 
-  it("disables the Ban button on the signed-in admin's own row", async () => {
+  it("marks the Ban button aria-disabled on the signed-in admin's own row", async () => {
     mockUserDID.mockReturnValue(self.external_id);
     serveUsers([self]);
 
     renderWithRBACContext(<UserList />);
 
     const banButton = await waitFor(() => screen.getByRole('button', { name: /ban/i }));
-    expect(banButton).toBeDisabled();
+    expect(banButton).toHaveAttribute('aria-disabled', 'true');
+    // aria-disabled, not `disabled`: the shared Button sets
+    // disabled:pointer-events-none and disabled controls aren't focusable, so a
+    // real `disabled` would suppress the tooltip explaining why it's inert.
+    expect(banButton).not.toBeDisabled();
     expect(banButton).toHaveAttribute('title', expect.stringMatching(/own account/i));
   });
 
-  it('leaves the Ban button enabled for other users', async () => {
+  it('leaves the Ban button actionable for other users', async () => {
     mockUserDID.mockReturnValue(self.external_id);
     serveUsers([other]);
 
@@ -80,6 +84,7 @@ describe('UserList self-ban guard (RD-1238)', () => {
 
     const banButton = await waitFor(() => screen.getByRole('button', { name: /ban/i }));
     expect(banButton).toBeEnabled();
+    expect(banButton).not.toHaveAttribute('aria-disabled');
   });
 
   it('does not send the request when the own-row button is clicked', async () => {
@@ -107,10 +112,10 @@ describe('UserList self-ban guard (RD-1238)', () => {
     renderWithRBACContext(<UserList />);
 
     const banButton = await waitFor(() => screen.getByRole('button', { name: /ban/i }));
-    expect(banButton).toBeDisabled();
+    expect(banButton).toHaveAttribute('aria-disabled', 'true');
   });
 
-  it('keeps every Ban button enabled when the identity is unknown', async () => {
+  it('keeps every Ban button actionable when the identity is unknown', async () => {
     // Fail-open on the affordance only: the server gate still rejects a real
     // self-ban, so an unknown identity must not disable unrelated controls.
     mockUserDID.mockReturnValue(null);
@@ -119,6 +124,8 @@ describe('UserList self-ban guard (RD-1238)', () => {
     renderWithRBACContext(<UserList />);
 
     await waitFor(() => expect(screen.getAllByRole('button', { name: /ban/i })).toHaveLength(2));
-    screen.getAllByRole('button', { name: /ban/i }).forEach(b => expect(b).toBeEnabled());
+    screen
+      .getAllByRole('button', { name: /ban/i })
+      .forEach(b => expect(b).not.toHaveAttribute('aria-disabled'));
   });
 });

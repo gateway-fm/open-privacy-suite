@@ -404,8 +404,15 @@ func (s *Server) updateRBACUser(c *gin.Context) {
 	// a banned admin cannot reach this endpoint anyway, so gating it would only
 	// obstruct recovery. Checked after the body is bound (the decision needs
 	// input.Banned) and before any field is applied, so nothing is persisted.
-	if input.Banned != nil && *input.Banned && isSelfBanAttempt(c, userID) {
-		slog.Warn("admin_rbac_user: self-ban rejected", "user_id", userID)
+	//
+	// Compares user.ID, NOT the raw :user_id path value. Postgres's uuid type
+	// accepts non-canonical spellings (upper case, no hyphens, braces), so a
+	// raw-string comparison would miss while GetUser and the scope check both
+	// still resolve the caller's own row — walking the self-ban straight
+	// through the guard. user.ID comes back canonical from the database, and so
+	// does the admin_user_id the auth middleware stores, so both sides match.
+	if input.Banned != nil && *input.Banned && isSelfBanAttempt(c, user.ID) {
+		slog.Warn("admin_rbac_user: self-ban rejected", "user_id", user.ID)
 		c.JSON(http.StatusBadRequest, gin.H{"error": errCannotSelfBan})
 		return
 	}

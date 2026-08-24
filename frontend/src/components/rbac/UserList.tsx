@@ -435,13 +435,23 @@ export default function UserList() {
                         variant={user.banned ? 'success' : 'destructive'}
                         size="sm"
                         onClick={() => handleToggleBan(user)}
-                        className="gap-1.5"
-                        // RD-1238: your own Ban control is disabled — banning
+                        // RD-1238: your own Ban control is inert — banning
                         // yourself ends your session on the spot and only the
-                        // full admin token can undo it. Disabled rather than
-                        // hidden so the reason is visible and the action
-                        // column keeps its alignment (cf. RD-996).
-                        disabled={isSelfBanBlocked(user)}
+                        // full admin token can undo it. aria-disabled rather
+                        // than `disabled`: the shared Button sets
+                        // disabled:pointer-events-none, and disabled controls
+                        // aren't focusable, so a real `disabled` would hide the
+                        // very tooltip that explains why. This keeps the button
+                        // hoverable and focusable while handleToggleBan returns
+                        // early, and announces the state to assistive tech.
+                        // Kept visible (not hidden) so the action column keeps
+                        // its alignment (cf. RD-996).
+                        aria-disabled={isSelfBanBlocked(user) || undefined}
+                        className={
+                          isSelfBanBlocked(user)
+                            ? 'gap-1.5 opacity-50 cursor-not-allowed'
+                            : 'gap-1.5'
+                        }
                         title={
                           isSelfBanBlocked(user)
                             ? 'You cannot ban your own account — ask another admin'
