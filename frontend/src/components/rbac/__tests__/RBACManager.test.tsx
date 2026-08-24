@@ -667,8 +667,9 @@ describe('RBACManager Integration Tests', () => {
       renderRBACManager({ initialRoute: '/admin/rbac/users' });
 
       await waitFor(() => {
-        // Should show empty state
-        expect(screen.getByText('No users found')).toBeInTheDocument();
+        // RD-1239: a failed fetch reports the failure; it no longer renders as
+        // an empty list, which would assert the org has no users.
+        expect(screen.getByTestId('users-load-error')).toBeInTheDocument();
       });
     });
 

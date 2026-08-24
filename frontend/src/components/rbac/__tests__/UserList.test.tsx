@@ -438,7 +438,7 @@ describe('UserList', () => {
   });
 
   describe('Error Handling', () => {
-    it('shows empty list when API returns error', async () => {
+    it('reports a failed load rather than presenting it as an empty list', async () => {
       server.use(
         http.get('/api/v1/admin/users', () => {
           return HttpResponse.json(
@@ -451,8 +451,38 @@ describe('UserList', () => {
       renderWithRBACContext(<UserList />);
 
       await waitFor(() => {
-        expect(screen.getByText('No users found')).toBeInTheDocument();
+        expect(screen.getByTestId('users-load-error')).toBeInTheDocument();
       });
+      // "No users found" would state as fact something the request never
+      // established.
+      expect(screen.queryByText('No users found')).not.toBeInTheDocument();
+      expect(screen.getByTestId('users-retry-button')).toBeInTheDocument();
+    });
+
+    it('recovers on retry after a failed load', async () => {
+      const user = userEvent.setup();
+      let fail = true;
+      server.use(
+        http.get('/api/v1/admin/users', () => {
+          if (fail) {
+            return HttpResponse.json({ error: 'boom' }, { status: 500 });
+          }
+          return HttpResponse.json({ data: [mockUserFull], total: 1, limit: 25, offset: 0 });
+        })
+      );
+
+      renderWithRBACContext(<UserList />);
+      await waitFor(() => {
+        expect(screen.getByTestId('users-load-error')).toBeInTheDocument();
+      });
+
+      fail = false;
+      await user.click(screen.getByTestId('users-retry-button'));
+
+      await waitFor(() => {
+        expect(screen.getByText('Verified')).toBeInTheDocument();
+      });
+      expect(screen.queryByTestId('users-load-error')).not.toBeInTheDocument();
     });
   });
 
@@ -675,10 +705,22 @@ describe('UserList', () => {
 
     it('does not show the hint when the search returns users', async () => {
       const user = userEvent.setup();
+      // Return a distinguishable row for the searched query so the assertion
+      // below runs against the post-search render, not the initial one.
       server.use(
-        http.get('/api/v1/admin/users', () =>
-          HttpResponse.json({ data: [mockUserFull], total: 1, limit: 25, offset: 0 })
-        )
+        http.get('/api/v1/admin/users', ({ request }) => {
+          const searched = new URL(request.url).searchParams.get('search');
+          return HttpResponse.json({
+            data: [
+              searched
+                ? { ...mockUserFull, id: 'user-searched', note: 'searched-hit' }
+                : mockUserFull,
+            ],
+            total: 1,
+            limit: 25,
+            offset: 0,
+          });
+        })
       );
 
       renderWithRBACContext(<UserList />);
@@ -688,11 +730,36 @@ describe('UserList', () => {
 
       await search(user, SEARCH_DID);
 
-      // Give the debounced refetch a chance to land before asserting absence.
+      // Proves the debounced search request landed and rendered.
       await waitFor(() => {
-        expect(
-          screen.getByPlaceholderText('Search by DID or wallet address...')
-        ).toHaveValue(SEARCH_DID);
+        expect(screen.getByText('searched-hit')).toBeInTheDocument();
+      });
+      expect(screen.queryByTestId('users-empty-search')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('onboard-by-did-hint-button')).not.toBeInTheDocument();
+    });
+
+    it('does not offer onboarding when the search request itself fails', async () => {
+      const user = userEvent.setup();
+      server.use(
+        http.get('/api/v1/admin/users', ({ request }) => {
+          if (new URL(request.url).searchParams.get('search')) {
+            return HttpResponse.error();
+          }
+          return HttpResponse.json({ data: [mockUserFull], total: 1, limit: 25, offset: 0 });
+        })
+      );
+
+      renderWithRBACContext(<UserList />);
+      await waitFor(() => {
+        expect(screen.getByText('Verified')).toBeInTheDocument();
+      });
+
+      await search(user, SEARCH_DID);
+
+      // A failed search says nothing about whether the DID exists — offering
+      // onboarding here would invite a duplicate membership.
+      await waitFor(() => {
+        expect(screen.getByTestId('users-load-error')).toBeInTheDocument();
       });
       expect(screen.queryByTestId('users-empty-search')).not.toBeInTheDocument();
       expect(screen.queryByTestId('onboard-by-did-hint-button')).not.toBeInTheDocument();

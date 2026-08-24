@@ -62,6 +62,7 @@ export default function UserList() {
   const { isReadonlyAdmin } = useAdmin();
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
@@ -148,12 +149,16 @@ export default function UserList() {
       const page = response.data;
       setUsers(page.data || []);
       setTotal(page.total);
+      setLoadFailed(false);
       if (newOffset !== undefined) {
         setOffset(newOffset);
       }
     } catch (error) {
       console.error('Failed to load users:', error);
       setUsers([]);
+      // A failed request must not render as "no such user" — that would invite
+      // onboarding someone who may already exist.
+      setLoadFailed(true);
     } finally {
       setLoading(false);
     }
@@ -338,7 +343,24 @@ export default function UserList() {
           <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-neutral-100 flex items-center justify-center">
             <Users className="w-8 h-8 text-neutral-400" />
           </div>
-          {debouncedSearch ? (
+          {loadFailed ? (
+            <div data-testid="users-load-error">
+              <p className="text-neutral-500 mb-2">Couldn't load users</p>
+              <p className="text-neutral-400 text-sm max-w-md mx-auto">
+                The request failed, so this list is incomplete. Retry before
+                concluding that a user is missing.
+              </p>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => loadUsers()}
+                className="gap-2 mt-4"
+                data-testid="users-retry-button"
+              >
+                Retry
+              </Button>
+            </div>
+          ) : debouncedSearch ? (
             // RD-1239: this list only returns users who already belong to an org
             // the caller administers, so a not-yet-onboarded DID can never match.
             // Saying so turns a dead end ("is search broken?") into the next step.
