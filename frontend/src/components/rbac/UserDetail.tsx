@@ -31,6 +31,7 @@ import {
   Clock,
 } from 'lucide-react';
 import { useAdmin } from '@/components/auth/RequireAdmin';
+import { useAuthOptional } from '@/contexts/AuthContext';
 
 interface UserDetailProps {
   user: User;
@@ -47,6 +48,14 @@ interface LinkedAddress {
 export default function UserDetail({ user, onUpdate }: UserDetailProps) {
   const { organizations } = useOrgContext();
   const { isReadonlyAdmin } = useAdmin();
+  // RD-1238: banning yourself is rejected by the backend (400) — it would end
+  // your own session on the spot. Disable the Banned toggle on your own record
+  // so the form can't be armed into a save that must fail. Compares lowercase
+  // (DID casing isn't semantic) and stays false when the identity is unknown,
+  // so an absent AuthProvider disables nothing. Presentation only.
+  const signedInDID = useAuthOptional()?.userDID ?? null;
+  const isOwnRecord =
+    signedInDID !== null && signedInDID.toLowerCase() === user.external_id.toLowerCase();
   const [memberships, setMemberships] = useState<MembershipWithDetails[]>([]);
   const [effectivePermsByOrg, setEffectivePermsByOrg] = useState<Record<string, EffectivePermissions>>({});
   const [loadingPerms, setLoadingPerms] = useState(false);
@@ -290,13 +299,22 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
             </span>
           </label>
 
-          <label className="flex items-center gap-3 cursor-pointer group">
+          <label
+            className="flex items-center gap-3 cursor-pointer group"
+            title={
+              isOwnRecord && !banned
+                ? 'You cannot ban your own account — ask another admin'
+                : undefined
+            }
+          >
             <div className="relative">
               <input
                 type="checkbox"
                 checked={banned}
                 onChange={e => setBanned(e.target.checked)}
-                disabled={isReadonlyAdmin}
+                // RD-1238: never let an admin arm a ban on their own record.
+                // Not gated when already banned, so an unban stays possible.
+                disabled={isReadonlyAdmin || (isOwnRecord && !banned)}
                 className="peer sr-only"
               />
               <div className="w-5 h-5 rounded border border-neutral-300 bg-neutral-100 peer-checked:bg-red-500 peer-checked:border-red-500 transition-all flex items-center justify-center">
