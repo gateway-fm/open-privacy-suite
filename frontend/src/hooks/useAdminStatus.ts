@@ -14,36 +14,35 @@ import { useAuth } from '@/contexts/AuthContext';
  */
 export function useAdminStatus(): { isAdmin: boolean; loading: boolean } {
   const { accessToken, isLoading: authLoading } = useAuth();
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [loading, setLoading] = useState(true);
+  // The answer is stored with the token it was obtained for. Callers then read
+  // "settled" as a comparison against the *current* token, so a rotation can
+  // never surface one identity's access as another's — the staleness is derived
+  // rather than repaired by a follow-up state update.
+  const [result, setResult] = useState<{ token: string | null; isAdmin: boolean } | null>(null);
 
   useEffect(() => {
     if (authLoading) return;
 
     if (!accessToken) {
-      setIsAdmin(false);
-      setLoading(false);
+      setResult({ token: null, isAdmin: false });
       return;
     }
 
-    // Re-arm on every probe. The effect re-runs when the token rotates, and
-    // without this `loading` stays false while the second request is in
-    // flight, so callers would read the previous token's answer as settled.
-    // isAdmin drops with it: keeping the old answer visible would attribute
-    // one identity's access to whoever the new token belongs to.
-    setLoading(true);
-    setIsAdmin(false);
+    // Pin the narrowed token: TypeScript widens accessToken back to
+    // string | null inside the async closure, and this is the token the answer
+    // is being recorded for.
+    const probedToken = accessToken;
 
     let cancelled = false;
 
     async function check() {
       try {
         const response = await fetch('/api/v1/me/admin-status', {
-          headers: { Authorization: `Bearer ${accessToken}` },
+          headers: { Authorization: `Bearer ${probedToken}` },
         });
         if (cancelled) return;
         if (!response.ok) {
-          setIsAdmin(false);
+          setResult({ token: probedToken, isAdmin: false });
           return;
         }
         const data = await response.json();
@@ -55,11 +54,9 @@ export function useAdminStatus(): { isAdmin: boolean; loading: boolean } {
         // schema (`"is_admin": "false"`, a non-empty string, a number) would
         // otherwise read as admin — the opposite of the fail-closed behaviour
         // this hook promises.
-        setIsAdmin(data?.is_admin === true);
+        setResult({ token: probedToken, isAdmin: data?.is_admin === true });
       } catch {
-        if (!cancelled) setIsAdmin(false);
-      } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) setResult({ token: probedToken, isAdmin: false });
       }
     }
 
@@ -70,5 +67,8 @@ export function useAdminStatus(): { isAdmin: boolean; loading: boolean } {
     };
   }, [accessToken, authLoading]);
 
-  return { isAdmin, loading };
+  // A result for a different token is not an answer for this one: report
+  // loading, and isAdmin false, until the current token has its own verdict.
+  const settled = result !== null && result.token === accessToken;
+  return { isAdmin: settled ? result.isAdmin : false, loading: authLoading || !settled };
 }

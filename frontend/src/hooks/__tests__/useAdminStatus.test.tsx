@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { renderHook, waitFor, act } from '@testing-library/react';
+import { renderHook, render, waitFor, act } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
 
@@ -149,5 +149,50 @@ describe('useAdminStatus', () => {
 
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.isAdmin).toBe(false);
+  });
+
+  // Companion to the RequireAdmin render-phase test, and it has to use the
+  // same trick for the same reason: renderHook's rerender() runs inside act(),
+  // which flushes the re-arming effect before result.current can be read, so
+  // the offending commit is invisible to a post-rerender assertion. Recording
+  // the value *during* render is what exposes it.
+  it('never reports a stale answer to a render under the new token', async () => {
+    const seen: Array<{ token: string | null; isAdmin: boolean; loading: boolean }> = [];
+
+    function Probe() {
+      const { isAdmin, loading } = useAdminStatus();
+      seen.push({ token: mockAuth.accessToken, isAdmin, loading });
+      return null;
+    }
+
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+
+    server.use(
+      http.get('/api/v1/me/admin-status', async ({ request }) => {
+        if (request.headers.get('Authorization') === 'Bearer token-admin') {
+          return HttpResponse.json({ is_admin: true });
+        }
+        await gate;
+        return HttpResponse.json({ is_admin: false });
+      }),
+    );
+
+    // A fresh element each time — an identical element lets React bail out of
+    // the re-render, which would make this test pass without proving anything.
+    const tree = () => <Probe />;
+    const { rerender } = render(tree());
+    await waitFor(() => expect(seen.some((e) => e.isAdmin && !e.loading)).toBe(true));
+
+    mockAuth.accessToken = 'token-regular';
+    rerender(tree());
+
+    // No render under token-regular may have been handed the admin answer that
+    // belongs to token-admin.
+    expect(seen.filter((e) => e.token === 'token-regular' && e.isAdmin)).toEqual([]);
+
+    release();
+    await waitFor(() => expect(seen[seen.length - 1].loading).toBe(false));
+    expect(seen.filter((e) => e.token === 'token-regular' && e.isAdmin)).toEqual([]);
   });
 });
