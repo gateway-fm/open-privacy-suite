@@ -653,6 +653,26 @@ describe('UserList', () => {
       });
     });
 
+    it('reports a group-load failure instead of claiming the org has no groups', async () => {
+      const user = userEvent.setup();
+      serveEmptyOnSearch();
+      server.use(
+        http.get('/api/v1/admin/orgs/:orgId/groups', () => HttpResponse.error())
+      );
+
+      renderWithRBACContext(<UserList />);
+      await waitFor(() => {
+        expect(screen.getByText('Verified')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByTestId('onboard-by-did-button'));
+
+      // "Create one in the Groups tab" is the wrong instruction when the list
+      // simply failed to load.
+      expect(await screen.findByTestId('onboard-groups-error')).toBeInTheDocument();
+      expect(screen.queryByTestId('onboard-no-groups')).not.toBeInTheDocument();
+    });
+
     it('does not show the hint when the search returns users', async () => {
       const user = userEvent.setup();
       server.use(

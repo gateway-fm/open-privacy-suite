@@ -81,6 +81,7 @@ export default function UserList() {
 
   // Group filter options — populated when an org is selected.
   const [groupOptions, setGroupOptions] = useState<GroupWithAccess[]>([]);
+  const [groupsLoadFailed, setGroupsLoadFailed] = useState(false);
 
   // Debounce search input
   useEffect(() => {
@@ -94,6 +95,7 @@ export default function UserList() {
   // are org-scoped, so a previous selection is meaningless under a new org.
   useEffect(() => {
     setSelectedGroupIds([]);
+    setGroupsLoadFailed(false);
     if (!selectedOrg) {
       setGroupOptions([]);
       return;
@@ -105,7 +107,9 @@ export default function UserList() {
         if (!cancelled) setGroupOptions(res.data.data || []);
       })
       .catch(() => {
-        if (!cancelled) setGroupOptions([]);
+        if (cancelled) return;
+        setGroupOptions([]);
+        setGroupsLoadFailed(true);
       });
     return () => {
       cancelled = true;
@@ -557,7 +561,11 @@ export default function UserList() {
               // carried over from the hint can never linger into the next open.
               key={onboardPrefillDid}
               orgId={selectedOrg.id}
-              groups={groupOptions.map(g => g.group)}
+              // On a failed group load, hand the form no list rather than an
+              // empty one: an empty list reads as "this org has no groups", so
+              // the form would advise creating one after a network error. Omitting
+              // the prop makes it fetch and report the failure itself.
+              groups={groupsLoadFailed ? undefined : groupOptions.map(g => g.group)}
               initialDid={onboardPrefillDid}
               onClose={() => setOnboardOpen(false)}
               onSave={() => {
