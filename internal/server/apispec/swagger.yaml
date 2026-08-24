@@ -8946,8 +8946,11 @@ paths:
       description: Updates a user's kyc, banned, note, and/or metadata fields. All
         body fields are optional; only supplied fields change. Requires full (is_org_admin)
         scope over an org the user belongs to — read-only admins are rejected. Banning
-        a user also revokes their refresh tokens for immediate session termination.
-        Out-of-scope or unknown users return an opaque 403.
+        a user also revokes their refresh tokens for immediate session termination;
+        because of that, a tier-2 org-admin JWT cannot set banned=true on its own
+        account (400) — that would be an immediate self-lockout recoverable only with
+        the full admin token. Un-banning yourself is not blocked. Out-of-scope or
+        unknown users return an opaque 403.
       parameters:
       - description: User ID (UUID)
         in: path
@@ -8978,7 +8981,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/internal_server.APIError'
-          description: invalid request body
+          description: invalid request body, or an attempt to ban your own account
         "401":
           content:
             application/json:

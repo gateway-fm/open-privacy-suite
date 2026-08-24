@@ -191,3 +191,36 @@ func denyOperatorTenantRead(c *gin.Context) bool {
 	c.JSON(http.StatusForbidden, gin.H{"error": errOperatorNoTenantRead})
 	return true
 }
+
+// ── Self-target guard (RD-1238) ──────────────────────────────────────────────
+//
+// A tier-2 org admin (jwt_admin) could set banned=true on their OWN user row.
+// Banning revokes the target's refresh tokens and adminAuthMiddleware rejects a
+// banned user on every subsequent request, so a self-ban is an instant, possibly
+// accidental self-lockout. Recovery needs the full super-admin X-Admin-Token,
+// because denyOperatorOrgScoped blocks the operator token from user mutations —
+// for a single-admin org that means the org cannot recover on its own.
+
+// errCannotSelfBan is returned when a caller tries to ban their own account.
+// Not opaque on purpose: the caller already knows who they are and that the
+// target is themselves, so there is nothing to leak, and a clear message is
+// what stops the mistake from being repeated.
+const errCannotSelfBan = "cannot ban your own account; ask another admin to do it"
+
+// isSelfBanAttempt reports whether the caller is targeting their own user row.
+// It only ever returns true for jwt_admin, the one principal that carries a user
+// identity (adminAuthMiddleware sets admin_user_id alongside admin_org_ids).
+// admin_token / operator_token / dev mode have no admin_user_id, so they always
+// return false — a super-admin acting on any user, including one that happens to
+// be an admin, is intended.
+//
+// The empty check is load-bearing: without it a caller with no admin_user_id
+// would "match" an empty :user_id and get a confusing 400 instead of the normal
+// scope/not-found path.
+func isSelfBanAttempt(c *gin.Context, targetUserID string) bool {
+	callerUserID := c.GetString("admin_user_id")
+	if callerUserID == "" || targetUserID == "" {
+		return false
+	}
+	return callerUserID == targetUserID
+}
