@@ -362,6 +362,60 @@ describe('OnboardByDIDForm', () => {
     });
   });
 
+  // RD-1239: org-admin groups are filtered out of the dropdown (RD-1099), so an
+  // org whose only group is org-admin rendered "No groups in this organization"
+  // — flatly untrue, and the submit button is then permanently disabled with no
+  // explanation. A dead end with no way to read it.
+  describe('Empty group list explains itself (RD-1239)', () => {
+    const orgAdminGroup = {
+      ...mockGroup,
+      id: 'group-admin',
+      name: 'Org Admins',
+      path: 'admins',
+      is_org_admin: true,
+    };
+
+    it('says the org has no groups at all when it genuinely has none', () => {
+      renderForm({ groups: [] });
+
+      expect(screen.getByTestId('onboard-no-groups')).toBeInTheDocument();
+      expect(screen.getByText(/no groups yet/i)).toBeInTheDocument();
+      expect(screen.getByText(/Groups tab/i)).toBeInTheDocument();
+    });
+
+    it('explains that org-admin-only groups are not assignable here', () => {
+      renderForm({ groups: [orgAdminGroup] });
+
+      expect(screen.getByTestId('onboard-no-assignable-groups')).toBeInTheDocument();
+      // Must not claim the org has no groups — it has one, just not one this
+      // caller may assign.
+      expect(screen.queryByText(/no groups yet/i)).not.toBeInTheDocument();
+      expect(screen.getByText(/org-admin/i)).toBeInTheDocument();
+      expect(screen.getByText(/Groups tab/i)).toBeInTheDocument();
+    });
+
+    it('says the fetch failed rather than advising a group be created', async () => {
+      server.use(
+        http.get('/api/v1/admin/orgs/:orgId/groups', () => HttpResponse.error())
+      );
+
+      renderForm({ groups: undefined });
+
+      expect(await screen.findByTestId('onboard-groups-error')).toBeInTheDocument();
+      // "Create one in the Groups tab" is wrong advice for a network failure.
+      expect(screen.queryByTestId('onboard-no-groups')).not.toBeInTheDocument();
+    });
+
+    it('keeps the submit button disabled in both empty states', () => {
+      const { unmount } = renderForm({ groups: [] });
+      expect(screen.getByRole('button', { name: /Onboard user/i })).toBeDisabled();
+      unmount();
+
+      renderForm({ groups: [orgAdminGroup] });
+      expect(screen.getByRole('button', { name: /Onboard user/i })).toBeDisabled();
+    });
+  });
+
   describe('Cancel', () => {
     it('calls onClose when cancel is clicked', async () => {
       const user = userEvent.setup();

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
@@ -12,6 +12,7 @@ import {
   createMockUser,
 } from '@/test/mocks/rbac-fixtures';
 import { mockUser } from '@/test/mocks/handlers';
+import { useAdmin } from '@/components/auth/RequireAdmin';
 
 // Mock the useOrgContext hook from RBACManager
 // Use the shared TestOrgContext from test-utils so MockOrgProvider works
@@ -493,6 +494,214 @@ describe('UserList', () => {
         // Component shows '-' when note is empty/null
         expect(screen.getByText('-')).toBeInTheDocument();
       });
+    });
+  });
+
+  // RD-1239: the users list only ever returns users who already belong to an
+  // org the caller administers (backend tenant-confidentiality), so a
+  // not-yet-onboarded DID can never appear in search results. Without an
+  // explanation an empty result for a pasted DID reads as a broken search
+  // rather than "this user doesn't exist yet — onboard them".
+  describe('Onboard-by-DID discoverability (RD-1239)', () => {
+    const SEARCH_DID =
+      'did:iden3:privado:main:2qABCDeFgHiJkLmNoPqRsTuVwXyZ1234567890aBcDeFgHi';
+
+    // Zero results for any search, one user otherwise, so the empty state is
+    // reached only via the search path.
+    function serveEmptyOnSearch() {
+      server.use(
+        http.get('/api/v1/admin/users', ({ request }) => {
+          const url = new URL(request.url);
+          if (url.searchParams.get('search')) {
+            return HttpResponse.json({ data: [], total: 0, limit: 25, offset: 0 });
+          }
+          return HttpResponse.json({
+            data: [mockUserFull],
+            total: 1,
+            limit: 25,
+            offset: 0,
+          });
+        })
+      );
+    }
+
+    async function search(
+      user: ReturnType<typeof userEvent.setup>,
+      query: string
+    ) {
+      const input = screen.getByPlaceholderText('Search by DID or wallet address...');
+      await user.click(input);
+      await user.paste(query);
+    }
+
+    afterEach(() => {
+      // Restore the default (non-readonly) admin so sibling tests are unaffected.
+      vi.mocked(useAdmin).mockReturnValue({
+        isAdmin: true,
+        isReadonlyAdmin: false,
+        adminOrgIds: [],
+        readonlyAdminOrgIds: [],
+      });
+    });
+
+    it('shows the onboard hint when a search returns no users', async () => {
+      const user = userEvent.setup();
+      serveEmptyOnSearch();
+
+      renderWithRBACContext(<UserList />);
+      await waitFor(() => {
+        expect(screen.getByText('Verified')).toBeInTheDocument();
+      });
+
+      await search(user, SEARCH_DID);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('users-empty-search')).toBeInTheDocument();
+      });
+      expect(screen.getByTestId('onboard-by-did-hint-button')).toBeInTheDocument();
+      // The generic "created automatically when they authenticate" copy is
+      // wrong here — it implies waiting is the answer.
+      expect(
+        screen.queryByText('Users are created automatically when they authenticate')
+      ).not.toBeInTheDocument();
+    });
+
+    it('hint button opens the onboard dialog prefilled with the searched DID', async () => {
+      const user = userEvent.setup();
+      serveEmptyOnSearch();
+
+      renderWithRBACContext(<UserList />);
+      await waitFor(() => {
+        expect(screen.getByText('Verified')).toBeInTheDocument();
+      });
+
+      await search(user, SEARCH_DID);
+      await user.click(await screen.findByTestId('onboard-by-did-hint-button'));
+
+      expect(await screen.findByText('Onboard user by DID')).toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.getByLabelText(/User DID/i)).toHaveValue(SEARCH_DID);
+      });
+    });
+
+    it('does not prefill a wallet-address search into the DID field', async () => {
+      const user = userEvent.setup();
+      serveEmptyOnSearch();
+
+      renderWithRBACContext(<UserList />);
+      await waitFor(() => {
+        expect(screen.getByText('Verified')).toBeInTheDocument();
+      });
+
+      // The search box also accepts wallet addresses, which don't belong in a
+      // DID field.
+      await search(user, '0x1234567890123456789012345678901234567890');
+      await user.click(await screen.findByTestId('onboard-by-did-hint-button'));
+
+      expect(await screen.findByText('Onboard user by DID')).toBeInTheDocument();
+      expect(screen.getByLabelText(/User DID/i)).toHaveValue('');
+    });
+
+    it('does not carry the searched DID into a later header-opened dialog', async () => {
+      const user = userEvent.setup();
+      serveEmptyOnSearch();
+
+      renderWithRBACContext(<UserList />);
+      await waitFor(() => {
+        expect(screen.getByText('Verified')).toBeInTheDocument();
+      });
+
+      await search(user, SEARCH_DID);
+      await user.click(await screen.findByTestId('onboard-by-did-hint-button'));
+      await waitFor(() => {
+        expect(screen.getByLabelText(/User DID/i)).toHaveValue(SEARCH_DID);
+      });
+
+      await user.click(screen.getByRole('button', { name: /Cancel/i }));
+      await waitFor(() => {
+        expect(screen.queryByLabelText(/User DID/i)).not.toBeInTheDocument();
+      });
+
+      // Onboarding someone else must start from a clean field — a leftover DID
+      // here would silently onboard the wrong identity.
+      await user.click(screen.getByTestId('onboard-by-did-button'));
+      expect(await screen.findByLabelText(/User DID/i)).toHaveValue('');
+    });
+
+    it('notes that active filters may also be hiding matches', async () => {
+      const user = userEvent.setup();
+      serveEmptyOnSearch();
+
+      renderWithRBACContext(<UserList />);
+      await waitFor(() => {
+        expect(screen.getByText('Verified')).toBeInTheDocument();
+      });
+
+      // No filter yet — the hint must not claim filters are involved.
+      await search(user, SEARCH_DID);
+      await waitFor(() => {
+        expect(screen.getByTestId('users-empty-search')).toBeInTheDocument();
+      });
+      expect(screen.queryByText(/filters may also be hiding/i)).not.toBeInTheDocument();
+
+      // Apply a role filter: "never onboarded" is no longer the only explanation.
+      await user.click(screen.getByRole('combobox'));
+      await user.click(await screen.findByRole('option', { name: 'Org admin' }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/filters may also be hiding/i)).toBeInTheDocument();
+      });
+    });
+
+    it('does not show the hint when the search returns users', async () => {
+      const user = userEvent.setup();
+      server.use(
+        http.get('/api/v1/admin/users', () =>
+          HttpResponse.json({ data: [mockUserFull], total: 1, limit: 25, offset: 0 })
+        )
+      );
+
+      renderWithRBACContext(<UserList />);
+      await waitFor(() => {
+        expect(screen.getByText('Verified')).toBeInTheDocument();
+      });
+
+      await search(user, SEARCH_DID);
+
+      // Give the debounced refetch a chance to land before asserting absence.
+      await waitFor(() => {
+        expect(
+          screen.getByPlaceholderText('Search by DID or wallet address...')
+        ).toHaveValue(SEARCH_DID);
+      });
+      expect(screen.queryByTestId('users-empty-search')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('onboard-by-did-hint-button')).not.toBeInTheDocument();
+    });
+
+    it('offers no onboard action to a read-only admin, but still explains why search is empty', async () => {
+      vi.mocked(useAdmin).mockReturnValue({
+        isAdmin: true,
+        isReadonlyAdmin: true,
+        adminOrgIds: [],
+        readonlyAdminOrgIds: ['org-1'],
+      });
+      const user = userEvent.setup();
+      serveEmptyOnSearch();
+
+      renderWithRBACContext(<UserList />);
+      await waitFor(() => {
+        expect(screen.getByText('Verified')).toBeInTheDocument();
+      });
+
+      await search(user, SEARCH_DID);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('users-empty-search')).toBeInTheDocument();
+      });
+      // RD-866: read-only admins get no mutating affordance — not the header
+      // button, and not the hint's.
+      expect(screen.queryByTestId('onboard-by-did-hint-button')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('onboard-by-did-button')).not.toBeInTheDocument();
     });
   });
 

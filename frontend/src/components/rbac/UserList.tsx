@@ -67,6 +67,9 @@ export default function UserList() {
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [showUpdateError, setShowUpdateError] = useState(false);
   const [onboardOpen, setOnboardOpen] = useState(false);
+  // DID to seed the onboard dialog with. Set when the dialog is opened from the
+  // empty-search hint so the admin doesn't have to paste the DID a second time.
+  const [onboardPrefillDid, setOnboardPrefillDid] = useState('');
 
   // Search state
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -206,6 +209,24 @@ export default function UserList() {
     return `${id.slice(0, 10)}...${id.slice(-8)}`;
   };
 
+  // Onboarding writes membership, so read-only admins (RD-866) don't get the
+  // affordance, and the target org has to be known.
+  const canOnboard = !!selectedOrg && !isReadonlyAdmin;
+
+  const openOnboard = (prefillDid = '') => {
+    setOnboardPrefillDid(prefillDid);
+    setOnboardOpen(true);
+  };
+
+  // The search box also accepts wallet addresses, which don't belong in a DID
+  // field — only carry the query over when it is plausibly a DID.
+  const searchedDid = debouncedSearch.trim();
+  const onboardPrefillFromSearch = searchedDid.startsWith('did:') ? searchedDid : '';
+
+  // With a role/group filter also applied, "never onboarded" is not the only
+  // explanation for an empty result — don't let the hint assert it is.
+  const filtersNarrowing = roleFilter !== 'any' || selectedGroupIds.length > 0;
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
@@ -215,10 +236,10 @@ export default function UserList() {
             Manage user accounts, KYC status, and group memberships
           </p>
         </div>
-        {selectedOrg && !isReadonlyAdmin && (
+        {canOnboard && (
           <Button
             size="sm"
-            onClick={() => setOnboardOpen(true)}
+            onClick={() => openOnboard()}
             className="gap-2"
             data-testid="onboard-by-did-button"
             title="Onboard a user by their DID into a group in this organization"
@@ -313,10 +334,43 @@ export default function UserList() {
           <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-neutral-100 flex items-center justify-center">
             <Users className="w-8 h-8 text-neutral-400" />
           </div>
-          <p className="text-neutral-500 mb-2">No users found</p>
-          <p className="text-neutral-400 text-sm">
-            Users are created automatically when they authenticate
-          </p>
+          {debouncedSearch ? (
+            // RD-1239: this list only returns users who already belong to an org
+            // the caller administers, so a not-yet-onboarded DID can never match.
+            // Saying so turns a dead end ("is search broken?") into the next step.
+            <div data-testid="users-empty-search">
+              <p className="text-neutral-500 mb-2">No users match this search</p>
+              <p className="text-neutral-400 text-sm max-w-md mx-auto">
+                Search covers users who already belong to an organization you
+                administer. Someone who has never been onboarded won't appear here.
+              </p>
+              {filtersNarrowing && (
+                <p className="text-neutral-400 text-sm max-w-md mx-auto mt-1">
+                  The active role or group filters may also be hiding matches.
+                </p>
+              )}
+              {canOnboard && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => openOnboard(onboardPrefillFromSearch)}
+                  className="gap-2 mt-4"
+                  data-testid="onboard-by-did-hint-button"
+                  title="Onboard a user by their DID into a group in this organization"
+                >
+                  <UserPlus className="w-4 h-4" />
+                  Onboard by DID
+                </Button>
+              )}
+            </div>
+          ) : (
+            <>
+              <p className="text-neutral-500 mb-2">No users found</p>
+              <p className="text-neutral-400 text-sm">
+                Users are created automatically when they authenticate
+              </p>
+            </>
+          )}
         </div>
       ) : (
         <Table>
@@ -497,8 +551,14 @@ export default function UserList() {
           </DialogHeader>
           {selectedOrg && (
             <OnboardByDIDForm
+              // initialDid is read at mount. The host dialog normally unmounts on
+              // close, but during its exit animation it briefly does not — keying
+              // on the prefill makes a reopen remount deterministically, so a DID
+              // carried over from the hint can never linger into the next open.
+              key={onboardPrefillDid}
               orgId={selectedOrg.id}
               groups={groupOptions.map(g => g.group)}
+              initialDid={onboardPrefillDid}
               onClose={() => setOnboardOpen(false)}
               onSave={() => {
                 setOnboardOpen(false);

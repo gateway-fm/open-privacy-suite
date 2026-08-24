@@ -28,6 +28,12 @@ interface OnboardByDIDFormProps {
    * fetches them itself, matching the pattern in MembershipForm.
    */
   groups?: Group[];
+  /**
+   * DID to seed the input with. Read once, at mount: the field is editable
+   * afterwards, so later changes to this prop are ignored. A caller that needs a
+   * new value to take effect must remount the form (see UserList's `key`).
+   */
+  initialDid?: string;
   onClose: () => void;
   /** Called after a successful onboarding. */
   onSave: (result: { userId: string; membership: UserMembership }) => void;
@@ -36,13 +42,15 @@ interface OnboardByDIDFormProps {
 export default function OnboardByDIDForm({
   orgId,
   groups,
+  initialDid = '',
   onClose,
   onSave,
 }: OnboardByDIDFormProps) {
-  const [did, setDid] = useState('');
+  const [did, setDid] = useState(initialDid);
   const [selectedGroupId, setSelectedGroupId] = useState<string>('');
   const [fetchedGroups, setFetchedGroups] = useState<Group[]>([]);
   const [loadingGroups, setLoadingGroups] = useState(false);
+  const [groupsFailed, setGroupsFailed] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Time-boxed access window (RD-1145) — onboard a regulator/auditor
@@ -56,7 +64,13 @@ export default function OnboardByDIDForm({
   // dashboard's tier-2 (JWT) caller with a 403. Hiding them here keeps the UI
   // honest; the backend gate (denyJWTAdminTouchOrgAdminGroup) is the real
   // boundary. Read-only-admin groups stay assignable (delegation, not escalation).
-  const availableGroups = (groups ?? fetchedGroups).filter(g => !g.is_org_admin);
+  const allGroups = groups ?? fetchedGroups;
+  const availableGroups = allGroups.filter(g => !g.is_org_admin);
+  // RD-1239: distinguish "this org has nothing" from "everything it has is
+  // filtered out above". Both render an empty dropdown, but only one of them is
+  // fixed by creating a group — and claiming "no groups" when the org demonstrably
+  // has one is what left admins stuck with a permanently disabled submit button.
+  const onlyOrgAdminGroups = availableGroups.length === 0 && allGroups.length > 0;
 
   useEffect(() => {
     if (groups) return; // Parent supplied them, nothing to load.
@@ -72,6 +86,9 @@ export default function OnboardByDIDForm({
         if (cancelled) return;
         console.error('Failed to load groups:', err);
         setFetchedGroups([]);
+        // A failed fetch is indistinguishable from an empty org by list length
+        // alone, and "create a group" is the wrong advice for a network error.
+        setGroupsFailed(true);
       })
       .finally(() => {
         if (!cancelled) setLoadingGroups(false);
@@ -183,8 +200,25 @@ export default function OnboardByDIDForm({
             <Loader2 className="w-4 h-4 animate-spin" />
             <span className="text-sm">Loading groups...</span>
           </div>
+        ) : groupsFailed ? (
+          <p className="text-neutral-500 text-sm py-2" data-testid="onboard-groups-error">
+            Couldn't load this organization's groups. Close and reopen this dialog
+            to retry.
+          </p>
+        ) : onlyOrgAdminGroups ? (
+          <p
+            className="text-neutral-500 text-sm py-2"
+            data-testid="onboard-no-assignable-groups"
+          >
+            This organization's only groups are org-admin groups, which can't be
+            assigned from here. Create a regular group in the Groups tab, then
+            onboard the user into that.
+          </p>
         ) : availableGroups.length === 0 ? (
-          <p className="text-neutral-400 text-sm py-2">No groups in this organization</p>
+          <p className="text-neutral-500 text-sm py-2" data-testid="onboard-no-groups">
+            This organization has no groups yet. Create one in the Groups tab,
+            then onboard the user into it.
+          </p>
         ) : (
           <Select
             value={selectedGroupId}
