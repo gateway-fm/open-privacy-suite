@@ -2012,6 +2012,16 @@
                         "items": {},
                         "type": "array",
                         "uniqueItems": false
+                    },
+                    "privateFor": {
+                        "items": {},
+                        "type": "array",
+                        "uniqueItems": false
+                    },
+                    "visibleTo": {
+                        "items": {},
+                        "type": "array",
+                        "uniqueItems": false
                     }
                 },
                 "required": [
@@ -2466,6 +2476,79 @@
                     }
                 },
                 "type": "object"
+            },
+            "internal_server.policyCheckRPCBlock": {
+                "properties": {
+                    "method": {
+                        "type": "string"
+                    },
+                    "params": {
+                        "items": {},
+                        "type": "array",
+                        "uniqueItems": false
+                    }
+                },
+                "required": [
+                    "method"
+                ],
+                "type": "object"
+            },
+            "internal_server.policyCheckRequest": {
+                "properties": {
+                    "operation": {
+                        "$ref": "#/components/schemas/internal_server.policyCheckRPCBlock"
+                    },
+                    "org_id": {
+                        "description": "OrgID is optional; omitted, CheckAccess resolves it as a live request would.",
+                        "type": "string"
+                    },
+                    "subject": {
+                        "$ref": "#/components/schemas/internal_server.policyCheckSubject"
+                    }
+                },
+                "required": [
+                    "operation",
+                    "subject"
+                ],
+                "type": "object"
+            },
+            "internal_server.policyCheckResponse": {
+                "properties": {
+                    "allowed": {
+                        "type": "boolean"
+                    },
+                    "reason": {
+                        "description": "Reason is set only on deny, sanitized to a coarse category (RD-934).",
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "internal_server.policyCheckSubject": {
+                "oneOf": [
+                    {
+                        "properties": {
+                            "did": {
+                                "type": "string"
+                            }
+                        },
+                        "required": [
+                            "did"
+                        ],
+                        "type": "object"
+                    },
+                    {
+                        "properties": {
+                            "address": {
+                                "type": "string"
+                            }
+                        },
+                        "required": [
+                            "address"
+                        ],
+                        "type": "object"
+                    }
+                ]
             },
             "internal_server.rbacUserUpdateRequest": {
                 "properties": {
@@ -12019,6 +12102,92 @@
                     }
                 ],
                 "summary": "Onboard a DID into a group",
+                "tags": [
+                    "Admin: RBAC"
+                ]
+            }
+        },
+        "/api/v1/admin/policy-check": {
+            "post": {
+                "description": "Privacy-policy verdict for a trusted infrastructure caller. Subject is a DID or Ethereum address. Operation is a JSON-RPC method and params. EVM execution methods use debug_traceCall with the same upstream credential as live calls. Write methods also run a side-effect-free compliance preview. The endpoint does not submit the call or consume a travel-rule record. A supplied sender must link to the subject. Trace checks are limited to 100 RPS and 10000 per day. debug_traceCall and debug_traceTransaction are not supported. Requires the full X-Admin-Token credential. The operator token and JWT admin credentials are not accepted. Every evaluation is audited and fails closed.",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "oneOf": [
+                                    {
+                                        "type": "object"
+                                    },
+                                    {
+                                        "$ref": "#/components/schemas/internal_server.policyCheckRequest",
+                                        "description": "subject, operation, and optional org_id",
+                                        "summary": "request"
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "description": "subject, operation, and optional org_id",
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/internal_server.policyCheckResponse"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/internal_server.APIError"
+                                }
+                            }
+                        },
+                        "description": "invalid body, missing operation.method, an invalid subject address, or subject has neither/both of did and address"
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/internal_server.APIError"
+                                }
+                            }
+                        },
+                        "description": "missing or invalid X-Admin-Token"
+                    },
+                    "403": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/internal_server.APIError"
+                                }
+                            }
+                        },
+                        "description": "source address not on the private network, or the credential cannot read tenant policy"
+                    },
+                    "500": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/internal_server.APIError"
+                                }
+                            }
+                        },
+                        "description": "internal error (includes audit-log write failure, response withheld)"
+                    }
+                },
+                "security": [
+                    {
+                        "AdminToken": []
+                    }
+                ],
+                "summary": "Check whether a subject would be allowed to make an RPC call",
                 "tags": [
                     "Admin: RBAC"
                 ]
