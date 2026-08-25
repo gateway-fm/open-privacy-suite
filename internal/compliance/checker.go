@@ -388,6 +388,25 @@ func (c *Checker) Check(ctx context.Context, req *CheckRequest) (*CheckResult, e
 	}, nil
 }
 
+// CheckPreview evaluates compliance without logs or travel-rule record claims.
+func (c *Checker) CheckPreview(ctx context.Context, req *CheckRequest) (*CheckResult, error) {
+	preview := *c
+	preview.store = previewStore{Store: c.store}
+	return preview.Check(ctx, req)
+}
+
+type previewStore struct {
+	Store
+}
+
+func (s previewStore) ClaimUnusedTravelRuleRecord(ctx context.Context, orgID, userID, beneficiaryAddr, tokenAddr string, amountFiat float64) (*TravelRuleRecord, error) {
+	return s.FindUnusedTravelRuleRecord(ctx, orgID, userID, beneficiaryAddr, tokenAddr, amountFiat)
+}
+
+func (previewStore) CreateComplianceLog(context.Context, *ComplianceLog) (int64, error) {
+	return 0, nil
+}
+
 // resolveTokenPrice implements the price fallback chain.
 // Returns (priceFiat, decimals, error). A negative priceFiat signals "not found / fail closed".
 func (c *Checker) resolveTokenPrice(ctx context.Context, orgID, tokenAddr, activeCurrency string) (float64, int, error) {

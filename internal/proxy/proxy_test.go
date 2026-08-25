@@ -2,11 +2,13 @@ package proxy
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestIsBatchRequest(t *testing.T) {
@@ -235,6 +237,22 @@ func TestForward(t *testing.T) {
 
 	if response.Result != "0x123" {
 		t.Errorf("got result %v, want 0x123", response.Result)
+	}
+}
+
+func TestForwardContextCancelsRequest(t *testing.T) {
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-release
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	_, _, err := New(server.URL).ForwardContext(ctx, []byte(`{"jsonrpc":"2.0","method":"debug_traceCall","params":[],"id":1}`))
+	close(release)
+	if err == nil {
+		t.Fatal("ForwardContext() error = nil after context timeout")
 	}
 }
 
@@ -497,4 +515,3 @@ func TestForwardWithAPIKeyHeader_RoutesToHeader(t *testing.T) {
 		})
 	}
 }
-

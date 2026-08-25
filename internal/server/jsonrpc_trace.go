@@ -147,8 +147,9 @@ func (p *JSONRPCProcessor) validateWithTracing(ctx context.Context, req *Process
 		}
 	}
 
-	// Get user's org memberships
-	memberships, err := p.rbacAccessCtrl.Store().ListUserMembershipsWithDetails(ctx, user.ID)
+	// Get user's org memberships (active only — an expired time-boxed grant
+	// must not authorize nested calls into its former organization).
+	memberships, err := p.rbacAccessCtrl.Store().ListActiveUserMembershipsWithDetails(ctx, user.ID)
 	if err != nil {
 		return nil, &ProcessError{
 			StatusCode: http.StatusForbidden,
@@ -494,7 +495,7 @@ func (p *JSONRPCProcessor) validateEthCallWithTracingInOrg(ctx context.Context, 
 		userOrgIDs[orgID] = true
 		userHasDeploy = effectivePermissionsHasDeployClaim(perms)
 	} else {
-		memberships, membershipErr := p.rbacAccessCtrl.Store().ListUserMembershipsWithDetails(ctx, user.ID)
+		memberships, membershipErr := p.rbacAccessCtrl.Store().ListActiveUserMembershipsWithDetails(ctx, user.ID)
 		if membershipErr != nil {
 			slog.Warn("eth_call trace: membership lookup failed",
 				slog.String("user_uuid", user.ID), slog.Any("err", membershipErr))
@@ -596,7 +597,7 @@ func (p *JSONRPCProcessor) processDebugTrace(ctx context.Context, req *ProcessRe
 		return &ProcessResult{Error: &ProcessError{StatusCode: http.StatusUnauthorized, Message: "failed to get user"}}
 	}
 
-	memberships, err := p.rbacAccessCtrl.Store().ListUserMembershipsWithDetails(ctx, user.ID)
+	memberships, err := p.rbacAccessCtrl.Store().ListActiveUserMembershipsWithDetails(ctx, user.ID)
 	if err != nil {
 		p.logAccess(ctx, req, http.StatusInternalServerError)
 		return &ProcessResult{Error: &ProcessError{StatusCode: http.StatusInternalServerError, Message: "failed to get memberships"}}
@@ -780,8 +781,8 @@ func (p *JSONRPCProcessor) validateRawTxWithTracing(ctx context.Context, req *Pr
 		}
 	}
 
-	// Get user's org memberships
-	memberships, err := p.rbacAccessCtrl.Store().ListUserMembershipsWithDetails(ctx, user.ID)
+	// Get user's org memberships (active only).
+	memberships, err := p.rbacAccessCtrl.Store().ListActiveUserMembershipsWithDetails(ctx, user.ID)
 	if err != nil {
 		return nil, &ProcessError{
 			StatusCode: http.StatusForbidden,

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 
+	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
 	"privacy-proxy/internal/tracer"
 
@@ -62,8 +63,10 @@ type dryRunRequest struct {
 // dryRunRPCBlock carries the JSON-RPC method + params that the admin
 // is asking the proxy to evaluate as the impersonated user.
 type dryRunRPCBlock struct {
-	Method string `json:"method" binding:"required"`
-	Params []any  `json:"params"`
+	Method     string `json:"method" binding:"required"`
+	Params     []any  `json:"params"`
+	VisibleTo  []any  `json:"visibleTo,omitempty"`
+	PrivateFor []any  `json:"privateFor,omitempty"`
 }
 
 // dryRunResponse is the handler's reply.
@@ -307,7 +310,7 @@ func (s *Server) handleDryRun(c *gin.Context) {
 
 	// Allowed — execute or trace. Both branches log on success.
 	if isTrace {
-		traceResp, traceErr := s.forwardDryRunTrace(ctx, req.RPC)
+		traceResp, traceErr := s.forwardSimulationTrace(ctx, req.RPC)
 		if traceErr != nil {
 			if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "error", sanitizeDryRunReason(traceErr), c.GetString("correlation_id")); logErr != nil {
 				slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
@@ -469,46 +472,66 @@ func sanitizeDryRunReason(in any) string {
 	}
 }
 
-// dryRunTraceResult is what forwardDryRunTrace returns to the handler.
-type dryRunTraceResult struct {
+type simulationTraceResult struct {
 	Trace  json.RawMessage     // the raw debug_traceCall response (callTracer + withLog)
 	Logs   []json.RawMessage   // logs extracted from the trace frames
 	Parsed *tracer.TraceResult // the same trace parsed for access validation
 }
 
-// forwardDryRunTrace translates a write-method call (eth_sendTransaction
-// / eth_sendRawTransaction) into a debug_traceCall against the upstream
-// node and returns the trace + extracted logs. No state mutation —
-// debug_traceCall executes against current state and discards.
-//
-// eth_sendRawTransaction is RLP-decoded via the production helper
-// (decodeRawTransaction in jsonrpc_processor.go) — same path the real
-// raw-tx handler uses, so dry-run reaches the trace with the same
-// (from, to, data, value) the production processor would. Sender
-// recovery uses the chain-id-aware signer; signature must be valid
-// (admins running dry-run on a malformed signed blob get a clear
-// decode error, not a silent pass).
-func (s *Server) forwardDryRunTrace(ctx context.Context, rpc dryRunRPCBlock) (*dryRunTraceResult, error) {
+// forwardSimulationTrace evaluates an EVM call with debug_traceCall. It does
+// not change chain state.
+func (s *Server) forwardSimulationTrace(ctx context.Context, rpc dryRunRPCBlock) (*simulationTraceResult, error) {
+	apiKey, apiKeyHeader := "", proxy.DefaultAPIKeyHeader
+	if s.jsonrpcProcessor != nil {
+		apiKey = s.jsonrpcProcessor.defaultRPCAPIKey
+		apiKeyHeader = s.jsonrpcProcessor.resolveAPIKeyHeader()
+	}
+	return s.forwardSimulationTraceWithAPIKey(ctx, rpc, apiKey, apiKeyHeader)
+}
+
+// simulationClientError marks an operation-shape error controlled by the
+// caller (malformed params). Policy-check maps it to 400, distinct from
+// infrastructure failures (500).
+type simulationClientError struct{ msg string }
+
+func (e *simulationClientError) Error() string { return e.msg }
+
+// forwardSimulationTraceWithAPIKey evaluates an EVM call with debug_traceCall
+// using the same upstream credential as the matching live request.
+func (s *Server) forwardSimulationTraceWithAPIKey(ctx context.Context, rpc dryRunRPCBlock, apiKey, apiKeyHeader string) (*simulationTraceResult, error) {
 	if s.proxy == nil {
 		return nil, fmt.Errorf("proxy not configured")
 	}
 
-	// Build the tx object passed to debug_traceCall. For
-	// eth_sendTransaction the admin already supplied it; for
-	// eth_sendRawTransaction we RLP-decode + recover sender, then
-	// shape the same { from, to, data, value } object.
 	var txObj map[string]any
-	switch rpc.Method {
-	case "eth_sendTransaction":
+	blockParam := any("latest")
+	effectiveMethod := rbac.ResolveMethodAlias(rpc.Method)
+	switch effectiveMethod {
+	case "eth_call", "eth_estimateGas", "eth_sendTransaction":
 		if len(rpc.Params) == 0 {
-			return nil, fmt.Errorf("eth_sendTransaction requires a tx object")
+			return nil, &simulationClientError{msg: fmt.Sprintf("%s requires a transaction object", rpc.Method)}
+		}
+		if (effectiveMethod == "eth_call" || effectiveMethod == "eth_estimateGas") && len(rpc.Params) > 2 {
+			return nil, &simulationClientError{msg: fmt.Sprintf("%s state and block overrides are not supported", rpc.Method)}
+		}
+		if effectiveMethod == "eth_sendTransaction" && len(rpc.Params) != 1 {
+			return nil, &simulationClientError{msg: fmt.Sprintf("%s requires exactly one transaction object", rpc.Method)}
 		}
 		obj, ok := rpc.Params[0].(map[string]any)
 		if !ok {
-			return nil, fmt.Errorf("eth_sendTransaction param[0] must be a tx object")
+			return nil, &simulationClientError{msg: fmt.Sprintf("%s param[0] must be a transaction object", rpc.Method)}
 		}
 		txObj = obj
+		if effectiveMethod == "eth_sendTransaction" {
+			txObj = policyCheckTraceTransaction(txObj)
+		}
+		if (effectiveMethod == "eth_call" || effectiveMethod == "eth_estimateGas") && len(rpc.Params) > 1 {
+			blockParam = rpc.Params[1]
+		}
 	case "eth_sendRawTransaction":
+		if len(rpc.Params) > 2 {
+			return nil, &simulationClientError{msg: fmt.Sprintf("%s accepts at most two parameters", rpc.Method)}
+		}
 		rawHex, err := extractRawTxHex(rpc.Params)
 		if err != nil {
 			return nil, fmt.Errorf("invalid raw transaction: %w", err)
@@ -530,16 +553,12 @@ func (s *Server) forwardDryRunTrace(ctx context.Context, rpc dryRunRPCBlock) (*d
 		return nil, fmt.Errorf("unsupported trace method: %s", rpc.Method)
 	}
 
-	// Build the debug_traceCall request. callTracer + withLog gives us
-	// nested call frames + the logs each frame would emit, which is
-	// exactly what dry-run needs — RBAC gating + audit are already done
-	// upstream of this call.
 	traceReq := map[string]any{
 		"jsonrpc": "2.0",
 		"method":  "debug_traceCall",
 		"params": []any{
 			txObj,
-			"latest",
+			blockParam,
 			map[string]any{
 				"tracer": "callTracer",
 				"tracerConfig": map[string]any{
@@ -554,14 +573,11 @@ func (s *Server) forwardDryRunTrace(ctx context.Context, rpc dryRunRPCBlock) (*d
 	if err != nil {
 		return nil, fmt.Errorf("marshal: %w", err)
 	}
-	respBody, _, err := s.proxy.Forward(body)
+	respBody, _, err := s.proxy.ForwardWithAPIKeyHeaderContext(ctx, body, apiKeyHeader, apiKey, "")
 	if err != nil {
 		return nil, err
 	}
 
-	// Surface upstream errors clearly — most commonly "method
-	// debug_traceCall is not available", which means the operator's
-	// node doesn't expose the debug namespace.
 	var rpcResp struct {
 		Result json.RawMessage `json:"result"`
 		Error  *struct {
@@ -573,12 +589,9 @@ func (s *Server) forwardDryRunTrace(ctx context.Context, rpc dryRunRPCBlock) (*d
 		return nil, fmt.Errorf("upstream returned malformed response")
 	}
 	if rpcResp.Error != nil {
-		// Common case: debug_* not enabled on the node. Sanitise the
-		// message so we don't echo arbitrary upstream output back to
-		// the admin UI without inspection.
 		if strings.Contains(strings.ToLower(rpcResp.Error.Message), "method") &&
 			strings.Contains(strings.ToLower(rpcResp.Error.Message), "not") {
-			return nil, fmt.Errorf("node does not support debug_traceCall — dry-run for write methods unavailable")
+			return nil, fmt.Errorf("node does not support debug_traceCall")
 		}
 		return nil, fmt.Errorf("trace failed: %s", rpcResp.Error.Message)
 	}
@@ -587,15 +600,27 @@ func (s *Server) forwardDryRunTrace(ctx context.Context, rpc dryRunRPCBlock) (*d
 		return nil, fmt.Errorf("could not validate trace: %w", err)
 	}
 	_ = ctx
-	return &dryRunTraceResult{
+	return &simulationTraceResult{
 		Trace:  rpcResp.Result,
 		Logs:   extractLogsFromCallTrace(rpcResp.Result),
 		Parsed: parsed,
 	}, nil
 }
 
+// policyCheckTraceTransaction copies a transaction object without proxy-only
+// visibility data. The live write path removes this field before RPC forwarding.
+func policyCheckTraceTransaction(txObj map[string]any) map[string]any {
+	copy := make(map[string]any, len(txObj))
+	for key, value := range txObj {
+		if key != "visibleTo" {
+			copy[key] = value
+		}
+	}
+	return copy
+}
+
 // validateDryRunTrace applies the live trace validator to the exact callTracer
-// payload returned by forwardDryRunTrace. Validation is deliberately pinned to
+// payload returned by forwardSimulationTrace. Validation is deliberately pinned to
 // orgID rather than all of the impersonated user's memberships: an Org A admin
 // must not receive nested Org B calls merely because the user belongs to both.
 func (s *Server) validateDryRunTrace(
@@ -604,6 +629,24 @@ func (s *Server) validateDryRunTrace(
 	perms *rbac.EffectivePermissions,
 	orgID, targetAddr string,
 	traceResult *tracer.TraceResult,
+) *ProcessError {
+	return s.validateTraceWithOrgIDs(
+		ctx, user, perms, orgID, targetAddr, traceResult,
+		map[string]bool{orgID: true}, effectivePermissionsHasDeployClaim(perms),
+	)
+}
+
+// validateTraceWithOrgIDs applies a trace policy with an explicit organization
+// set. Admin dry-run supplies its selected organization. Policy-check supplies
+// all subject organizations, as the live RPC path does.
+func (s *Server) validateTraceWithOrgIDs(
+	ctx context.Context,
+	user *rbac.User,
+	perms *rbac.EffectivePermissions,
+	orgID, targetAddr string,
+	traceResult *tracer.TraceResult,
+	userOrgIDs map[string]bool,
+	userHasDeploy bool,
 ) *ProcessError {
 	if user == nil || perms == nil || traceResult == nil || s.db == nil {
 		return &ProcessError{
@@ -621,7 +664,7 @@ func (s *Server) validateDryRunTrace(
 		}
 		var err error
 		traceOpts, err = s.jsonrpcProcessor.intraOrgGrantTraceOptions(
-			ctx, user.ID, targetAddr, map[string]bool{orgID: true},
+			ctx, user.ID, targetAddr, userOrgIDs,
 		)
 		if err != nil {
 			slog.Warn("dry-run trace: grant resolution failed",
@@ -636,9 +679,9 @@ func (s *Server) validateDryRunTrace(
 
 	validation, err := validator.ValidateTrace(
 		ctx,
-		map[string]bool{orgID: true},
+		userOrgIDs,
 		traceResult,
-		effectivePermissionsHasDeployClaim(perms),
+		userHasDeploy,
 		traceOpts...,
 	)
 	if err != nil {
