@@ -74,39 +74,26 @@ interface AuthState {
   error: string | null;
   humanityVerifyUrl: string | null;
   oauthRedirectUrl: string | null;
+  // RD-1242: a rejected proof, surfaced WITHOUT leaving the 'ready' step so the
+  // poll loop stays alive. The backend treats a failure as non-terminal (a
+  // wallet retry can still complete), and the session ID is visible in the QR
+  // code, so anyone who photographs it can post one bogus token. Tearing the
+  // page down here would let that cancel a legitimate login.
+  failureReason: string | null;
 }
 
 // Maps a curated failure code from the polled session (RD-1242) to the step and
 // copy the user sees. The codes come from the backend's closed allowlist, so an
 // unrecognised value here means a newer backend: fall back to the generic
 // message rather than rendering the raw code.
-function authFailureState(reason: string): Pick<AuthState, 'step' | 'error' | 'humanityVerifyUrl'> {
+function authFailureMessage(reason: string): string {
   switch (reason) {
-    case 'humanity_required':
-      return {
-        step: 'humanity_required',
-        error: null,
-        humanityVerifyUrl: BILLIONS_VERIFY_URL,
-      };
     case 'verification_failed':
-      return {
-        step: 'error',
-        error:
-          'Your wallet’s proof could not be verified. Generate a new QR code and try again, or contact your administrator if this keeps happening.',
-        humanityVerifyUrl: null,
-      };
+      return 'Your wallet’s proof could not be verified. Generate a new QR code and try again, or contact your administrator if this keeps happening.';
     case 'invalid_request':
-      return {
-        step: 'error',
-        error: 'Your wallet sent a response the server could not read. Generate a new QR code and try again.',
-        humanityVerifyUrl: null,
-      };
+      return 'Your wallet sent a response the server could not read. Generate a new QR code and try again.';
     default:
-      return {
-        step: 'error',
-        error: 'Authentication failed. Generate a new QR code and try again, or contact your administrator.',
-        humanityVerifyUrl: null,
-      };
+      return 'Authentication failed. Generate a new QR code and try again, or contact your administrator.';
   }
 }
 
@@ -133,6 +120,7 @@ export function LoginPage() {
     error: null,
     humanityVerifyUrl: null,
     oauthRedirectUrl: null,
+    failureReason: null,
   });
 
   // Redirect if already authenticated (skip in OAuth mode — user is authenticating for a third-party app)
@@ -186,6 +174,7 @@ export function LoginPage() {
         error: null,
         humanityVerifyUrl: null,
         oauthRedirectUrl: null,
+        failureReason: null,
       });
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to start authentication';
@@ -208,6 +197,7 @@ export function LoginPage() {
         error: null,
         humanityVerifyUrl: null,
         oauthRedirectUrl: null,
+        failureReason: null,
       });
     } catch {
       setState(prev => ({ ...prev, step: 'error', error: 'Failed to load authentication session' }));
@@ -437,16 +427,32 @@ export function LoginPage() {
           const result = await authApiMethods.pollSession(state.sessionId!);
           if (result && mounted) {
             if (result.status === 'failed') {
-              // RD-1242: the wallet's proof was rejected. Stop polling and say
-              // so — this session used to stay pending, so the poll budget
-              // eventually reported a timeout that never happened.
-              setState(prev => ({ ...prev, ...authFailureState(result.reason) }));
+              // RD-1242: report the rejection, but keep polling. A missing
+              // humanity credential needs the user to act, so that one becomes
+              // its own step; every other rejection is shown in place so a
+              // wallet retry (or a bogus callback from someone who photographed
+              // the QR) cannot cancel a login that later succeeds.
+              if (result.reason === 'humanity_required') {
+                setState(prev => ({
+                  ...prev,
+                  step: 'humanity_required',
+                  humanityVerifyUrl: BILLIONS_VERIFY_URL,
+                }));
+                return;
+              }
+              // Identical reason => return prev so the state object is stable
+              // and this effect is not torn down and restarted every 2s.
+              setState(prev =>
+                prev.failureReason === result.reason
+                  ? prev
+                  : { ...prev, failureReason: result.reason }
+              );
+            } else {
+              login(result.tokens.access_token, result.tokens.refresh_token, result.tokens.expires_in);
+              setState(prev => ({ ...prev, step: 'success' }));
+              setTimeout(() => navigate(from, { replace: true }), 1000);
               return;
             }
-            login(result.tokens.access_token, result.tokens.refresh_token, result.tokens.expires_in);
-            setState(prev => ({ ...prev, step: 'success' }));
-            setTimeout(() => navigate(from, { replace: true }), 1000);
-            return;
           }
         }
       } catch (err) {
@@ -487,6 +493,28 @@ export function LoginPage() {
   // Render QR code section
   const renderQRSection = () => {
     if (!state.authRequest) return null;
+
+    // RD-1242: a rejected proof replaces the QR and spinner with the reason,
+    // while the poll loop above keeps running. The backend's failure is not
+    // terminal, and the session ID is visible in the QR code, so a bogus
+    // callback from anyone who photographed it must not be able to cancel a
+    // login that still completes.
+    if (state.failureReason) {
+      return (
+        <div className="flex flex-col items-center gap-4 py-6" data-testid="auth-error">
+          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-error-light">
+            <AlertCircle className="h-8 w-8 text-error-dark" />
+          </div>
+          <div className="text-center">
+            <p className="mb-2 font-medium text-neutral-900">Authentication Failed</p>
+            <p className="text-sm text-neutral-500">{authFailureMessage(state.failureReason)}</p>
+          </div>
+          <Button onClick={startAuth} variant="default" className="w-full mt-2" data-testid="try-again-btn">
+            Try Again
+          </Button>
+        </div>
+      );
+    }
 
     const deepLink = generatePrivadoLink(state.authRequest);
     const isMobile = isMobileDevice();

@@ -3,7 +3,12 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { LoginPage } from '../LoginPage';
 import { AuthProvider } from '@/contexts/AuthContext';
-import { setSessionFailed, resetSessionState } from '@/test/mocks/handlers';
+import {
+  setSessionFailed,
+  setSessionCompleted,
+  resetSessionState,
+  mockTokenResponse,
+} from '@/test/mocks/handlers';
 
 // RD-1242: a rejected wallet proof used to leave the session pending, so the
 // browser polled for five minutes (150 polls x 2s) and then claimed the wallet
@@ -54,9 +59,12 @@ describe('LoginPage — rejected wallet proof (RD-1242)', () => {
     expect(screen.getByTestId('try-again-btn')).toBeInTheDocument();
   });
 
-  it('stops polling once the session has failed', async () => {
+  // The security property: the session ID is rendered in the QR code, so anyone
+  // who photographs it can post one bogus token. That must not be able to cancel
+  // a login that still completes, so the page keeps polling while showing the
+  // failure (matching the backend's non-terminal semantics).
+  it('keeps polling after a rejection, so a later completion still wins', async () => {
     setSessionFailed('verification_failed');
-    const fetchSpy = vi.spyOn(globalThis, 'fetch');
     renderLoginPage();
 
     await waitFor(
@@ -66,20 +74,16 @@ describe('LoginPage — rejected wallet proof (RD-1242)', () => {
       { timeout: 5000 }
     );
 
-    const statusCallsAtFailure = fetchSpy.mock.calls.filter(([url]) =>
-      String(url).includes('/status')
-    ).length;
+    // A retry succeeds on the backend after the rejection was shown.
+    setSessionCompleted(true, mockTokenResponse);
 
-    // Give the old 2s poll interval more than one chance to fire again.
-    await new Promise(resolve => setTimeout(resolve, 2500));
-
-    const statusCallsLater = fetchSpy.mock.calls.filter(([url]) =>
-      String(url).includes('/status')
-    ).length;
-
-    expect(statusCallsLater).toBe(statusCallsAtFailure);
-    fetchSpy.mockRestore();
-  });
+    await waitFor(
+      () => {
+        expect(screen.queryByTestId('auth-error')).not.toBeInTheDocument();
+      },
+      { timeout: 6000 }
+    );
+  }, 15000);
 
   it('routes a missing humanity credential to its own step, not a generic error', async () => {
     setSessionFailed('humanity_required');

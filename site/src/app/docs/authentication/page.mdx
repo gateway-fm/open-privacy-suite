@@ -398,4 +398,6 @@ The reason comes from a fixed set and never carries internal detail:
 | `invalid_request` | The wallet's callback body was unreadable. | Generate a new QR code and retry. |
 | `authentication_failed` | Anything else, including a banned account and internal faults. | Check the proxy log — the precise cause is recorded there. |
 
-A banned account and an internal fault both collapse to `authentication_failed` deliberately: the session ID is rendered in the on-screen QR code, so anyone who photographs it could otherwise poll for someone else's login outcome. Operators read the precise reason from the proxy log.
+A banned account and an internal fault both collapse to `authentication_failed` deliberately: the session ID is rendered in the on-screen QR code, so anyone who photographs it could otherwise poll for someone else's login outcome. Operators read the precise reason from the proxy log and from `GET /api/v1/admin/sessions`, which reports it unreduced.
+
+A rejection is **not final**, for the same reason. Because that session ID is visible, anyone who photographs the QR can post one bogus proof — so a failure must not be able to cancel a login that still succeeds. The login page shows the failure but keeps polling, and a wallet that retries successfully still completes the session. Any client polling this endpoint should do the same rather than treating `failed: true` as terminal.

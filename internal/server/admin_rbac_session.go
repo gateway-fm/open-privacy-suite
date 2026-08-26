@@ -18,6 +18,12 @@ type sessionInfoResponse struct {
 	ExpiresAt   string `json:"expires_at"`
 	Completed   bool   `json:"completed"`
 	CompletedAt string `json:"completed_at,omitempty"`
+	// Failure state (RD-1242). This is the operator channel for the PRECISE
+	// reason: the polled session-status endpoint collapses oracle-sensitive
+	// codes, this super-admin view does not.
+	Failed        bool   `json:"failed,omitempty"`
+	FailureReason string `json:"failure_reason,omitempty"`
+	FailedAt      string `json:"failed_at,omitempty"`
 }
 
 // listSessions exposes the in-flight auth session store. The entries
@@ -26,7 +32,7 @@ type sessionInfoResponse struct {
 // (audit H7). Restrict to super-admin.
 //
 // @Summary      List auth sessions
-// @Description  Returns the in-flight authentication sessions (id, created/expiry/completed timestamps) held in the session store. These are cluster-wide auth-flow sessions, not org-tagged, so the endpoint is restricted to the super-admin (full X-Admin-Token); tier-2 org-admin JWTs and the operator token are rejected with 403.
+// @Description  Returns the in-flight authentication sessions (id, created/expiry/completed timestamps, and for a rejected wallet proof the precise failure reason) held in the session store. These are cluster-wide auth-flow sessions, not org-tagged, so the endpoint is restricted to the super-admin (full X-Admin-Token); tier-2 org-admin JWTs and the operator token are rejected with 403.
 // @Tags         Admin: RBAC
 // @Produce      json
 // @Success      200 {object} SessionListResponse
@@ -56,6 +62,13 @@ func (s *Server) listSessions(c *gin.Context) {
 		}
 		if session.Completed && !session.CompletedAt.IsZero() {
 			item.CompletedAt = session.CompletedAt.Format("2006-01-02T15:04:05Z07:00")
+		}
+		if session.Failed {
+			item.Failed = true
+			item.FailureReason = session.FailureReason
+			if !session.FailedAt.IsZero() {
+				item.FailedAt = session.FailedAt.Format("2006-01-02T15:04:05Z07:00")
+			}
 		}
 		responseItems = append(responseItems, item)
 	}

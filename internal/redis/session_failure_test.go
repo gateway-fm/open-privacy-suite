@@ -2,8 +2,11 @@ package redis
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
+
+	"privacy-proxy/internal/auth"
 
 	"github.com/iden3/iden3comm/v2/protocol"
 	"github.com/stretchr/testify/assert"
@@ -110,4 +113,45 @@ func TestSessionStore_FailAfterCompleteIsIgnored(t *testing.T) {
 	assert.True(t, session.Completed, "a late failure erased a successful login")
 	assert.False(t, session.Failed)
 	assert.Equal(t, "access-token-123", session.AccessToken, "tokens were lost")
+}
+
+// The CAS must drop a failure whose read is stale, which is the lost-update the
+// pre-write Go check alone cannot close: simulate it by completing the session
+// after the failure path has already read the pending JSON.
+func TestSessionStore_FailSession_CASDropsStaleWrite(t *testing.T) {
+	client := setupRedis(t)
+	store := NewSessionStore(client, 10*time.Minute, 100)
+	ctx := context.Background()
+
+	sessionID := store.CreateSession(&protocol.AuthorizationRequestMessage{})
+	require.NotEmpty(t, sessionID)
+	key := sessionKeyPrefix + sessionID
+
+	// What a concurrent FailSession would have read before the completion.
+	stale, err := client.Get(ctx, key).Bytes()
+	require.NoError(t, err)
+
+	require.NoError(t, store.CompleteSession(sessionID, "access-token-123", "refresh-token-456"))
+
+	// Replay the stale write directly against the script, as a racing
+	// FailSession would: it must be refused rather than clobber the tokens.
+	var session auth.Session
+	require.NoError(t, json.Unmarshal(stale, &session))
+	session.Failed = true
+	session.FailureReason = "verification_failed"
+	session.FailedAt = time.Now()
+	updated, err := json.Marshal(&session)
+	require.NoError(t, err)
+
+	result, err := failSessionScript.Run(ctx, client, []string{key},
+		string(stale), string(updated),
+	).Int()
+	require.NoError(t, err)
+	assert.Equal(t, -1, result, "a stale CAS write must be refused")
+
+	after := store.GetSession(sessionID)
+	require.NotNil(t, after)
+	assert.True(t, after.Completed, "the completed login survived")
+	assert.Equal(t, "access-token-123", after.AccessToken)
+	assert.False(t, after.Failed)
 }

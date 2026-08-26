@@ -80,6 +80,26 @@ redis.call('SET', KEYS[1], ARGV[1], 'EX', tonumber(ARGV[2]))
 return 1
 `)
 
+// failSessionScript records a failure only if the stored value is byte-for-byte
+// the one the caller read. This is an optimistic compare-and-set: without it a
+// failure that read the pending session before a concurrent CompleteSession
+// wrote would clobber the tokens and revert Completed, losing a successful
+// login. Comparing the raw string avoids cjson entirely (it corrupts empty
+// arrays — see updateSessionScript), so no JSON is decoded in Lua.
+//
+// KEYS[1] = session key (pp:session:{id})
+// ARGV[1] = the exact JSON the caller read
+// ARGV[2] = the new JSON to store
+//
+// Returns 1 on success, 0 if the key doesn't exist, -1 if it changed under us.
+var failSessionScript = redis.NewScript(`
+local data = redis.call('GET', KEYS[1])
+if not data then return 0 end
+if data ~= ARGV[1] then return -1 end
+redis.call('SET', KEYS[1], ARGV[2], 'KEEPTTL')
+return 1
+`)
+
 // SessionStore is a Redis-backed implementation of the SessionManager interface.
 // It stores auth sessions as JSON values with Redis TTL for automatic expiry,
 // replacing the in-memory sync.Map-based store.
@@ -277,34 +297,35 @@ func (s *SessionStore) CompleteSession(sessionID, accessToken, refreshToken stri
 // reason must be a curated code (see internal/server/auth_failure_reasons.go),
 // never raw error text: the value is returned to an unauthenticated poller.
 //
-// Uses updateSessionScript rather than completeSessionScript because that one
-// KEEPTTLs: a session that failed carries no tokens, so it must expire on its
-// original schedule instead of being handed the 2-minute completed-session
-// window. Recording a failure is deliberately not terminal - a wallet that
-// retries after a transient error still completes via CompleteSession, which
-// clears these fields.
+// A success always wins over a failure. The write is an optimistic
+// compare-and-set against the exact bytes read (failSessionScript), so a
+// failure racing a concurrent CompleteSession is dropped rather than clobbering
+// the tokens. TTL is preserved via KEEPTTL: a session that failed carries no
+// tokens, so it must expire on its original schedule rather than being handed
+// the 2-minute completed-session window.
+//
+// Recording a failure is not terminal - a wallet that retries after a transient
+// error still completes via CompleteSession, which clears these fields.
 func (s *SessionStore) FailSession(sessionID, reason string) error {
 	ctx := context.Background()
 	key := sessionKeyPrefix + sessionID
 
-	session := s.GetSession(sessionID)
-	if session == nil {
-		return fmt.Errorf("session not found")
+	// Read the raw bytes, not via GetSession: the CAS compares against exactly
+	// what is stored, and a re-marshal is not guaranteed to reproduce it.
+	current, err := s.client.Get(ctx, key).Bytes()
+	if err != nil {
+		if err == redis.Nil {
+			return fmt.Errorf("session not found")
+		}
+		return fmt.Errorf("redis get session: %w", err)
 	}
 
-	// Never let a failure erase a completed login. Two callbacks can race for
-	// the same session (a wallet retry against the original attempt) and this
-	// is a read-modify-write, so without the check a failure that read before a
-	// concurrent CompleteSession wrote would write back a token-less session.
-	//
-	// The guard closes the ordering that actually happens - complete, then a
-	// late failure - but not the true interleaving, where both read the pending
-	// session before either writes. Closing that needs a compare-and-set inside
-	// the Lua script, which cannot decode the stored JSON: cjson corrupts empty
-	// arrays (see the note on updateSessionScript), so the flag is not readable
-	// there. The residual window is a few milliseconds and requires a wallet to
-	// double-submit; the in-memory store has no such gap because both paths take
-	// the session mutex.
+	var session auth.Session
+	if err := json.Unmarshal(current, &session); err != nil {
+		return fmt.Errorf("unmarshal session: %w", err)
+	}
+
+	// Already completed: a success outranks a late failure.
 	if session.Completed {
 		return nil
 	}
@@ -313,17 +334,24 @@ func (s *SessionStore) FailSession(sessionID, reason string) error {
 	session.FailureReason = reason
 	session.FailedAt = time.Now()
 
-	data, err := json.Marshal(session)
+	updated, err := json.Marshal(&session)
 	if err != nil {
 		return fmt.Errorf("marshal session: %w", err)
 	}
 
-	result, err := updateSessionScript.Run(ctx, s.client, []string{key}, string(data)).Int()
+	result, err := failSessionScript.Run(ctx, s.client, []string{key},
+		string(current), string(updated),
+	).Int()
 	if err != nil {
 		return fmt.Errorf("redis fail session script: %w", err)
 	}
-	if result == 0 {
+	switch result {
+	case 0:
 		return fmt.Errorf("session not found")
+	case -1:
+		// Changed under us — a concurrent CompleteSession (or another failure)
+		// won. Dropping this write is the point of the CAS.
+		return nil
 	}
 
 	return nil

@@ -535,7 +535,12 @@ func (s *Server) failAuthSession(sessionID, reason string) {
 		// error response, so this is not worth failing the request over.
 		slog.Debug("auth: could not record session failure",
 			"session_id", sessionID, "reason", reason, "err", err)
+		return
 	}
+	// The precise reason, for operators. The polled status endpoint collapses
+	// oracle-sensitive codes, so this log and the super-admin session list are
+	// the only places the exact cause is available.
+	slog.Info("auth: session marked failed", "session_id", sessionID, "reason", reason)
 }
 
 // verifyAndIssueTokens is a helper that verifies JWZ proof and issues JWT tokens
@@ -713,13 +718,12 @@ func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authReque
 type SessionStatusResponse struct {
 	Completed bool          `json:"completed"`
 	Tokens    *AuthResponse `json:"tokens,omitempty"`
-	// Failed reports that the wallet callback was rejected, so the browser can
-	// stop polling and show the reason instead of waiting out its poll budget
-	// and reporting a timeout that never happened (RD-1242). Additive: existing
-	// clients that only read `completed` are unaffected.
+	// Failed reports that the wallet's proof was rejected. Additive: clients
+	// that only read `completed` are unaffected.
 	Failed bool `json:"failed,omitempty"`
-	// Reason is a curated failure code (see auth_failure_reasons.go), passed
-	// through wireAuthFailureReason - never raw error text.
+	// Reason is one of: verification_failed, humanity_required,
+	// invalid_request, authentication_failed. Sensitive and unrecognised
+	// failures collapse to authentication_failed.
 	Reason string `json:"reason,omitempty"`
 }
 
@@ -727,7 +731,7 @@ type SessionStatusResponse struct {
 // Frontend polls this after displaying QR code to check if wallet has completed auth
 //
 // @Summary      Poll a Privado ID auth session for completion
-// @Description  The frontend polls this after showing the QR code to learn whether the wallet has completed authentication. While pending it returns `completed:false`; once complete it returns the issued tokens (and mirrors the access JWT into an HttpOnly cookie). If the wallet's proof was rejected it returns `failed:true` with a curated `reason` code so the browser can surface the failure immediately instead of polling until it times out; the reason is drawn from a closed allowlist and never carries internal error detail. Deliberately not rate-limited: it is read-only polling during the login flow.
+// @Description  The frontend polls this after showing the QR code to learn whether the wallet has completed authentication. While pending it returns `completed:false`; once complete it returns the issued tokens (and mirrors the access JWT into an HttpOnly cookie). If the wallet's proof was rejected it returns `failed:true` with a `reason`, so the caller can surface the failure immediately instead of polling until it times out. `reason` is one of `verification_failed`, `humanity_required`, `invalid_request`, or `authentication_failed`; sensitive and unrecognised failures collapse to `authentication_failed`, and the value never carries internal error detail. A rejection is not final: a wallet that retries successfully still completes the session, so callers should keep polling while presenting the failure. Deliberately not rate-limited: it is read-only polling during the login flow.
 // @Tags         Auth
 // @Produce      json
 // @Param        id path string true "auth session ID"
