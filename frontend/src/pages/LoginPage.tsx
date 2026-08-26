@@ -60,6 +60,10 @@ interface TestIdentity {
 const AUTH_POLL_INTERVAL_MS = 2000;
 const AUTH_MAX_POLLS = 150;
 
+// Fallback for the humanity flow when the reason arrives via the polled session
+// rather than the wallet's own 403 (which carries a verify_url).
+const BILLIONS_VERIFY_URL = 'https://app.billions.network';
+
 type AuthStep = 'init' | 'loading' | 'ready' | 'success' | 'error' | 'humanity_required' | 'timed_out';
 type AuthProvider = 'privado' | 'azuread';
 
@@ -70,6 +74,40 @@ interface AuthState {
   error: string | null;
   humanityVerifyUrl: string | null;
   oauthRedirectUrl: string | null;
+}
+
+// Maps a curated failure code from the polled session (RD-1242) to the step and
+// copy the user sees. The codes come from the backend's closed allowlist, so an
+// unrecognised value here means a newer backend: fall back to the generic
+// message rather than rendering the raw code.
+function authFailureState(reason: string): Pick<AuthState, 'step' | 'error' | 'humanityVerifyUrl'> {
+  switch (reason) {
+    case 'humanity_required':
+      return {
+        step: 'humanity_required',
+        error: null,
+        humanityVerifyUrl: BILLIONS_VERIFY_URL,
+      };
+    case 'verification_failed':
+      return {
+        step: 'error',
+        error:
+          'Your wallet’s proof could not be verified. Generate a new QR code and try again, or contact your administrator if this keeps happening.',
+        humanityVerifyUrl: null,
+      };
+    case 'invalid_request':
+      return {
+        step: 'error',
+        error: 'Your wallet sent a response the server could not read. Generate a new QR code and try again.',
+        humanityVerifyUrl: null,
+      };
+    default:
+      return {
+        step: 'error',
+        error: 'Authentication failed. Generate a new QR code and try again, or contact your administrator.',
+        humanityVerifyUrl: null,
+      };
+  }
 }
 
 export function LoginPage() {
@@ -398,7 +436,14 @@ export function LoginPage() {
           // Normal mode: poll auth session for JWT tokens
           const result = await authApiMethods.pollSession(state.sessionId!);
           if (result && mounted) {
-            login(result.access_token, result.refresh_token, result.expires_in);
+            if (result.status === 'failed') {
+              // RD-1242: the wallet's proof was rejected. Stop polling and say
+              // so — this session used to stay pending, so the poll budget
+              // eventually reported a timeout that never happened.
+              setState(prev => ({ ...prev, ...authFailureState(result.reason) }));
+              return;
+            }
+            login(result.tokens.access_token, result.tokens.refresh_token, result.tokens.expires_in);
             setState(prev => ({ ...prev, step: 'success' }));
             setTimeout(() => navigate(from, { replace: true }), 1000);
             return;

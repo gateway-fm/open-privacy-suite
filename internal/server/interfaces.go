@@ -25,6 +25,11 @@ type SessionManager interface {
 	// CompleteSession marks a session as completed with tokens.
 	CompleteSession(sessionID, accessToken, refreshToken string) error
 
+	// FailSession records that the wallet callback was rejected, so the polling
+	// browser learns why instead of waiting out its poll budget (RD-1242).
+	// reason must be a curated code from auth_failure_reasons.go.
+	FailSession(sessionID, reason string) error
+
 	// ListSessions returns information about all active sessions.
 	ListSessions() []*auth.SessionInfo
 

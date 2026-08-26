@@ -23,6 +23,12 @@ export interface AuthRequestResponse {
   };
 }
 
+// Outcome of one session poll. `failed` carries a curated reason code from the
+// backend's closed allowlist (RD-1242) — never raw error text.
+export type SessionPollResult =
+  | { status: 'completed'; tokens: AuthTokenResponse }
+  | { status: 'failed'; reason: string };
+
 export interface AuthTokenResponse {
   access_token: string;
   refresh_token: string;
@@ -83,14 +89,23 @@ export const authApiMethods = {
     return response.data;
   },
 
-  // Poll for session completion (check if wallet has completed auth)
-  pollSession: async (sessionId: string): Promise<AuthTokenResponse | null> => {
+  // Poll for session completion (check if wallet has completed auth).
+  // Returns the tokens once complete, a rejection once the wallet's proof was
+  // refused (RD-1242), or null while still pending.
+  pollSession: async (sessionId: string): Promise<SessionPollResult | null> => {
     try {
       // In a real implementation, you'd have a dedicated endpoint for this
       // For now, we'll poll the callback status
       const response = await authApi.get(`/auth/session/${sessionId}/status`);
       if (response.data.completed) {
-        return response.data.tokens;
+        return { status: 'completed', tokens: response.data.tokens };
+      }
+      // RD-1242: the wallet posts its proof to a different endpoint and reads
+      // the rejection from that response. Without this the browser would keep
+      // polling a session that will never complete, and after 150 polls report
+      // a timeout that never happened.
+      if (response.data.failed) {
+        return { status: 'failed', reason: response.data.reason || '' };
       }
       return null;
     } catch (err) {

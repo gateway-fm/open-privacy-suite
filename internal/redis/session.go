@@ -243,6 +243,11 @@ func (s *SessionStore) CompleteSession(sessionID, accessToken, refreshToken stri
 	session.AccessToken = accessToken
 	session.RefreshToken = refreshToken
 	session.CompletedAt = now
+	// A wallet may retry after a transient failure, so a success supersedes any
+	// recorded failure rather than being blocked by it (RD-1242).
+	session.Failed = false
+	session.FailureReason = ""
+	session.FailedAt = time.Time{}
 	session.ExpiresAt = now.Add(2 * time.Minute)
 
 	ttlSeconds := 120
@@ -257,6 +262,65 @@ func (s *SessionStore) CompleteSession(sessionID, accessToken, refreshToken stri
 	).Int()
 	if err != nil {
 		return fmt.Errorf("redis complete session script: %w", err)
+	}
+	if result == 0 {
+		return fmt.Errorf("session not found")
+	}
+
+	return nil
+}
+
+// FailSession records that the wallet callback for this session was rejected,
+// so the polling browser can be told why instead of waiting out its poll budget
+// and reporting a timeout that never happened (RD-1242).
+//
+// reason must be a curated code (see internal/server/auth_failure_reasons.go),
+// never raw error text: the value is returned to an unauthenticated poller.
+//
+// Uses updateSessionScript rather than completeSessionScript because that one
+// KEEPTTLs: a session that failed carries no tokens, so it must expire on its
+// original schedule instead of being handed the 2-minute completed-session
+// window. Recording a failure is deliberately not terminal - a wallet that
+// retries after a transient error still completes via CompleteSession, which
+// clears these fields.
+func (s *SessionStore) FailSession(sessionID, reason string) error {
+	ctx := context.Background()
+	key := sessionKeyPrefix + sessionID
+
+	session := s.GetSession(sessionID)
+	if session == nil {
+		return fmt.Errorf("session not found")
+	}
+
+	// Never let a failure erase a completed login. Two callbacks can race for
+	// the same session (a wallet retry against the original attempt) and this
+	// is a read-modify-write, so without the check a failure that read before a
+	// concurrent CompleteSession wrote would write back a token-less session.
+	//
+	// The guard closes the ordering that actually happens - complete, then a
+	// late failure - but not the true interleaving, where both read the pending
+	// session before either writes. Closing that needs a compare-and-set inside
+	// the Lua script, which cannot decode the stored JSON: cjson corrupts empty
+	// arrays (see the note on updateSessionScript), so the flag is not readable
+	// there. The residual window is a few milliseconds and requires a wallet to
+	// double-submit; the in-memory store has no such gap because both paths take
+	// the session mutex.
+	if session.Completed {
+		return nil
+	}
+
+	session.Failed = true
+	session.FailureReason = reason
+	session.FailedAt = time.Now()
+
+	data, err := json.Marshal(session)
+	if err != nil {
+		return fmt.Errorf("marshal session: %w", err)
+	}
+
+	result, err := updateSessionScript.Run(ctx, s.client, []string{key}, string(data)).Int()
+	if err != nil {
+		return fmt.Errorf("redis fail session script: %w", err)
 	}
 	if result == 0 {
 		return fmt.Errorf("session not found")
@@ -292,6 +356,11 @@ func (s *SessionStore) ListSessions() []*auth.SessionInfo {
 		}
 		if session.Completed {
 			info.CompletedAt = session.CompletedAt
+		}
+		if session.Failed {
+			info.Failed = true
+			info.FailureReason = session.FailureReason
+			info.FailedAt = session.FailedAt
 		}
 		sessions = append(sessions, info)
 	}

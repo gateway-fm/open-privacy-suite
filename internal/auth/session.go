@@ -31,6 +31,17 @@ type Session struct {
 	AccessToken  string    `json:"access_token,omitempty"`
 	RefreshToken string    `json:"refresh_token,omitempty"`
 	CompletedAt  time.Time `json:"completed_at,omitempty"`
+	// Failure fields - set when the wallet callback is rejected (RD-1242).
+	// The wallet and the browser are different HTTP clients: the wallet reads
+	// the error from its own callback response, the browser only ever sees this
+	// session. Without these the browser polls a still-pending session until
+	// its poll budget runs out, then reports a timeout that never happened.
+	//
+	// FailureReason is a curated code, never raw error text - see
+	// internal/server/auth_failure_reasons.go.
+	Failed        bool      `json:"failed,omitempty"`
+	FailureReason string    `json:"failure_reason,omitempty"`
+	FailedAt      time.Time `json:"failed_at,omitempty"`
 }
 
 // SessionStore manages authentication sessions
@@ -150,10 +161,49 @@ func (s *SessionStore) CompleteSession(sessionID, accessToken, refreshToken stri
 	session.AccessToken = accessToken
 	session.RefreshToken = refreshToken
 	session.CompletedAt = time.Now()
+	// A wallet may retry after a transient failure, so a success supersedes any
+	// recorded failure rather than being blocked by it (RD-1242).
+	session.Failed = false
+	session.FailureReason = ""
+	session.FailedAt = time.Time{}
 	// Extend expiry so frontend has time to poll and get the tokens
 	session.ExpiresAt = time.Now().Add(2 * time.Minute)
 	s.sessions.Store(sessionID, session)
 	session.mu.Unlock()
+	return nil
+}
+
+// FailSession records that the wallet callback for this session was rejected,
+// so the polling browser can be told why instead of waiting out its poll budget
+// and reporting a timeout that never happened (RD-1242).
+//
+// reason must be a curated code (see internal/server/auth_failure_reasons.go),
+// never raw error text: the value is returned to an unauthenticated poller.
+//
+// Recording a failure is deliberately NOT terminal. A wallet that retries after
+// a transient error still completes the session normally - CompleteSession
+// clears these fields. The session's TTL is left untouched so a failure cannot
+// extend the lifetime of a session that carries no tokens.
+func (s *SessionStore) FailSession(sessionID, reason string) error {
+	value, ok := s.sessions.Load(sessionID)
+	if !ok {
+		return fmt.Errorf("session not found")
+	}
+
+	session := value.(*Session)
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	// Never let a failure erase a completed login. Two callbacks can race for
+	// the same session (a wallet retry against the original attempt); a success
+	// must win regardless of which finishes last. CompleteSession takes the
+	// same lock, so this check makes the outcome deterministic here.
+	if session.Completed {
+		return nil
+	}
+	session.Failed = true
+	session.FailureReason = reason
+	session.FailedAt = time.Now()
+	s.sessions.Store(sessionID, session)
 	return nil
 }
 
@@ -199,6 +249,11 @@ type SessionInfo struct {
 	ExpiresAt   time.Time `json:"expires_at"`
 	Completed   bool      `json:"completed"`
 	CompletedAt time.Time `json:"completed_at,omitempty"`
+	// Failure state (RD-1242). The reason is a curated code, so it is safe in
+	// this operator-facing view.
+	Failed        bool      `json:"failed,omitempty"`
+	FailureReason string    `json:"failure_reason,omitempty"`
+	FailedAt      time.Time `json:"failed_at,omitempty"`
 }
 
 // ListSessions returns information about all active sessions.
@@ -222,6 +277,11 @@ func (s *SessionStore) ListSessions() []*SessionInfo {
 		}
 		if session.Completed {
 			info.CompletedAt = session.CompletedAt
+		}
+		if session.Failed {
+			info.Failed = true
+			info.FailureReason = session.FailureReason
+			info.FailedAt = session.FailedAt
 		}
 		sessions = append(sessions, info)
 		return true

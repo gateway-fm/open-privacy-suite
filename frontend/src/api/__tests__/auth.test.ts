@@ -12,6 +12,7 @@ import {
   mockAuthRequest,
   mockTokenResponse,
   setSessionCompleted,
+  setSessionFailed,
   resetSessionState,
 } from '@/test/mocks/handlers';
 
@@ -70,13 +71,28 @@ describe('Auth API', () => {
         expect(result).toBeNull();
       });
 
+      // RD-1242: a rejected proof must be reported, not swallowed as "pending".
+      it('should report a rejected proof with its curated reason', async () => {
+        resetSessionState();
+        setSessionFailed('verification_failed');
+
+        const result = await authApiMethods.pollSession('test-session');
+
+        expect(result).not.toBeNull();
+        expect(result?.status).toBe('failed');
+        expect(result?.status === 'failed' && result.reason).toBe('verification_failed');
+      });
+
       it('should return tokens when session is complete', async () => {
         setSessionCompleted(true, mockTokenResponse);
 
         const result = await authApiMethods.pollSession('test-session');
 
         expect(result).not.toBeNull();
-        expect(result?.access_token).toBe(mockTokenResponse.access_token);
+        expect(result?.status).toBe('completed');
+        expect(result?.status === 'completed' && result.tokens.access_token).toBe(
+          mockTokenResponse.access_token
+        );
       });
 
       it('should handle poll errors gracefully', async () => {

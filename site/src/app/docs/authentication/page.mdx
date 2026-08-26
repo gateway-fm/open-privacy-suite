@@ -384,3 +384,18 @@ Bootstrap the first admin with the `X-Admin-Token` (M2M) endpoint above, then gr
 | 403 | `account is banned` | Banned user on login / refresh (the admin dashboard returns `user is banned`) |
 
 On the JSON-RPC data path, RBAC denials — method not allowed, KYC not completed, contract not permitted, and even a ban — are deliberately returned as an opaque **`404 method not found`**; the proxy does not disclose *why* a call was denied. The operator-facing denial reasons are recorded in the access log and surfaced in [Troubleshooting → RBAC](/docs/troubleshooting).
+
+### A rejected wallet proof
+
+The wallet and the browser are two different clients. The wallet posts its proof to the callback endpoint and reads the outcome from that response; the browser only polls `GET /api/v1/auth/session/{id}/status`. When a proof is rejected, that poll now returns `failed: true` with a short `reason`, so the login page shows the failure straight away instead of waiting out its polling window and then reporting a timeout that never happened.
+
+The reason comes from a fixed set and never carries internal detail:
+
+| `reason` | Meaning | What the user should do |
+|---|---|---|
+| `verification_failed` | The proof did not verify against the authorization request. | Generate a new QR code and retry. If it persists, check that the wallet's identity network is one this deployment supports. |
+| `humanity_required` | A ProofOfHumanity credential is required and was absent. | Complete verification, then retry. |
+| `invalid_request` | The wallet's callback body was unreadable. | Generate a new QR code and retry. |
+| `authentication_failed` | Anything else, including a banned account and internal faults. | Check the proxy log — the precise cause is recorded there. |
+
+A banned account and an internal fault both collapse to `authentication_failed` deliberately: the session ID is rendered in the on-screen QR code, so anyone who photographs it could otherwise poll for someone else's login outcome. Operators read the precise reason from the proxy log.

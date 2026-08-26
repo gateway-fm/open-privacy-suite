@@ -354,15 +354,26 @@ export const mockAddressThresholdOverrides: AddressThresholdOverride[] = [
 // Session state for polling simulation
 let sessionCompleted = false;
 let sessionTokens: AuthTokenResponse | null = null;
+// RD-1242: a rejected wallet proof is reported on the session so the browser can
+// stop polling instead of waiting out its poll budget.
+let sessionFailed = false;
+let sessionFailureReason = '';
 
 export function setSessionCompleted(completed: boolean, tokens?: AuthTokenResponse) {
   sessionCompleted = completed;
   sessionTokens = tokens || null;
 }
 
+export function setSessionFailed(reason: string) {
+  sessionFailed = true;
+  sessionFailureReason = reason;
+}
+
 export function resetSessionState() {
   sessionCompleted = false;
   sessionTokens = null;
+  sessionFailed = false;
+  sessionFailureReason = '';
 }
 
 // MSW handlers
@@ -383,6 +394,9 @@ export const handlers = [
   http.get('/api/v1/auth/session/:sessionId/status', () => {
     if (sessionCompleted && sessionTokens) {
       return HttpResponse.json({ completed: true, tokens: sessionTokens });
+    }
+    if (sessionFailed) {
+      return HttpResponse.json({ completed: false, failed: true, reason: sessionFailureReason });
     }
     return HttpResponse.json({ completed: false });
   }),
