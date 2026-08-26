@@ -195,7 +195,7 @@ If a collision is judged to be a key-compromise event rather than intentional sh
   { name: "BILLIONS_CREDENTIAL_TYPE", default: "ProofOfHumanity", description: "Credential type name declared by the schema" },
   { name: "BILLIONS_CREDENTIAL_QUERY_FILE", default: "(none)", description: "Path to a JSON file containing the credentialSubject predicate (e.g. {\"credentialSubject\":{\"isHuman\":{\"$eq\":1}}}). Required when PoH enabled." },
   { name: "PRIVADO_RPC_URL", default: "https://rpc-mainnet.privado.id", description: "Privado network RPC endpoint (backs the privado:main state resolver)" },
-  { name: "BILLIONS_RPC_URL", default: "https://billions-rpc.eu-north-2.gateway.fm", description: "RPC endpoint for the Billions identity chain (chainID 45056). Backs the billions:main state resolver so DIDs created in the Billions app can authenticate." },
+  { name: "BILLIONS_RPC_URL", default: "(unset)", description: "RPC endpoint for the Billions identity chain (chainID 45056). Backs the billions:main state resolver so DIDs created in the Billions app can authenticate. Required for Billions sign-in — there is no default." },
   { name: "BILLIONS_STATE_CONTRACT", default: "0x3C9acB2205Aa72A05F6D77d708b5Cf85FCa3a896", description: "On-chain identity state contract for the Billions chain. Defaults to the shared iden3 cross-chain address; override only if Billions moves it." },
   { name: "IPFS_GATEWAY", default: "https://ipfs-proxy-cache.privado.id", description: "IPFS gateway for credential schemas" },
   { name: "JWT_SECRET", default: "(auto-generated in dev)", description: "Access token signing secret" },
@@ -210,13 +210,21 @@ If a collision is judged to be a key-compromise event rather than intentional sh
 Every wallet's DID is anchored on a specific iden3 network — Privado ID wallets on
 `privado:main`, Billions app wallets on `billions:main` (chainID 45056). During proof
 verification the proxy resolves each DID's on-chain identity state through a per-network
-resolver. **Both networks are registered out of the box**, so users can sign in with either
-the Privado ID app or the Billions app against a stock deployment.
+resolver. `privado:main` is registered out of the box; **`billions:main` requires you to set
+`BILLIONS_RPC_URL`.** There is deliberately no default, because an RPC endpoint that stops
+resolving is worse than none at all — the resolver registers but cannot be reached, and every
+Billions sign-in then fails deep inside proof verification with nothing pointing at the missing
+setting.
 
-If a wallet's network has no registered resolver, its proof is rejected before any credential
-check. The Billions resolver is configured by `BILLIONS_RPC_URL` and `BILLIONS_STATE_CONTRACT`;
-the Privado resolver by `PRIVADO_RPC_URL` and `PRIVADO_STATE_CONTRACT`. This applies to basic
-DID-ownership login (Path A) — it is independent of ProofOfHumanity (Path B).
+While `BILLIONS_RPC_URL` is unset, `billions:main` is simply not registered. A Billions wallet's
+proof is refused immediately with `network_not_supported` naming the network, the failure is
+logged for the operator, and `GET /api/v1/auth/providers` omits the network so the login page
+advertises Privado ID alone rather than a sign-in that cannot complete.
+
+`BILLIONS_STATE_CONTRACT` keeps its default, which stays correct on that chain, so enabling
+Billions is a one-variable change. The Privado resolver is configured by `PRIVADO_RPC_URL` and
+`PRIVADO_STATE_CONTRACT`. All of this applies to basic DID-ownership login (Path A) — it is
+independent of ProofOfHumanity (Path B).
 
 ### Credential query file
 

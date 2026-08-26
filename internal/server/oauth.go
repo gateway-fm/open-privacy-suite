@@ -764,19 +764,11 @@ func (s *Server) handleOAuthCallback(c *gin.Context) {
 	} else {
 		userDID, err = s.privadoVerifier.VerifyJWZ(c.Request.Context(), jwzToken, authSession.AuthRequest, s.config.VerifierID)
 		if err != nil {
-			if strings.Contains(err.Error(), "humanity") || strings.Contains(err.Error(), "ProofOfHumanity") {
-				c.JSON(http.StatusForbidden, HumanityVerificationError{
-					Error:     "humanity_verification_required",
-					Message:   "Please complete ProofOfHumanity verification at Billions",
-					VerifyURL: "https://app.billions.network",
-				})
-				return
-			}
-			// JWZ verifier errors include iden3 / circuit internals (state
-			// contract resolver state, proof shape, issuer DID) that we
-			// don't expose to unauthenticated callers. RD-934.
-			slog.Warn("oauth: JWZ verification failed", "err", err, "ip", c.ClientIP())
-			respondUnauthorized(c, "verification failed")
+			// Shared with the wallet-callback path. This used to be a second
+			// copy of the same mapping and fell behind it: an unconfigured
+			// wallet network was reported there and silently opaque here, even
+			// though the login page drives both (RD-1241).
+			s.respondVerificationError(c, "oauth", err)
 			return
 		}
 	}

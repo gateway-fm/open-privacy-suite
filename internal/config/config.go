@@ -650,10 +650,15 @@ func Load() *Config {
 		}
 	}
 
-	// iden3 network resolver config for the Billions identity chain. Defaults
-	// let a stock deployment verify Billions-app DIDs out of the box (RD-943);
-	// override either value if Billions moves its RPC or state contract.
-	billionsRPCURL := getEnv("BILLIONS_RPC_URL", auth.BillionsMainnetRPCURL)
+	// iden3 network resolver config for the Billions identity chain. The RPC
+	// URL has NO default: an unreachable default registers a resolver that
+	// cannot work and turns a missing config value into an opaque dial failure
+	// during proof verification (RD-1241). Unset means billions:main is not
+	// registered, Billions DIDs are rejected immediately and legibly, and the
+	// login UI stops advertising the network. The state contract keeps its
+	// default because it stays correct once the RPC is supplied, so enabling
+	// Billions is a one-variable change.
+	billionsRPCURL := getEnv("BILLIONS_RPC_URL", "")
 	billionsStateContract := getEnv("BILLIONS_STATE_CONTRACT", auth.BillionsMainnetStateContract)
 
 	// Path B (ProofOfHumanity) configuration with current hardcoded values as defaults.

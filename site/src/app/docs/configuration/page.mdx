@@ -159,7 +159,7 @@ Existing grants survive the transfer, including the `privacy_proxy_app` append-o
 
 <EnvTable vars={[
   { name: "PRIVADO_RPC_URL", default: "https://rpc-mainnet.privado.id", description: "Privado network RPC endpoint (backs the privado:main state resolver)" },
-  { name: "BILLIONS_RPC_URL", default: "https://billions-rpc.eu-north-2.gateway.fm", description: "RPC endpoint for the Billions identity chain (chainID 45056). Lets users sign in with the Billions app, not just Privado ID." },
+  { name: "BILLIONS_RPC_URL", default: "(unset)", description: "RPC endpoint for the Billions identity chain (chainID 45056). Required to let users sign in with the Billions app; while unset that network is not registered, Billions sign-ins are refused with a clear message, and the login page advertises Privado ID only." },
   { name: "BILLIONS_STATE_CONTRACT", default: "0x3C9acB2205Aa72A05F6D77d708b5Cf85FCa3a896", description: "Billions on-chain identity state contract. Defaults to the shared iden3 cross-chain address; override only if Billions moves it." },
   { name: "IPFS_GATEWAY", default: "https://ipfs-proxy-cache.privado.id", description: "IPFS gateway for schemas" },
   { name: "JWT_SECRET", default: "(auto in dev)", description: "Access token signing secret" },

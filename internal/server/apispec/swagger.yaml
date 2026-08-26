@@ -930,6 +930,16 @@ components:
       type: object
     internal_server.ProvidersResponse:
       properties:
+        networks:
+          description: |-
+            Networks lists the iden3 "blockchain:network" identifiers this deployment
+            has a state resolver for (e.g. ["billions:main","privado:main"]). The
+            login UI uses it to avoid advertising a wallet network that cannot be
+            verified here (RD-1241). Always present, possibly empty.
+          items:
+            type: string
+          type: array
+          uniqueItems: false
         providers:
           items:
             type: string
@@ -1050,6 +1060,18 @@ components:
         latency_ms:
           type: integer
         result: {}
+      type: object
+    internal_server.UnsupportedNetworkError:
+      properties:
+        error:
+          example: network_not_supported
+          type: string
+        message:
+          example: This deployment does not support the wallet's identity network.
+          type: string
+        network:
+          example: billions:main
+          type: string
       type: object
     internal_server.UserOrgResponse:
       properties:
@@ -9473,12 +9495,15 @@ paths:
       - Auth
   /api/v1/auth/callback:
     post:
-      description: Step 2 of the Privado ID wallet login. The wallet posts the JWZ
+      description: 'Step 2 of the Privado ID wallet login. The wallet posts the JWZ
         proof to the session named by the `session` query parameter (the callback
         URL from step 1). On success the proof is verified and access + refresh tokens
         are issued. The body is the JWZ token, accepted either as JSON (`{"token":"<jwz>"}`
         or `{"jwz_token":"<jwz>"}`) or as the raw token string; it is size-capped.
-        Rate-limited.
+        If the wallet''s DID is anchored on an iden3 network this deployment has no
+        state resolver for, the response is a 401 carrying `error: network_not_supported`
+        and the network name, distinguishing a missing deployment setting from a bad
+        proof; every other verification failure stays opaque. Rate-limited.'
       parameters:
       - description: auth session ID from /auth/request
         in: query
@@ -9515,8 +9540,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/internal_server.APIError'
-          description: session not found/expired, or JWZ verification failed
+                $ref: '#/components/schemas/internal_server.UnsupportedNetworkError'
+          description: 'session not found/expired; JWZ verification failed (opaque);
+            or the wallet''s iden3 network is not configured here (error: network_not_supported)'
         "403":
           content:
             application/json:
@@ -9536,7 +9562,10 @@ paths:
     get:
       description: Returns the identifiers of the authentication providers this deployment
         has configured (always includes "privado"; adds "azuread" when Azure AD is
-        enabled), so the login UI can render the right options. Public.
+        enabled), plus the iden3 identity networks it has a state resolver for (e.g.
+        "privado:main", "billions:main"), so the login UI can render the right options
+        and avoid advertising a wallet network this deployment cannot verify. Deployment
+        capability only -- no tenant or user data. Public.
       responses:
         "200":
           content:
@@ -9664,8 +9693,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/internal_server.APIError'
-          description: session not found/expired, or JWZ verification failed
+                $ref: '#/components/schemas/internal_server.UnsupportedNetworkError'
+          description: 'session not found/expired; JWZ verification failed (opaque);
+            or the wallet''s iden3 network is not configured here (error: network_not_supported)'
         "403":
           content:
             application/json:

@@ -52,6 +52,17 @@ const (
 	// and the operator log carries the detail.
 	AuthFailInternalError = "internal_error"
 
+	// AuthFailNetworkUnsupported: the wallet's iden3 identity network is not
+	// configured on this deployment (RD-1241). ORACLE-SENSITIVE and therefore
+	// NOT on the wire allowlist below: unlike humanity_required, this describes
+	// someone else's wallet rather than the poller's own request, and the
+	// session ID is readable straight off the on-screen QR. The wallet that
+	// actually submitted the proof is still told precisely, and operators get
+	// the exact code in the log and the session listing. Passing it through to
+	// the poller would help the user in front of the browser, so it is a
+	// reasonable future change - but a deliberate one, not a merge artifact.
+	AuthFailNetworkUnsupported = "network_not_supported"
+
 	// AuthFailWireGeneric is the single value that oracle-sensitive and
 	// unrecognised codes collapse to on the wire. It carries no state beyond
 	// "this attempt failed".
@@ -74,5 +85,21 @@ func wireAuthFailureReason(code string) string {
 		return code
 	default:
 		return AuthFailWireGeneric
+	}
+}
+
+// authFailReasonForVerification maps the wire-response class chosen by
+// respondVerificationError (RD-1241) onto this file's curated codes, so the
+// session records the same outcome the wallet was told and the two cannot
+// drift. Anything unrecognised lands on AuthFailVerification, which is the
+// accurate description of "the proof did not verify" and is itself allowlisted.
+func authFailReasonForVerification(class verificationErrorClass) string {
+	switch class {
+	case verificationHumanityRequired:
+		return AuthFailHumanityRequired
+	case verificationNetworkUnsupported:
+		return AuthFailNetworkUnsupported
+	default:
+		return AuthFailVerification
 	}
 }

@@ -130,6 +130,11 @@ type AzureCallbackRequest struct {
 // ProvidersResponse is the response from GET /api/v1/auth/providers.
 type ProvidersResponse struct {
 	Providers []string `json:"providers"`
+	// Networks lists the iden3 "blockchain:network" identifiers this deployment
+	// has a state resolver for (e.g. ["billions:main","privado:main"]). The
+	// login UI uses it to avoid advertising a wallet network that cannot be
+	// verified here (RD-1241). Always present, possibly empty.
+	Networks []string `json:"networks"`
 }
 
 // handleAzureAuthURL handles GET /api/v1/auth/azure/url.
@@ -435,7 +440,7 @@ func (s *Server) handleAzureServicePrincipal(c *gin.Context) {
 // Returns the list of configured authentication provider identifiers.
 //
 // @Summary      List configured auth providers
-// @Description  Returns the identifiers of the authentication providers this deployment has configured (always includes "privado"; adds "azuread" when Azure AD is enabled), so the login UI can render the right options. Public.
+// @Description  Returns the identifiers of the authentication providers this deployment has configured (always includes "privado"; adds "azuread" when Azure AD is enabled), plus the iden3 identity networks it has a state resolver for (e.g. "privado:main", "billions:main"), so the login UI can render the right options and avoid advertising a wallet network this deployment cannot verify. Deployment capability only -- no tenant or user data. Public.
 // @Tags         Auth
 // @Produce      json
 // @Success      200 {object} ProvidersResponse
@@ -445,5 +450,23 @@ func (s *Server) handleAuthProviders(c *gin.Context) {
 	if s.azureAuthenticator != nil {
 		providers = append(providers, "azuread")
 	}
-	c.JSON(http.StatusOK, ProvidersResponse{Providers: providers})
+	c.JSON(http.StatusOK, ProvidersResponse{
+		Providers: providers,
+		Networks:  s.registeredNetworks(),
+	})
+}
+
+// registeredNetworks returns the iden3 networks the verifier can resolve, or an
+// empty (never nil) slice when no verifier is wired. Failing closed matters:
+// advertising a network we cannot confirm is exactly the false promise RD-1241
+// removes, so an absent verifier advertises nothing.
+func (s *Server) registeredNetworks() []string {
+	if s.privadoVerifier == nil {
+		return []string{}
+	}
+	networks := s.privadoVerifier.RegisteredNetworks()
+	if networks == nil {
+		return []string{}
+	}
+	return networks
 }

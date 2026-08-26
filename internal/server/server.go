@@ -338,6 +338,10 @@ type PrivadoVerifier interface {
 	CreateHumanityAuthRequest(verifierID, callbackURL, reason, issuerDID string, hc auth.HumanityRequestConfig) (*protocol.AuthorizationRequestMessage, error)
 	VerifyJWZ(ctx context.Context, jwzToken string, authRequest *protocol.AuthorizationRequestMessage, verifierID string) (string, error)
 	VerifyJWZWithProofData(ctx context.Context, jwzToken string, authRequest *protocol.AuthorizationRequestMessage, verifierID string) (*auth.VerificationResult, error)
+	// RegisteredNetworks lists the iden3 "blockchain:network" resolver keys
+	// this verifier accepts. Drives /auth/providers so the login UI advertises
+	// only networks the deployment can actually verify (RD-1241).
+	RegisteredNetworks() []string
 }
 
 func New(cfg *config.Config) (*Server, error) {

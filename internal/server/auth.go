@@ -396,7 +396,7 @@ func (s *Server) scheduleDemoAutoAuth(sessionID string) {
 // Step 2: Wallet automatically sends proof here after user approves
 //
 // @Summary      Submit a Privado ID proof (wallet callback)
-// @Description  Step 2 of the Privado ID wallet login. The wallet posts the JWZ proof to the session named by the `session` query parameter (the callback URL from step 1). On success the proof is verified and access + refresh tokens are issued. The body is the JWZ token, accepted either as JSON (`{"token":"<jwz>"}` or `{"jwz_token":"<jwz>"}`) or as the raw token string; it is size-capped. Rate-limited.
+// @Description  Step 2 of the Privado ID wallet login. The wallet posts the JWZ proof to the session named by the `session` query parameter (the callback URL from step 1). On success the proof is verified and access + refresh tokens are issued. The body is the JWZ token, accepted either as JSON (`{"token":"<jwz>"}` or `{"jwz_token":"<jwz>"}`) or as the raw token string; it is size-capped. If the wallet's DID is anchored on an iden3 network this deployment has no state resolver for, the response is a 401 carrying `error: network_not_supported` and the network name, distinguishing a missing deployment setting from a bad proof; every other verification failure stays opaque. Rate-limited.
 // @Tags         Auth
 // @Accept       json
 // @Produce      json
@@ -404,7 +404,7 @@ func (s *Server) scheduleDemoAutoAuth(sessionID string) {
 // @Param        request body object true "JWZ token, as {\"token\":\"<jwz>\"} or the raw token string"
 // @Success      200 {object} AuthResponse
 // @Failure      400 {object} APIError "missing session parameter, unreadable body, or missing JWZ token"
-// @Failure      401 {object} APIError "session not found/expired, or JWZ verification failed"
+// @Failure      401 {object} UnsupportedNetworkError "session not found/expired; JWZ verification failed (opaque); or the wallet's iden3 network is not configured here (error: network_not_supported)"
 // @Failure      403 {object} HumanityVerificationError "ProofOfHumanity verification required, or account banned"
 // @Failure      500 {object} APIError "failed to persist user record or issue tokens"
 // @Router       /api/v1/auth/callback [post]
@@ -478,7 +478,7 @@ func (s *Server) handleAuthCallback(c *gin.Context) {
 // @Param        request body AuthVerifyRequest true "session ID and JWZ token"
 // @Success      200 {object} AuthResponse
 // @Failure      400 {object} APIError "invalid request body"
-// @Failure      401 {object} APIError "session not found/expired, or JWZ verification failed"
+// @Failure      401 {object} UnsupportedNetworkError "session not found/expired; JWZ verification failed (opaque); or the wallet's iden3 network is not configured here (error: network_not_supported)"
 // @Failure      403 {object} HumanityVerificationError "ProofOfHumanity verification required, or account banned"
 // @Failure      500 {object} APIError "failed to persist user record or issue tokens"
 // @Router       /api/v1/auth/verify [post]
@@ -569,28 +569,13 @@ func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authReque
 		// Use VerifyJWZWithProofData to get both the DID and any ZK credential data
 		verificationResult, verifyErr := s.privadoVerifier.VerifyJWZWithProofData(c.Request.Context(), jwzToken, authRequest, s.config.VerifierID)
 		if verifyErr != nil {
-			// Check if this is a humanity verification failure
-			if strings.Contains(verifyErr.Error(), "humanity") || strings.Contains(verifyErr.Error(), "ProofOfHumanity") {
-				s.recordAuthAttempt("privado", "humanity_required")
-				// RD-1242: before this, the wallet got the 403 and the browser
-				// polled a pending session, so the login page's
-				// humanity_required step was unreachable in the wallet flow.
-				s.failAuthSession(sessionID, AuthFailHumanityRequired)
-				c.JSON(http.StatusForbidden, HumanityVerificationError{
-					Error:     "humanity_verification_required",
-					Message:   "Please complete ProofOfHumanity verification at Billions",
-					VerifyURL: "https://app.billions.network",
-				})
-				return nil, verifyErr
-			}
-			s.recordAuthAttempt("privado", "error")
-			// RD-1178: opaque to the (unauthenticated) client — verifyErr can
-			// carry the server's verifier DID and iden3 circuit/issuer/schema
-			// internals, which aid proof forgery and config enumeration. Detail
-			// goes to the operator log only.
-			slog.Warn("auth: JWZ verification failed", "err", verifyErr)
-			s.failAuthSession(sessionID, AuthFailVerification)
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "verification failed"})
+			// RD-1241 owns the wire response so the auth and OAuth paths cannot
+			// drift on what they disclose; RD-1242 records the same outcome on
+			// the session, so a browser polling it stops instead of waiting out
+			// the poll budget and then reporting a timeout that never happened.
+			class := s.respondVerificationError(c, "auth", verifyErr)
+			s.recordAuthAttempt("privado", string(class))
+			s.failAuthSession(sessionID, authFailReasonForVerification(class))
 			return nil, verifyErr
 		}
 		userDID = verificationResult.UserDID
