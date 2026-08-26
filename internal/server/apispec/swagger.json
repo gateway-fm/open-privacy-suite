@@ -14369,11 +14369,11 @@
                         "content": {
                             "application/json": {
                                 "schema": {
-                                    "$ref": "#/components/schemas/internal_server.APIError"
+                                    "$ref": "#/components/schemas/internal_server.UnsupportedNetworkError"
                                 }
                             }
                         },
-                        "description": "session not found/expired, or JWZ verification failed"
+                        "description": "session not found/expired; JWZ verification failed (opaque); or the wallet's iden3 network is not configured here (error: network_not_supported)"
                     },
                     "403": {
                         "content": {

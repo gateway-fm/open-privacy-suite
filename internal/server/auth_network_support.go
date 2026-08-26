@@ -1,8 +1,12 @@
 package server
 
 import (
+	"log/slog"
+	"net/http"
 	"regexp"
 	"strings"
+
+	"github.com/gin-gonic/gin"
 )
 
 // UnsupportedNetworkError is returned when a wallet's proof cannot be verified
@@ -62,4 +66,60 @@ func unsupportedNetworkFromVerifyError(err error) (string, bool) {
 		return "", false
 	}
 	return candidate, true
+}
+
+// verificationErrorClass names which outcome respondVerificationError wrote, so
+// a caller can record a metric without re-inspecting the error.
+type verificationErrorClass string
+
+const (
+	verificationHumanityRequired   verificationErrorClass = "humanity_required"
+	verificationNetworkUnsupported verificationErrorClass = "network_not_supported"
+	verificationFailed             verificationErrorClass = "error"
+)
+
+// respondVerificationError writes the wire response for a failed JWZ
+// verification and reports which class it was.
+//
+// Both login paths go through here — the wallet callback and the interactive
+// OAuth callback — because they previously each carried their own copy of this
+// mapping and drifted: the network-not-configured case was reported on one and
+// silently opaque on the other, even though the login page uses both. Keeping
+// one implementation is the point (RD-1241).
+//
+// Disclosure rules, in order of specificity:
+//   - ProofOfHumanity: actionable by the user, with the issuer's verify URL.
+//   - Unsupported network: names the wallet's own network so a missing
+//     deployment setting is distinguishable from a bad proof. Nothing else.
+//   - Everything else: opaque. Verifier errors carry iden3 circuit, issuer,
+//     schema and resolver internals that aid proof forgery and config
+//     enumeration (RD-934 / RD-1178), so detail goes to the operator log only.
+func (s *Server) respondVerificationError(c *gin.Context, logPrefix string, err error) verificationErrorClass {
+	msg := err.Error()
+	if strings.Contains(msg, "humanity") || strings.Contains(msg, "ProofOfHumanity") {
+		c.JSON(http.StatusForbidden, HumanityVerificationError{
+			Error:     "humanity_verification_required",
+			Message:   "Please complete ProofOfHumanity verification at Billions",
+			VerifyURL: "https://app.billions.network",
+		})
+		return verificationHumanityRequired
+	}
+
+	if network, ok := unsupportedNetworkFromVerifyError(err); ok {
+		slog.Warn(logPrefix+": wallet identity network not configured — set its RPC URL to enable it",
+			"network", network,
+			"configured_networks", s.registeredNetworks(),
+			"ip", c.ClientIP(),
+			"err", err)
+		c.JSON(http.StatusUnauthorized, UnsupportedNetworkError{
+			Error:   errUnsupportedNetworkCode,
+			Message: "This deployment does not support the wallet's identity network.",
+			Network: network,
+		})
+		return verificationNetworkUnsupported
+	}
+
+	slog.Warn(logPrefix+": JWZ verification failed", "err", err, "ip", c.ClientIP())
+	c.JSON(http.StatusUnauthorized, gin.H{"error": "verification failed"})
+	return verificationFailed
 }

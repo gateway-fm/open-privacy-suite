@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -238,4 +239,109 @@ func TestHandleAuthProviders_ReportsNetworks(t *testing.T) {
 			assert.NotContains(t, strings.Join(resp.Networks, ","), "http")
 		})
 	}
+}
+
+// RD-1241 follow-up: the interactive OAuth login used by the same page has its
+// own callback, which used to carry a second copy of the verification-error
+// mapping and fell behind the wallet-callback path — an unconfigured wallet
+// network was reported there and silently opaque here. Both now share
+// respondVerificationError; this pins that they agree.
+func TestHandleOAuthCallback_UnsupportedNetwork(t *testing.T) {
+	srv := setupTestServerForOAuth(t)
+	defer srv.db.Close()
+	defer srv.oauthSessionStore.Stop()
+	defer srv.sessionStore.Stop()
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.GET("/oauth/authorize", srv.handleOAuthAuthorize)
+	router.POST("/oauth/callback", srv.handleOAuthCallback)
+
+	q := url.Values{}
+	q.Set("client_id", "explorer-app")
+	q.Set("redirect_uri", "http://localhost:3000/callback")
+	q.Set("response_type", "code")
+	q.Set("state", "state-rd1241")
+
+	w1 := httptest.NewRecorder()
+	router.ServeHTTP(w1, httptest.NewRequest("GET", "/oauth/authorize?"+q.Encode(), nil))
+	require.Equal(t, http.StatusOK, w1.Code)
+
+	var authorizeResp map[string]any
+	require.NoError(t, json.Unmarshal(w1.Body.Bytes(), &authorizeResp))
+	oauthSessionID := authorizeResp["oauth_session_id"].(string)
+	authSessionID := authorizeResp["auth_session_id"].(string)
+
+	const secretRPC = "https://internal-rpc.example.invalid/v1/super-secret-key"
+	mockVerifier := srv.privadoVerifier.(*mockPrivadoVerifier)
+	mockVerifier.verifyFunc = func(ctx context.Context, jwzToken string, ar *protocol.AuthorizationRequestMessage, verifierID string) (string, error) {
+		return "", fmt.Errorf("Post %q: dial tcp: %w", secretRPC, fmt.Errorf("billions:main resolver not found"))
+	}
+
+	body, _ := json.Marshal(map[string]any{"token": "some.jwz.token"})
+	req := httptest.NewRequest("POST",
+		"/oauth/callback?session="+authSessionID+"&oauth_session="+oauthSessionID, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w2 := httptest.NewRecorder()
+	router.ServeHTTP(w2, req)
+
+	require.Equal(t, http.StatusUnauthorized, w2.Code)
+	out := w2.Body.String()
+	assert.Contains(t, out, "billions:main")
+	assert.NotContains(t, out, secretRPC)
+	assert.NotContains(t, out, "internal-rpc.example.invalid")
+	assert.NotContains(t, out, "resolver not found")
+	assert.NotContains(t, out, "dial tcp")
+
+	var resp UnsupportedNetworkError
+	require.NoError(t, json.Unmarshal(w2.Body.Bytes(), &resp))
+	assert.Equal(t, "network_not_supported", resp.Error)
+	assert.Equal(t, "billions:main", resp.Network)
+}
+
+// And a generic OAuth verification failure must stay opaque, as before.
+func TestHandleOAuthCallback_GenericFailureStaysOpaque(t *testing.T) {
+	srv := setupTestServerForOAuth(t)
+	defer srv.db.Close()
+	defer srv.oauthSessionStore.Stop()
+	defer srv.sessionStore.Stop()
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.GET("/oauth/authorize", srv.handleOAuthAuthorize)
+	router.POST("/oauth/callback", srv.handleOAuthCallback)
+
+	q := url.Values{}
+	q.Set("client_id", "explorer-app")
+	q.Set("redirect_uri", "http://localhost:3000/callback")
+	q.Set("response_type", "code")
+	q.Set("state", "state-rd1241-generic")
+
+	w1 := httptest.NewRecorder()
+	router.ServeHTTP(w1, httptest.NewRequest("GET", "/oauth/authorize?"+q.Encode(), nil))
+	require.Equal(t, http.StatusOK, w1.Code)
+
+	var authorizeResp map[string]any
+	require.NoError(t, json.Unmarshal(w1.Body.Bytes(), &authorizeResp))
+	oauthSessionID := authorizeResp["oauth_session_id"].(string)
+	authSessionID := authorizeResp["auth_session_id"].(string)
+
+	mockVerifier := srv.privadoVerifier.(*mockPrivadoVerifier)
+	mockVerifier.verifyFunc = func(ctx context.Context, jwzToken string, ar *protocol.AuthorizationRequestMessage, verifierID string) (string, error) {
+		return "", fmt.Errorf("invalid proof: gist root mismatch for issuer did:iden3:privado:main:xyz")
+	}
+
+	body, _ := json.Marshal(map[string]any{"token": "some.jwz.token"})
+	req := httptest.NewRequest("POST",
+		"/oauth/callback?session="+authSessionID+"&oauth_session="+oauthSessionID, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w2 := httptest.NewRecorder()
+	router.ServeHTTP(w2, req)
+
+	require.Equal(t, http.StatusUnauthorized, w2.Code)
+	out := w2.Body.String()
+	assert.Contains(t, out, "verification failed")
+	assert.NotContains(t, out, "network_not_supported")
+	assert.NotContains(t, out, "gist root")
+	assert.NotContains(t, out, "did:iden3")
 }
