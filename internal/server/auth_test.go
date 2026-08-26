@@ -29,6 +29,17 @@ type mockPrivadoVerifier struct {
 	createHumanityRequestFunc func(verifierID, callbackURL, reason, issuerDID string, hc auth.HumanityRequestConfig) (*protocol.AuthorizationRequestMessage, error)
 	verifyFunc                func(ctx context.Context, jwzToken string, authRequest *protocol.AuthorizationRequestMessage, verifierID string) (string, error)
 	verifyWithProofDataFunc   func(ctx context.Context, jwzToken string, authRequest *protocol.AuthorizationRequestMessage, verifierID string) (*auth.VerificationResult, error)
+	registeredNetworksFunc    func() []string
+}
+
+// RegisteredNetworks defaults to the pair a stock deployment wires when Billions
+// is configured, so tests that do not care about network advertisement behave
+// as before (RD-1241).
+func (m *mockPrivadoVerifier) RegisteredNetworks() []string {
+	if m.registeredNetworksFunc != nil {
+		return m.registeredNetworksFunc()
+	}
+	return []string{"billions:main", "privado:main"}
 }
 
 func (m *mockPrivadoVerifier) CreateAuthorizationRequest(verifierID, callbackURL, reason string) (*protocol.AuthorizationRequestMessage, error) {

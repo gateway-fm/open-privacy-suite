@@ -63,7 +63,7 @@ describe('LoginPage', () => {
       expect(qrCode).toBeInTheDocument();
     });
 
-    it('should show "Sign in with Billions/Privado" brand panel (RD-859)', async () => {
+    it('should show the wallet brand panel (RD-859)', async () => {
       renderLoginPage();
 
       // The brand panel renders alongside the QR section once auth is ready
@@ -71,9 +71,12 @@ describe('LoginPage', () => {
         expect(screen.getByTestId('privado-brand-panel')).toBeInTheDocument();
       });
 
-      expect(
-        screen.getByText('Sign in with Billions/Privado')
-      ).toBeInTheDocument();
+      // Privado ID is the wallet protocol either way, so it is always named.
+      // Whether Billions is co-branded depends on the deployment reporting a
+      // billions:main resolver — see the RD-1241 suite below. The default mock
+      // reports no networks, so only Privado is advertised here.
+      expect(screen.getByTestId('brand-privado')).toBeInTheDocument();
+      expect(screen.getByText('Sign in with Privado ID')).toBeInTheDocument();
     });
 
     it('should show polling indicator when ready', async () => {
@@ -501,5 +504,76 @@ describe('LoginPage', () => {
       renderLoginPage(ROUTE);
       await waitFor(() => expect(mockBody).toEqual({ did: 'did:test:alice' }));
     });
+  });
+});
+
+// RD-1241: the brand panel used to advertise Billions unconditionally, so a
+// deployment with no billions:main state resolver promised a sign-in it could
+// not verify — the wallet's proof was rejected and the user was left with a
+// spinner. The panel now follows what /auth/providers reports.
+describe('LoginPage — Billions branding follows configured networks', () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+    resetSessionState();
+    vi.clearAllMocks();
+  });
+
+  function mockNetworks(body: unknown) {
+    server.use(
+      http.get('*/auth/providers', () => HttpResponse.json(body))
+    );
+  }
+
+  it('advertises Billions when billions:main is configured', async () => {
+    mockNetworks({ providers: ['privado'], networks: ['billions:main', 'privado:main'] });
+    renderLoginPage();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('privado-brand-panel')).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('brand-billions')).toBeInTheDocument();
+    });
+    expect(screen.getByText('Sign in with Billions/Privado')).toBeInTheDocument();
+  });
+
+  it('hides Billions when only privado:main is configured', async () => {
+    mockNetworks({ providers: ['privado'], networks: ['privado:main'] });
+    renderLoginPage();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('privado-brand-panel')).toBeInTheDocument();
+    });
+    // Privado is still offered — this removes a false promise, not the flow.
+    expect(screen.getByTestId('brand-privado')).toBeInTheDocument();
+    expect(screen.queryByTestId('brand-billions')).not.toBeInTheDocument();
+    expect(screen.queryByText('Sign in with Billions/Privado')).not.toBeInTheDocument();
+    expect(screen.getByText('Sign in with Privado ID')).toBeInTheDocument();
+  });
+
+  it('hides Billions when the backend does not report networks at all', async () => {
+    // Fails closed: an older backend that omits the field cannot confirm the
+    // network, and advertising an unconfirmed network is the defect being fixed.
+    mockNetworks({ providers: ['privado'] });
+    renderLoginPage();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('privado-brand-panel')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('brand-billions')).not.toBeInTheDocument();
+    expect(screen.getByTestId('brand-privado')).toBeInTheDocument();
+  });
+
+  it('hides Billions when the providers request fails', async () => {
+    server.use(
+      http.get('*/auth/providers', () => HttpResponse.error())
+    );
+    renderLoginPage();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('privado-brand-panel')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('brand-billions')).not.toBeInTheDocument();
+    expect(screen.getByTestId('brand-privado')).toBeInTheDocument();
   });
 });

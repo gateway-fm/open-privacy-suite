@@ -53,9 +53,13 @@ func TestLoad_Defaults(t *testing.T) {
 		{"Port", cfg.Port, "8080"},
 		{"Environment", cfg.Environment, "development"},
 		{"BillionsIssuerDID", cfg.BillionsIssuerDID, ""},
-		// RD-943: billions:main resolver must be wired out of the box so the
-		// Billions app can authenticate against a stock deployment.
-		{"BillionsRPCURL", cfg.BillionsRPCURL, "https://billions-rpc.eu-north-2.gateway.fm"},
+		// RD-1241: there is deliberately NO default. The previous default
+		// (billions-rpc.eu-north-2.gateway.fm) lost its DNS record, which
+		// registered a billions:main resolver that could never be reached, so
+		// every Billions sign-in failed on a dial deep inside proof
+		// verification. Empty means the network is simply not registered and a
+		// Billions DID is rejected immediately and legibly instead.
+		{"BillionsRPCURL", cfg.BillionsRPCURL, ""},
 		{"BillionsStateContract", cfg.BillionsStateContract, "0x3C9acB2205Aa72A05F6D77d708b5Cf85FCa3a896"},
 	}
 

@@ -86,6 +86,13 @@ export function LoginPage() {
   const isOAuthMode = !!oauthSessionId;
   const [testIdentities, setTestIdentities] = useState<TestIdentity[]>([]);
   const [providers, setProviders] = useState<string[]>(['privado']);
+  // iden3 networks this deployment can actually verify (RD-1241). Starts empty
+  // and stays empty if the probe fails or the backend omits the field: the
+  // brand panel must not promise a network we have not confirmed.
+  const [networks, setNetworks] = useState<string[]>([]);
+  // Derived here, immediately below the state it reads, so it cannot be
+  // referenced before `networks` exists.
+  const billionsSupported = networks.includes('billions:main');
   const [activeProvider, setActiveProvider] = useState<AuthProvider>('privado');
   const [azureLoading, setAzureLoading] = useState(false);
   const [state, setState] = useState<AuthState>({
@@ -106,7 +113,13 @@ export function LoginPage() {
 
   // Load available providers (silently ignore errors — default to privado only)
   useEffect(() => {
-    authApiMethods.getAuthProviders().then((res) => setProviders(res.providers)).catch(() => {});
+    authApiMethods
+      .getAuthProviders()
+      .then((res) => {
+        setProviders(res.providers);
+        setNetworks(res.networks ?? []);
+      })
+      .catch(() => {});
   }, []);
 
   // Fetch test identities for dev identity picker (only in mock login mode)
@@ -452,18 +465,38 @@ export function LoginPage() {
             and the wallet protocol (Privado ID). Reads correctly whether
             REQUIRE_PROOF_OF_HUMANITY is on (Path B, Billions issuer) or
             off (Path A, plain DID-ownership) — Privado ID is the wallet
-            either way. */}
+            either way.
+
+            RD-1241: Billions is shown only when the deployment reports a
+            billions:main state resolver. Without one, a Billions wallet's
+            proof is rejected during verification, so advertising it promised a
+            sign-in that could not complete. There is no wallet choice to lose
+            — the QR and deep link are the same either way and the scanning
+            wallet decides the network — so this drops a false promise, not a
+            capability. */}
         <div className="flex flex-col items-center gap-3" data-testid="privado-brand-panel">
           <div className="flex items-center gap-3" aria-hidden="true">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#0046FF]/10">
-              <BillionsIcon className="h-6 w-auto" />
-            </div>
-            <span className="text-neutral-300 text-sm">×</span>
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#99FE5B]/30">
+            {billionsSupported && (
+              <>
+                <div
+                  className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#0046FF]/10"
+                  data-testid="brand-billions"
+                >
+                  <BillionsIcon className="h-6 w-auto" />
+                </div>
+                <span className="text-neutral-300 text-sm">×</span>
+              </>
+            )}
+            <div
+              className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#99FE5B]/30"
+              data-testid="brand-privado"
+            >
               <PrivadoIcon className="h-7 w-7" />
             </div>
           </div>
-          <p className="font-medium text-neutral-900">Sign in with Billions/Privado</p>
+          <p className="font-medium text-neutral-900">
+            {billionsSupported ? 'Sign in with Billions/Privado' : 'Sign in with Privado ID'}
+          </p>
         </div>
 
         {/* QR Code for desktop */}

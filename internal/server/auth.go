@@ -396,7 +396,7 @@ func (s *Server) scheduleDemoAutoAuth(sessionID string) {
 // Step 2: Wallet automatically sends proof here after user approves
 //
 // @Summary      Submit a Privado ID proof (wallet callback)
-// @Description  Step 2 of the Privado ID wallet login. The wallet posts the JWZ proof to the session named by the `session` query parameter (the callback URL from step 1). On success the proof is verified and access + refresh tokens are issued. The body is the JWZ token, accepted either as JSON (`{"token":"<jwz>"}` or `{"jwz_token":"<jwz>"}`) or as the raw token string; it is size-capped. Rate-limited.
+// @Description  Step 2 of the Privado ID wallet login. The wallet posts the JWZ proof to the session named by the `session` query parameter (the callback URL from step 1). On success the proof is verified and access + refresh tokens are issued. The body is the JWZ token, accepted either as JSON (`{"token":"<jwz>"}` or `{"jwz_token":"<jwz>"}`) or as the raw token string; it is size-capped. If the wallet's DID is anchored on an iden3 network this deployment has no state resolver for, the response is a 401 carrying `error: network_not_supported` and the network name, distinguishing a missing deployment setting from a bad proof; every other verification failure stays opaque. Rate-limited.
 // @Tags         Auth
 // @Accept       json
 // @Produce      json
@@ -404,7 +404,7 @@ func (s *Server) scheduleDemoAutoAuth(sessionID string) {
 // @Param        request body object true "JWZ token, as {\"token\":\"<jwz>\"} or the raw token string"
 // @Success      200 {object} AuthResponse
 // @Failure      400 {object} APIError "missing session parameter, unreadable body, or missing JWZ token"
-// @Failure      401 {object} APIError "session not found/expired, or JWZ verification failed"
+// @Failure      401 {object} UnsupportedNetworkError "session not found/expired; JWZ verification failed (opaque); or the wallet's iden3 network is not configured here (error: network_not_supported)"
 // @Failure      403 {object} HumanityVerificationError "ProofOfHumanity verification required, or account banned"
 // @Failure      500 {object} APIError "failed to persist user record or issue tokens"
 // @Router       /api/v1/auth/callback [post]
@@ -545,6 +545,25 @@ func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authReque
 					Error:     "humanity_verification_required",
 					Message:   "Please complete ProofOfHumanity verification at Billions",
 					VerifyURL: "https://app.billions.network",
+				})
+				return nil, verifyErr
+			}
+			// RD-1241: a missing state resolver means the wallet's iden3
+			// network is not configured on this deployment, which is an
+			// operator-actionable misconfiguration rather than a bad proof.
+			// Report it as such, naming only the network — the wallet's own,
+			// so no disclosure — and never the library text or the endpoint
+			// the resolver would have dialled.
+			if network, ok := unsupportedNetworkFromVerifyError(verifyErr); ok {
+				s.recordAuthAttempt("privado", "network_not_supported")
+				slog.Warn("auth: wallet identity network not configured — set its RPC URL to enable it",
+					"network", network,
+					"configured_networks", s.registeredNetworks(),
+					"err", verifyErr)
+				c.JSON(http.StatusUnauthorized, UnsupportedNetworkError{
+					Error:   errUnsupportedNetworkCode,
+					Message: "This deployment does not support the wallet's identity network.",
+					Network: network,
 				})
 				return nil, verifyErr
 			}

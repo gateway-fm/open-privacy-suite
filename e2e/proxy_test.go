@@ -99,6 +99,12 @@ func (m *mockPrivadoVerifier) VerifyJWZWithProofData(ctx context.Context, jwzTok
 	return &auth.VerificationResult{UserDID: did}, nil
 }
 
+// RegisteredNetworks reports the pair a deployment wires once the Billions RPC
+// is configured, so E2E behaves like a fully-configured install (RD-1241).
+func (m *mockPrivadoVerifier) RegisteredNetworks() []string {
+	return []string{"billions:main", "privado:main"}
+}
+
 func setupE2E(t *testing.T) (*server.Server, string, func()) {
 	return setupE2EWithVerifier(t, nil)
 }

@@ -61,6 +61,9 @@ PORT = "8080"                                    # server listen port
 VERIFIER_ID = "did:privado:verifier:your-network-name"
 REQUIRE_PROOF_OF_HUMANITY = true
 # PRIVADO_RPC_URL = "https://rpc-mainnet.privado.id"
+# BILLIONS_RPC_URL has no default: set it to let Billions-app wallets sign in.
+# While unset, that network is refused with a clear message and the login page
+# advertises Privado ID only.
 # BILLIONS_RPC_URL = "https://billions-rpc.example.com"
 # BILLIONS_STATE_CONTRACT = "0x3C9acB2205Aa72A05F6D77d708b5Cf85FCa3a896"
 # BILLIONS_ISSUER_DID = "did:polygonid:polygon:main:billions-issuer-did"

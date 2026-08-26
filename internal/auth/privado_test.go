@@ -27,7 +27,7 @@ func TestNewPrivadoVerifier_RegistersBillionsNetwork(t *testing.T) {
 	verifier, err := NewPrivadoVerifier(
 		"https://rpc-mainnet.privado.id", "https://ipfs-proxy-cache.privado.id",
 		PrivadoMainnetStateContract,
-		NetworkResolver{Key: "billions:main", RPCURL: BillionsMainnetRPCURL, StateContract: BillionsMainnetStateContract},
+		NetworkResolver{Key: "billions:main", RPCURL: "https://billions.example/rpc", StateContract: BillionsMainnetStateContract},
 	)
 	require.NoError(t, err)
 	require.NotNil(t, verifier)

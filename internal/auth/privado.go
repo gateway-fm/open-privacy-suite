@@ -45,10 +45,17 @@ const PrivadoMainnetStateContract = "0x3C9acB2205Aa72A05F6D77d708b5Cf85FCa3a896"
 // the same address. Override via BILLIONS_STATE_CONTRACT if it ever diverges.
 const BillionsMainnetStateContract = "0x3C9acB2205Aa72A05F6D77d708b5Cf85FCa3a896"
 
-// BillionsMainnetRPCURL is the default RPC endpoint for the Billions identity
-// chain (chainID 45056), per the ethereum-lists chain registry. Override via
-// BILLIONS_RPC_URL.
-const BillionsMainnetRPCURL = "https://billions-rpc.eu-north-2.gateway.fm"
+// There is deliberately no default RPC endpoint for the Billions identity
+// chain (chainID 45056). It previously defaulted to a Gateway-operated host
+// that later lost its DNS record, which is worse than having no default at
+// all: the billions:main resolver was registered but unreachable, so every
+// Billions sign-in failed on a dial from deep inside proof verification, with
+// nothing in the error to suggest a missing config value (RD-1241).
+//
+// With BILLIONS_RPC_URL unset the network is simply not registered, and
+// NewPrivadoVerifier's caller learns that from RegisteredNetworks() while a
+// Billions DID is rejected immediately with "billions:main resolver not
+// found". Set BILLIONS_RPC_URL to enable the network.
 
 // NetworkResolver registers one additional iden3 network's on-chain state
 // resolver beyond the built-in privado:main. Key is the iden3

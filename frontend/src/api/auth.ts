@@ -215,6 +215,13 @@ export function isMobileDevice(): boolean {
 
 export interface AuthProvidersResponse {
   providers: string[];
+  /**
+   * iden3 "blockchain:network" identifiers this deployment has a state resolver
+   * for, e.g. ["billions:main", "privado:main"] (RD-1241). Optional: a backend
+   * predating the field omits it, and the UI then treats the network set as
+   * unconfirmed rather than assuming support.
+   */
+  networks?: string[];
 }
 
 export interface AzureAuthURLResponse {
