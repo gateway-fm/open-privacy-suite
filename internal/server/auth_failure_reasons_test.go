@@ -1,9 +1,6 @@
 package server
 
-import (
-	"strings"
-	"testing"
-)
+import "testing"
 
 // RD-1242: wireAuthFailureReason is a CLOSED allowlist. The session-status
 // endpoint is polled by an unauthenticated client that presents only a session
@@ -72,20 +69,21 @@ func TestWireAuthFailureReason_OutputIsAlwaysCurated(t *testing.T) {
 // RD-1251: admitting network_not_supported rests on the code being a bare
 // classification. The wallet's own response names the network (it is the
 // caller's own, already known to it); the pollable session must not, because
-// its ID is readable off the on-screen QR. Pin that the constant carries no
-// network identifier of any kind.
+// its ID is readable off the on-screen QR.
+//
+// The expectation is written out as a literal on purpose. Every other
+// assertion in this file derives from the constant, so all of them would move
+// with it if someone appended or substituted an identifier; only pinning the
+// exact published string catches that. It doubles as the API contract - this
+// value is documented in SessionStatusResponse and the operator reason table.
 func TestAuthFailNetworkUnsupported_CarriesNoNetworkName(t *testing.T) {
-	wire := wireAuthFailureReason(AuthFailNetworkUnsupported)
+	const wantWire = "network_not_supported"
 
-	if strings.Contains(wire, ":") {
-		t.Errorf("wire reason %q contains %q — an iden3 network identifier is "+
-			"blockchain:network, so a colon suggests one leaked into the code", wire, ":")
-	}
-	for _, network := range []string{"billions", "privado", "polygon", "linea", "ethereum"} {
-		if strings.Contains(strings.ToLower(wire), network) {
-			t.Errorf("wire reason %q names network %q; the poller must learn only "+
-				"that the wallet's network is outside the (already public) supported set", wire, network)
-		}
+	if got := wireAuthFailureReason(AuthFailNetworkUnsupported); got != wantWire {
+		t.Errorf("wire reason = %q, want exactly %q.\n"+
+			"Anything else means a network identifier reached the pollable session, "+
+			"or the documented contract changed. The poller must learn only that the "+
+			"wallet's network is outside the (already public) supported set.", got, wantWire)
 	}
 }
 
