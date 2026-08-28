@@ -14,14 +14,20 @@ package server
 // denial_reasons.go:
 //   - Stable: treat the string values as an API contract - add, don't rename.
 //   - Never derived from raw internal error text.
-//   - Only codes describing the caller's OWN request pass to the wire; codes
-//     that describe a property of an identity, or internal state, collapse.
+//   - A code reaches the wire only if it describes the caller's OWN request, or
+//     discloses nothing that is not already public. Codes that describe a
+//     property of an identity, or internal state, collapse.
 //
 // The threat model differs from denial_reasons.go in one way that matters: the
 // status endpoint is polled with nothing but a session ID, and that ID is
 // rendered on screen inside the login QR code. Someone who photographs the QR
 // can poll the legitimate user's session without ever proving anything, so the
 // wire set is kept narrower than "whatever the wallet was told".
+//
+// Note what such a poller can already do, since it bounds what withholding a
+// code can buy: they see success versus failure either way, and every public
+// endpoint remains open to them. The question for each code is therefore what
+// it adds ON TOP of that, not what it says in isolation.
 const (
 	// AuthFailVerification: the JWZ proof did not verify. An outcome of the
 	// caller's own submission, not a property of any account.
@@ -53,14 +59,27 @@ const (
 	AuthFailInternalError = "internal_error"
 
 	// AuthFailNetworkUnsupported: the wallet's iden3 identity network is not
-	// configured on this deployment (RD-1241). ORACLE-SENSITIVE and therefore
-	// NOT on the wire allowlist below: unlike humanity_required, this describes
-	// someone else's wallet rather than the poller's own request, and the
-	// session ID is readable straight off the on-screen QR. The wallet that
-	// actually submitted the proof is still told precisely, and operators get
-	// the exact code in the log and the session listing. Passing it through to
-	// the poller would help the user in front of the browser, so it is a
-	// reasonable future change - but a deliberate one, not a merge artifact.
+	// configured on this deployment (RD-1241). Allowlisted below.
+	//
+	// It was initially withheld on the reasoning that it describes someone
+	// else's wallet rather than the poller's own request, which is the test
+	// AuthFailAccountBanned fails. RD-1251 reviewed that and it does not hold
+	// here, for two reasons:
+	//
+	//  1. The supported-network set is ALREADY PUBLIC. RD-1241 also added
+	//     Networks to GET /api/v1/auth/providers, which takes no auth and no
+	//     rate limit. Anyone able to poll a session can read the same list, so
+	//     collapsing this code protected nothing.
+	//  2. A poller already distinguishes success from failure, so the marginal
+	//     disclosure is only WHICH KIND of failure - and this code is a bare
+	//     classification. The network name goes to the wallet in its own
+	//     response (its own network, already known to it), never here.
+	//
+	// The contrast with AuthFailAccountBanned is the point: ban state is a
+	// property of an identity that this codebase surfaces nowhere else, so it
+	// stays collapsed. "This deployment lacks network X" is published.
+	//
+	// TestAuthFailNetworkUnsupported_CarriesNoNetworkName pins premise 2.
 	AuthFailNetworkUnsupported = "network_not_supported"
 
 	// AuthFailWireGeneric is the single value that oracle-sensitive and
@@ -77,11 +96,17 @@ const (
 //
 // Do NOT widen the allowlist without a security review. The precise code is
 // still available to operators via the session listing and the server log.
+//
+// Reviews on record, so the bar is visible rather than folklore:
+//   - network_not_supported, admitted by RD-1251. The deciding facts were that
+//     the supported-network set is already public on an unauthenticated
+//     endpoint, and that the code names no network. See the constant.
 func wireAuthFailureReason(code string) string {
 	switch code {
 	case AuthFailVerification,
 		AuthFailHumanityRequired,
-		AuthFailInvalidRequest:
+		AuthFailInvalidRequest,
+		AuthFailNetworkUnsupported:
 		return code
 	default:
 		return AuthFailWireGeneric

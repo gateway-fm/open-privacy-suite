@@ -1,6 +1,9 @@
 package server
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // RD-1242: wireAuthFailureReason is a CLOSED allowlist. The session-status
 // endpoint is polled by an unauthenticated client that presents only a session
@@ -16,6 +19,9 @@ func TestWireAuthFailureReason_ClosedAllowlist(t *testing.T) {
 		{"verification failure", AuthFailVerification, AuthFailVerification},
 		{"humanity credential required", AuthFailHumanityRequired, AuthFailHumanityRequired},
 		{"malformed callback", AuthFailInvalidRequest, AuthFailInvalidRequest},
+		// RD-1251: the supported-network set is already public via
+		// GET /api/v1/auth/providers, so collapsing this protected nothing.
+		{"unsupported network", AuthFailNetworkUnsupported, AuthFailNetworkUnsupported},
 
 		// Collapsed: properties of an identity, or internal state.
 		{"ban state must not leak", AuthFailAccountBanned, AuthFailWireGeneric},
@@ -41,15 +47,16 @@ func TestWireAuthFailureReason_ClosedAllowlist(t *testing.T) {
 // every output has to be one of the known constants.
 func TestWireAuthFailureReason_OutputIsAlwaysCurated(t *testing.T) {
 	allowed := map[string]bool{
-		AuthFailVerification:     true,
-		AuthFailHumanityRequired: true,
-		AuthFailInvalidRequest:   true,
-		AuthFailWireGeneric:      true,
+		AuthFailVerification:       true,
+		AuthFailHumanityRequired:   true,
+		AuthFailInvalidRequest:     true,
+		AuthFailNetworkUnsupported: true,
+		AuthFailWireGeneric:        true,
 	}
 
 	inputs := []string{
 		AuthFailVerification, AuthFailHumanityRequired, AuthFailInvalidRequest,
-		AuthFailAccountBanned, AuthFailInternalError,
+		AuthFailNetworkUnsupported, AuthFailAccountBanned, AuthFailInternalError,
 		"", "arbitrary", "RPC https://internal.host/rpc unreachable",
 		"../../etc/passwd", "<script>alert(1)</script>",
 	}
@@ -59,5 +66,58 @@ func TestWireAuthFailureReason_OutputIsAlwaysCurated(t *testing.T) {
 		if !allowed[got] {
 			t.Errorf("wireAuthFailureReason(%q) = %q, which is not a curated reason", in, got)
 		}
+	}
+}
+
+// RD-1251: admitting network_not_supported rests on the code being a bare
+// classification. The wallet's own response names the network (it is the
+// caller's own, already known to it); the pollable session must not, because
+// its ID is readable off the on-screen QR. Pin that the constant carries no
+// network identifier of any kind.
+func TestAuthFailNetworkUnsupported_CarriesNoNetworkName(t *testing.T) {
+	wire := wireAuthFailureReason(AuthFailNetworkUnsupported)
+
+	if strings.Contains(wire, ":") {
+		t.Errorf("wire reason %q contains %q — an iden3 network identifier is "+
+			"blockchain:network, so a colon suggests one leaked into the code", wire, ":")
+	}
+	for _, network := range []string{"billions", "privado", "polygon", "linea", "ethereum"} {
+		if strings.Contains(strings.ToLower(wire), network) {
+			t.Errorf("wire reason %q names network %q; the poller must learn only "+
+				"that the wallet's network is outside the (already public) supported set", wire, network)
+		}
+	}
+}
+
+// authFailReasonForVerification is what decides which code lands on the
+// session, so the wallet response and the polled session cannot disagree. It
+// had no coverage before RD-1251.
+func TestAuthFailReasonForVerification(t *testing.T) {
+	tests := []struct {
+		name  string
+		class verificationErrorClass
+		want  string
+	}{
+		{"humanity", verificationHumanityRequired, AuthFailHumanityRequired},
+		{"unsupported network", verificationNetworkUnsupported, AuthFailNetworkUnsupported},
+		{"generic verification failure", verificationFailed, AuthFailVerification},
+		// Fail-safe: an unrecognised class must land on a truthful, allowlisted
+		// code rather than an empty string or a leaked value.
+		{"unknown class", verificationErrorClass("something_new"), AuthFailVerification},
+		{"empty class", verificationErrorClass(""), AuthFailVerification},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := authFailReasonForVerification(tt.class)
+			if got != tt.want {
+				t.Errorf("authFailReasonForVerification(%q) = %q, want %q", tt.class, got, tt.want)
+			}
+			// Whatever it returns must survive the allowlist unchanged or
+			// collapse deliberately — never be an unrecognised string.
+			if wire := wireAuthFailureReason(got); wire != got && wire != AuthFailWireGeneric {
+				t.Errorf("code %q maps to unexpected wire value %q", got, wire)
+			}
+		})
 	}
 }
