@@ -14,6 +14,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // repoRoot resolves the repository root from this package's directory
@@ -72,15 +74,39 @@ func TestOperatorSkillExists(t *testing.T) {
 	t.Fatal(".claude/skills/ops/SKILL.md is missing — the operator skill is what gives a fresh clone the setup knowledge; without it an operator has to be told where to look")
 }
 
-var frontmatterField = func(field string) *regexp.Regexp {
-	return regexp.MustCompile(`(?m)^` + field + `:[ \t]*(\S.*)$`)
+// skillFrontmatter is the typed shape a SKILL.md header must unmarshal into.
+// Parsing into a struct rather than pattern-matching lines is deliberate: a
+// header like `description: [unterminated` matches any reasonable regex but is
+// not valid YAML, so a regex check would pass a skill that Claude Code refuses
+// to load — the precise failure this test exists to catch.
+type skillFrontmatter struct {
+	Name        string `yaml:"name"`
+	Description string `yaml:"description"`
 }
 
-// TestSkillFrontmatter checks that every skill declares a name and a
-// description. Claude Code reads the description to decide whether a skill is
-// relevant, so a skill missing one silently never fires — a failure mode that
-// looks exactly like the skill not existing, and is invisible until someone
-// wonders why it never triggers.
+// splitFrontmatter returns the YAML block delimited by a leading `---` line and
+// the next line that is exactly `---`. Requiring an exact delimiter matters:
+// a closing line such as `---garbage` does not end a YAML front matter block,
+// so accepting it would again pass a skill that will not load.
+func splitFrontmatter(body string) (string, bool) {
+	lines := strings.Split(body, "\n")
+	if len(lines) == 0 || strings.TrimRight(lines[0], "\r") != "---" {
+		return "", false
+	}
+	for i := 1; i < len(lines); i++ {
+		if strings.TrimRight(lines[i], "\r") == "---" {
+			return strings.Join(lines[1:i], "\n"), true
+		}
+	}
+	return "", false
+}
+
+// TestSkillFrontmatter checks that every skill's header is valid YAML and
+// declares a name and a description. Claude Code reads the description to
+// decide whether a skill is relevant, so a skill whose header is malformed or
+// missing a field silently never fires — a failure mode indistinguishable from
+// the skill not existing, and invisible until someone wonders why it never
+// triggers.
 func TestSkillFrontmatter(t *testing.T) {
 	skills := discoverSkills(t)
 	if len(skills) == 0 {
@@ -89,24 +115,23 @@ func TestSkillFrontmatter(t *testing.T) {
 
 	for _, s := range skills {
 		t.Run(s.name, func(t *testing.T) {
-			if !strings.HasPrefix(s.body, "---\n") {
-				t.Fatalf("%s: does not open with a `---` YAML frontmatter block; the skill will not load", s.path)
+			block, ok := splitFrontmatter(s.body)
+			if !ok {
+				t.Fatalf("%s: has no YAML frontmatter delimited by a leading `---` line and a closing line that is exactly `---`; the skill will not load", s.path)
 			}
-			end := strings.Index(s.body[4:], "\n---")
-			if end < 0 {
-				t.Fatalf("%s: frontmatter block is never closed with `---`; the skill will not load", s.path)
-			}
-			front := s.body[4 : 4+end]
 
-			for _, field := range []string{"name", "description"} {
-				m := frontmatterField(field).FindStringSubmatch(front)
-				if m == nil || strings.TrimSpace(m[1]) == "" {
-					t.Errorf("%s: frontmatter has no non-empty %q; Claude Code needs it to load and match the skill", s.path, field)
-					continue
-				}
-				if field == "name" && strings.TrimSpace(m[1]) != s.name {
-					t.Errorf("%s: frontmatter name %q does not match its directory %q", s.path, strings.TrimSpace(m[1]), s.name)
-				}
+			var front skillFrontmatter
+			if err := yaml.Unmarshal([]byte(block), &front); err != nil {
+				t.Fatalf("%s: frontmatter is not valid YAML (%v); the skill will not load", s.path, err)
+			}
+
+			if strings.TrimSpace(front.Name) == "" {
+				t.Errorf("%s: frontmatter has no non-empty `name`; Claude Code needs it to load the skill", s.path)
+			} else if strings.TrimSpace(front.Name) != s.name {
+				t.Errorf("%s: frontmatter name %q does not match its directory %q", s.path, front.Name, s.name)
+			}
+			if strings.TrimSpace(front.Description) == "" {
+				t.Errorf("%s: frontmatter has no non-empty `description`; without it the skill never matches and so never fires", s.path)
 			}
 		})
 	}
@@ -136,10 +161,16 @@ func hasTrackedExt(tok string) bool {
 	return false
 }
 
-// pathRef is a candidate path reference and how strictly it can be checked.
+// pathRef is a candidate path reference, how strictly it can be checked, and
+// what it is relative to.
 type pathRef struct {
 	tok        string
 	exactMatch bool // true: must exist at this exact path; false: basename must exist somewhere
+	// fromLink marks a Markdown link target. Those resolve relative to the
+	// containing SKILL.md, not the repo root, so they are checked against the
+	// skill's own directory — otherwise a perfectly ordinary link such as
+	// `references/setup.md` would be reported missing at <repo>/references/setup.md.
+	fromLink bool
 }
 
 // classifyPathRef decides whether a token is a checkable repo path reference.
@@ -158,7 +189,7 @@ type pathRef struct {
 //     in the repo. Weaker than an exact path, but it still catches the failure
 //     that matters (the file was deleted or renamed) without tripping over
 //     workflow files referenced by name rather than full path.
-func classifyPathRef(tok string) (pathRef, bool) {
+func classifyPathRef(tok string, fromLink bool) (pathRef, bool) {
 	if tok == "" || strings.ContainsAny(tok, " \t") {
 		return pathRef{}, false
 	}
@@ -171,32 +202,47 @@ func classifyPathRef(tok string) (pathRef, bool) {
 	if !hasTrackedExt(tok) {
 		return pathRef{}, false // repo slug, image name, directory — too ambiguous
 	}
-	return pathRef{tok: tok, exactMatch: strings.Contains(tok, "/")}, true
+	// A link target is always checked exactly, against the skill's directory:
+	// falling back to a basename-anywhere search would let a broken link pass
+	// merely because some unrelated file shares its name.
+	return pathRef{tok: tok, exactMatch: fromLink || strings.Contains(tok, "/"), fromLink: fromLink}, true
 }
 
 // collectReferencedPaths pulls candidate repo path references out of a skill:
-// backticked tokens plus relative markdown link targets.
+// backticked tokens (repo-root relative by convention) plus relative Markdown
+// link targets (relative to the skill file, per Markdown semantics).
 func collectReferencedPaths(body string) []pathRef {
 	seen := map[string]bool{}
 	var out []pathRef
-	add := func(tok string) {
+	add := func(tok string, fromLink bool) {
 		tok = strings.TrimSpace(tok)
 		tok = strings.TrimSuffix(tok, ".") // trailing sentence punctuation
-		if seen[tok] || gitignoredByDesign[tok] {
+		if fromLink {
+			// Strip the fragment/query a link may carry: `setup.md#step-2`
+			// points at a real file, and the anchor is not part of the path.
+			if i := strings.IndexAny(tok, "#?"); i >= 0 {
+				tok = tok[:i]
+			}
+		}
+		key := tok
+		if fromLink {
+			key = "link:" + tok
+		}
+		if tok == "" || seen[key] || gitignoredByDesign[tok] {
 			return
 		}
-		ref, ok := classifyPathRef(tok)
+		ref, ok := classifyPathRef(tok, fromLink)
 		if !ok {
 			return
 		}
-		seen[tok] = true
+		seen[key] = true
 		out = append(out, ref)
 	}
 	for _, m := range backticked.FindAllStringSubmatch(body, -1) {
-		add(m[1])
+		add(m[1], false)
 	}
 	for _, m := range markdownLink.FindAllStringSubmatch(body, -1) {
-		add(m[1])
+		add(m[1], true)
 	}
 	return out
 }
@@ -234,8 +280,16 @@ func TestSkillReferencedPathsExist(t *testing.T) {
 		t.Run(s.name, func(t *testing.T) {
 			for _, ref := range collectReferencedPaths(s.body) {
 				if ref.exactMatch {
-					if _, err := os.Stat(filepath.Join(root, ref.tok)); err != nil {
-						t.Errorf("%s references %q, which does not exist at that path — the file moved or was renamed; update the skill (or add it to gitignoredByDesign if the operator creates it)", s.path, ref.tok)
+					// Markdown links resolve against the file that contains
+					// them; backticked repo paths against the repo root.
+					base := root
+					kind := "that path"
+					if ref.fromLink {
+						base = filepath.Dir(s.path)
+						kind = "that path relative to the skill"
+					}
+					if _, err := os.Stat(filepath.Join(base, ref.tok)); err != nil {
+						t.Errorf("%s links to %q, which does not exist at %s — the file moved or was renamed; update the skill (or add it to gitignoredByDesign if the operator creates it)", s.path, ref.tok, kind)
 					}
 					continue
 				}

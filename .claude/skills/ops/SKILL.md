@@ -76,8 +76,12 @@ log in once first and then find them with `resolve_user`.
 Both tier-1 credentials are sent in the `X-Admin-Token` header; which value you
 send decides what you may do.
 
-**Full admin token** (`ADMIN_API_TOKEN`) — unrestricted. Reads and writes every
-tenant's data. Hold it only inside your own trust boundary.
+**Full admin token** (`ADMIN_API_TOKEN`) — unrestricted across the admin plane:
+it reads and writes every tenant's configuration through the admin API. Hold it
+only inside your own trust boundary. It is not a blanket override, though — the
+dry-run endpoint rejects **both** tier-1 tokens, because evaluating a request as
+a user means reading tenant data as that user, which neither may do. That needs
+a tier-2 org-admin JWT.
 
 **Operator token** (`OPERATOR_API_TOKEN`) — a restricted onboarder. It can run the
 whole of section 1: create and delete organizations, create admin-tier groups, set
