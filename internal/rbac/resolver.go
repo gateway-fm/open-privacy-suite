@@ -101,6 +101,24 @@ func (r *Resolver) ResolvePermissions(ctx context.Context, userID, orgID string)
 	// Compute permissions
 	perms, err := r.computePermissions(ctx, userID, orgID)
 
+	// Cache the result synchronously (RD-984), and do it BEFORE publishing
+	// the result and removing the in-flight entry: while the write is in
+	// progress, a new caller sees a cache miss but still finds the in-flight
+	// entry and waits. With the write after removal there was a window
+	// (entry gone, cache not yet written) where a late arrival recomputed —
+	// see TestResolvePermissions_NoRecomputeDuringCacheWrite. The write
+	// stays synchronous: the previous fire-and-forget goroutine could race
+	// InvalidateUser / InvalidateOrg from a concurrent mutation and
+	// repopulate the cache with stale permissions for the 5-minute TTL.
+	if err == nil {
+		if cErr := r.store.SetCachedPermissions(ctx, perms); cErr != nil {
+			// Cache-write failure is not a correctness issue (the
+			// returned perms are still authoritative); a future call
+			// will re-resolve from the DB. Don't fail the request.
+			slog.Warn("rbac resolver: SetCachedPermissions failed", "user_id", userID, "org_id", orgID, "err", cErr)
+		}
+	}
+
 	// Store result and broadcast to all waiting goroutines
 	entry.perms = perms
 	entry.err = err
@@ -113,21 +131,6 @@ func (r *Resolver) ResolvePermissions(ctx context.Context, userID, orgID string)
 
 	if err != nil {
 		return nil, err
-	}
-
-	// Cache the result synchronously (RD-984). The previous
-	// fire-and-forget goroutine could race InvalidateUser /
-	// InvalidateOrg from a concurrent mutation: the async write
-	// would land after the invalidation and repopulate the cache
-	// with stale permissions, sticking for the 5-minute TTL.
-	// Synchronous write closes the race entirely. Cost is
-	// dominated by the DB read above; one extra round-trip on the
-	// cache-miss path is negligible.
-	if err := r.store.SetCachedPermissions(ctx, perms); err != nil {
-		// Cache-write failure is not a correctness issue (the
-		// returned perms are still authoritative); a future call
-		// will re-resolve from the DB. Don't fail the request.
-		slog.Warn("rbac resolver: SetCachedPermissions failed", "user_id", userID, "org_id", orgID, "err", err)
 	}
 
 	return perms, nil
