@@ -13,18 +13,22 @@ import (
 
 // Group operations
 
-func (d *DB) CreateGroup(ctx context.Context, group *rbac.Group) error {
+func createGroup(ctx context.Context, q DBTX, group *rbac.Group) error {
 	query := `INSERT INTO groups (id, org_id, parent_id, slug, name, description, depth, path, is_org_admin, is_org_readonly_admin, auto_created)
 	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 	          RETURNING created_at, updated_at`
 
-	return d.conn.QueryRowContext(ctx, query,
+	return q.QueryRowContext(ctx, query,
 		group.ID, group.OrgID, group.ParentID, group.Slug, group.Name,
 		group.Description, group.Depth, group.Path, group.IsOrgAdmin, group.IsOrgReadonlyAdmin, group.AutoCreated,
 	).Scan(&group.CreatedAt, &group.UpdatedAt)
 }
 
-func (d *DB) GetGroup(ctx context.Context, id string) (*rbac.Group, error) {
+func (d *DB) CreateGroup(ctx context.Context, group *rbac.Group) error {
+	return createGroup(ctx, d.conn, group)
+}
+
+func getGroup(ctx context.Context, q DBTX, id string) (*rbac.Group, error) {
 	query := `SELECT id, org_id, parent_id, slug, name, description, depth, path, is_org_admin, is_org_readonly_admin, is_system, auto_created, created_at, updated_at
 	          FROM groups WHERE id = $1`
 
@@ -32,7 +36,7 @@ func (d *DB) GetGroup(ctx context.Context, id string) (*rbac.Group, error) {
 	var parentID sql.NullString
 	var description sql.NullString
 
-	err := d.conn.QueryRowContext(ctx, query, id).Scan(
+	err := q.QueryRowContext(ctx, query, id).Scan(
 		&group.ID, &group.OrgID, &parentID, &group.Slug, &group.Name,
 		&description, &group.Depth, &group.Path, &group.IsOrgAdmin, &group.IsOrgReadonlyAdmin, &group.IsSystem, &group.AutoCreated, &group.CreatedAt, &group.UpdatedAt,
 	)
@@ -51,6 +55,10 @@ func (d *DB) GetGroup(ctx context.Context, id string) (*rbac.Group, error) {
 	}
 
 	return group, nil
+}
+
+func (d *DB) GetGroup(ctx context.Context, id string) (*rbac.Group, error) {
+	return getGroup(ctx, d.conn, id)
 }
 
 func (d *DB) GetGroupBySlug(ctx context.Context, orgID, slug string) (*rbac.Group, error) {
@@ -358,9 +366,13 @@ func (d *DB) GetGroupHierarchy(ctx context.Context, groupID string) ([]*rbac.Gro
 	return scanGroups(rows)
 }
 
-func (d *DB) DeleteGroup(ctx context.Context, id string) error {
-	_, err := d.conn.ExecContext(ctx, `DELETE FROM groups WHERE id = $1`, id)
+func deleteGroup(ctx context.Context, q DBTX, id string) error {
+	_, err := q.ExecContext(ctx, `DELETE FROM groups WHERE id = $1`, id)
 	return err
+}
+
+func (d *DB) DeleteGroup(ctx context.Context, id string) error {
+	return deleteGroup(ctx, d.conn, id)
 }
 
 func scanGroups(rows *sql.Rows) ([]*rbac.Group, error) {
@@ -396,7 +408,7 @@ func scanGroups(rows *sql.Rows) ([]*rbac.Group, error) {
 
 // Group Access operations
 
-func (d *DB) CreateGroupAccess(ctx context.Context, access *rbac.GroupAccess) error {
+func createGroupAccess(ctx context.Context, q DBTX, access *rbac.GroupAccess) error {
 	// rpc_api_key_header column is intentionally not written; it stays at its
 	// schema DEFAULT 'Authorization' (migration 043) and is not consulted at
 	// runtime. The header name is operator-wide via the RPC_API_KEY_HEADER env
@@ -410,11 +422,15 @@ func (d *DB) CreateGroupAccess(ctx context.Context, access *rbac.GroupAccess) er
 		claims[i] = string(c)
 	}
 
-	return d.conn.QueryRowContext(ctx, query,
+	return q.QueryRowContext(ctx, query,
 		access.ID, access.GroupID,
 		pq.Array(access.AllowedMethods), pq.Array(claims),
 		access.RPCAPIKey, access.VerboseErrors,
 	).Scan(&access.CreatedAt, &access.UpdatedAt)
+}
+
+func (d *DB) CreateGroupAccess(ctx context.Context, access *rbac.GroupAccess) error {
+	return createGroupAccess(ctx, d.conn, access)
 }
 
 func (d *DB) GetGroupAccess(ctx context.Context, groupID string) (*rbac.GroupAccess, error) {
@@ -549,9 +565,13 @@ func (d *DB) GroupVerboseErrorsForUserOrg(ctx context.Context, externalID, orgID
 	return ok, nil
 }
 
-func (d *DB) DeleteGroupAccess(ctx context.Context, groupID string) error {
-	_, err := d.conn.ExecContext(ctx, `DELETE FROM group_access WHERE group_id = $1`, groupID)
+func deleteGroupAccess(ctx context.Context, q DBTX, groupID string) error {
+	_, err := q.ExecContext(ctx, `DELETE FROM group_access WHERE group_id = $1`, groupID)
 	return err
+}
+
+func (d *DB) DeleteGroupAccess(ctx context.Context, groupID string) error {
+	return deleteGroupAccess(ctx, d.conn, groupID)
 }
 
 // SetGroupAccess creates or updates group access settings (alias for UpdateGroupAccess).

@@ -81,17 +81,25 @@ func (d *DB) InvalidateCacheForUser(ctx context.Context, userID string) error {
 	return err
 }
 
+func invalidateCacheForOrg(ctx context.Context, q DBTX, orgID string) error {
+	_, err := q.ExecContext(ctx, `DELETE FROM effective_permissions_cache WHERE org_id = $1`, orgID)
+	return err
+}
+
 func (d *DB) InvalidateCacheForOrg(ctx context.Context, orgID string) error {
-	_, err := d.conn.ExecContext(ctx, `DELETE FROM effective_permissions_cache WHERE org_id = $1`, orgID)
+	return invalidateCacheForOrg(ctx, d.conn, orgID)
+}
+
+func invalidateCacheForGroup(ctx context.Context, q DBTX, groupID string) error {
+	// Invalidate cache for all users who are members of this group
+	query := `DELETE FROM effective_permissions_cache
+	          WHERE user_id IN (SELECT user_id FROM user_memberships WHERE group_id = $1)`
+	_, err := q.ExecContext(ctx, query, groupID)
 	return err
 }
 
 func (d *DB) InvalidateCacheForGroup(ctx context.Context, groupID string) error {
-	// Invalidate cache for all users who are members of this group
-	query := `DELETE FROM effective_permissions_cache
-	          WHERE user_id IN (SELECT user_id FROM user_memberships WHERE group_id = $1)`
-	_, err := d.conn.ExecContext(ctx, query, groupID)
-	return err
+	return invalidateCacheForGroup(ctx, d.conn, groupID)
 }
 
 func (d *DB) CleanupExpiredCache(ctx context.Context) (int64, error) {
