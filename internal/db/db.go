@@ -1078,75 +1078,71 @@ func (d *DB) GetLatestAccessLogHashForChain(ctx context.Context, chainName strin
 // the anchor still records the row's id but uses the previous anchor hash —
 // that is the latest known good seed for downstream verification.
 func (d *DB) CleanupAccessLogs(ctx context.Context, olderThan time.Time) (PruneResult, error) {
-	tx, err := d.conn.BeginTx(ctx, nil)
-	if err != nil {
-		return PruneResult{}, fmt.Errorf("failed to begin cleanup transaction: %w", err)
-	}
-	defer func() {
-		// Best-effort rollback if commit didn't happen.
-		_ = tx.Rollback()
-	}()
+	var res PruneResult
+	err := d.WithTx(ctx, func(wtx *Tx) error {
+		tx := wtx.tx
 
-	// Pick the row with the lowest id among those about to be deleted —
-	// surfaced via PruneResult.LowestID so the audit-of-the-audit row can
-	// describe the full deleted range, not just its endpoint.
-	var firstID sql.NullInt64
-	err = tx.QueryRowContext(ctx, `
-		SELECT id FROM access_logs
-		WHERE created_at < $1
-		ORDER BY id ASC
-		LIMIT 1`, olderThan).Scan(&firstID)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return PruneResult{}, fmt.Errorf("failed to read prune lowest id for access_logs: %w", err)
-	}
+		// Pick the row with the lowest id among those about to be deleted —
+		// surfaced via PruneResult.LowestID so the audit-of-the-audit row can
+		// describe the full deleted range, not just its endpoint.
+		var firstID sql.NullInt64
+		err := tx.QueryRowContext(ctx, `
+			SELECT id FROM access_logs
+			WHERE created_at < $1
+			ORDER BY id ASC
+			LIMIT 1`, olderThan).Scan(&firstID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("failed to read prune lowest id for access_logs: %w", err)
+		}
 
-	// Pick the row with the highest id among those about to be deleted.
-	var lastID sql.NullInt64
-	var lastHash sql.NullString
-	err = tx.QueryRowContext(ctx, `
-		SELECT id, entry_hash FROM access_logs
-		WHERE created_at < $1
-		ORDER BY id DESC
-		LIMIT 1`, olderThan).Scan(&lastID, &lastHash)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return PruneResult{}, fmt.Errorf("failed to read prune cut for access_logs: %w", err)
-	}
+		// Pick the row with the highest id among those about to be deleted.
+		var lastID sql.NullInt64
+		var lastHash sql.NullString
+		err = tx.QueryRowContext(ctx, `
+			SELECT id, entry_hash FROM access_logs
+			WHERE created_at < $1
+			ORDER BY id DESC
+			LIMIT 1`, olderThan).Scan(&lastID, &lastHash)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("failed to read prune cut for access_logs: %w", err)
+		}
 
-	result, err := tx.ExecContext(ctx, `DELETE FROM access_logs WHERE created_at < $1`, olderThan)
-	if err != nil {
-		return PruneResult{}, fmt.Errorf("failed to cleanup access logs: %w", err)
-	}
-	deleted, err := result.RowsAffected()
-	if err != nil {
-		return PruneResult{}, fmt.Errorf("failed to count deleted access logs: %w", err)
-	}
+		result, err := tx.ExecContext(ctx, `DELETE FROM access_logs WHERE created_at < $1`, olderThan)
+		if err != nil {
+			return fmt.Errorf("failed to cleanup access logs: %w", err)
+		}
+		deleted, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("failed to count deleted access logs: %w", err)
+		}
 
-	res := PruneResult{Deleted: deleted}
-	if deleted > 0 && lastID.Valid {
-		anchorHash := lastHash.String
-		if !lastHash.Valid || anchorHash == "" {
-			// The row had no entry_hash — fall back to the previous anchor so
-			// downstream verifiers still have a valid seed. If there is no
-			// previous anchor either, write the empty string (chain restarts
-			// from genesis).
-			prev, perr := getAnchorHashTx(ctx, tx, ChainNameAccessLogs)
-			if perr != nil {
-				return PruneResult{}, perr
+		res = PruneResult{Deleted: deleted}
+		if deleted > 0 && lastID.Valid {
+			anchorHash := lastHash.String
+			if !lastHash.Valid || anchorHash == "" {
+				// The row had no entry_hash — fall back to the previous anchor so
+				// downstream verifiers still have a valid seed. If there is no
+				// previous anchor either, write the empty string (chain restarts
+				// from genesis).
+				prev, perr := getAnchorHashTx(ctx, tx, ChainNameAccessLogs)
+				if perr != nil {
+					return perr
+				}
+				anchorHash = prev
 			}
-			anchorHash = prev
+			if err := upsertAuditChainAnchorTx(ctx, tx, ChainNameAccessLogs, lastID.Int64, anchorHash); err != nil {
+				return err
+			}
+			res.HighestID = lastID.Int64
+			res.AnchorHash = anchorHash
+			if firstID.Valid {
+				res.LowestID = firstID.Int64
+			}
 		}
-		if err := upsertAuditChainAnchorTx(ctx, tx, ChainNameAccessLogs, lastID.Int64, anchorHash); err != nil {
-			return PruneResult{}, err
-		}
-		res.HighestID = lastID.Int64
-		res.AnchorHash = anchorHash
-		if firstID.Valid {
-			res.LowestID = firstID.Int64
-		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		return PruneResult{}, fmt.Errorf("failed to commit access log cleanup: %w", err)
+		return nil
+	})
+	if err != nil {
+		return PruneResult{}, err
 	}
 	return res, nil
 }
@@ -1191,84 +1187,81 @@ func (d *DB) TrimAccessLogsFIFOBatch(ctx context.Context, maxRows int64, batchSi
 		batchSize = 1000
 	}
 
-	tx, err := d.conn.BeginTx(ctx, nil)
-	if err != nil {
-		return PruneResult{}, fmt.Errorf("failed to begin trim transaction: %w", err)
-	}
-	defer func() {
-		_ = tx.Rollback()
-	}()
+	var res PruneResult
+	err := d.WithTx(ctx, func(wtx *Tx) error {
+		tx := wtx.tx
 
-	var total int64
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM access_logs`).Scan(&total); err != nil {
-		return PruneResult{}, fmt.Errorf("failed to count access_logs in trim: %w", err)
-	}
-	excess := total - maxRows
-	if excess <= 0 {
-		return PruneResult{}, tx.Commit()
-	}
-	toDelete := excess
-	if toDelete > int64(batchSize) {
-		toDelete = int64(batchSize)
-	}
-
-	// Capture the lowest id about to be deleted in this batch — surfaced in
-	// PruneResult so the retention manager can record the deleted range.
-	var firstID sql.NullInt64
-	if err := tx.QueryRowContext(ctx, `SELECT id FROM access_logs ORDER BY id ASC LIMIT 1`).Scan(&firstID); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return PruneResult{}, tx.Commit()
+		var total int64
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM access_logs`).Scan(&total); err != nil {
+			return fmt.Errorf("failed to count access_logs in trim: %w", err)
 		}
-		return PruneResult{}, fmt.Errorf("failed to read FIFO lowest id: %w", err)
-	}
-
-	// Identify the highest id among the oldest `toDelete` rows. We delete by
-	// id range (id <= cutId) inside the same transaction.
-	var cutID sql.NullInt64
-	var cutHash sql.NullString
-	err = tx.QueryRowContext(ctx, `
-		SELECT id, entry_hash FROM access_logs
-		ORDER BY id ASC
-		LIMIT 1 OFFSET $1`, toDelete-1).Scan(&cutID, &cutHash)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			// Race: rows disappeared between the COUNT and the OFFSET probe.
-			return PruneResult{}, tx.Commit()
+		excess := total - maxRows
+		if excess <= 0 {
+			return nil
 		}
-		return PruneResult{}, fmt.Errorf("failed to read FIFO cut: %w", err)
-	}
+		toDelete := excess
+		if toDelete > int64(batchSize) {
+			toDelete = int64(batchSize)
+		}
 
-	result, err := tx.ExecContext(ctx, `DELETE FROM access_logs WHERE id <= $1`, cutID.Int64)
-	if err != nil {
-		return PruneResult{}, fmt.Errorf("failed to trim access_logs: %w", err)
-	}
-	deleted, err := result.RowsAffected()
-	if err != nil {
-		return PruneResult{}, fmt.Errorf("failed to count trimmed rows: %w", err)
-	}
-
-	res := PruneResult{Deleted: deleted}
-	if deleted > 0 && cutID.Valid {
-		anchorHash := cutHash.String
-		if !cutHash.Valid || anchorHash == "" {
-			prev, perr := getAnchorHashTx(ctx, tx, ChainNameAccessLogs)
-			if perr != nil {
-				return PruneResult{}, perr
+		// Capture the lowest id about to be deleted in this batch — surfaced in
+		// PruneResult so the retention manager can record the deleted range.
+		var firstID sql.NullInt64
+		if err := tx.QueryRowContext(ctx, `SELECT id FROM access_logs ORDER BY id ASC LIMIT 1`).Scan(&firstID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil
 			}
-			anchorHash = prev
+			return fmt.Errorf("failed to read FIFO lowest id: %w", err)
 		}
-		if err := upsertAuditChainAnchorTx(ctx, tx, ChainNameAccessLogs, cutID.Int64, anchorHash); err != nil {
-			return PruneResult{}, err
-		}
-		res.HighestID = cutID.Int64
-		res.AnchorHash = anchorHash
-		if firstID.Valid {
-			res.LowestID = firstID.Int64
-		}
-	}
 
-	if err := tx.Commit(); err != nil {
-		return PruneResult{}, fmt.Errorf("failed to commit access log trim: %w", err)
+		// Identify the highest id among the oldest `toDelete` rows. We delete by
+		// id range (id <= cutId) inside the same transaction.
+		var cutID sql.NullInt64
+		var cutHash sql.NullString
+		err := tx.QueryRowContext(ctx, `
+			SELECT id, entry_hash FROM access_logs
+			ORDER BY id ASC
+			LIMIT 1 OFFSET $1`, toDelete-1).Scan(&cutID, &cutHash)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				// Race: rows disappeared between the COUNT and the OFFSET probe.
+				return nil
+			}
+			return fmt.Errorf("failed to read FIFO cut: %w", err)
+		}
+
+		result, err := tx.ExecContext(ctx, `DELETE FROM access_logs WHERE id <= $1`, cutID.Int64)
+		if err != nil {
+			return fmt.Errorf("failed to trim access_logs: %w", err)
+		}
+		deleted, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("failed to count trimmed rows: %w", err)
+		}
+
+		res = PruneResult{Deleted: deleted}
+		if deleted > 0 && cutID.Valid {
+			anchorHash := cutHash.String
+			if !cutHash.Valid || anchorHash == "" {
+				prev, perr := getAnchorHashTx(ctx, tx, ChainNameAccessLogs)
+				if perr != nil {
+					return perr
+				}
+				anchorHash = prev
+			}
+			if err := upsertAuditChainAnchorTx(ctx, tx, ChainNameAccessLogs, cutID.Int64, anchorHash); err != nil {
+				return err
+			}
+			res.HighestID = cutID.Int64
+			res.AnchorHash = anchorHash
+			if firstID.Valid {
+				res.LowestID = firstID.Int64
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return PruneResult{}, err
 	}
 	return res, nil
 }
