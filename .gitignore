@@ -6,7 +6,6 @@
 *.dylib
 bin/
 dist/
-authproxy
 
 # Test binary
 *.test

@@ -2137,3 +2137,91 @@ func TestPreregisteredAddressAccessGate(t *testing.T) {
 		})
 	}
 }
+
+// TestEthGetLogsFilterShapeValidation ports the filter-shape edge cases that
+// were previously asserted only against the removed test-only validator
+// (ValidateGetLogsAccess) so they are enforced on the live path:
+// CheckAccess → checkEthGetLogsAccess → validateGetLogsWithOrgContext.
+// A single-org user is used so org resolution falls back to the user's org
+// even when the malformed filter yields no target address.
+func TestEthGetLogsFilterShapeValidation(t *testing.T) {
+	ctx := context.Background()
+	store := NewMockCrossOrgStore()
+
+	org := &Organization{ID: "shape-org", Slug: "shape", Name: "Shape Org"}
+	store.organizations["shape-org"] = org
+
+	bob := &User{ID: "bob", ExternalID: "did:test:bob", KYC: true}
+	store.users["did:test:bob"] = bob
+
+	group := &Group{ID: "shape-group", OrgID: "shape-org", Slug: "default", Name: "Default"}
+	store.memberships["bob"] = []*MembershipWithDetails{
+		{Membership: &UserMembership{ID: "mem-shape", UserID: "bob", GroupID: "shape-group"}, Group: group},
+	}
+	store.groupAccess["shape-group"] = &GroupAccess{
+		GroupID:        "shape-group",
+		AllowedMethods: []string{"eth_getLogs"},
+		Claims:         []Claim{},
+	}
+
+	registered := "0xshape00000000000000000000000000000000aa"
+	unregistered := "0xshape00000000000000000000000000000000bb"
+	store.contractOwners[registered] = "shape-org"
+	store.registeredToAnyOrg[registered] = true
+
+	store.cachedPermissions["bob:shape-org"] = &EffectivePermissions{
+		UserID:         "bob",
+		OrgID:          "shape-org",
+		AllowedMethods: []string{"eth_getLogs"},
+		Claims:         []Claim{},
+		ContractAccess: map[string]ContractAccess{
+			registered: {Claims: []Claim{}},
+		},
+		ComputedAt: time.Now(),
+		ExpiresAt:  time.Now().Add(5 * time.Minute),
+	}
+
+	controller := NewAccessController(store, 5*time.Minute)
+
+	check := func(t *testing.T, params []any) *AccessCheckResult {
+		t.Helper()
+		result, err := controller.CheckAccess(ctx, &AccessCheckRequest{
+			UserExternalID: "did:test:bob",
+			Method:         "eth_getLogs",
+			Params:         params,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		return result
+	}
+
+	denied := []struct {
+		name   string
+		params []any
+	}{
+		{"nil params", nil},
+		{"empty params", []any{}},
+		{"filter is not a map", []any{"not a map"}},
+		{"no address field", []any{map[string]any{"fromBlock": "latest"}}},
+		{"null address", []any{map[string]any{"address": nil}}},
+		{"empty address array", []any{map[string]any{"address": []any{}}}},
+		{"empty string address", []any{map[string]any{"address": ""}}},
+		{"unregistered address", []any{map[string]any{"address": unregistered}}},
+		{"mixed array, one unregistered", []any{map[string]any{"address": []any{registered, unregistered}}}},
+	}
+	for _, tt := range denied {
+		t.Run("denied: "+tt.name, func(t *testing.T) {
+			if result := check(t, tt.params); result.Allowed {
+				t.Errorf("expected denial for %s", tt.name)
+			}
+		})
+	}
+
+	t.Run("allowed: registered address, case-insensitive", func(t *testing.T) {
+		upper := "0xSHAPE00000000000000000000000000000000AA"
+		if result := check(t, []any{map[string]any{"address": upper}}); !result.Allowed {
+			t.Errorf("expected uppercase spelling of a registered address to be allowed, got denied: %s", result.Reason)
+		}
+	})
+}
