@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -134,44 +135,50 @@ func TestTxContractReads_IncludeABIAndDynamicPayloadFlag(t *testing.T) {
 		t.Fatalf("UpdateContractEventsAllowDynamicPayload failed: %v", err)
 	}
 
+	// No t.Fatal inside the WithTx callback: FailNow exits the goroutine
+	// before WithTx can roll back or commit, leaking the open transaction.
+	// The callback only collects; assertions run after WithTx returns.
+	var byID, byAddr *rbac.Contract
+	var byIDs map[string]*rbac.Contract
 	err := db.WithTx(ctx, func(tx *Tx) error {
-		byID, err := tx.GetContract(ctx, contract.ID)
-		if err != nil {
-			t.Fatalf("tx.GetContract failed: %v", err)
+		var err error
+		if byID, err = tx.GetContract(ctx, contract.ID); err != nil {
+			return fmt.Errorf("tx.GetContract: %w", err)
 		}
-		byAddr, err := tx.GetContractByAddress(ctx, orgID, contract.Address)
-		if err != nil {
-			t.Fatalf("tx.GetContractByAddress failed: %v", err)
+		if byAddr, err = tx.GetContractByAddress(ctx, orgID, contract.Address); err != nil {
+			return fmt.Errorf("tx.GetContractByAddress: %w", err)
 		}
-		byIDs, err := tx.GetContractsByIDs(ctx, []string{contract.ID})
-		if err != nil {
-			t.Fatalf("tx.GetContractsByIDs failed: %v", err)
-		}
-		for name, got := range map[string]*rbac.Contract{
-			"GetContract":          byID,
-			"GetContractByAddress": byAddr,
-			"GetContractsByIDs":    byIDs[contract.ID],
-		} {
-			if got == nil {
-				t.Fatalf("tx.%s returned nil for existing contract", name)
-			}
-			if got.ABI != abi {
-				t.Errorf("tx.%s dropped abi: got %q", name, got.ABI)
-			}
-			if !got.EventsAllowDynamicPayload {
-				t.Errorf("tx.%s dropped events_allow_dynamic_payload", name)
-			}
+		if byIDs, err = tx.GetContractsByIDs(ctx, []string{contract.ID}); err != nil {
+			return fmt.Errorf("tx.GetContractsByIDs: %w", err)
 		}
 		return nil
 	})
 	if err != nil {
 		t.Fatalf("WithTx failed: %v", err)
 	}
+
+	for name, got := range map[string]*rbac.Contract{
+		"GetContract":          byID,
+		"GetContractByAddress": byAddr,
+		"GetContractsByIDs":    byIDs[contract.ID],
+	} {
+		if got == nil {
+			t.Fatalf("tx.%s returned nil for existing contract", name)
+		}
+		if got.ABI != abi {
+			t.Errorf("tx.%s dropped abi: got %q", name, got.ABI)
+		}
+		if !got.EventsAllowDynamicPayload {
+			t.Errorf("tx.%s dropped events_allow_dynamic_payload", name)
+		}
+	}
 }
 
-// The tx INSERT twin had dropped the abi column: contracts registered through
-// RegisterContractWithGrant (the composite every admin registration uses)
-// silently lost their ABI.
+// The tx INSERT twin had dropped the abi column: any contract created through
+// the tx path lost its ABI. Today that path is reached only via the
+// CreateContractWithGrant composite (tx_operations.go), which has no
+// production callers yet — a landmine for its first one rather than live
+// data loss.
 func TestTxCreateContract_PersistsABI(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test")
@@ -238,38 +245,41 @@ func TestTxGroupReadsAndCreate_CarryReadonlyAdminAndSystemFlags(t *testing.T) {
 		t.Fatalf("failed to set is_system: %v", err)
 	}
 
+	// No t.Fatal inside the WithTx callback (see the contract-reads test).
+	var byID *rbac.Group
+	var byIDs []*rbac.Group
 	err := db.WithTx(ctx, func(tx *Tx) error {
-		byID, err := tx.GetGroup(ctx, roGroup.ID)
-		if err != nil {
-			t.Fatalf("tx.GetGroup failed: %v", err)
+		var err error
+		if byID, err = tx.GetGroup(ctx, roGroup.ID); err != nil {
+			return fmt.Errorf("tx.GetGroup: %w", err)
 		}
-		if byID == nil {
-			t.Fatal("tx.GetGroup returned nil for existing group")
-		}
-		if !byID.IsOrgReadonlyAdmin {
-			t.Error("tx.GetGroup dropped is_org_readonly_admin")
-		}
-		if !byID.IsSystem {
-			t.Error("tx.GetGroup dropped is_system")
-		}
-
-		byIDs, err := tx.GetGroupsByIDs(ctx, orgID, []string{roGroup.ID})
-		if err != nil {
-			t.Fatalf("tx.GetGroupsByIDs failed: %v", err)
-		}
-		if len(byIDs) != 1 {
-			t.Fatalf("tx.GetGroupsByIDs returned %d groups, want 1", len(byIDs))
-		}
-		if !byIDs[0].IsOrgReadonlyAdmin {
-			t.Error("tx.GetGroupsByIDs dropped is_org_readonly_admin (breaks the RD-1107 batch-delete gate)")
-		}
-		if !byIDs[0].IsSystem {
-			t.Error("tx.GetGroupsByIDs dropped is_system (breaks the RD-1107 batch-delete gate)")
+		if byIDs, err = tx.GetGroupsByIDs(ctx, orgID, []string{roGroup.ID}); err != nil {
+			return fmt.Errorf("tx.GetGroupsByIDs: %w", err)
 		}
 		return nil
 	})
 	if err != nil {
 		t.Fatalf("WithTx failed: %v", err)
+	}
+
+	if byID == nil {
+		t.Fatal("tx.GetGroup returned nil for existing group")
+	}
+	if !byID.IsOrgReadonlyAdmin {
+		t.Error("tx.GetGroup dropped is_org_readonly_admin")
+	}
+	if !byID.IsSystem {
+		t.Error("tx.GetGroup dropped is_system")
+	}
+
+	if len(byIDs) != 1 {
+		t.Fatalf("tx.GetGroupsByIDs returned %d groups, want 1", len(byIDs))
+	}
+	if !byIDs[0].IsOrgReadonlyAdmin {
+		t.Error("tx.GetGroupsByIDs dropped is_org_readonly_admin (breaks the RD-1107 batch-delete gate)")
+	}
+	if !byIDs[0].IsSystem {
+		t.Error("tx.GetGroupsByIDs dropped is_system (breaks the RD-1107 batch-delete gate)")
 	}
 
 	// Readonly-admin group written through the tx path must persist the flag.
