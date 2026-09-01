@@ -10,19 +10,20 @@ package netguard
 
 import (
 	"fmt"
-	"net"
+	"net/netip"
 	"net/url"
+	"strings"
 )
 
 // blockedCIDRs are the IP ranges that must never be used as a webhook
-// destination. Using net.ParseCIDR + subnet.Contains avoids the string-prefix
-// pitfall where "172.0.0.1" or "10.io" could bypass or trip a HasPrefix check.
+// destination. netip.Prefix.Contains matches within one address family only,
+// which avoids the string-prefix pitfall where "172.0.0.1" or "10.io" could
+// bypass or trip a HasPrefix check.
 //
-// Note: do NOT include IPv4-mapped IPv6 ranges like ::ffff:0:0/96 here.
-// Go's net.IPNet.Contains normalises them to IPv4 by taking the last 4 bytes
-// of the mask, which turns a /96 IPv6 mask into a /0 IPv4 mask and would
-// match every IPv4 address.
-var blockedCIDRs = func() []*net.IPNet {
+// Note: netip does NOT match IPv4-mapped IPv6 addresses (::ffff:a.b.c.d)
+// against IPv4 prefixes — parseIPHost Unmap()s them to IPv4 first, so the
+// IPv4 ranges below cover those forms too.
+var blockedCIDRs = func() []netip.Prefix {
 	ranges := []string{
 		"127.0.0.0/8",    // IPv4 loopback
 		"::1/128",        // IPv6 loopback
@@ -34,16 +35,41 @@ var blockedCIDRs = func() []*net.IPNet {
 		"100.64.0.0/10",  // CGNAT / Tailscale (shared address space)
 		"fc00::/7",       // IPv6 ULA — private, the v6 analogue of RFC-1918
 	}
-	nets := make([]*net.IPNet, 0, len(ranges))
+	prefixes := make([]netip.Prefix, 0, len(ranges))
 	for _, r := range ranges {
-		_, cidr, err := net.ParseCIDR(r)
+		p, err := netip.ParsePrefix(r)
 		if err != nil {
 			panic(fmt.Sprintf("netguard: invalid blockedCIDR %q: %v", r, err))
 		}
-		nets = append(nets, cidr)
+		prefixes = append(prefixes, p)
 	}
-	return nets
+	return prefixes
 }()
+
+// normalizeHost lowercases the host and strips one trailing dot: DNS names
+// are case-insensitive and may be root-qualified, so name-based checks would
+// otherwise be bypassed with "LOCALHOST" or "localhost.".
+func normalizeHost(host string) string {
+	return strings.TrimSuffix(strings.ToLower(host), ".")
+}
+
+// isLocalhostName reports whether a normalized host names loopback:
+// "localhost" itself or any *.localhost subdomain (RFC 6761 — resolvers
+// answer loopback for those too).
+func isLocalhostName(host string) bool {
+	return host == "localhost" || strings.HasSuffix(host, ".localhost")
+}
+
+// parseIPHost parses an IP-literal host for range checking. It tolerates an
+// RFC 6874 zone suffix (fe80::1%en0 — which net.ParseIP would reject) and
+// strips it, and Unmap()s IPv4-mapped IPv6 so the IPv4 ranges apply.
+func parseIPHost(host string) (netip.Addr, bool) {
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		return netip.Addr{}, false
+	}
+	return addr.WithZone("").Unmap(), true
+}
 
 // ValidateWebhookURL checks that a webhook URL (SIEM forwarder, audit tamper
 // alarm) is safe to use in production. It rejects non-HTTPS schemes and
@@ -51,10 +77,10 @@ var blockedCIDRs = func() []*net.IPNet {
 // (SSRF). See ValidateWebhookURLForEnv for the env-aware variant used in
 // non-prod where HTTP-on-localhost is acceptable for development.
 //
-// IP range checks use net.ParseCIDR + subnet.Contains instead of
-// strings.HasPrefix to avoid the pitfalls documented in
-// localhost_security_test.go (e.g. "10.io" tripping a prefix check,
-// or "172.0.0.1" bypassing the Docker range).
+// IP range checks parse the host with net/netip and match against CIDR
+// prefixes instead of using strings.HasPrefix, avoiding the pitfalls
+// documented in localhost_security_test.go (e.g. "10.io" tripping a prefix
+// check, or "172.0.0.1" bypassing the Docker range).
 //
 // Note: if the host is a domain name (not a bare IP literal), DNS-resolved
 // addresses are not checked here — that would require a network call at
@@ -69,9 +95,9 @@ func ValidateWebhookURL(rawURL string) error {
 //
 // In strict mode (allowInsecure=false) — the production default — the URL
 // must use HTTPS and the host must not resolve to a loopback / RFC-1918 /
-// link-local / CGNAT / IPv6-ULA address. This is the only safe configuration for a
-// system that POSTs audit data from inside the VPC to an operator-supplied
-// destination.
+// link-local / CGNAT / IPv6-ULA address. This is the only safe configuration
+// for a system that POSTs audit data from inside the VPC to an
+// operator-supplied destination.
 //
 // In relaxed mode (allowInsecure=true) HTTP is also accepted, but ONLY when
 // the host is a loopback or private-network destination — e.g. an httptest
@@ -102,20 +128,26 @@ func ValidateWebhookURLForEnv(rawURL string, allowInsecure bool) error {
 		return fmt.Errorf("SIEM_WEBHOOK_URL scheme must be http or https, got %q", u.Scheme)
 	}
 
-	host := u.Hostname()
+	host := normalizeHost(u.Hostname())
 
-	// "localhost" is a hostname alias for loopback; block it by name.
-	if host == "localhost" {
+	// localhost by name — any case, optionally root-qualified, including
+	// RFC 6761 *.localhost subdomains — aliases loopback; block it.
+	if isLocalhostName(host) {
 		return fmt.Errorf("SIEM_WEBHOOK_URL must not target a loopback address")
 	}
 
 	// If the host is an IP literal, run proper CIDR checks.
-	if ip := net.ParseIP(host); ip != nil {
+	if ip, ok := parseIPHost(host); ok {
 		for _, blocked := range blockedCIDRs {
 			if blocked.Contains(ip) {
 				return fmt.Errorf("SIEM_WEBHOOK_URL targets a blocked IP range (%s is in %s)", ip, blocked)
 			}
 		}
+	} else if strings.ContainsAny(host, ":%") {
+		// Looks like an IP literal (hostnames contain neither ':' nor '%')
+		// but does not parse — fail closed rather than treat it as a
+		// hostname and skip the range checks.
+		return fmt.Errorf("SIEM_WEBHOOK_URL host %q is not a valid IP literal", host)
 	}
 
 	return nil
@@ -126,11 +158,12 @@ func ValidateWebhookURLForEnv(rawURL string, allowInsecure bool) error {
 // relaxed mode — cleartext traffic is acceptable on the local box / VPC, but
 // not over the public internet.
 func requireLoopbackOrPrivate(host string) error {
-	if host == "localhost" {
+	host = normalizeHost(host)
+	if isLocalhostName(host) {
 		return nil
 	}
-	ip := net.ParseIP(host)
-	if ip == nil {
+	ip, ok := parseIPHost(host)
+	if !ok {
 		// Domain name — cannot prove private at validation time without DNS,
 		// and we don't want cleartext POSTs to "evil.com". Reject.
 		return fmt.Errorf("http scheme is only allowed for loopback or private destinations, got hostname %q", host)
@@ -151,7 +184,7 @@ func requireLoopbackOrPrivate(host string) error {
 // Mirrors the operator-network ranges in server.localhostOnlyMiddleware so
 // the two trust boundaries share a single definition of "this is on our
 // network, cleartext is acceptable".
-var allowedHTTPCIDRs = func() []*net.IPNet {
+var allowedHTTPCIDRs = func() []netip.Prefix {
 	ranges := []string{
 		"10.0.0.0/8",
 		"172.16.0.0/12",
@@ -159,13 +192,13 @@ var allowedHTTPCIDRs = func() []*net.IPNet {
 		"100.64.0.0/10",
 		"fc00::/7", // IPv6 ULA
 	}
-	nets := make([]*net.IPNet, 0, len(ranges))
+	prefixes := make([]netip.Prefix, 0, len(ranges))
 	for _, r := range ranges {
-		_, cidr, err := net.ParseCIDR(r)
+		p, err := netip.ParsePrefix(r)
 		if err != nil {
 			panic(fmt.Sprintf("netguard: invalid allowedHTTPCIDR %q: %v", r, err))
 		}
-		nets = append(nets, cidr)
+		prefixes = append(prefixes, p)
 	}
-	return nets
+	return prefixes
 }()

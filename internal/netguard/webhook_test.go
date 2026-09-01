@@ -39,6 +39,28 @@ func TestValidateWebhookURL(t *testing.T) {
 		{"[fc00::1] rejected - IPv6 ULA", "https://[fc00::1]/ingest", true},
 		{"[fdff::1] rejected - IPv6 ULA range end", "https://[fdff::1]/ingest", true},
 
+		// IPv6 zone literals (RFC 6874, %25-escaped in URLs) — a zone must
+		// not push the address off the bare-IP check into the hostname path.
+		{"[fe80::1%25en0] rejected - zoned IPv6 link-local", "https://[fe80::1%25en0]/ingest", true},
+		{"[fc00::1%25en0] rejected - zoned IPv6 ULA", "https://[fc00::1%25en0]/ingest", true},
+
+		// IPv4-mapped IPv6 — the v4 ranges must apply to ::ffff: forms.
+		{"[::ffff:127.0.0.1] rejected - IPv4-mapped loopback", "https://[::ffff:127.0.0.1]/ingest", true},
+
+		// IP-ish hosts that don't parse must fail closed, not pass as
+		// "hostname" (hostnames contain neither ':' nor '%').
+		{"bracketed IP garbage rejected", "https://[fe80::zz%25en0]/ingest", true},
+		{"bare-percent host rejected", "https://a%25b/ingest", true},
+
+		// localhost by any other spelling: DNS names are case-insensitive,
+		// a trailing dot is the DNS root, and *.localhost subdomains resolve
+		// to loopback per RFC 6761.
+		{"LOCALHOST rejected - case-insensitive", "https://LOCALHOST/ingest", true},
+		{"localhost. rejected - root-qualified", "https://localhost./ingest", true},
+		{"LoCaLhOsT rejected - mixed case", "https://LoCaLhOsT/ingest", true},
+		{"foo.localhost rejected - RFC 6761 subdomain", "https://foo.localhost/ingest", true},
+		{"foo.LOCALHOST. rejected - subdomain, mixed case, root-qualified", "https://foo.LOCALHOST./ingest", true},
+
 		// RFC-1918 private ranges - correct CIDR boundaries, not string prefix
 		{"10.0.0.1 rejected", "https://10.0.0.1/ingest", true},
 		{"10.255.255.255 rejected - end of /8", "https://10.255.255.255/ingest", true},
@@ -112,6 +134,23 @@ func TestValidateWebhookURLForEnv(t *testing.T) {
 		{"prod [::1] rejected (IPv6 loopback)", "https://[::1]/ingest", false, true, "blocked IP range"},
 		{"prod [fe80::1] rejected (IPv6 link-local)", "https://[fe80::1]/ingest", false, true, "blocked IP range"},
 		{"prod [fc00::1] rejected (IPv6 ULA)", "https://[fc00::1]/ingest", false, true, "blocked IP range"},
+		{"prod [fe80::1%25en0] rejected (zoned link-local)", "https://[fe80::1%25en0]/ingest", false, true, "blocked IP range"},
+		{"prod [fc00::1%25en0] rejected (zoned ULA)", "https://[fc00::1%25en0]/ingest", false, true, "blocked IP range"},
+		{"prod bare-percent host rejected fail-closed", "https://a%25b/ingest", false, true, "not a valid IP literal"},
+		{"prod LOCALHOST rejected", "https://LOCALHOST/ingest", false, true, "loopback"},
+		{"prod localhost. rejected", "https://localhost./ingest", false, true, "loopback"},
+		{"prod foo.localhost rejected", "https://foo.localhost/ingest", false, true, "loopback"},
+
+		// The zone/name normalizations apply in relaxed mode too: https to a
+		// zoned private range is still range-blocked, http to a zoned
+		// link-local is still not private, and localhost spellings are
+		// loopback (so relaxed http accepts them).
+		{"non-prod https zoned ULA still rejected", "https://[fc00::1%25en0]/ingest", true, true, "blocked IP range"},
+		{"non-prod http zoned link-local rejected", "http://[fe80::1%25en0]/ingest", true, true, "loopback or private"},
+		{"non-prod http zoned loopback allowed", "http://[::1%25lo0]:9000/ingest", true, false, ""},
+		{"non-prod http LOCALHOST allowed as loopback", "http://LOCALHOST:9000/ingest", true, false, ""},
+		{"non-prod http localhost. allowed as loopback", "http://localhost.:9000/ingest", true, false, ""},
+		{"non-prod http foo.localhost allowed as loopback", "http://foo.localhost:9000/ingest", true, false, ""},
 		{"prod public https allowed", "https://siem.example.com/ingest", false, false, ""},
 
 		// Garbage schemes are rejected in both modes — we only know what
