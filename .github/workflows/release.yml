@@ -81,6 +81,16 @@ jobs:
             BUILD_TIME=${{ steps.build_meta.outputs.build_time }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # Aikido: always rebuild the stage that runs `apt-get upgrade`. Its
+          # cache key is the instruction text (never changes) plus the
+          # debian:trixie-slim digest, so a release cut after a new CVE lands
+          # can restore a pre-advisory layer from the gha cache and republish
+          # the SAME vulnerable packages. That is how CVE-2026-63072
+          # (libssl3t64/openssl 3.5.6-1~deb13u2) survived: the advisory
+          # appeared 2026-08-26, after the v0.13.0-rc.3 build on 2026-08-25,
+          # and the base image had not moved since. Only this stage is
+          # uncached; the Go build stages still hit the cache.
+          no-cache-filters: runtime-base
 
   release-frontend:
     name: Release Frontend Image
@@ -139,3 +149,9 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # Aikido: same reason as the backend. Note `apk upgrade --no-cache`
+          # in the Dockerfile is an apk flag (skip the package index cache) and
+          # does NOT stop Docker restoring this whole layer from the gha cache,
+          # so the openssl 3.5.7-r0 -> 3.5.8-r0 fix needs the stage marked
+          # uncached here. `prod` is the stage that runs the upgrade.
+          no-cache-filters: prod
