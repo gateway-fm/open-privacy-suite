@@ -10,6 +10,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
+
 	"privacy-proxy/internal/audit"
 	"privacy-proxy/internal/audit/buffer"
 	"privacy-proxy/internal/audit/sealer"
@@ -568,6 +570,10 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 			"aliases", len(cfg.ExtraRPCNamespaces.Aliases()),
 			"wildcards", len(wildcards))
 	}
+	// Startup registration is done: from here on the registries are read
+	// lock-free by request handlers, so any further RegisterExtraNamespaces
+	// call is a data race and panics (RD-1262).
+	rbac.ArmMethodRegistries()
 
 	// Configure RPC API key encryption for decrypting keys from the database
 	if len(cfg.RPCAPIKeyEncryptionKey) > 0 {
@@ -1911,7 +1917,8 @@ type ExtraWildcardInfo struct {
 
 // buildExtraWildcardsResponse projects the rbac.Wildcards registry into the
 // status response shape (namespace name → prefix + deny list). Returns nil when
-// no wildcards are registered so the JSON omits the field.
+// no wildcards are registered so the JSON omits the field. Deny is cloned:
+// the response must not alias the live registry slice (RD-1262).
 func buildExtraWildcardsResponse() map[string]ExtraWildcardInfo {
 	if len(rbac.Wildcards) == 0 {
 		return nil
@@ -1920,8 +1927,24 @@ func buildExtraWildcardsResponse() map[string]ExtraWildcardInfo {
 	for _, w := range rbac.Wildcards {
 		out[w.Namespace] = ExtraWildcardInfo{
 			Prefix: w.Prefix,
-			Deny:   w.Deny,
+			Deny:   slices.Clone(w.Deny),
 		}
+	}
+	return out
+}
+
+// snapshotExtraNamespaces deep-copies the rbac.ExtraNamespaces registry for
+// the status response. The response must not carry the live package-global
+// map by reference — a consumer mutating it would be editing RBAC state
+// (RD-1262). Returns nil when nothing is registered so the JSON field keeps
+// its omitempty behavior.
+func snapshotExtraNamespaces() map[string][]string {
+	if len(rbac.ExtraNamespaces) == 0 {
+		return nil
+	}
+	out := make(map[string][]string, len(rbac.ExtraNamespaces))
+	for ns, methods := range rbac.ExtraNamespaces {
+		out[ns] = slices.Clone(methods)
 	}
 	return out
 }
@@ -1991,7 +2014,7 @@ func (s *Server) getStatus(c *gin.Context) {
 			ComplianceDefaultMode: complianceMode,
 		},
 		Methods: MethodsStatus{
-			ExtraNamespaces: rbac.ExtraNamespaces,
+			ExtraNamespaces: snapshotExtraNamespaces(),
 			ExtraWildcards:  buildExtraWildcardsResponse(),
 		},
 	}

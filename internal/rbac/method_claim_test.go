@@ -288,17 +288,8 @@ func TestExpandWildcardMethods(t *testing.T) {
 }
 
 func TestRegisterExtraNamespaces(t *testing.T) {
-	// Clean up after test (extra methods are package-level state)
-	origExtra := ExtraMethods
-	origNS := ExtraNamespaces
-	origAliases := MethodAliases
-	origWildcards := Wildcards
-	defer func() {
-		ExtraMethods = origExtra
-		ExtraNamespaces = origNS
-		MethodAliases = origAliases
-		Wildcards = origWildcards
-	}()
+	// Extra methods are package-level state — snapshot and restore.
+	defer SnapshotMethodRegistriesForTest()()
 
 	// Reset state
 	ExtraMethods = map[string]bool{}
@@ -356,8 +347,7 @@ func TestRegisterExtraNamespaces(t *testing.T) {
 // TestMatchWildcard exercises the prefix-wildcard passthrough matcher: prefix
 // match, deny-glob override, and namespaces with no wildcard.
 func TestMatchWildcard(t *testing.T) {
-	origWildcards := Wildcards
-	defer func() { Wildcards = origWildcards }()
+	defer SnapshotMethodRegistriesForTest()()
 
 	Wildcards = []*WildcardNamespace{
 		{
@@ -404,8 +394,7 @@ func TestMatchWildcard(t *testing.T) {
 // real registered wildcard. Groups can't invent prefixes the operator hasn't
 // enabled globally.
 func TestHasWildcardForPrefix(t *testing.T) {
-	origWildcards := Wildcards
-	defer func() { Wildcards = origWildcards }()
+	defer SnapshotMethodRegistriesForTest()()
 
 	Wildcards = []*WildcardNamespace{
 		{Namespace: "Linea", Prefix: "linea_"},
@@ -421,16 +410,7 @@ func TestHasWildcardForPrefix(t *testing.T) {
 // and that explicit methods continue to win for alias resolution (a method can
 // be both explicit and covered by a wildcard prefix).
 func TestRegisterExtraNamespaces_WithWildcards(t *testing.T) {
-	origExtra := ExtraMethods
-	origNS := ExtraNamespaces
-	origAliases := MethodAliases
-	origWildcards := Wildcards
-	defer func() {
-		ExtraMethods = origExtra
-		ExtraNamespaces = origNS
-		MethodAliases = origAliases
-		Wildcards = origWildcards
-	}()
+	defer SnapshotMethodRegistriesForTest()()
 	ExtraMethods = map[string]bool{}
 	ExtraNamespaces = nil
 	MethodAliases = map[string]string{}
@@ -468,4 +448,66 @@ func TestAccessCheckRequest_EffectiveMethod(t *testing.T) {
 		}
 		assert.Equal(t, "eth_call", req.EffectiveMethod())
 	})
+}
+
+// TestRegisterExtraNamespaces_PanicsAfterArm pins the RD-1262 invariant: the
+// method registries are read lock-free on the request hot path, so
+// registration is startup-only. Once ArmMethodRegistries has run (end of
+// server construction), a late RegisterExtraNamespaces call must fail loud —
+// a panic at the registration site — instead of silently racing readers.
+func TestRegisterExtraNamespaces_PanicsAfterArm(t *testing.T) {
+	defer SnapshotMethodRegistriesForTest()()
+
+	// Pre-arm registration is the normal startup path and must work.
+	RegisterExtraNamespaces(
+		map[string][]string{"Linea": {"linea_estimateGas"}},
+		map[string]string{"linea_estimateGas": "eth_estimateGas"},
+		nil,
+	)
+	assert.True(t, ExtraMethods["linea_estimateGas"], "pre-arm registration must succeed")
+
+	ArmMethodRegistries()
+
+	assert.Panics(t, func() {
+		RegisterExtraNamespaces(
+			map[string][]string{"Late": {"late_method"}},
+			nil,
+			nil,
+		)
+	}, "post-arm registration must panic, not race hot-path readers")
+}
+
+// TestSnapshotMethodRegistriesForTest verifies the deep-copy semantics the
+// helper promises: in-place mutations of the live maps (what tests actually
+// do) are undone by restore, not just pointer reassignments — and the armed
+// flag is restored too.
+func TestSnapshotMethodRegistriesForTest(t *testing.T) {
+	// Outer snapshot so this test itself leaves no trace.
+	defer SnapshotMethodRegistriesForTest()()
+
+	ExtraMethods = map[string]bool{"keep_me": true}
+	ExtraNamespaces = map[string][]string{"NS": {"keep_me"}}
+	MethodAliases = map[string]string{"keep_me": "eth_call"}
+	Wildcards = []*WildcardNamespace{{Namespace: "NS", Prefix: "ns_"}}
+
+	restore := SnapshotMethodRegistriesForTest()
+
+	// Mutate in place AND reassign — both must be undone.
+	ExtraMethods["intruder"] = true
+	ExtraNamespaces["NS"] = append(ExtraNamespaces["NS"], "intruder")
+	MethodAliases["intruder"] = "eth_call"
+	Wildcards = nil
+	ArmMethodRegistries()
+
+	restore()
+
+	assert.Equal(t, map[string]bool{"keep_me": true}, ExtraMethods)
+	assert.Equal(t, map[string][]string{"NS": {"keep_me"}}, ExtraNamespaces)
+	assert.Equal(t, map[string]string{"keep_me": "eth_call"}, MethodAliases)
+	if assert.Len(t, Wildcards, 1) {
+		assert.Equal(t, "ns_", Wildcards[0].Prefix)
+	}
+	assert.NotPanics(t, func() {
+		RegisterExtraNamespaces(map[string][]string{"Again": {"again_m"}}, nil, nil)
+	}, "restore must disarm (this test started un-armed)")
 }

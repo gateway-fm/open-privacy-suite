@@ -1,8 +1,11 @@
 package rbac
 
 import (
+	"maps"
+	"slices"
 	"sort"
 	"strings"
+	"sync/atomic"
 )
 
 // ReadMethods classifies read-only RPC methods.
@@ -262,11 +265,57 @@ type WildcardNamespace struct {
 // reproducible audit logs.
 var Wildcards []*WildcardNamespace
 
+// methodRegistriesArmed flips to true once server startup finishes registering
+// namespaces (ArmMethodRegistries). The registries above are read lock-free on
+// the request hot path (ResolveMethodAlias, MatchWildcard, AllAllowedMethods),
+// so mutating them after the server starts serving would be a data race. The
+// flag turns that startup-only convention into an enforced invariant (RD-1262).
+var methodRegistriesArmed atomic.Bool
+
+// ArmMethodRegistries marks startup registration as complete: any subsequent
+// RegisterExtraNamespaces call panics. Called by server initialization after
+// the (optional) namespace registration; idempotent.
+func ArmMethodRegistries() {
+	methodRegistriesArmed.Store(true)
+}
+
+// SnapshotMethodRegistriesForTest deep-copies the four method registries and
+// the armed flag, and returns a function that restores all of them. Test-only:
+// production registers namespaces once at startup and never restores. Tests
+// that mutate ExtraMethods/ExtraNamespaces/MethodAliases/Wildcards should
+// `defer SnapshotMethodRegistriesForTest()()` instead of hand-rolling the
+// save/restore (the hand-rolled version restores map *pointers*, which does
+// not undo in-place mutations of the original maps).
+func SnapshotMethodRegistriesForTest() (restore func()) {
+	extraMethods := maps.Clone(ExtraMethods)
+	aliases := maps.Clone(MethodAliases)
+	var namespaces map[string][]string
+	if ExtraNamespaces != nil {
+		namespaces = make(map[string][]string, len(ExtraNamespaces))
+		for ns, methods := range ExtraNamespaces {
+			namespaces[ns] = slices.Clone(methods)
+		}
+	}
+	wildcards := slices.Clone(Wildcards)
+	armed := methodRegistriesArmed.Load()
+	return func() {
+		ExtraMethods = extraMethods
+		MethodAliases = aliases
+		ExtraNamespaces = namespaces
+		Wildcards = wildcards
+		methodRegistriesArmed.Store(armed)
+	}
+}
+
 // RegisterExtraNamespaces registers operator-configured chain-specific methods,
 // their access control aliases, and any prefix-wildcard configurations. Called
-// once at startup from server initialization. The wildcards parameter may be
-// nil for v1 configs that don't use wildcard mode.
+// once at startup from server initialization, strictly before
+// ArmMethodRegistries; calling it afterwards panics. The wildcards parameter
+// may be nil for v1 configs that don't use wildcard mode.
 func RegisterExtraNamespaces(methodNames map[string][]string, aliases map[string]string, wildcards []*WildcardNamespace) {
+	if methodRegistriesArmed.Load() {
+		panic("rbac: RegisterExtraNamespaces called after startup — the method registries are read lock-free on the request hot path, so runtime registration is a data race; register all namespaces before ArmMethodRegistries (RD-1262)")
+	}
 	ExtraNamespaces = methodNames
 	for _, methods := range methodNames {
 		for _, m := range methods {
