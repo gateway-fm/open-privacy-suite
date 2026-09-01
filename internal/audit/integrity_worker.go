@@ -227,8 +227,16 @@ func NewWebhookNotifier(rawURL string) (*WebhookNotifier, error) {
 		return nil, err
 	}
 	return &WebhookNotifier{
-		URL:    rawURL,
-		Client: &http.Client{Timeout: 5 * time.Second},
+		URL: rawURL,
+		Client: &http.Client{
+			Timeout: 5 * time.Second,
+			// Disallow redirects: a redirect could lead to a private/internal
+			// address even when the original URL was validated (open-redirect
+			// SSRF) — same guard as the SIEM forwarder's client.
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+				return fmt.Errorf("redirects not permitted for audit tamper webhook")
+			},
+		},
 	}, nil
 }
 

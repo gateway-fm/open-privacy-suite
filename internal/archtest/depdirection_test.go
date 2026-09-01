@@ -18,6 +18,7 @@ import (
 	// gate.
 	_ "privacy-proxy/internal/audit"
 	_ "privacy-proxy/internal/config"
+	_ "privacy-proxy/internal/netguard"
 )
 
 // TestDependencyDirection locks the dependency-direction invariants
@@ -55,6 +56,29 @@ func TestDependencyDirection(t *testing.T) {
 					rule.pkg, forbidden, rule.pkg)
 			}
 		}
+	}
+}
+
+// TestNetguardIsStdlibOnly locks netguard's leaf-package contract: its doc
+// promises "importing only the standard library", and packages like config
+// rely on that to stay light. Anything non-stdlib in its transitive deps
+// (other than netguard itself) fails the gate.
+func TestNetguardIsStdlibOnly(t *testing.T) {
+	const pkg = "privacy-proxy/internal/netguard"
+	root := moduleRoot(t)
+	cmd := exec.Command("go", "list", "-deps",
+		"-f", "{{if not .Standard}}{{.ImportPath}}{{end}}", pkg)
+	cmd.Dir = root
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("go list -deps %s: %v\n%s", pkg, err, out)
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || line == pkg {
+			continue
+		}
+		t.Errorf("%s must import only the standard library, but transitively depends on %s (RD-1255)", pkg, line)
 	}
 }
 

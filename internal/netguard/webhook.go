@@ -32,6 +32,7 @@ var blockedCIDRs = func() []*net.IPNet {
 		"172.16.0.0/12",  // RFC-1918 private (Docker bridge lives here)
 		"192.168.0.0/16", // RFC-1918 private
 		"100.64.0.0/10",  // CGNAT / Tailscale (shared address space)
+		"fc00::/7",       // IPv6 ULA — private, the v6 analogue of RFC-1918
 	}
 	nets := make([]*net.IPNet, 0, len(ranges))
 	for _, r := range ranges {
@@ -68,7 +69,7 @@ func ValidateWebhookURL(rawURL string) error {
 //
 // In strict mode (allowInsecure=false) — the production default — the URL
 // must use HTTPS and the host must not resolve to a loopback / RFC-1918 /
-// link-local / CGNAT address. This is the only safe configuration for a
+// link-local / CGNAT / IPv6-ULA address. This is the only safe configuration for a
 // system that POSTs audit data from inside the VPC to an operator-supplied
 // destination.
 //

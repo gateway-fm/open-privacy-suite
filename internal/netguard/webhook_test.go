@@ -34,6 +34,11 @@ func TestValidateWebhookURL(t *testing.T) {
 		// IPv6 link-local
 		{"[fe80::1] rejected - IPv6 link-local", "https://[fe80::1]/ingest", true},
 
+		// IPv6 ULA — private (fc00::/7); the relaxed-mode list already
+		// classifies it as private, so strict mode must block it too.
+		{"[fc00::1] rejected - IPv6 ULA", "https://[fc00::1]/ingest", true},
+		{"[fdff::1] rejected - IPv6 ULA range end", "https://[fdff::1]/ingest", true},
+
 		// RFC-1918 private ranges - correct CIDR boundaries, not string prefix
 		{"10.0.0.1 rejected", "https://10.0.0.1/ingest", true},
 		{"10.255.255.255 rejected - end of /8", "https://10.255.255.255/ingest", true},
@@ -106,6 +111,7 @@ func TestValidateWebhookURLForEnv(t *testing.T) {
 		{"prod 169.254.169.254 rejected (AWS metadata)", "https://169.254.169.254/latest/meta-data/", false, true, "blocked IP range"},
 		{"prod [::1] rejected (IPv6 loopback)", "https://[::1]/ingest", false, true, "blocked IP range"},
 		{"prod [fe80::1] rejected (IPv6 link-local)", "https://[fe80::1]/ingest", false, true, "blocked IP range"},
+		{"prod [fc00::1] rejected (IPv6 ULA)", "https://[fc00::1]/ingest", false, true, "blocked IP range"},
 		{"prod public https allowed", "https://siem.example.com/ingest", false, false, ""},
 
 		// Garbage schemes are rejected in both modes — we only know what
