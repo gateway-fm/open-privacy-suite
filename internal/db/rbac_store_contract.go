@@ -527,6 +527,12 @@ func scanContracts(rows *sql.Rows) ([]*rbac.Contract, error) {
 
 // Contract Grant operations
 
+// contractGrantColumns is the single definition of the contract_grants column
+// list every grant SELECT must use (single-row, list, and batch variants scan
+// through scanContractGrant/scanContractGrants). The batch variant had drifted
+// to a shorter list and silently dropped event_rules (RD-1257).
+const contractGrantColumns = `id, contract_id, group_id, functions, event_rules, created_at, updated_at`
+
 func createContractGrant(ctx context.Context, q DBTX, grant *rbac.ContractGrant) error {
 	query := `INSERT INTO contract_grants (id, contract_id, group_id, functions, event_rules)
 	          VALUES ($1, $2, $3, $4, $5)
@@ -553,14 +559,14 @@ func (d *DB) CreateContractGrant(ctx context.Context, grant *rbac.ContractGrant)
 }
 
 func (d *DB) GetContractGrant(ctx context.Context, id string) (*rbac.ContractGrant, error) {
-	query := `SELECT id, contract_id, group_id, functions, event_rules, created_at, updated_at
+	query := `SELECT ` + contractGrantColumns + `
 	          FROM contract_grants WHERE id = $1`
 
 	return scanContractGrant(d.conn.QueryRowContext(ctx, query, id))
 }
 
 func getContractGrantByContractAndGroup(ctx context.Context, q DBTX, contractID, groupID string) (*rbac.ContractGrant, error) {
-	query := `SELECT id, contract_id, group_id, functions, event_rules, created_at, updated_at
+	query := `SELECT ` + contractGrantColumns + `
 	          FROM contract_grants WHERE contract_id = $1 AND group_id = $2`
 
 	return scanContractGrant(q.QueryRowContext(ctx, query, contractID, groupID))
@@ -590,7 +596,7 @@ func (d *DB) UpdateContractGrant(ctx context.Context, grant *rbac.ContractGrant)
 }
 
 func listContractGrantsByContract(ctx context.Context, q DBTX, contractID string) ([]*rbac.ContractGrant, error) {
-	query := `SELECT id, contract_id, group_id, functions, event_rules, created_at, updated_at
+	query := `SELECT ` + contractGrantColumns + `
 	          FROM contract_grants WHERE contract_id = $1 ORDER BY created_at`
 
 	rows, err := q.QueryContext(ctx, query, contractID)
@@ -607,7 +613,7 @@ func (d *DB) ListContractGrantsByContract(ctx context.Context, contractID string
 }
 
 func (d *DB) ListContractGrantsByGroup(ctx context.Context, groupID string) ([]*rbac.ContractGrant, error) {
-	query := `SELECT id, contract_id, group_id, functions, event_rules, created_at, updated_at
+	query := `SELECT ` + contractGrantColumns + `
 	          FROM contract_grants WHERE group_id = $1 ORDER BY created_at`
 
 	rows, err := d.conn.QueryContext(ctx, query, groupID)
@@ -624,7 +630,7 @@ func (d *DB) ListContractGrantsBatch(ctx context.Context, groupIDs []string) (ma
 		return make(map[string][]*rbac.ContractGrant), nil
 	}
 
-	query := `SELECT id, contract_id, group_id, functions, created_at, updated_at
+	query := `SELECT ` + contractGrantColumns + `
 	          FROM contract_grants WHERE group_id = ANY($1) ORDER BY created_at`
 
 	rows, err := d.conn.QueryContext(ctx, query, pq.Array(groupIDs))
@@ -633,29 +639,14 @@ func (d *DB) ListContractGrantsBatch(ctx context.Context, groupIDs []string) (ma
 	}
 	defer rows.Close()
 
-	result := make(map[string][]*rbac.ContractGrant)
-	for rows.Next() {
-		grant := &rbac.ContractGrant{}
-		var functionsJSON []byte
-
-		if err := rows.Scan(
-			&grant.ID, &grant.ContractID, &grant.GroupID,
-			&functionsJSON, &grant.CreatedAt, &grant.UpdatedAt,
-		); err != nil {
-			return nil, fmt.Errorf("failed to scan contract grant: %w", err)
-		}
-
-		if len(functionsJSON) > 0 {
-			if err := json.Unmarshal(functionsJSON, &grant.Functions); err != nil {
-				return nil, fmt.Errorf("failed to unmarshal functions: %w", err)
-			}
-		}
-
-		result[grant.GroupID] = append(result[grant.GroupID], grant)
+	grants, err := scanContractGrants(rows)
+	if err != nil {
+		return nil, err
 	}
 
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating contract grants batch: %w", err)
+	result := make(map[string][]*rbac.ContractGrant)
+	for _, grant := range grants {
+		result[grant.GroupID] = append(result[grant.GroupID], grant)
 	}
 
 	return result, nil

@@ -433,15 +433,20 @@ func (d *DB) CreateGroupAccess(ctx context.Context, access *rbac.GroupAccess) er
 	return createGroupAccess(ctx, d.conn, access)
 }
 
-func (d *DB) GetGroupAccess(ctx context.Context, groupID string) (*rbac.GroupAccess, error) {
-	query := `SELECT id, group_id, allowed_methods, claims, rpc_api_key, verbose_errors, created_at, updated_at
-	          FROM group_access WHERE group_id = $1`
+// groupAccessColumns is the single definition of the group_access column list
+// every access SELECT must use (single-row and batch variants scan through
+// scanGroupAccessRow). The batch variant had drifted to a shorter list and
+// silently dropped verbose_errors (RD-1257).
+const groupAccessColumns = `id, group_id, allowed_methods, claims, rpc_api_key, verbose_errors, created_at, updated_at`
 
+// scanGroupAccessRow scans one group_access row. The scanner is either a
+// *sql.Row or a *sql.Rows positioned on a row.
+func scanGroupAccessRow(s interface{ Scan(dest ...any) error }) (*rbac.GroupAccess, error) {
 	access := &rbac.GroupAccess{}
 	var allowedMethods, defaultClaims pq.StringArray
 	var rpcAPIKey sql.NullString
 
-	err := d.conn.QueryRowContext(ctx, query, groupID).Scan(
+	err := s.Scan(
 		&access.ID, &access.GroupID,
 		&allowedMethods, &defaultClaims,
 		&rpcAPIKey, &access.VerboseErrors,
@@ -451,7 +456,7 @@ func (d *DB) GetGroupAccess(ctx context.Context, groupID string) (*rbac.GroupAcc
 		return nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("failed to get group access: %w", err)
+		return nil, fmt.Errorf("failed to scan group access: %w", err)
 	}
 
 	access.AllowedMethods = allowedMethods
@@ -467,12 +472,19 @@ func (d *DB) GetGroupAccess(ctx context.Context, groupID string) (*rbac.GroupAcc
 	return access, nil
 }
 
+func (d *DB) GetGroupAccess(ctx context.Context, groupID string) (*rbac.GroupAccess, error) {
+	query := `SELECT ` + groupAccessColumns + `
+	          FROM group_access WHERE group_id = $1`
+
+	return scanGroupAccessRow(d.conn.QueryRowContext(ctx, query, groupID))
+}
+
 func (d *DB) GetGroupAccessBatch(ctx context.Context, groupIDs []string) (map[string]*rbac.GroupAccess, error) {
 	if len(groupIDs) == 0 {
 		return make(map[string]*rbac.GroupAccess), nil
 	}
 
-	query := `SELECT id, group_id, allowed_methods, claims, rpc_api_key, created_at, updated_at
+	query := `SELECT ` + groupAccessColumns + `
 	          FROM group_access WHERE group_id = ANY($1)`
 
 	rows, err := d.conn.QueryContext(ctx, query, pq.Array(groupIDs))
@@ -483,29 +495,10 @@ func (d *DB) GetGroupAccessBatch(ctx context.Context, groupIDs []string) (map[st
 
 	result := make(map[string]*rbac.GroupAccess)
 	for rows.Next() {
-		access := &rbac.GroupAccess{}
-		var allowedMethods, defaultClaims pq.StringArray
-		var rpcAPIKey sql.NullString
-
-		if err := rows.Scan(
-			&access.ID, &access.GroupID,
-			&allowedMethods, &defaultClaims,
-			&rpcAPIKey,
-			&access.CreatedAt, &access.UpdatedAt,
-		); err != nil {
-			return nil, fmt.Errorf("failed to scan group access: %w", err)
+		access, err := scanGroupAccessRow(rows)
+		if err != nil {
+			return nil, err
 		}
-
-		access.AllowedMethods = allowedMethods
-		access.Claims = make([]rbac.Claim, len(defaultClaims))
-		for i, c := range defaultClaims {
-			access.Claims[i] = rbac.Claim(c)
-		}
-
-		if rpcAPIKey.Valid {
-			access.RPCAPIKey = &rpcAPIKey.String
-		}
-
 		result[access.GroupID] = access
 	}
 
