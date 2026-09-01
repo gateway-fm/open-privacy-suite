@@ -296,7 +296,15 @@ func SnapshotMethodRegistriesForTest() (restore func()) {
 			namespaces[ns] = slices.Clone(methods)
 		}
 	}
-	wildcards := slices.Clone(Wildcards)
+	var wildcards []*WildcardNamespace
+	if Wildcards != nil {
+		wildcards = make([]*WildcardNamespace, len(Wildcards))
+		for i, w := range Wildcards {
+			cp := *w
+			cp.Deny = slices.Clone(w.Deny)
+			wildcards[i] = &cp
+		}
+	}
 	armed := methodRegistriesArmed.Load()
 	return func() {
 		ExtraMethods = extraMethods

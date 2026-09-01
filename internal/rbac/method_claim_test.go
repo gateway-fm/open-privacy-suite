@@ -488,15 +488,17 @@ func TestSnapshotMethodRegistriesForTest(t *testing.T) {
 	ExtraMethods = map[string]bool{"keep_me": true}
 	ExtraNamespaces = map[string][]string{"NS": {"keep_me"}}
 	MethodAliases = map[string]string{"keep_me": "eth_call"}
-	Wildcards = []*WildcardNamespace{{Namespace: "NS", Prefix: "ns_"}}
+	Wildcards = []*WildcardNamespace{{Namespace: "NS", Prefix: "ns_", Deny: []string{"ns_deny"}}}
 
 	restore := SnapshotMethodRegistriesForTest()
 
-	// Mutate in place AND reassign — both must be undone.
+	// Mutate in place AND reassign — both must be undone. Wildcard elements
+	// are pointers, so in-place struct/deny mutation is the sharpest case.
 	ExtraMethods["intruder"] = true
 	ExtraNamespaces["NS"] = append(ExtraNamespaces["NS"], "intruder")
 	MethodAliases["intruder"] = "eth_call"
-	Wildcards = nil
+	Wildcards[0].Prefix = "mutated_"
+	Wildcards[0].Deny[0] = "mutated_deny"
 	ArmMethodRegistries()
 
 	restore()
@@ -506,6 +508,7 @@ func TestSnapshotMethodRegistriesForTest(t *testing.T) {
 	assert.Equal(t, map[string]string{"keep_me": "eth_call"}, MethodAliases)
 	if assert.Len(t, Wildcards, 1) {
 		assert.Equal(t, "ns_", Wildcards[0].Prefix)
+		assert.Equal(t, []string{"ns_deny"}, Wildcards[0].Deny)
 	}
 	assert.NotPanics(t, func() {
 		RegisterExtraNamespaces(map[string][]string{"Again": {"again_m"}}, nil, nil)

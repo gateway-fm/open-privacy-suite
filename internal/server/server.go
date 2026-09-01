@@ -570,10 +570,6 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 			"aliases", len(cfg.ExtraRPCNamespaces.Aliases()),
 			"wildcards", len(wildcards))
 	}
-	// Startup registration is done: from here on the registries are read
-	// lock-free by request handlers, so any further RegisterExtraNamespaces
-	// call is a data race and panics (RD-1262).
-	rbac.ArmMethodRegistries()
 
 	// Configure RPC API key encryption for decrypting keys from the database
 	if len(cfg.RPCAPIKeyEncryptionKey) > 0 {
@@ -998,6 +994,13 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	if cfg.AdminAPIToken == "" {
 		slog.Warn("ADMIN_API_TOKEN is not set - admin API is unprotected, any request from the private network will be accepted without authentication")
 	}
+
+	// Startup registration is done: from here on the registries are read
+	// lock-free by request handlers, so any further RegisterExtraNamespaces
+	// call is a data race and panics (RD-1262). Armed only on the success
+	// path: a construction that fails partway must leave the process able
+	// to retry NewWithVerifier (registration included) without panicking.
+	rbac.ArmMethodRegistries()
 
 	return s, nil
 }
