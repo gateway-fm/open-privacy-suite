@@ -653,8 +653,8 @@ func (d *DB) ListContractGrantsBatch(ctx context.Context, groupIDs []string) (ma
 }
 
 func (d *DB) ListContractGrantsByGroupWithContract(ctx context.Context, groupID string) ([]*rbac.ContractGrantWithGroup, error) {
-	query := `SELECT cg.id, cg.contract_id, cg.group_id, cg.functions, cg.event_rules, cg.created_at, cg.updated_at,
-	                 g.id, g.org_id, g.parent_id, g.slug, g.name, g.description, g.depth, g.path, g.is_org_admin, g.created_at, g.updated_at
+	query := `SELECT ` + prefixColumns("cg", contractGrantColumns) + `,
+	                 ` + prefixColumns("g", groupColumns) + `
 	          FROM contract_grants cg
 	          JOIN groups g ON cg.group_id = g.id
 	          WHERE cg.group_id = $1 ORDER BY cg.created_at`
@@ -680,6 +680,7 @@ func (d *DB) ListContractGrantsByGroupWithContract(ctx context.Context, groupID 
 			&functionsJSON, &eventRulesJSON, &result.Grant.CreatedAt, &result.Grant.UpdatedAt,
 			&result.Group.ID, &result.Group.OrgID, &parentID, &result.Group.Slug,
 			&result.Group.Name, &description, &result.Group.Depth, &result.Group.Path, &result.Group.IsOrgAdmin,
+			&result.Group.IsOrgReadonlyAdmin, &result.Group.IsSystem, &result.Group.AutoCreated,
 			&result.Group.CreatedAt, &result.Group.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan contract grant with group: %w", err)

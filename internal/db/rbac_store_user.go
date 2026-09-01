@@ -498,7 +498,7 @@ func (d *DB) ListUserMemberships(ctx context.Context, userID string) ([]*rbac.Us
 
 func (d *DB) ListUserMembershipsWithDetails(ctx context.Context, userID string) ([]*rbac.MembershipWithDetails, error) {
 	query := `SELECT m.id, m.user_id, m.group_id, m.source, m.zk_credential_ref, m.expires_at, m.created_at, m.updated_at,
-	                 g.id, g.org_id, g.parent_id, g.slug, g.name, g.description, g.depth, g.path, g.is_org_admin, g.created_at, g.updated_at
+	                 ` + prefixColumns("g", groupColumns) + `
 	          FROM user_memberships m
 	          JOIN groups g ON m.group_id = g.id
 	          WHERE m.user_id = $1`
@@ -523,7 +523,7 @@ func (d *DB) ListUserMembershipsInOrg(ctx context.Context, userID, orgID string)
 	// away afterwards — this filter is the actual revocation boundary, so an
 	// expired window blocks access immediately, not at the next sweep.
 	query := `SELECT m.id, m.user_id, m.group_id, m.source, m.zk_credential_ref, m.expires_at, m.created_at, m.updated_at,
-	                 g.id, g.org_id, g.parent_id, g.slug, g.name, g.description, g.depth, g.path, g.is_org_admin, g.created_at, g.updated_at
+	                 ` + prefixColumns("g", groupColumns) + `
 	          FROM user_memberships m
 	          JOIN groups g ON m.group_id = g.id
 	          WHERE m.user_id = $1 AND g.org_id = $2
@@ -744,6 +744,7 @@ func scanMembershipsWithDetails(rows *sql.Rows) ([]*rbac.MembershipWithDetails, 
 			&result.Membership.CreatedAt, &result.Membership.UpdatedAt,
 			&result.Group.ID, &result.Group.OrgID, &groupParentID, &result.Group.Slug,
 			&result.Group.Name, &groupDescription, &result.Group.Depth, &result.Group.Path, &result.Group.IsOrgAdmin,
+			&result.Group.IsOrgReadonlyAdmin, &result.Group.IsSystem, &result.Group.AutoCreated,
 			&result.Group.CreatedAt, &result.Group.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan membership: %w", err)
