@@ -170,11 +170,16 @@ func TestProxyOpenLoop(t *testing.T) {
 	rt := tracer.NewRuntimeTracer(tracer.RuntimeTracerConfig{NodeURL: node.URL, Enabled: true, TieredEnabled: true, Timeout: 5 * time.Second})
 	defer rt.Stop()
 	tv := rbac.NewTraceValidator(database)
-	proc := NewJSONRPCProcessorWithTracing(
-		rbacCtrl, &noopRateLimiter{}, proxy.New(node.URL), database, rt, tv,
-		NewCircuitBreaker(), NewConcurrencyLimiter(50, 0), "",
-	)
-
+	procCfg := JSONRPCProcessorConfig{
+		RBACAccessCtrl:     rbacCtrl,
+		RateLimiter:        &noopRateLimiter{},
+		Proxy:              proxy.New(node.URL),
+		AccessLogger:       database,
+		RuntimeTracer:      rt,
+		TraceValidator:     tv,
+		CircuitBreaker:     NewCircuitBreaker(),
+		ConcurrencyLimiter: NewConcurrencyLimiter(50, 0),
+	}
 	auditMode := "async"
 	if async {
 		buf, err := buffer.Open(t.TempDir())
@@ -182,12 +187,14 @@ func TestProxyOpenLoop(t *testing.T) {
 			t.Fatalf("buffer: %v", err)
 		}
 		defer buf.Close()
-		proc.SetAuditBuffer(buf)
+		procCfg.AuditBuffer = buf
 	} else {
 		auditMode = "sync"
 		seed, _ := database.GetLatestAccessLogHash(ctx)
-		proc.SetEnhancedAudit(database, audit.NewHashChain(seed), nil, false)
+		procCfg.EnhancedAuditLogger = database
+		procCfg.HashChain = audit.NewHashChain(seed)
 	}
+	proc := NewJSONRPCProcessor(procCfg)
 
 	// Warm the perms cache + create each user's system-link row, so the
 	// measured run is steady-state (not paying first-touch costs).

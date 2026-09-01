@@ -691,27 +691,10 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		go s.explorerReconnectLoop(cfg.ExplorerDatabaseURL, database, cfg.IndexerURL)
 	}
 
-	// Initialize circuit breaker and concurrency limiter for upstream RPC proxy
-	circuitBreaker := NewCircuitBreaker()
-	concurrencyLimiter := NewConcurrencyLimiter(cfg.MaxConcurrentRequests, cfg.MaxConcurrentAnonymousRequests)
-
-	// Initialize JSON-RPC processor with dependencies. RD-1147: the basic
-	// LogAccess fallback (used only when the chained/buffered audit write fails)
-	// targets the audit DB too, so no access-log row ever lands in the main DB
-	// when the audit DB is separated. auditDB == database when not separated.
-	if runtimeTracer != nil {
-		s.jsonrpcProcessor = NewJSONRPCProcessorWithTracing(rbacAccessCtrl, rateLimiter, proxySvc, auditDB, runtimeTracer, traceValidator, circuitBreaker, concurrencyLimiter, cfg.RPCAPIKey)
-	} else {
-		s.jsonrpcProcessor = NewJSONRPCProcessor(rbacAccessCtrl, rateLimiter, proxySvc, auditDB, circuitBreaker, concurrencyLimiter, cfg.RPCAPIKey)
-	}
-	s.jsonrpcProcessor.SetMetrics(m)
-	s.jsonrpcProcessor.SetTxVisibilityStore(database)
-	// RD-1214: same DB the explorer redactor resolves through, so the RPC log
-	// field-redaction hides identical embedded addresses (symmetry).
-	s.jsonrpcProcessor.SetAddressVisibilityResolver(database)
-	s.jsonrpcProcessor.SetDefaultRPCAPIKeyHeader(cfg.RPCAPIKeyHeader)
-	s.jsonrpcProcessor.SetEthCallTracing(cfg.RuntimeTracingEthCallEnabled, cfg.EthCallTraceTimeout)
-	s.jsonrpcProcessor.SetIntraOrgGrantTracing(cfg.RuntimeTracingIntraOrgGrantsEnabled)
+	// The JSON-RPC processor is constructed AFTER the compliance / audit /
+	// visibility blocks below, once every dependency exists, so it is fully
+	// wired at construction — no post-construction Set* step to forget
+	// (RD-1259). Nothing between here and that point touches it.
 
 	// Initialize compliance checker for travel rule enforcement
 	if cfg.EnableTravelRule {
@@ -720,7 +703,6 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		// per-org setting. Per-org compliance config overrides this.
 		checker.SetDefaultEnforcementMode(compliance.EnforcementMode(cfg.ComplianceDefaultMode))
 		s.complianceChecker = checker
-		s.jsonrpcProcessor.SetComplianceChecker(checker)
 		slog.Info("travel rule compliance enabled", "record_expiry", cfg.TravelRecordExpiry, "default_enforcement_mode", cfg.ComplianceDefaultMode)
 
 		// Start background CoinGecko price fetcher (unless disabled)
@@ -786,10 +768,6 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		slog.Info("SIEM forwarding enabled", "webhook", cfg.SIEMWebhookURL, "batch_size", cfg.SIEMBatchSize, "flush_interval", cfg.SIEMFlushInterval)
 	}
 
-	// Wire enhanced audit into JSON-RPC processor
-	// RD-1147: access_logs writes (synchronous chained path) go to the audit DB.
-	s.jsonrpcProcessor.SetEnhancedAudit(auditDB, hashChain, siemForwarder, cfg.AuditLogParams)
-
 	// RD-1112: async access-log auditing. When AUDIT_BUFFER_DIR is set, the hot
 	// path appends each entry to a durable Pebble buffer and a single background
 	// sealer drains it into the access_logs chain off the request path — removing
@@ -854,7 +832,6 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		s.auditSealerCancel = sealerCancel
 		go s.auditSealer.Run(sealerCtx)
 
-		s.jsonrpcProcessor.SetAuditBuffer(auditBuf)
 		slog.Info("async access-log auditing enabled (RD-1112)", "buffer_dir", cfg.AuditBufferDir)
 	}
 
@@ -916,16 +893,53 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	reconcilerCfg := DefaultVisibilityReconcilerConfig()
 	s.visibilityReconciler = NewVisibilityReconciler(database, reconcilerCfg)
 	s.visibilityReconciler.Start(context.Background())
-	// Event-driven drain: the send path kicks the reconciler right after it
-	// enqueues a visibleTo row, so recipients see the tx within ms; the
-	// periodic ticker is only the retry/outage backstop.
-	if s.jsonrpcProcessor != nil {
-		s.jsonrpcProcessor.SetVisibilityKick(s.visibilityReconciler.Kick)
-	}
 	slog.Info("visibility reconciler started",
 		"backstop_interval", reconcilerCfg.Interval,
 		"batch", reconcilerCfg.BatchSize,
 		"drain", "event-driven")
+
+	// Initialize the JSON-RPC processor, fully wired at construction (RD-1259).
+	// Every dependency above exists by now; there is no Set* step to forget.
+	// RD-1147: the AccessLogger fallback (used only when the chained/buffered
+	// audit write fails) targets the audit DB too, so no access-log row ever
+	// lands in the main DB when the audit DB is separated. auditDB == database
+	// when not separated. RD-1214: AddressVisibilityResolver is the same DB the
+	// explorer redactor resolves through, so the RPC log field-redaction hides
+	// identical embedded addresses (symmetry). VisibilityKick: the send path
+	// kicks the reconciler right after it enqueues a visibleTo row, so
+	// recipients see the tx within ms; the periodic ticker is only the
+	// retry/outage backstop.
+	var procAuditBuffer AuditBuffer
+	if s.auditBuffer != nil {
+		procAuditBuffer = s.auditBuffer
+	}
+	s.jsonrpcProcessor = NewJSONRPCProcessor(JSONRPCProcessorConfig{
+		RBACAccessCtrl:            rbacAccessCtrl,
+		RateLimiter:               rateLimiter,
+		Proxy:                     proxySvc,
+		AccessLogger:              auditDB,
+		CircuitBreaker:            NewCircuitBreaker(),
+		ConcurrencyLimiter:        NewConcurrencyLimiter(cfg.MaxConcurrentRequests, cfg.MaxConcurrentAnonymousRequests),
+		DefaultRPCAPIKey:          cfg.RPCAPIKey,
+		RuntimeTracer:             runtimeTracer,
+		TraceValidator:            traceValidator,
+		Metrics:                   m,
+		TxVisibilityStore:         database,
+		AddressVisibilityResolver: database,
+		RPCAPIKeyHeader:           cfg.RPCAPIKeyHeader,
+		ComplianceChecker:         s.complianceChecker,
+		EnhancedAuditLogger:       auditDB,
+		HashChain:                 hashChain,
+		SIEMForwarder:             siemForwarder,
+		AuditLogParams:            cfg.AuditLogParams,
+		AuditBuffer:               procAuditBuffer,
+		VisibilityKick:            s.visibilityReconciler.Kick,
+		EthCallTracing: &EthCallTracingConfig{
+			Enabled: cfg.RuntimeTracingEthCallEnabled,
+			Timeout: cfg.EthCallTraceTimeout,
+		},
+		IntraOrgGrantTracingEnabled: cfg.RuntimeTracingIntraOrgGrantsEnabled,
+	})
 
 	// RD-858: scheduled audit hash-chain integrity verifier. Default
 	// interval 15m (config: AUDIT_INTEGRITY_VERIFY_INTERVAL). On

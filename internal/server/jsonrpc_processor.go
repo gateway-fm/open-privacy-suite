@@ -68,7 +68,7 @@ type JSONRPCProcessor struct {
 	// redactor uses — so an admitted log's embedded addresses are zeroed
 	// identically on both layers (symmetry by construction). nil in unit tests
 	// that don't exercise field-redaction ⇒ the step is a no-op; production
-	// always wires it via SetAddressVisibilityResolver.
+	// always wires it via JSONRPCProcessorConfig.AddressVisibilityResolver.
 	addrVisResolver addressVisibilityResolver
 
 	// Circuit breaker + concurrency limiter (replaces rate limiter for authenticated users)
@@ -211,51 +211,118 @@ func (e *ProcessError) Error() string {
 	return e.Message
 }
 
-// NewJSONRPCProcessor creates a new processor with the given dependencies.
-func NewJSONRPCProcessor(
-	rbacCtrl *rbac.AccessController,
-	rateLimiter RateLimiterInterface,
-	proxyClient *proxy.Proxy,
-	logger AccessLogger,
-	cb *CircuitBreaker,
-	cl *ConcurrencyLimiter,
-	defaultAPIKey string,
-) *JSONRPCProcessor {
+// EthCallTracingConfig carries the env-derived RD-915 eth_call cross-org
+// tracing knobs into the processor constructor. Timeout <= 0 keeps the 5s
+// default. A nil *EthCallTracingConfig on JSONRPCProcessorConfig means the
+// wire-level safe default: tracing ON.
+type EthCallTracingConfig struct {
+	Enabled bool
+	Timeout time.Duration
+}
+
+// JSONRPCProcessorConfig carries every dependency the processor needs, so a
+// constructed processor is fully wired (RD-1259) — there is no
+// post-construction wiring step to forget. Optional fields document their
+// zero-value meaning; each matches the degraded mode the corresponding
+// unwired Set* call used to leave behind.
+type JSONRPCProcessorConfig struct {
+	// Core request-path dependencies.
+	RBACAccessCtrl     *rbac.AccessController
+	RateLimiter        RateLimiterInterface
+	Proxy              *proxy.Proxy
+	AccessLogger       AccessLogger
+	CircuitBreaker     *CircuitBreaker
+	ConcurrencyLimiter *ConcurrencyLimiter
+	DefaultRPCAPIKey   string
+
+	// Optional send-path runtime tracing (nil = tracing-dependent methods
+	// keep their no-tracer behavior).
+	RuntimeTracer  *tracer.RuntimeTracer
+	TraceValidator *rbac.TraceValidator
+
+	// Optional wiring. Zero values reproduce the unwired behavior exactly:
+	// nil Metrics = no metrics; nil TxVisibilityStore = visibleTo resolution
+	// skipped; nil AddressVisibilityResolver = RPC log field-redaction no-op
+	// (RD-1214); empty RPCAPIKeyHeader = proxy.DefaultAPIKeyHeader; nil
+	// ComplianceChecker = travel rule off; nil EnhancedAuditLogger = basic
+	// access logging; nil AuditBuffer = synchronous chained audit write
+	// (RD-1112 async off); nil VisibilityKick = reconciler backstop tick only.
+	Metrics                   *metrics.Metrics
+	TxVisibilityStore         rbac.TxVisibilityProvider
+	AddressVisibilityResolver addressVisibilityResolver
+	RPCAPIKeyHeader           string
+	ComplianceChecker         *compliance.Checker
+	EnhancedAuditLogger       EnhancedAccessLogger
+	HashChain                 *audit.HashChain
+	SIEMForwarder             *audit.SIEMForwarder
+	AuditLogParams            bool
+	AuditBuffer               AuditBuffer
+	VisibilityKick            func()
+
+	// Env-derived security toggles, installed atomically at construction.
+	// Runtime overrides still go through the Set*RuntimeOverride admin
+	// setters; a restart re-arms these env values (RD-915 KD-5 / RD-1053).
+	EthCallTracing              *EthCallTracingConfig // nil = enabled, 5s timeout
+	IntraOrgGrantTracingEnabled bool                  // zero value = OFF (RD-1053 default)
+}
+
+// NewJSONRPCProcessor creates a fully wired processor from cfg (RD-1259).
+func NewJSONRPCProcessor(cfg JSONRPCProcessorConfig) *JSONRPCProcessor {
 	p := &JSONRPCProcessor{
-		rbacAccessCtrl:      rbacCtrl,
-		rateLimiter:         rateLimiter,
-		proxy:               proxyClient,
-		accessLogger:        logger,
-		circuitBreaker:      cb,
-		concurrencyLimiter:  cl,
-		defaultRPCAPIKey:    defaultAPIKey,
-		ethCallTraceTimeout: 5 * time.Second,
+		rbacAccessCtrl:         cfg.RBACAccessCtrl,
+		rateLimiter:            cfg.RateLimiter,
+		proxy:                  cfg.Proxy,
+		accessLogger:           cfg.AccessLogger,
+		runtimeTracer:          cfg.RuntimeTracer,
+		traceValidator:         cfg.TraceValidator,
+		circuitBreaker:         cfg.CircuitBreaker,
+		concurrencyLimiter:     cfg.ConcurrencyLimiter,
+		defaultRPCAPIKey:       cfg.DefaultRPCAPIKey,
+		defaultRPCAPIKeyHeader: cfg.RPCAPIKeyHeader,
+		metrics:                cfg.Metrics,
+		txVisibilityStore:      cfg.TxVisibilityStore,
+		addrVisResolver:        cfg.AddressVisibilityResolver,
+		complianceChecker:      cfg.ComplianceChecker,
+		enhancedLogger:         cfg.EnhancedAuditLogger,
+		hashChain:              cfg.HashChain,
+		siemForwarder:          cfg.SIEMForwarder,
+		logParams:              cfg.AuditLogParams,
+		auditBuffer:            cfg.AuditBuffer,
+		visibilityKick:         cfg.VisibilityKick,
+		ethCallTraceTimeout:    5 * time.Second,
 	}
-	// Wire-level safe-by-default — the server constructor calls
-	// SetEthCallTracing(...) right after to install the env-derived
-	// value. Until then, tracing is on.
+	// RD-915 env install. Wire-level safe-by-default: a nil config keeps
+	// tracing ON.
+	ethEnabled := true
+	if cfg.EthCallTracing != nil {
+		ethEnabled = cfg.EthCallTracing.Enabled
+		if cfg.EthCallTracing.Timeout > 0 {
+			p.ethCallTraceTimeout = cfg.EthCallTracing.Timeout
+		}
+	}
 	p.ethCallTracing.Store(&runtimeToggleState{
-		Enabled:    true,
-		EnvDefault: true,
+		Enabled:    ethEnabled,
+		EnvDefault: ethEnabled,
 		Source:     "env",
 	})
-	// Intra-org grant scoping is OFF until env install (RD-1053). Org
-	// ownership is the default isolation boundary; operators opt in.
+	// RD-1053 env install. Org ownership is the default isolation boundary;
+	// operators opt in.
 	p.intraOrgGrantTracing.Store(&runtimeToggleState{
-		Enabled:    false,
-		EnvDefault: false,
+		Enabled:    cfg.IntraOrgGrantTracingEnabled,
+		EnvDefault: cfg.IntraOrgGrantTracingEnabled,
 		Source:     "env",
 	})
 	return p
 }
 
-// SetEthCallTracing installs the env-derived configuration for the RD-915
-// eth_call cross-org tracing knobs. `enabled` defaults to true; the env
-// var only flips it to false as a documented sev-1 rollback path.
-// `timeout` caps how long the proxy waits for the upstream
-// debug_traceCall on the eth_call validation path; distinct from the
-// send-side TraceTimeout. This wipes any prior runtime override — boot
-// always re-arms from env (RD-915 KD-5, ISO 27001 A.8.32).
+// SetEthCallTracing re-arms the env-derived configuration for the RD-915
+// eth_call cross-org tracing knobs, wiping any prior runtime override.
+// Boot installs the same state via JSONRPCProcessorConfig.EthCallTracing
+// (RD-1259); this re-arm entry point is the state-reset used by tests and
+// by any future config-reload path — it is not dependency wiring and is
+// safe to call at any time (RD-915 KD-5, ISO 27001 A.8.32). `timeout`
+// caps how long the proxy waits for the upstream debug_traceCall on the
+// eth_call validation path; distinct from the send-side TraceTimeout.
 func (p *JSONRPCProcessor) SetEthCallTracing(enabled bool, timeout time.Duration) {
 	p.ethCallTracing.Store(&runtimeToggleState{
 		Enabled:    enabled,
@@ -299,11 +366,11 @@ func (p *JSONRPCProcessor) EthCallTracingSnapshot() runtimeToggleState {
 	return *s
 }
 
-// SetIntraOrgGrantTracing installs the env-derived configuration for the
-// RD-1053 intra-org contract-grant scoping knob. Defaults OFF; the env var
-// flips it on for operators who want grants to gate contract-to-contract
-// composition within an org. This wipes any prior runtime override — boot
-// always re-arms from env (mirrors SetEthCallTracing; ISO 27001 A.8.32).
+// SetIntraOrgGrantTracing re-arms the env-derived configuration for the
+// RD-1053 intra-org contract-grant scoping knob, wiping any prior runtime
+// override. Boot installs the same state via
+// JSONRPCProcessorConfig.IntraOrgGrantTracingEnabled (RD-1259); this
+// re-arm entry point mirrors SetEthCallTracing (ISO 27001 A.8.32).
 func (p *JSONRPCProcessor) SetIntraOrgGrantTracing(enabled bool) {
 	p.intraOrgGrantTracing.Store(&runtimeToggleState{
 		Enabled:    enabled,
@@ -399,39 +466,6 @@ func (p *JSONRPCProcessor) resolveGrantedContracts(ctx context.Context, userID s
 	return granted, nil
 }
 
-// SetComplianceChecker sets the compliance checker for travel rule enforcement.
-func (p *JSONRPCProcessor) SetComplianceChecker(checker *compliance.Checker) {
-	p.complianceChecker = checker
-}
-
-// SetEnhancedAudit configures enhanced audit logging with hash chain and optional SIEM.
-func (p *JSONRPCProcessor) SetEnhancedAudit(logger EnhancedAccessLogger, hashChain *audit.HashChain, siemForwarder *audit.SIEMForwarder, logParams bool) {
-	p.enhancedLogger = logger
-	p.hashChain = hashChain
-	p.siemForwarder = siemForwarder
-	p.logParams = logParams
-}
-
-// SetAuditBuffer enables async audit logging (RD-1112): logAccess appends to
-// this durable buffer on the hot path and a background sealer drains it into
-// the chain off the request path. When nil, logAccess uses the synchronous
-// chained write (legacy behaviour).
-func (p *JSONRPCProcessor) SetAuditBuffer(b AuditBuffer) {
-	p.auditBuffer = b
-}
-
-// SetMetrics configures Prometheus metrics for the processor.
-func (p *JSONRPCProcessor) SetMetrics(m *metrics.Metrics) {
-	p.metrics = m
-}
-
-// SetDefaultRPCAPIKeyHeader sets the operator-wide header name used to forward
-// the RPC API key (from the RPC_API_KEY_HEADER env var). Empty input means
-// "use Authorization / Bearer" — the proxy default.
-func (p *JSONRPCProcessor) SetDefaultRPCAPIKeyHeader(name string) {
-	p.defaultRPCAPIKeyHeader = name
-}
-
 // resolveAPIKeyHeader returns the header name used to forward the upstream
 // RPC API key. The header is operator-wide (set via the RPC_API_KEY_HEADER
 // env var); there is no per-group override.
@@ -440,20 +474,6 @@ func (p *JSONRPCProcessor) resolveAPIKeyHeader() string {
 		return p.defaultRPCAPIKeyHeader
 	}
 	return proxy.DefaultAPIKeyHeader
-}
-
-// SetTxVisibilityStore configures the per-tx visibility provider for
-// visibleTo feature. When set, the processor resolves visibleTo rules
-// from the DB during response filtering and stores them during send.
-func (p *JSONRPCProcessor) SetTxVisibilityStore(store rbac.TxVisibilityProvider) {
-	p.txVisibilityStore = store
-}
-
-// SetVisibilityKick wires the visibility reconciler's Kick so the send path can
-// trigger an immediate outbox drain after enqueuing a visibleTo row. Optional;
-// without it, visibility still materializes on the reconciler's backstop tick.
-func (p *JSONRPCProcessor) SetVisibilityKick(kick func()) {
-	p.visibilityKick = kick
 }
 
 // logAccess logs an access entry using enhanced logging (with hash chain + SIEM) if available,
@@ -560,31 +580,6 @@ func (p *JSONRPCProcessor) logAccess(ctx context.Context, req *ProcessRequest, s
 
 	// Fallback to basic logging
 	p.accessLogger.LogAccess(ctx, req.UserID, req.Method, statusCode, req.ClientIP)
-}
-
-// NewJSONRPCProcessorWithTracing creates a new processor with runtime tracing support.
-func NewJSONRPCProcessorWithTracing(
-	rbacCtrl *rbac.AccessController,
-	rateLimiter RateLimiterInterface,
-	proxyClient *proxy.Proxy,
-	logger AccessLogger,
-	runtimeTracer *tracer.RuntimeTracer,
-	traceValidator *rbac.TraceValidator,
-	cb *CircuitBreaker,
-	cl *ConcurrencyLimiter,
-	defaultAPIKey string,
-) *JSONRPCProcessor {
-	return &JSONRPCProcessor{
-		rbacAccessCtrl:     rbacCtrl,
-		rateLimiter:        rateLimiter,
-		proxy:              proxyClient,
-		accessLogger:       logger,
-		runtimeTracer:      runtimeTracer,
-		traceValidator:     traceValidator,
-		circuitBreaker:     cb,
-		concurrencyLimiter: cl,
-		defaultRPCAPIKey:   defaultAPIKey,
-	}
 }
 
 // ParseAndValidateBody parses and validates the JSON-RPC request body.

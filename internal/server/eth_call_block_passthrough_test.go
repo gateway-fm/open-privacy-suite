@@ -80,11 +80,16 @@ func setupProcessorWithCapturingTracer(t *testing.T, srv *httptest.Server) (*JSO
 	})
 	t.Cleanup(rt.Stop)
 	tv := rbac.NewTraceValidator(ts.db)
-	proc := NewJSONRPCProcessorWithTracing(
-		ts.rbacAccessCtrl, &noopRateLimiter{}, nil, ts.db, rt, tv,
-		NewCircuitBreaker(), NewConcurrencyLimiter(50, 0), "",
-	)
-	proc.SetEthCallTracing(true, 5*time.Second)
+	proc := NewJSONRPCProcessor(JSONRPCProcessorConfig{
+		RBACAccessCtrl:     ts.rbacAccessCtrl,
+		RateLimiter:        &noopRateLimiter{},
+		AccessLogger:       ts.db,
+		RuntimeTracer:      rt,
+		TraceValidator:     tv,
+		CircuitBreaker:     NewCircuitBreaker(),
+		ConcurrencyLimiter: NewConcurrencyLimiter(50, 0),
+		EthCallTracing:     &EthCallTracingConfig{Enabled: true, Timeout: 5 * time.Second},
+	})
 	return proc, ts
 }
 
