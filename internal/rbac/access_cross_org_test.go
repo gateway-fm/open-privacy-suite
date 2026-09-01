@@ -2196,24 +2196,35 @@ func TestEthGetLogsFilterShapeValidation(t *testing.T) {
 		return result
 	}
 
+	// wantReason pins each denial to the getLogs filter-shape validation
+	// specifically — without it, an unrelated earlier gate (method allowlist,
+	// org resolution) denying the request would satisfy a bare Allowed=false
+	// assertion. Reason is internal-only (never on the wire), so asserting
+	// its text in tests is safe.
 	denied := []struct {
-		name   string
-		params []any
+		name       string
+		params     []any
+		wantReason string
 	}{
-		{"nil params", nil},
-		{"empty params", []any{}},
-		{"filter is not a map", []any{"not a map"}},
-		{"no address field", []any{map[string]any{"fromBlock": "latest"}}},
-		{"null address", []any{map[string]any{"address": nil}}},
-		{"empty address array", []any{map[string]any{"address": []any{}}}},
-		{"empty string address", []any{map[string]any{"address": ""}}},
-		{"unregistered address", []any{map[string]any{"address": unregistered}}},
-		{"mixed array, one unregistered", []any{map[string]any{"address": []any{registered, unregistered}}}},
+		{"nil params", nil, "missing filter parameter"},
+		{"empty params", []any{}, "missing filter parameter"},
+		{"filter is not a map", []any{"not a map"}, "invalid filter parameter type"},
+		{"no address field", []any{map[string]any{"fromBlock": "latest"}}, "address filter required"},
+		{"null address", []any{map[string]any{"address": nil}}, "address filter required"},
+		{"empty address array", []any{map[string]any{"address": []any{}}}, "address filter required"},
+		{"empty string address", []any{map[string]any{"address": ""}}, "address filter required"},
+		{"unregistered address", []any{map[string]any{"address": unregistered}}, ErrContractAccessDenied},
+		{"mixed array, one unregistered", []any{map[string]any{"address": []any{registered, unregistered}}}, ErrContractAccessDenied},
 	}
 	for _, tt := range denied {
 		t.Run("denied: "+tt.name, func(t *testing.T) {
-			if result := check(t, tt.params); result.Allowed {
-				t.Errorf("expected denial for %s", tt.name)
+			result := check(t, tt.params)
+			if result.Allowed {
+				t.Fatalf("expected denial for %s", tt.name)
+			}
+			if !strings.Contains(result.Reason, "eth_getLogs") || !strings.Contains(result.Reason, tt.wantReason) {
+				t.Errorf("denial for %s came from the wrong gate: reason %q, want it to contain %q and %q",
+					tt.name, result.Reason, "eth_getLogs", tt.wantReason)
 			}
 		})
 	}
