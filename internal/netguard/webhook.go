@@ -130,6 +130,12 @@ func ValidateWebhookURLForEnv(rawURL string, allowInsecure bool) error {
 
 	host := normalizeHost(u.Hostname())
 
+	// A URL without a host ("https:///path", "https://:8080/") classifies
+	// as nothing below — require one.
+	if host == "" {
+		return fmt.Errorf("SIEM_WEBHOOK_URL must include a host")
+	}
+
 	// localhost by name — any case, optionally root-qualified, including
 	// RFC 6761 *.localhost subdomains — aliases loopback; block it.
 	if isLocalhostName(host) {
@@ -138,6 +144,11 @@ func ValidateWebhookURLForEnv(rawURL string, allowInsecure bool) error {
 
 	// If the host is an IP literal, run proper CIDR checks.
 	if ip, ok := parseIPHost(host); ok {
+		// 0.0.0.0 and :: mean "this host"/all-interfaces when dialed on
+		// many stacks — a loopback-class destination.
+		if ip.IsUnspecified() {
+			return fmt.Errorf("SIEM_WEBHOOK_URL must not target the unspecified address (%s)", ip)
+		}
 		for _, blocked := range blockedCIDRs {
 			if blocked.Contains(ip) {
 				return fmt.Errorf("SIEM_WEBHOOK_URL targets a blocked IP range (%s is in %s)", ip, blocked)

@@ -51,6 +51,17 @@ func TestValidateWebhookURL(t *testing.T) {
 		// "hostname" (hostnames contain neither ':' nor '%').
 		{"bracketed IP garbage rejected", "https://[fe80::zz%25en0]/ingest", true},
 		{"bare-percent host rejected", "https://a%25b/ingest", true},
+		{"unbracketed :: rejected - parses as host \":\"", "https://::/ingest", true},
+
+		// Unspecified addresses mean "this host"/all-interfaces on many
+		// stacks — a loopback-class destination when dialed.
+		{"0.0.0.0 rejected - IPv4 unspecified", "https://0.0.0.0/ingest", true},
+		{"[::] rejected - IPv6 unspecified", "https://[::]/ingest", true},
+		{"[::ffff:0.0.0.0] rejected - mapped unspecified", "https://[::ffff:0.0.0.0]/ingest", true},
+
+		// A URL without a host classifies as nothing — require one.
+		{"empty host rejected", "https:///ingest", true},
+		{"port-only host rejected", "https://:8080/ingest", true},
 
 		// localhost by any other spelling: DNS names are case-insensitive,
 		// a trailing dot is the DNS root, and *.localhost subdomains resolve
@@ -137,6 +148,18 @@ func TestValidateWebhookURLForEnv(t *testing.T) {
 		{"prod [fe80::1%25en0] rejected (zoned link-local)", "https://[fe80::1%25en0]/ingest", false, true, "blocked IP range"},
 		{"prod [fc00::1%25en0] rejected (zoned ULA)", "https://[fc00::1%25en0]/ingest", false, true, "blocked IP range"},
 		{"prod bare-percent host rejected fail-closed", "https://a%25b/ingest", false, true, "not a valid IP literal"},
+		{"prod unbracketed :: rejected fail-closed", "https://::/ingest", false, true, "not a valid IP literal"},
+		{"prod 0.0.0.0 rejected (unspecified)", "https://0.0.0.0/ingest", false, true, "unspecified"},
+		{"prod [::] rejected (unspecified)", "https://[::]/ingest", false, true, "unspecified"},
+		{"prod empty host rejected", "https:///ingest", false, true, "host"},
+		{"prod port-only host rejected", "https://:8080/ingest", false, true, "host"},
+
+		// Unspecified is neither loopback nor private — relaxed mode must
+		// reject it on both schemes.
+		{"non-prod https [::] rejected (unspecified)", "https://[::]/ingest", true, true, "unspecified"},
+		{"non-prod http 0.0.0.0 rejected (not loopback/private)", "http://0.0.0.0:9000/ingest", true, true, "loopback or private"},
+		{"non-prod http [::] rejected (not loopback/private)", "http://[::]:9000/ingest", true, true, "loopback or private"},
+		{"non-prod http empty host rejected", "http:///ingest", true, true, "loopback or private"},
 		{"prod LOCALHOST rejected", "https://LOCALHOST/ingest", false, true, "loopback"},
 		{"prod localhost. rejected", "https://localhost./ingest", false, true, "loopback"},
 		{"prod foo.localhost rejected", "https://foo.localhost/ingest", false, true, "loopback"},
