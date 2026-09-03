@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"time"
 
+	"privacy-proxy/internal/netguard"
+
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -198,8 +200,8 @@ func (s *SIEMNotifier) Notify(_ context.Context, result *Result) {
 // every violation. Used when no SIEM is configured (smaller customers
 // often wire this to Slack incoming webhooks, Discord, or a generic
 // alerting bus). The destination URL is validated via
-// ValidateWebhookURL — the same SSRF guard applied to the SIEM
-// forwarder.
+// netguard.ValidateWebhookURL — the same SSRF guard applied to the
+// SIEM forwarder.
 //
 // The notifier sends a single attempt with a short timeout and logs
 // failure. Retries are intentionally NOT implemented here — the
@@ -211,22 +213,30 @@ type WebhookNotifier struct {
 }
 
 // NewWebhookNotifier validates the URL via the existing SSRF guard
-// (ValidateWebhookURL — denies loopback, RFC-1918, link-local, cloud
-// metadata IPs) and returns a configured notifier. Pass an empty
+// (netguard.ValidateWebhookURL — denies loopback, RFC-1918, link-local,
+// cloud metadata IPs) and returns a configured notifier. Pass an empty
 // string to disable webhook notification entirely.
 func NewWebhookNotifier(rawURL string) (*WebhookNotifier, error) {
 	if rawURL == "" {
 		return nil, nil
 	}
-	if err := ValidateWebhookURL(rawURL); err != nil {
+	if err := netguard.ValidateWebhookURL(rawURL); err != nil {
 		return nil, err
 	}
 	if _, err := url.Parse(rawURL); err != nil {
 		return nil, err
 	}
 	return &WebhookNotifier{
-		URL:    rawURL,
-		Client: &http.Client{Timeout: 5 * time.Second},
+		URL: rawURL,
+		Client: &http.Client{
+			Timeout: 5 * time.Second,
+			// Disallow redirects: a redirect could lead to a private/internal
+			// address even when the original URL was validated (open-redirect
+			// SSRF) — same guard as the SIEM forwarder's client.
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+				return fmt.Errorf("redirects not permitted for audit tamper webhook")
+			},
+		},
 	}, nil
 }
 

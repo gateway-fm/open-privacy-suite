@@ -7,8 +7,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"privacy-proxy/internal/db"
 )
 
 // mockRetentionStore tracks calls to each cleanup method.
@@ -48,11 +46,11 @@ type auditEntry struct {
 	details map[string]any
 }
 
-func (m *mockRetentionStore) CleanupAccessLogs(_ context.Context, _ time.Time) (db.PruneResult, error) {
+func (m *mockRetentionStore) CleanupAccessLogs(_ context.Context, _ time.Time) (PruneResult, error) {
 	m.accessCalls.Add(1)
 	// Synthetic id range + anchor so retention manager assertions on the
 	// audit-of-the-audit metadata have something deterministic to compare to.
-	return db.PruneResult{Deleted: 5, LowestID: 100, HighestID: 104, AnchorHash: "ttl-anchor-hash"}, nil
+	return PruneResult{Deleted: 5, LowestID: 100, HighestID: 104, AnchorHash: "ttl-anchor-hash"}, nil
 }
 
 func (m *mockRetentionStore) CleanupComplianceLogs(_ context.Context, _ time.Time) (int64, error) {
@@ -113,7 +111,7 @@ func (m *mockRetentionStore) auditCallsFor(action string) []auditEntry {
 	return out
 }
 
-func (m *mockRetentionStore) TrimAccessLogsFIFOBatch(_ context.Context, maxRows int64, batchSize int) (db.PruneResult, error) {
+func (m *mockRetentionStore) TrimAccessLogsFIFOBatch(_ context.Context, maxRows int64, batchSize int) (PruneResult, error) {
 	m.trimMaxRows.Store(maxRows)
 	m.trimBatchSize.Store(int64(batchSize))
 	callIdx := m.trimCallCount.Add(1)
@@ -121,7 +119,7 @@ func (m *mockRetentionStore) TrimAccessLogsFIFOBatch(_ context.Context, maxRows 
 	m.trimReturnsMu.Lock()
 	defer m.trimReturnsMu.Unlock()
 	if len(m.trimReturns) == 0 {
-		return db.PruneResult{}, nil
+		return PruneResult{}, nil
 	}
 	idx := m.trimReturnsIdx
 	if idx >= len(m.trimReturns) {
@@ -138,7 +136,7 @@ func (m *mockRetentionStore) TrimAccessLogsFIFOBatch(_ context.Context, maxRows 
 	}
 	m.countTotal.Store(cur)
 	if deleted == 0 {
-		return db.PruneResult{}, nil
+		return PruneResult{}, nil
 	}
 	// Synthesize a deterministic, monotonic id range per call so the
 	// retention manager's accumulator (min lowest, max highest, last anchor)
@@ -146,7 +144,7 @@ func (m *mockRetentionStore) TrimAccessLogsFIFOBatch(_ context.Context, maxRows 
 	// previous call's ended.
 	lowestID := (callIdx-1)*1000 + 1
 	highestID := lowestID + deleted - 1
-	return db.PruneResult{
+	return PruneResult{
 		Deleted:    deleted,
 		LowestID:   lowestID,
 		HighestID:  highestID,
