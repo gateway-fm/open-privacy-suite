@@ -153,22 +153,29 @@ func benchProcessor(b *testing.B, async bool) (*JSONRPCProcessor, string, *Proce
 	rbacCtrl := rbac.NewAccessController(database, 5*time.Minute)
 	rt := tracer.NewRuntimeTracer(tracer.RuntimeTracerConfig{NodeURL: node.URL, Enabled: true, TieredEnabled: true, Timeout: 5 * time.Second})
 	tv := rbac.NewTraceValidator(database)
-	proc := NewJSONRPCProcessorWithTracing(
-		rbacCtrl, &noopRateLimiter{}, proxy.New(node.URL), database, rt, tv,
-		NewCircuitBreaker(), NewConcurrencyLimiter(50, 0), "",
-	)
-
+	procCfg := JSONRPCProcessorConfig{
+		RBACAccessCtrl:     rbacCtrl,
+		RateLimiter:        &noopRateLimiter{},
+		Proxy:              proxy.New(node.URL),
+		AccessLogger:       database,
+		RuntimeTracer:      rt,
+		TraceValidator:     tv,
+		CircuitBreaker:     NewCircuitBreaker(),
+		ConcurrencyLimiter: NewConcurrencyLimiter(50, 0),
+	}
 	var buf *buffer.Buffer
 	if async {
 		buf, err = buffer.Open(b.TempDir())
 		if err != nil {
 			b.Fatalf("buffer: %v", err)
 		}
-		proc.SetAuditBuffer(buf)
+		procCfg.AuditBuffer = buf
 	} else {
 		seed, _ := database.GetLatestAccessLogHash(ctx)
-		proc.SetEnhancedAudit(database, audit.NewHashChain(seed), nil, false)
+		procCfg.EnhancedAuditLogger = database
+		procCfg.HashChain = audit.NewHashChain(seed)
 	}
+	proc := NewJSONRPCProcessor(procCfg)
 
 	rawHex, body := signedValueTransfer(b)
 	req := &ProcessRequest{UserID: did, Method: "eth_sendRawTransaction", Params: []any{rawHex}, Body: body, ClientIP: "127.0.0.1"}

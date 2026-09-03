@@ -26,15 +26,13 @@ import (
 func TestViewerAdminContracts(t *testing.T) {
 	ctx := context.Background()
 	ts := setupTestServerForRBAC(t)
-	proc := NewJSONRPCProcessor(
-		ts.rbacAccessCtrl,
-		&noopRateLimiter{},
-		nil,
-		ts.db,
-		NewCircuitBreaker(),
-		NewConcurrencyLimiter(50, 0),
-		"",
-	)
+	proc := NewJSONRPCProcessor(JSONRPCProcessorConfig{
+		RBACAccessCtrl:     ts.rbacAccessCtrl,
+		RateLimiter:        &noopRateLimiter{},
+		AccessLogger:       ts.db,
+		CircuitBreaker:     NewCircuitBreaker(),
+		ConcurrencyLimiter: NewConcurrencyLimiter(50, 0),
+	})
 
 	// --- Fixture ---
 	// Org A: Alice is org admin (is_org_admin=true on her group).
@@ -194,15 +192,13 @@ func TestViewerAdminContracts(t *testing.T) {
 func TestApplyResponseFilter_AdminBypass_UsesUUIDFromAccessCheckResult(t *testing.T) {
 	ctx := context.Background()
 	ts := setupTestServerForRBAC(t)
-	proc := NewJSONRPCProcessor(
-		ts.rbacAccessCtrl,
-		&noopRateLimiter{},
-		nil,
-		ts.db,
-		NewCircuitBreaker(),
-		NewConcurrencyLimiter(50, 0),
-		"",
-	)
+	proc := NewJSONRPCProcessor(JSONRPCProcessorConfig{
+		RBACAccessCtrl:     ts.rbacAccessCtrl,
+		RateLimiter:        &noopRateLimiter{},
+		AccessLogger:       ts.db,
+		CircuitBreaker:     NewCircuitBreaker(),
+		ConcurrencyLimiter: NewConcurrencyLimiter(50, 0),
+	})
 
 	// Org with a contract; Alice is org admin (is_org_admin=true).
 	orgID := uuid.New().String()

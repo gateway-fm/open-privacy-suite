@@ -62,10 +62,12 @@ func (c *captureEnhancedLogger) UpdateAccessLogHash(_ context.Context, _ int64, 
 // write NULL org_id and make a tenant admin unable to see their own row.
 func TestLogAccess_ForwardsResolvedOrgID(t *testing.T) {
 	cl := &captureEnhancedLogger{}
-	p := &JSONRPCProcessor{}
 	// Both enhancedLogger and a non-nil hashChain are required for logAccess to
 	// take the chained path (the production path).
-	p.SetEnhancedAudit(cl, audit.NewHashChain(""), nil, false)
+	p := NewJSONRPCProcessor(JSONRPCProcessorConfig{
+		EnhancedAuditLogger: cl,
+		HashChain:           audit.NewHashChain(""),
+	})
 
 	req := &ProcessRequest{
 		UserID:        "did:test:user",
@@ -86,8 +88,10 @@ func TestLogAccess_ForwardsResolvedOrgID(t *testing.T) {
 // NULL — keeping such rows super-admin-only on read.
 func TestLogAccess_EmptyResolvedOrgIDStaysEmpty(t *testing.T) {
 	cl := &captureEnhancedLogger{}
-	p := &JSONRPCProcessor{}
-	p.SetEnhancedAudit(cl, audit.NewHashChain(""), nil, false)
+	p := NewJSONRPCProcessor(JSONRPCProcessorConfig{
+		EnhancedAuditLogger: cl,
+		HashChain:           audit.NewHashChain(""),
+	})
 
 	req := &ProcessRequest{UserID: "did:test:anon", Method: "eth_blockNumber", ClientIP: "203.0.113.7"}
 	p.logAccess(context.Background(), req, 200)

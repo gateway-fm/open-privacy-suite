@@ -39,16 +39,15 @@ func setupSystemAdminTestServer(t *testing.T) *testServerRBAC {
 
 	// Build a minimal processor — we only need ethCallTracing state
 	// management, not the trace path itself.
-	proc := NewJSONRPCProcessor(
-		ts.rbacAccessCtrl,
-		&noopRateLimiter{},
-		&proxy.Proxy{},
-		ts.db,
-		NewCircuitBreaker(),
-		NewConcurrencyLimiter(50, 0),
-		"",
-	)
-	proc.SetEthCallTracing(true, 5*time.Second)
+	proc := NewJSONRPCProcessor(JSONRPCProcessorConfig{
+		RBACAccessCtrl:     ts.rbacAccessCtrl,
+		RateLimiter:        &noopRateLimiter{},
+		Proxy:              &proxy.Proxy{},
+		AccessLogger:       ts.db,
+		CircuitBreaker:     NewCircuitBreaker(),
+		ConcurrencyLimiter: NewConcurrencyLimiter(50, 0),
+		EthCallTracing:     &EthCallTracingConfig{Enabled: true, Timeout: 5 * time.Second},
+	})
 	ts.Server.jsonrpcProcessor = proc
 
 	// Test middleware: take auth_method from a header so tests can

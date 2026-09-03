@@ -611,7 +611,7 @@ func TestGroupAccessValidation(t *testing.T) {
 	// The RPC API key header sub-tests were removed: rpc_api_key_header is no
 	// longer a per-group field. The header name is operator-wide via the
 	// RPC_API_KEY_HEADER env var. See TestResolveAPIKeyHeader and
-	// TestSetDefaultRPCAPIKeyHeader in jsonrpc_processor_test.go for the
+	// TestRPCAPIKeyHeaderConfig in jsonrpc_processor_test.go for the
 	// 2-branch resolution that replaced the per-group validation path.
 }
 

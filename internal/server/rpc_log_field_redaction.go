@@ -14,16 +14,11 @@ import (
 // GetBatchVisibilityDetailed — the SAME method the explorer redactor calls — so
 // the RPC and the explorer hide exactly the same embedded addresses for a given
 // (viewer, log) pair. Symmetry is a property of sharing this resolver plus
-// explorer.RedactLogAddressFields, not a convention.
+// explorer.RedactLogAddressFields, not a convention. Wired at construction via
+// JSONRPCProcessorConfig.AddressVisibilityResolver; when unset (unit tests that
+// don't exercise field-redaction) the step is a no-op.
 type addressVisibilityResolver interface {
 	GetBatchVisibilityDetailed(ctx context.Context, viewerDID string, addresses []string) (map[string]explorer.AddressVisibility, error)
-}
-
-// SetAddressVisibilityResolver wires the per-address resolver used by the RPC
-// log field-redaction step. Call once at startup with the *db.DB. When unset
-// (unit tests that don't exercise field-redaction) the step is a no-op.
-func (p *JSONRPCProcessor) SetAddressVisibilityResolver(r addressVisibilityResolver) {
-	p.addrVisResolver = r
 }
 
 // redactEmbeddedLogAddresses zeroes, in every raw eth log, each embedded address
