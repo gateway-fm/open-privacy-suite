@@ -13,18 +13,39 @@ import (
 
 // Group operations
 
-func (d *DB) CreateGroup(ctx context.Context, group *rbac.Group) error {
+// groupColumns is the single definition of the groups column list every
+// SELECT that hydrates an rbac.Group must use — directly, or alias-qualified
+// through prefixColumns for joined queries. Joined copies of this list had
+// drifted (dropped is_org_readonly_admin / is_system / auto_created; RD-1257).
+const groupColumns = `id, org_id, parent_id, slug, name, description, depth, path, is_org_admin, is_org_readonly_admin, is_system, auto_created, created_at, updated_at`
+
+// prefixColumns qualifies each column in a comma-separated list with a table
+// alias, so joined queries share the canonical column lists instead of
+// hand-copying them.
+func prefixColumns(alias, columns string) string {
+	parts := strings.Split(columns, ", ")
+	for i, p := range parts {
+		parts[i] = alias + "." + p
+	}
+	return strings.Join(parts, ", ")
+}
+
+func createGroup(ctx context.Context, q DBTX, group *rbac.Group) error {
 	query := `INSERT INTO groups (id, org_id, parent_id, slug, name, description, depth, path, is_org_admin, is_org_readonly_admin, auto_created)
 	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 	          RETURNING created_at, updated_at`
 
-	return d.conn.QueryRowContext(ctx, query,
+	return q.QueryRowContext(ctx, query,
 		group.ID, group.OrgID, group.ParentID, group.Slug, group.Name,
 		group.Description, group.Depth, group.Path, group.IsOrgAdmin, group.IsOrgReadonlyAdmin, group.AutoCreated,
 	).Scan(&group.CreatedAt, &group.UpdatedAt)
 }
 
-func (d *DB) GetGroup(ctx context.Context, id string) (*rbac.Group, error) {
+func (d *DB) CreateGroup(ctx context.Context, group *rbac.Group) error {
+	return createGroup(ctx, d.conn, group)
+}
+
+func getGroup(ctx context.Context, q DBTX, id string) (*rbac.Group, error) {
 	query := `SELECT id, org_id, parent_id, slug, name, description, depth, path, is_org_admin, is_org_readonly_admin, is_system, auto_created, created_at, updated_at
 	          FROM groups WHERE id = $1`
 
@@ -32,7 +53,7 @@ func (d *DB) GetGroup(ctx context.Context, id string) (*rbac.Group, error) {
 	var parentID sql.NullString
 	var description sql.NullString
 
-	err := d.conn.QueryRowContext(ctx, query, id).Scan(
+	err := q.QueryRowContext(ctx, query, id).Scan(
 		&group.ID, &group.OrgID, &parentID, &group.Slug, &group.Name,
 		&description, &group.Depth, &group.Path, &group.IsOrgAdmin, &group.IsOrgReadonlyAdmin, &group.IsSystem, &group.AutoCreated, &group.CreatedAt, &group.UpdatedAt,
 	)
@@ -51,6 +72,10 @@ func (d *DB) GetGroup(ctx context.Context, id string) (*rbac.Group, error) {
 	}
 
 	return group, nil
+}
+
+func (d *DB) GetGroup(ctx context.Context, id string) (*rbac.Group, error) {
+	return getGroup(ctx, d.conn, id)
 }
 
 func (d *DB) GetGroupBySlug(ctx context.Context, orgID, slug string) (*rbac.Group, error) {
@@ -135,8 +160,8 @@ func (d *DB) ListGroupsWithAccessPaginated(ctx context.Context, orgID string, li
 		return nil, 0, fmt.Errorf("failed to count groups: %w", err)
 	}
 
-	query := `SELECT g.id, g.org_id, g.parent_id, g.slug, g.name, g.description, g.depth, g.path, g.is_org_admin, g.is_org_readonly_admin, g.is_system, g.auto_created, g.created_at, g.updated_at,
-	                 ga.id, ga.allowed_methods, ga.claims, ga.rpc_api_key, ga.created_at, ga.updated_at
+	query := `SELECT ` + prefixColumns("g", groupColumns) + `,
+	                 ` + groupAccessJoinColumns + `
 	          FROM groups g
 	          LEFT JOIN group_access ga ON g.id = ga.group_id
 	          WHERE g.org_id = $1
@@ -149,6 +174,23 @@ func (d *DB) ListGroupsWithAccessPaginated(ctx context.Context, orgID string, li
 	}
 	defer rows.Close()
 
+	results, err := scanGroupsWithAccess(rows)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return results, total, nil
+}
+
+// groupAccessJoinColumns is the LEFT JOIN group_access fragment: the columns
+// of groupAccessColumns minus group_id (implied by the join key), in the same
+// relative order, scanned by scanGroupsWithAccess. The two list queries had
+// hand-copied a shorter list that dropped verbose_errors (RD-1257).
+const groupAccessJoinColumns = `ga.id, ga.allowed_methods, ga.claims, ga.rpc_api_key, ga.verbose_errors, ga.created_at, ga.updated_at`
+
+// scanGroupsWithAccess scans rows shaped as prefixColumns("g", groupColumns)
+// + groupAccessJoinColumns; the ga.* columns are nullable via the LEFT JOIN.
+func scanGroupsWithAccess(rows *sql.Rows) ([]*rbac.GroupWithAccess, error) {
 	var results []*rbac.GroupWithAccess
 	for rows.Next() {
 		group := &rbac.Group{}
@@ -158,14 +200,15 @@ func (d *DB) ListGroupsWithAccessPaginated(ctx context.Context, orgID string, li
 		var accessID sql.NullString
 		var allowedMethods, claimsStr pq.StringArray
 		var rpcAPIKey sql.NullString
+		var verboseErrors sql.NullBool
 		var accessCreatedAt, accessUpdatedAt sql.NullTime
 
 		if err := rows.Scan(
 			&group.ID, &group.OrgID, &parentID, &group.Slug, &group.Name,
 			&description, &group.Depth, &group.Path, &group.IsOrgAdmin, &group.IsOrgReadonlyAdmin, &group.IsSystem, &group.AutoCreated, &group.CreatedAt, &group.UpdatedAt,
-			&accessID, &allowedMethods, &claimsStr, &rpcAPIKey, &accessCreatedAt, &accessUpdatedAt,
+			&accessID, &allowedMethods, &claimsStr, &rpcAPIKey, &verboseErrors, &accessCreatedAt, &accessUpdatedAt,
 		); err != nil {
-			return nil, 0, fmt.Errorf("failed to scan group with access: %w", err)
+			return nil, fmt.Errorf("failed to scan group with access: %w", err)
 		}
 
 		if parentID.Valid {
@@ -182,6 +225,7 @@ func (d *DB) ListGroupsWithAccessPaginated(ctx context.Context, orgID string, li
 				ID:             accessID.String,
 				GroupID:        group.ID,
 				AllowedMethods: []string(allowedMethods),
+				VerboseErrors:  verboseErrors.Bool,
 				CreatedAt:      accessCreatedAt.Time,
 				UpdatedAt:      accessUpdatedAt.Time,
 			}
@@ -199,10 +243,10 @@ func (d *DB) ListGroupsWithAccessPaginated(ctx context.Context, orgID string, li
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, 0, fmt.Errorf("error iterating groups with access: %w", err)
+		return nil, fmt.Errorf("error iterating groups with access: %w", err)
 	}
 
-	return results, total, nil
+	return results, nil
 }
 
 // escapeILIKE escapes PostgreSQL ILIKE metacharacters (%, _, \) in a search string.
@@ -239,13 +283,13 @@ func (d *DB) ListGroupsWithAccessFiltered(ctx context.Context, orgID string, lim
 	}
 
 	// Query with joins
-	query := fmt.Sprintf(`SELECT g.id, g.org_id, g.parent_id, g.slug, g.name, g.description, g.depth, g.path, g.is_org_admin, g.is_org_readonly_admin, g.is_system, g.auto_created, g.created_at, g.updated_at,
-	                 ga.id, ga.allowed_methods, ga.claims, ga.rpc_api_key, ga.created_at, ga.updated_at
+	query := fmt.Sprintf(`SELECT %s,
+	                 %s
 	          FROM groups g
 	          LEFT JOIN group_access ga ON g.id = ga.group_id
 	          WHERE %s
 	          ORDER BY g.path
-	          LIMIT $%d OFFSET $%d`, where, argIdx, argIdx+1)
+	          LIMIT $%d OFFSET $%d`, prefixColumns("g", groupColumns), groupAccessJoinColumns, where, argIdx, argIdx+1)
 
 	args = append(args, limit, offset)
 
@@ -255,54 +299,9 @@ func (d *DB) ListGroupsWithAccessFiltered(ctx context.Context, orgID string, lim
 	}
 	defer rows.Close()
 
-	var results []*rbac.GroupWithAccess
-	for rows.Next() {
-		group := &rbac.Group{}
-		var parentID, description sql.NullString
-		var accessID sql.NullString
-		var allowedMethods, claimsStr pq.StringArray
-		var rpcAPIKey sql.NullString
-		var accessCreatedAt, accessUpdatedAt sql.NullTime
-
-		if err := rows.Scan(
-			&group.ID, &group.OrgID, &parentID, &group.Slug, &group.Name,
-			&description, &group.Depth, &group.Path, &group.IsOrgAdmin, &group.IsOrgReadonlyAdmin, &group.IsSystem, &group.AutoCreated, &group.CreatedAt, &group.UpdatedAt,
-			&accessID, &allowedMethods, &claimsStr, &rpcAPIKey, &accessCreatedAt, &accessUpdatedAt,
-		); err != nil {
-			return nil, 0, fmt.Errorf("failed to scan group with access: %w", err)
-		}
-
-		if parentID.Valid {
-			group.ParentID = &parentID.String
-		}
-		if description.Valid {
-			group.Description = description.String
-		}
-
-		gwa := &rbac.GroupWithAccess{Group: group}
-		if accessID.Valid {
-			access := &rbac.GroupAccess{
-				ID:             accessID.String,
-				GroupID:        group.ID,
-				AllowedMethods: []string(allowedMethods),
-				CreatedAt:      accessCreatedAt.Time,
-				UpdatedAt:      accessUpdatedAt.Time,
-			}
-			access.Claims = make([]rbac.Claim, len(claimsStr))
-			for i, c := range claimsStr {
-				access.Claims[i] = rbac.Claim(c)
-			}
-			if rpcAPIKey.Valid {
-				access.RPCAPIKey = &rpcAPIKey.String
-			}
-			gwa.Access = access
-		}
-
-		results = append(results, gwa)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, 0, fmt.Errorf("error iterating groups with access: %w", err)
+	results, err := scanGroupsWithAccess(rows)
+	if err != nil {
+		return nil, 0, err
 	}
 
 	return results, total, nil
@@ -358,9 +357,13 @@ func (d *DB) GetGroupHierarchy(ctx context.Context, groupID string) ([]*rbac.Gro
 	return scanGroups(rows)
 }
 
-func (d *DB) DeleteGroup(ctx context.Context, id string) error {
-	_, err := d.conn.ExecContext(ctx, `DELETE FROM groups WHERE id = $1`, id)
+func deleteGroup(ctx context.Context, q DBTX, id string) error {
+	_, err := q.ExecContext(ctx, `DELETE FROM groups WHERE id = $1`, id)
 	return err
+}
+
+func (d *DB) DeleteGroup(ctx context.Context, id string) error {
+	return deleteGroup(ctx, d.conn, id)
 }
 
 func scanGroups(rows *sql.Rows) ([]*rbac.Group, error) {
@@ -396,7 +399,7 @@ func scanGroups(rows *sql.Rows) ([]*rbac.Group, error) {
 
 // Group Access operations
 
-func (d *DB) CreateGroupAccess(ctx context.Context, access *rbac.GroupAccess) error {
+func createGroupAccess(ctx context.Context, q DBTX, access *rbac.GroupAccess) error {
 	// rpc_api_key_header column is intentionally not written; it stays at its
 	// schema DEFAULT 'Authorization' (migration 043) and is not consulted at
 	// runtime. The header name is operator-wide via the RPC_API_KEY_HEADER env
@@ -410,22 +413,31 @@ func (d *DB) CreateGroupAccess(ctx context.Context, access *rbac.GroupAccess) er
 		claims[i] = string(c)
 	}
 
-	return d.conn.QueryRowContext(ctx, query,
+	return q.QueryRowContext(ctx, query,
 		access.ID, access.GroupID,
 		pq.Array(access.AllowedMethods), pq.Array(claims),
 		access.RPCAPIKey, access.VerboseErrors,
 	).Scan(&access.CreatedAt, &access.UpdatedAt)
 }
 
-func (d *DB) GetGroupAccess(ctx context.Context, groupID string) (*rbac.GroupAccess, error) {
-	query := `SELECT id, group_id, allowed_methods, claims, rpc_api_key, verbose_errors, created_at, updated_at
-	          FROM group_access WHERE group_id = $1`
+func (d *DB) CreateGroupAccess(ctx context.Context, access *rbac.GroupAccess) error {
+	return createGroupAccess(ctx, d.conn, access)
+}
 
+// groupAccessColumns is the single definition of the group_access column list
+// every access SELECT must use (single-row and batch variants scan through
+// scanGroupAccessRow). The batch variant had drifted to a shorter list and
+// silently dropped verbose_errors (RD-1257).
+const groupAccessColumns = `id, group_id, allowed_methods, claims, rpc_api_key, verbose_errors, created_at, updated_at`
+
+// scanGroupAccessRow scans one group_access row. The scanner is either a
+// *sql.Row or a *sql.Rows positioned on a row.
+func scanGroupAccessRow(s interface{ Scan(dest ...any) error }) (*rbac.GroupAccess, error) {
 	access := &rbac.GroupAccess{}
 	var allowedMethods, defaultClaims pq.StringArray
 	var rpcAPIKey sql.NullString
 
-	err := d.conn.QueryRowContext(ctx, query, groupID).Scan(
+	err := s.Scan(
 		&access.ID, &access.GroupID,
 		&allowedMethods, &defaultClaims,
 		&rpcAPIKey, &access.VerboseErrors,
@@ -435,7 +447,7 @@ func (d *DB) GetGroupAccess(ctx context.Context, groupID string) (*rbac.GroupAcc
 		return nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("failed to get group access: %w", err)
+		return nil, fmt.Errorf("failed to scan group access: %w", err)
 	}
 
 	access.AllowedMethods = allowedMethods
@@ -451,12 +463,19 @@ func (d *DB) GetGroupAccess(ctx context.Context, groupID string) (*rbac.GroupAcc
 	return access, nil
 }
 
+func (d *DB) GetGroupAccess(ctx context.Context, groupID string) (*rbac.GroupAccess, error) {
+	query := `SELECT ` + groupAccessColumns + `
+	          FROM group_access WHERE group_id = $1`
+
+	return scanGroupAccessRow(d.conn.QueryRowContext(ctx, query, groupID))
+}
+
 func (d *DB) GetGroupAccessBatch(ctx context.Context, groupIDs []string) (map[string]*rbac.GroupAccess, error) {
 	if len(groupIDs) == 0 {
 		return make(map[string]*rbac.GroupAccess), nil
 	}
 
-	query := `SELECT id, group_id, allowed_methods, claims, rpc_api_key, created_at, updated_at
+	query := `SELECT ` + groupAccessColumns + `
 	          FROM group_access WHERE group_id = ANY($1)`
 
 	rows, err := d.conn.QueryContext(ctx, query, pq.Array(groupIDs))
@@ -467,29 +486,10 @@ func (d *DB) GetGroupAccessBatch(ctx context.Context, groupIDs []string) (map[st
 
 	result := make(map[string]*rbac.GroupAccess)
 	for rows.Next() {
-		access := &rbac.GroupAccess{}
-		var allowedMethods, defaultClaims pq.StringArray
-		var rpcAPIKey sql.NullString
-
-		if err := rows.Scan(
-			&access.ID, &access.GroupID,
-			&allowedMethods, &defaultClaims,
-			&rpcAPIKey,
-			&access.CreatedAt, &access.UpdatedAt,
-		); err != nil {
-			return nil, fmt.Errorf("failed to scan group access: %w", err)
+		access, err := scanGroupAccessRow(rows)
+		if err != nil {
+			return nil, err
 		}
-
-		access.AllowedMethods = allowedMethods
-		access.Claims = make([]rbac.Claim, len(defaultClaims))
-		for i, c := range defaultClaims {
-			access.Claims[i] = rbac.Claim(c)
-		}
-
-		if rpcAPIKey.Valid {
-			access.RPCAPIKey = &rpcAPIKey.String
-		}
-
 		result[access.GroupID] = access
 	}
 
@@ -549,9 +549,13 @@ func (d *DB) GroupVerboseErrorsForUserOrg(ctx context.Context, externalID, orgID
 	return ok, nil
 }
 
-func (d *DB) DeleteGroupAccess(ctx context.Context, groupID string) error {
-	_, err := d.conn.ExecContext(ctx, `DELETE FROM group_access WHERE group_id = $1`, groupID)
+func deleteGroupAccess(ctx context.Context, q DBTX, groupID string) error {
+	_, err := q.ExecContext(ctx, `DELETE FROM group_access WHERE group_id = $1`, groupID)
 	return err
+}
+
+func (d *DB) DeleteGroupAccess(ctx context.Context, groupID string) error {
+	return deleteGroupAccess(ctx, d.conn, groupID)
 }
 
 // SetGroupAccess creates or updates group access settings (alias for UpdateGroupAccess).

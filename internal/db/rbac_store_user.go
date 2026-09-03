@@ -22,7 +22,7 @@ const (
 
 // User operations
 
-func (d *DB) CreateUser(ctx context.Context, user *rbac.User) error {
+func createUser(ctx context.Context, q DBTX, user *rbac.User) error {
 	query := `INSERT INTO users (id, external_id, kyc, banned, note, metadata, auth_tenant_id)
 	          VALUES ($1, $2, $3, $4, $5, $6, $7)
 	          RETURNING created_at, updated_at`
@@ -32,69 +32,31 @@ func (d *DB) CreateUser(ctx context.Context, user *rbac.User) error {
 		return fmt.Errorf("failed to marshal metadata: %w", err)
 	}
 
-	return d.conn.QueryRowContext(ctx, query,
+	return q.QueryRowContext(ctx, query,
 		user.ID, user.ExternalID, user.KYC, user.Banned, user.Note, metadata, user.AuthTenantID,
 	).Scan(&user.CreatedAt, &user.UpdatedAt)
+}
+
+func (d *DB) CreateUser(ctx context.Context, user *rbac.User) error {
+	return createUser(ctx, d.conn, user)
 }
 
 func (d *DB) GetUser(ctx context.Context, id string) (*rbac.User, error) {
 	query := `SELECT id, external_id, kyc, banned, note, metadata, auth_tenant_id, created_at, updated_at
 	          FROM users WHERE id = $1`
 
-	user := &rbac.User{}
-	var note sql.NullString
-	var metadata []byte
-
-	err := d.conn.QueryRowContext(ctx, query, id).Scan(
-		&user.ID, &user.ExternalID, &user.KYC, &user.Banned, &note, &metadata, &user.AuthTenantID,
-		&user.CreatedAt, &user.UpdatedAt,
-	)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("failed to get user: %w", err)
-	}
-
-	if note.Valid {
-		user.Note = note.String
-	}
-
-	if err := json.Unmarshal(metadata, &user.Metadata); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
-	}
-
-	return user, nil
+	return scanUserRow(d.conn.QueryRowContext(ctx, query, id))
 }
 
-func (d *DB) GetUserByExternalID(ctx context.Context, externalID string) (*rbac.User, error) {
+func getUserByExternalID(ctx context.Context, q DBTX, externalID string) (*rbac.User, error) {
 	query := `SELECT id, external_id, kyc, banned, note, metadata, auth_tenant_id, created_at, updated_at
 	          FROM users WHERE external_id = $1`
 
-	user := &rbac.User{}
-	var note sql.NullString
-	var metadata []byte
+	return scanUserRow(q.QueryRowContext(ctx, query, externalID))
+}
 
-	err := d.conn.QueryRowContext(ctx, query, externalID).Scan(
-		&user.ID, &user.ExternalID, &user.KYC, &user.Banned, &note, &metadata, &user.AuthTenantID,
-		&user.CreatedAt, &user.UpdatedAt,
-	)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("failed to get user: %w", err)
-	}
-
-	if note.Valid {
-		user.Note = note.String
-	}
-
-	if err := json.Unmarshal(metadata, &user.Metadata); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
-	}
-
-	return user, nil
+func (d *DB) GetUserByExternalID(ctx context.Context, externalID string) (*rbac.User, error) {
+	return getUserByExternalID(ctx, d.conn, externalID)
 }
 
 // UpdateUser updates mutable user fields. auth_tenant_id is deliberately
@@ -138,35 +100,7 @@ func (d *DB) ListUsers(ctx context.Context, limit, offset int) ([]*rbac.User, er
 	}
 	defer rows.Close()
 
-	var users []*rbac.User
-	for rows.Next() {
-		user := &rbac.User{}
-		var note sql.NullString
-		var metadata []byte
-
-		if err := rows.Scan(
-			&user.ID, &user.ExternalID, &user.KYC, &user.Banned, &note, &metadata, &user.AuthTenantID,
-			&user.CreatedAt, &user.UpdatedAt,
-		); err != nil {
-			return nil, fmt.Errorf("failed to scan user: %w", err)
-		}
-
-		if note.Valid {
-			user.Note = note.String
-		}
-
-		if err := json.Unmarshal(metadata, &user.Metadata); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
-		}
-
-		users = append(users, user)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating users: %w", err)
-	}
-
-	return users, nil
+	return scanUsers(rows)
 }
 
 // UserFilter contains filter options for listing users.
@@ -298,35 +232,7 @@ func (d *DB) ListUsersFiltered(ctx context.Context, filter UserFilter, limit, of
 	}
 	defer rows.Close()
 
-	var users []*rbac.User
-	for rows.Next() {
-		user := &rbac.User{}
-		var note sql.NullString
-		var metadata []byte
-
-		if err := rows.Scan(
-			&user.ID, &user.ExternalID, &user.KYC, &user.Banned, &note, &metadata, &user.AuthTenantID,
-			&user.CreatedAt, &user.UpdatedAt,
-		); err != nil {
-			return nil, fmt.Errorf("failed to scan user: %w", err)
-		}
-
-		if note.Valid {
-			user.Note = note.String
-		}
-
-		if err := json.Unmarshal(metadata, &user.Metadata); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
-		}
-
-		users = append(users, user)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating users: %w", err)
-	}
-
-	return users, nil
+	return scanUsers(rows)
 }
 
 func (d *DB) ListUsersPaginated(ctx context.Context, limit, offset int) ([]*rbac.User, int, error) {
@@ -363,35 +269,59 @@ func (d *DB) ListUsersFilteredPaginated(ctx context.Context, filter UserFilter, 
 	}
 	defer rows.Close()
 
+	users, err := scanUsers(rows)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return users, total, nil
+}
+
+// scanUserRow scans one 9-column user row. The scanner is either a *sql.Row
+// or a *sql.Rows positioned on a row — this is the single definition of the
+// user column list; every user SELECT must scan through it (RD-1257).
+func scanUserRow(s interface{ Scan(dest ...any) error }) (*rbac.User, error) {
+	user := &rbac.User{}
+	var note sql.NullString
+	var metadata []byte
+
+	err := s.Scan(
+		&user.ID, &user.ExternalID, &user.KYC, &user.Banned, &note, &metadata, &user.AuthTenantID,
+		&user.CreatedAt, &user.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to scan user: %w", err)
+	}
+
+	if note.Valid {
+		user.Note = note.String
+	}
+
+	if err := json.Unmarshal(metadata, &user.Metadata); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
+	}
+
+	return user, nil
+}
+
+func scanUsers(rows *sql.Rows) ([]*rbac.User, error) {
 	var users []*rbac.User
 	for rows.Next() {
-		user := &rbac.User{}
-		var note sql.NullString
-		var metadata []byte
-
-		if err := rows.Scan(
-			&user.ID, &user.ExternalID, &user.KYC, &user.Banned, &note, &metadata, &user.AuthTenantID,
-			&user.CreatedAt, &user.UpdatedAt,
-		); err != nil {
-			return nil, 0, fmt.Errorf("failed to scan user: %w", err)
+		user, err := scanUserRow(rows)
+		if err != nil {
+			return nil, err
 		}
-
-		if note.Valid {
-			user.Note = note.String
-		}
-
-		if err := json.Unmarshal(metadata, &user.Metadata); err != nil {
-			return nil, 0, fmt.Errorf("failed to unmarshal metadata: %w", err)
-		}
-
 		users = append(users, user)
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, 0, fmt.Errorf("error iterating users: %w", err)
+		return nil, fmt.Errorf("error iterating users: %w", err)
 	}
 
-	return users, total, nil
+	return users, nil
 }
 
 // ListGroupMembershipsForUsers returns each given user's group memberships
@@ -489,15 +419,19 @@ func utcPtr(t *time.Time) *time.Time {
 	return &u
 }
 
-func (d *DB) CreateMembership(ctx context.Context, membership *rbac.UserMembership) error {
+func createMembership(ctx context.Context, q DBTX, membership *rbac.UserMembership) error {
 	query := `INSERT INTO user_memberships (id, user_id, group_id, source, zk_credential_ref, expires_at)
 	          VALUES ($1, $2, $3, $4, $5, $6)
 	          RETURNING created_at, updated_at`
 
-	return d.conn.QueryRowContext(ctx, query,
+	return q.QueryRowContext(ctx, query,
 		membership.ID, membership.UserID, membership.GroupID,
 		string(membership.Source), membership.ZKCredentialRef, utcPtr(membership.ExpiresAt),
 	).Scan(&membership.CreatedAt, &membership.UpdatedAt)
+}
+
+func (d *DB) CreateMembership(ctx context.Context, membership *rbac.UserMembership) error {
+	return createMembership(ctx, d.conn, membership)
 }
 
 // CreateMembershipIfNotExists atomically inserts a membership if no row with the
@@ -564,7 +498,7 @@ func (d *DB) ListUserMemberships(ctx context.Context, userID string) ([]*rbac.Us
 
 func (d *DB) ListUserMembershipsWithDetails(ctx context.Context, userID string) ([]*rbac.MembershipWithDetails, error) {
 	query := `SELECT m.id, m.user_id, m.group_id, m.source, m.zk_credential_ref, m.expires_at, m.created_at, m.updated_at,
-	                 g.id, g.org_id, g.parent_id, g.slug, g.name, g.description, g.depth, g.path, g.is_org_admin, g.created_at, g.updated_at
+	                 ` + prefixColumns("g", groupColumns) + `
 	          FROM user_memberships m
 	          JOIN groups g ON m.group_id = g.id
 	          WHERE m.user_id = $1`
@@ -589,7 +523,7 @@ func (d *DB) ListUserMembershipsInOrg(ctx context.Context, userID, orgID string)
 	// away afterwards — this filter is the actual revocation boundary, so an
 	// expired window blocks access immediately, not at the next sweep.
 	query := `SELECT m.id, m.user_id, m.group_id, m.source, m.zk_credential_ref, m.expires_at, m.created_at, m.updated_at,
-	                 g.id, g.org_id, g.parent_id, g.slug, g.name, g.description, g.depth, g.path, g.is_org_admin, g.created_at, g.updated_at
+	                 ` + prefixColumns("g", groupColumns) + `
 	          FROM user_memberships m
 	          JOIN groups g ON m.group_id = g.id
 	          WHERE m.user_id = $1 AND g.org_id = $2
@@ -617,9 +551,13 @@ func (d *DB) ListGroupMembers(ctx context.Context, groupID string) ([]*rbac.User
 	return scanMemberships(rows)
 }
 
-func (d *DB) DeleteMembership(ctx context.Context, id string) error {
-	_, err := d.conn.ExecContext(ctx, `DELETE FROM user_memberships WHERE id = $1`, id)
+func deleteMembership(ctx context.Context, q DBTX, id string) error {
+	_, err := q.ExecContext(ctx, `DELETE FROM user_memberships WHERE id = $1`, id)
 	return err
+}
+
+func (d *DB) DeleteMembership(ctx context.Context, id string) error {
+	return deleteMembership(ctx, d.conn, id)
 }
 
 // HasAdminClaim checks whether a user (identified by internal ID) has the "admin"
@@ -806,6 +744,7 @@ func scanMembershipsWithDetails(rows *sql.Rows) ([]*rbac.MembershipWithDetails, 
 			&result.Membership.CreatedAt, &result.Membership.UpdatedAt,
 			&result.Group.ID, &result.Group.OrgID, &groupParentID, &result.Group.Slug,
 			&result.Group.Name, &groupDescription, &result.Group.Depth, &result.Group.Path, &result.Group.IsOrgAdmin,
+			&result.Group.IsOrgReadonlyAdmin, &result.Group.IsSystem, &result.Group.AutoCreated,
 			&result.Group.CreatedAt, &result.Group.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan membership: %w", err)
