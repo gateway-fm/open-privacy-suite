@@ -3,19 +3,24 @@ package rbac
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
 
 // MockStore implements Store interface for testing
 type MockStore struct {
-	organizations     map[string]*Organization
-	groups            map[string]*Group
-	groupAccess       map[string]*GroupAccess
-	contracts         map[string]*Contract
-	contractGrants    map[string][]*ContractGrant
-	users             map[string]*User
-	memberships       map[string]*UserMembership
+	organizations  map[string]*Organization
+	groups         map[string]*Group
+	groupAccess    map[string]*GroupAccess
+	contracts      map[string]*Contract
+	contractGrants map[string][]*ContractGrant
+	users          map[string]*User
+	memberships    map[string]*UserMembership
+	// cacheMu guards cachedPermissions: concurrent ResolvePermissions
+	// callers hit Get/Set from multiple goroutines (the production cache
+	// store is thread-safe; the mock must be too for -race tests).
+	cacheMu           sync.RWMutex
 	cachedPermissions map[string]*EffectivePermissions
 	groupsByOrg       map[string][]*MembershipWithDetails
 }
@@ -112,16 +117,22 @@ func (m *MockStore) ListUserMembershipsInOrg(ctx context.Context, userID, orgID 
 
 func (m *MockStore) GetCachedPermissions(ctx context.Context, userID, orgID string) (*EffectivePermissions, error) {
 	key := userID + ":" + orgID
+	m.cacheMu.RLock()
+	defer m.cacheMu.RUnlock()
 	return m.cachedPermissions[key], nil
 }
 
 func (m *MockStore) SetCachedPermissions(ctx context.Context, perms *EffectivePermissions) error {
 	key := perms.UserID + ":" + perms.OrgID
+	m.cacheMu.Lock()
+	defer m.cacheMu.Unlock()
 	m.cachedPermissions[key] = perms
 	return nil
 }
 
 func (m *MockStore) InvalidateCacheForUser(ctx context.Context, userID string) error {
+	m.cacheMu.Lock()
+	defer m.cacheMu.Unlock()
 	for key := range m.cachedPermissions {
 		if len(key) > len(userID) && key[:len(userID)] == userID {
 			delete(m.cachedPermissions, key)
@@ -131,6 +142,8 @@ func (m *MockStore) InvalidateCacheForUser(ctx context.Context, userID string) e
 }
 
 func (m *MockStore) InvalidateCacheForOrg(ctx context.Context, orgID string) error {
+	m.cacheMu.Lock()
+	defer m.cacheMu.Unlock()
 	for key := range m.cachedPermissions {
 		if len(key) > len(orgID) && key[len(key)-len(orgID):] == orgID {
 			delete(m.cachedPermissions, key)
@@ -141,6 +154,8 @@ func (m *MockStore) InvalidateCacheForOrg(ctx context.Context, orgID string) err
 
 func (m *MockStore) InvalidateCacheForGroup(ctx context.Context, groupID string) error {
 	// Clear all cache for simplicity in tests
+	m.cacheMu.Lock()
+	defer m.cacheMu.Unlock()
 	m.cachedPermissions = make(map[string]*EffectivePermissions)
 	return nil
 }
@@ -304,7 +319,9 @@ func (m *MockStore) ListContractGrantsByContract(ctx context.Context, contractID
 	return nil, nil
 }
 func (m *MockStore) DeleteContractGrant(ctx context.Context, id string) error { return nil }
-func (m *MockStore) GetContractGrantSummary(ctx context.Context, orgID string) (map[string]*ContractGrantSummary, error) { return nil, nil }
+func (m *MockStore) GetContractGrantSummary(ctx context.Context, orgID string) (map[string]*ContractGrantSummary, error) {
+	return nil, nil
+}
 func (m *MockStore) GetLinkedEthAddresses(ctx context.Context, did string) ([]string, error) {
 	return nil, nil
 }
@@ -1060,4 +1077,3 @@ func TestResolverCachesPermissionsSynchronously(t *testing.T) {
 		}
 	})
 }
-
