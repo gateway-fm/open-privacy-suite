@@ -215,8 +215,15 @@ func New(databaseURL string, opts ...Option) (*DB, error) {
 
 // NewWithoutMigrate creates a database connection without running migrations.
 // Use this when you need to check migration status or run migrations manually.
+//
+// RD-1256: opens through the same UTC-pinned path as New (parseConfigUTC), so
+// the audit pools and CLI tools get the RD-1005 timezone semantics instead of
+// inheriting the server's default GUC. Unlike New it still fails fast on the
+// first ping (no retry loop): its callers either run after the main pool has
+// already proven Postgres is up (server audit pools) or are interactive tools
+// where waiting 30s on a bad DSN is worse than an immediate error.
 func NewWithoutMigrate(databaseURL string, opts ...Option) (*DB, error) {
-	conn, err := sql.Open("pgx", databaseURL)
+	conn, err := openPostgres(databaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}

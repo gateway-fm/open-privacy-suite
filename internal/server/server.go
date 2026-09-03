@@ -82,13 +82,18 @@ type Server struct {
 	// not enforced) — never main. It aliases db (main) only in the co-located case
 	// where the resolved DSN equals DATABASE_URL (dev/tests). All access_logs
 	// reads/writes go through this handle.
-	auditDB *db.DB
+	//
+	// RD-1256: role-scoped type — exposes only the access_logs/audit-chain
+	// surface, so calling a main-DB method on it is a compile error.
+	auditDB *db.AuditDB
 	// auditAdminDB is the ADMIN/owner handle for the audit Postgres (RD-1147):
 	// runs audit-DB migrations and access_logs retention prune (DELETE). When
 	// AUDIT_ADMIN_DATABASE_URL is unset it is DERIVED to "<name>_audit" (a
 	// separate DB), never main; it aliases db (main) only when the resolved DSN
 	// equals DATABASE_URL (co-located dev/tests, where the pool is reused).
-	auditAdminDB         *db.DB
+	//
+	// RD-1256: role-scoped type — migrations + retention pruning only.
+	auditAdminDB         *db.AuditAdminDB
 	rbacAccessCtrl       *rbac.AccessController
 	proxy                *proxy.Proxy
 	privadoVerifier      PrivadoVerifier
@@ -137,7 +142,7 @@ type Server struct {
 // checkpointAdapter bridges *db.DB to the audit package's CheckpointStore and
 // CheckpointReader interfaces (the audit package deliberately does not import
 // db; this adapter, in the server layer which imports both, does the mapping).
-type checkpointAdapter struct{ db *db.DB }
+type checkpointAdapter struct{ db *db.AuditDB }
 
 func (a checkpointAdapter) ChainStats(ctx context.Context, chainName string) (int64, int64, string, error) {
 	return a.db.GetAccessLogChainStats(ctx, chainName)
@@ -246,12 +251,16 @@ func (s *Server) Stop() {
 		s.redisCloser.Close()
 	}
 	// RD-1147: close the separate audit pools if (and only if) they are distinct
-	// handles from the main DB. When the audit DB is not separated they alias
-	// s.db and must not be double-closed.
-	if s.auditDB != nil && s.auditDB != s.db {
+	// pools from the main DB. When the audit DB is not separated the role
+	// handles wrap s.db's pool and must not double-close it. Pool identity is
+	// compared via Conn() because the RD-1256 role handles are distinct wrapper
+	// values even when they share one pool.
+	if s.auditDB != nil && (s.db == nil || s.auditDB.Conn() != s.db.Conn()) {
 		s.auditDB.Close()
 	}
-	if s.auditAdminDB != nil && s.auditAdminDB != s.db && s.auditAdminDB != s.auditDB {
+	if s.auditAdminDB != nil &&
+		(s.db == nil || s.auditAdminDB.Conn() != s.db.Conn()) &&
+		(s.auditDB == nil || s.auditAdminDB.Conn() != s.auditDB.Conn()) {
 		s.auditAdminDB.Close()
 	}
 	if s.db != nil {
@@ -403,18 +412,22 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	// append-only seal is not enforced in this mode anyway (owner credentials),
 	// consistent with the documented co-located/derived-default behaviour. The
 	// Close() logic already guards against double-closing a reused pool.
-	var auditAdminDB *db.DB
+	var auditAdminPool *db.DB
 	if cfg.AuditAdminDatabaseURL == cfg.DatabaseURL {
-		auditAdminDB = database
+		auditAdminPool = database
 	} else {
-		auditAdminDB, err = db.NewWithoutMigrate(cfg.AuditAdminDatabaseURL, db.WithPool(cfg.DBMaxOpenConns, cfg.DBMaxIdleConns, cfg.DBConnMaxLifetime))
+		auditAdminPool, err = db.NewWithoutMigrate(cfg.AuditAdminDatabaseURL, db.WithPool(cfg.DBMaxOpenConns, cfg.DBMaxIdleConns, cfg.DBConnMaxLifetime))
 		if err != nil {
 			database.Close()
 			return nil, fmt.Errorf("failed to open audit admin database: %w", err)
 		}
 	}
+	// RD-1256: from here on the audit pools are only reachable through their
+	// role-scoped handles, so a main-DB call on an audit handle is a compile
+	// error instead of a grants-and-convention violation.
+	auditAdminDB := db.NewAuditAdminHandle(auditAdminPool)
 	if mErr := auditAdminDB.MigrateAuditOnly(context.Background(), migrationsaudit.FS); mErr != nil {
-		if auditAdminDB != database {
+		if auditAdminPool != database {
 			auditAdminDB.Close()
 		}
 		database.Close()
@@ -424,22 +437,23 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	// Runtime pool: restricted role, NO migrations (it lacks DDL rights; the
 	// admin pool above already migrated the audit DB). Reuse the main or admin
 	// pool when the runtime DSN matches (see the pool-reuse note above).
-	var auditDB *db.DB
+	var auditPool *db.DB
 	switch {
 	case cfg.AuditDatabaseURL == cfg.DatabaseURL:
-		auditDB = database
+		auditPool = database
 	case cfg.AuditDatabaseURL == cfg.AuditAdminDatabaseURL:
-		auditDB = auditAdminDB
+		auditPool = auditAdminPool
 	default:
-		auditDB, err = db.NewWithoutMigrate(cfg.AuditDatabaseURL, db.WithPool(cfg.DBMaxOpenConns, cfg.DBMaxIdleConns, cfg.DBConnMaxLifetime))
+		auditPool, err = db.NewWithoutMigrate(cfg.AuditDatabaseURL, db.WithPool(cfg.DBMaxOpenConns, cfg.DBMaxIdleConns, cfg.DBConnMaxLifetime))
 		if err != nil {
-			if auditAdminDB != database {
+			if auditAdminPool != database {
 				auditAdminDB.Close()
 			}
 			database.Close()
 			return nil, fmt.Errorf("failed to open audit runtime database: %w", err)
 		}
 	}
+	auditDB := db.NewAuditHandle(auditPool)
 	if cfg.AuditDatabaseURL == cfg.AuditAdminDatabaseURL {
 		// Derived-default deployment (or an operator pointing both DSNs at the
 		// same owner identity): the runtime pool connects as the owner, so the

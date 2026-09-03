@@ -24,12 +24,12 @@ import (
 // transparent pass-through identical to the pre-RD-1147 single-store behaviour.
 type retentionAuditStore struct {
 	main         *db.DB
-	auditAdminDB *db.DB
+	auditAdminDB *db.AuditAdminDB // RD-1256 role handle: prune/count only
 }
 
 var _ audit.RetentionStore = (*retentionAuditStore)(nil)
 
-func newRetentionAuditStore(main, auditAdminDB *db.DB) *retentionAuditStore {
+func newRetentionAuditStore(main *db.DB, auditAdminDB *db.AuditAdminDB) *retentionAuditStore {
 	return &retentionAuditStore{main: main, auditAdminDB: auditAdminDB}
 }
 
