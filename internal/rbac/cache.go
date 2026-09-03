@@ -35,7 +35,7 @@ type cacheEntry struct {
 // CacheConfig holds configuration for the permission cache.
 type CacheConfig struct {
 	TTL        time.Duration // Default TTL for cache entries (default: 5 minutes)
-	MaxEntries int           // Maximum number of entries (default: 10000)
+	MaxEntries int           // Maximum number of entries (default: 50000)
 }
 
 // DefaultCacheConfig returns the default cache configuration.
@@ -58,7 +58,7 @@ func NewCache(config CacheConfig) *Cache {
 		config.TTL = 5 * time.Minute
 	}
 	if config.MaxEntries == 0 {
-		config.MaxEntries = 10000
+		config.MaxEntries = 50000
 	}
 
 	c := &Cache{

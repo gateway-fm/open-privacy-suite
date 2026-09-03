@@ -2,7 +2,7 @@
 	e2e e2e-all e2e-go e2e-playwright e2e-privacy e2e-chaos e2e-soak e2e-doctor e2e-debug e2e-down e2e-clean \
 	demo-e2e demo-e2e-debug demo-e2e-down \
 	db-migrate db-status db-new-migration install-tern seed \
-	contracts-install contracts-build contracts-deploy authproxy \
+	contracts-install contracts-build contracts-deploy \
 	stop restart logs status \
 	demo demo-record demo-process demo-all demo-setup demo-clean \
 	quickstart quickstart-down quickstart-reset \
@@ -42,10 +42,6 @@ build-prod: ensure-hooks
 		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
 		--build-arg BUILD_TIME=$(BUILD_TIME) \
 		-t privacy-proxy:prod .
-
-# Build authproxy
-authproxy: ensure-hooks
-	go build -o bin/authproxy ./cmd/authproxy
 
 # Run full Docker stack (postgres, anvil, backend, frontend)
 run: ensure-hooks

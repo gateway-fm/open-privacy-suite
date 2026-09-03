@@ -7,23 +7,23 @@ import (
 
 // TestFactoryAutoAllowLogic tests the auto-allow logic for org factory access.
 func TestFactoryAutoAllowLogic(t *testing.T) {
-	t.Run("containsClaim helper works correctly", func(t *testing.T) {
+	t.Run("hasClaim helper works correctly", func(t *testing.T) {
 		claims := []Claim{ClaimDeploy, ClaimUpgrade}
 
-		if !containsClaim(claims, ClaimDeploy) {
-			t.Error("containsClaim should find ClaimDeploy")
+		if !hasClaim(claims, ClaimDeploy) {
+			t.Error("hasClaim should find ClaimDeploy")
 		}
-		if !containsClaim(claims, ClaimUpgrade) {
-			t.Error("containsClaim should find ClaimUpgrade")
+		if !hasClaim(claims, ClaimUpgrade) {
+			t.Error("hasClaim should find ClaimUpgrade")
 		}
-		if containsClaim(claims, ClaimAdmin) {
-			t.Error("containsClaim should NOT find ClaimAdmin")
+		if hasClaim(claims, ClaimAdmin) {
+			t.Error("hasClaim should NOT find ClaimAdmin")
 		}
-		if containsClaim(nil, ClaimDeploy) {
-			t.Error("containsClaim should return false for nil slice")
+		if hasClaim(nil, ClaimDeploy) {
+			t.Error("hasClaim should return false for nil slice")
 		}
-		if containsClaim([]Claim{}, ClaimDeploy) {
-			t.Error("containsClaim should return false for empty slice")
+		if hasClaim([]Claim{}, ClaimDeploy) {
+			t.Error("hasClaim should return false for empty slice")
 		}
 	})
 
@@ -34,7 +34,7 @@ func TestFactoryAutoAllowLogic(t *testing.T) {
 			Claims:         []Claim{ClaimDeploy},
 		}
 
-		hasDeploy := containsClaim(perms.Claims, ClaimDeploy)
+		hasDeploy := hasClaim(perms.Claims, ClaimDeploy)
 		if !hasDeploy {
 			t.Error("User with deploy in default_claims should have deploy claim")
 		}
@@ -52,7 +52,7 @@ func TestFactoryAutoAllowLogic(t *testing.T) {
 
 		hasDeployOnAnyContract := false
 		for _, access := range perms.ContractAccess {
-			if containsClaim(access.Claims, ClaimDeploy) {
+			if hasClaim(access.Claims, ClaimDeploy) {
 				hasDeployOnAnyContract = true
 				break
 			}
@@ -71,10 +71,10 @@ func TestFactoryAutoAllowLogic(t *testing.T) {
 			Claims: []Claim{},
 		}
 
-		hasDeployInDefault := containsClaim(perms.Claims, ClaimDeploy)
+		hasDeployInDefault := hasClaim(perms.Claims, ClaimDeploy)
 		hasDeployOnAnyContract := false
 		for _, access := range perms.ContractAccess {
-			if containsClaim(access.Claims, ClaimDeploy) {
+			if hasClaim(access.Claims, ClaimDeploy) {
 				hasDeployOnAnyContract = true
 				break
 			}
@@ -143,13 +143,13 @@ func TestFactoryAutoAllowSecurityProperties(t *testing.T) {
 			Claims: []Claim{},
 		}
 
-		hasDeploy := containsClaim(perms.Claims, ClaimDeploy)
+		hasDeploy := hasClaim(perms.Claims, ClaimDeploy)
 		if hasDeploy {
 			t.Error("Should not have deploy in default claims")
 		}
 
 		for _, access := range perms.ContractAccess {
-			if containsClaim(access.Claims, ClaimDeploy) {
+			if hasClaim(access.Claims, ClaimDeploy) {
 				t.Error("Should not have deploy on any contract")
 			}
 		}

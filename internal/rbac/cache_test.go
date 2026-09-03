@@ -366,3 +366,22 @@ func TestCacheConcurrentEviction(t *testing.T) {
 		t.Errorf("Cache size %d exceeds max entries %d", stats.Entries, stats.MaxEntries)
 	}
 }
+
+// TestCacheZeroValueMaxEntriesMatchesDefault pins the NewCache zero-value
+// fallback to DefaultCacheConfig().MaxEntries. The two once drifted apart
+// (fallback stayed at 10000 after the default was raised to 50000), which
+// silently defeated the raise for the only production construction site,
+// NewAccessController, which leaves MaxEntries unset.
+func TestCacheZeroValueMaxEntriesMatchesDefault(t *testing.T) {
+	cache := NewCache(CacheConfig{})
+	defer cache.Stop()
+
+	got := cache.Stats().MaxEntries
+	want := DefaultCacheConfig().MaxEntries
+	if got != want {
+		t.Errorf("NewCache(CacheConfig{}) effective MaxEntries = %d, want DefaultCacheConfig().MaxEntries = %d", got, want)
+	}
+	if want != 50000 {
+		t.Errorf("DefaultCacheConfig().MaxEntries = %d, want 50000 (raised intentionally by the perf pass)", want)
+	}
+}
