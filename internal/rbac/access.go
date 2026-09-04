@@ -710,7 +710,7 @@ func (c *AccessController) checkHistoricalStateQuery(ctx context.Context, req *A
 // stays NULL / super-admin-only, matching pre-org denials. It never returns
 // an org the caller is not a member of.
 func (c *AccessController) callerOrgForDenial(ctx context.Context, req *AccessCheckRequest, user *User) string {
-	memberships, err := c.store.ListUserMembershipsWithDetails(ctx, user.ID)
+	memberships, err := c.store.ListActiveUserMembershipsWithDetails(ctx, user.ID)
 	if err != nil || len(memberships) == 0 {
 		return ""
 	}
@@ -1643,7 +1643,7 @@ func accessGetFunctionRule(access *ContractAccess, selector string) *FunctionRul
 
 // getUserOrganizationIDs returns the set of organization IDs the user is a member of.
 func (c *AccessController) getUserOrganizationIDs(ctx context.Context, userID string) (map[string]bool, error) {
-	memberships, err := c.store.ListUserMembershipsWithDetails(ctx, userID)
+	memberships, err := c.store.ListActiveUserMembershipsWithDetails(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user memberships: %w", err)
 	}
@@ -1663,7 +1663,7 @@ func (c *AccessController) getUserOrganizationIDs(ctx context.Context, userID st
 // This is used for unregistered contract access where permissions are resolved
 // for one org but deploy claims may exist in another.
 func (c *AccessController) userHasDeployClaimInAnyOrg(ctx context.Context, userID string) (bool, error) {
-	memberships, err := c.store.ListUserMembershipsWithDetails(ctx, userID)
+	memberships, err := c.store.ListActiveUserMembershipsWithDetails(ctx, userID)
 	if err != nil {
 		return false, err
 	}
@@ -1687,7 +1687,7 @@ func (c *AccessController) userHasDeployClaimInAnyOrg(ctx context.Context, userI
 // GetUserOrgIDs returns all org IDs the user belongs to.
 // Used by response filters to resolve permissions across all orgs.
 func (c *AccessController) GetUserOrgIDs(ctx context.Context, userID string) ([]string, error) {
-	memberships, err := c.store.ListUserMembershipsWithDetails(ctx, userID)
+	memberships, err := c.store.ListActiveUserMembershipsWithDetails(ctx, userID)
 	if err != nil {
 		return nil, err
 	}

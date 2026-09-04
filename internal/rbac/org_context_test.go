@@ -28,6 +28,13 @@ func (m *MockOrgContextStore) ListUserMembershipsWithDetails(ctx context.Context
 	return m.memberships, nil
 }
 
+func (m *MockOrgContextStore) ListActiveUserMembershipsWithDetails(ctx context.Context, userID string) ([]*MembershipWithDetails, error) {
+	if m.membershipsErr != nil {
+		return nil, m.membershipsErr
+	}
+	return m.memberships, nil
+}
+
 func (m *MockOrgContextStore) GetOrganization(ctx context.Context, id string) (*Organization, error) {
 	if m.orgErr != nil {
 		return nil, m.orgErr

@@ -122,6 +122,10 @@ func (m *MockCrossOrgStore) ListUserMembershipsWithDetails(ctx context.Context, 
 	return m.memberships[userID], nil
 }
 
+func (m *MockCrossOrgStore) ListActiveUserMembershipsWithDetails(ctx context.Context, userID string) ([]*MembershipWithDetails, error) {
+	return m.memberships[userID], nil
+}
+
 func (m *MockCrossOrgStore) ListUserMembershipsInOrg(ctx context.Context, userID, orgID string) ([]*MembershipWithDetails, error) {
 	var result []*MembershipWithDetails
 	for _, ms := range m.memberships[userID] {

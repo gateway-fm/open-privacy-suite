@@ -1494,6 +1494,30 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 		defer p.concurrencyLimiter.Release(req.UserID)
 	}
 
+	// Bind a raw transaction signer to the authenticated DID before tracing or
+	// forwarding. Without this check, one user's grants can authorize another
+	// unlocked account on a shared upstream node.
+	linkedAddresses, addrErr := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)
+	if addrErr != nil {
+		p.recordRPCOutcome(req.Method, "sender_validation_unavailable", start)
+		req.denialReason = ReasonTracingUnavailable
+		p.logAccess(ctx, req, http.StatusForbidden)
+		return &ProcessResult{Error: &ProcessError{StatusCode: http.StatusForbidden, Message: "failed to verify sender identity", Reason: ReasonTracingUnavailable}}
+	}
+	linkedSender := false
+	for _, address := range linkedAddresses {
+		if strings.EqualFold(address, from) {
+			linkedSender = true
+			break
+		}
+	}
+	if !linkedSender {
+		p.recordRPCOutcome(req.Method, "sender_not_linked", start)
+		req.denialReason = ReasonSenderNotLinked
+		p.logAccess(ctx, req, http.StatusBadRequest)
+		return &ProcessResult{Error: &ProcessError{StatusCode: http.StatusBadRequest, Message: "invalid sender: from address is not linked to your account", Reason: ReasonSenderNotLinked}}
+	}
+
 	// Runtime tracing validation. For non-deploy raw transactions
 	// (to != "") and for deploys (to == ""). Pre-M10 deploys skipped
 	// tracing entirely, leaving constructor frames unvalidated; M10
@@ -1536,7 +1560,7 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 				Error: &ProcessError{StatusCode: http.StatusForbidden, Message: sendTraceDenyTracerError, Reason: ReasonTracingUnavailable},
 			}
 		}
-		memberships, err := p.rbacAccessCtrl.Store().ListUserMembershipsWithDetails(ctx, user.ID)
+		memberships, err := p.rbacAccessCtrl.Store().ListActiveUserMembershipsWithDetails(ctx, user.ID)
 		if err != nil {
 			p.recordRPCOutcome(req.Method, "send_trace_denied", start)
 			req.denialReason = ReasonTracingUnavailable // RD-1137

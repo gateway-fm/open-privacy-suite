@@ -1488,7 +1488,9 @@ func (s *Server) getEffectivePermissions(c *gin.Context) {
 	c.JSON(http.StatusOK, perms)
 }
 
-// checkAccessAPI evaluates an RBAC access-check request.
+// checkAccessAPI evaluates an RBAC access-check request. Distinct from
+// POST /policy-check (admin_policy_check.go): this is the human-admin debugging
+// tool, with the caller pre-computing target_address/function_selector.
 //
 // @Summary      Check access
 // @Description  Evaluates whether a given user (by external DID) would be allowed to call a method against a target in an organization, returning the resolver's decision and reason. For a tier-2 org-admin JWT the probe is clamped to the caller's scope: the target org must be specified and in scope, and the probed user must share an org with the caller — this prevents the endpoint from being a cluster-wide permission-map oracle. Tenant-confidential: rejected for the operator token (403).

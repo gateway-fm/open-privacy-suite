@@ -713,6 +713,20 @@ func TestDryRun_RawSendTransactionMalformedAudit(t *testing.T) {
 	})
 }
 
+func TestPolicyCheckTraceTransaction_StripsVisibleToWithoutMutatingInput(t *testing.T) {
+	original := map[string]any{
+		"to":        "0x000000000000000000000000000000000000ac51",
+		"data":      "0x12345678",
+		"visibleTo": []any{"did:example:recipient"},
+	}
+
+	traceTx := policyCheckTraceTransaction(original)
+
+	assert.NotContains(t, traceTx, "visibleTo")
+	assert.Contains(t, original, "visibleTo")
+	assert.Equal(t, original["to"], traceTx["to"])
+}
+
 // ---- fixture helpers -------------------------------------------------
 
 func drCreateGroup(t *testing.T, database interface {

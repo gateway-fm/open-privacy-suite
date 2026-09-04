@@ -497,6 +497,10 @@ func (d *DB) ListUserMemberships(ctx context.Context, userID string) ([]*rbac.Us
 }
 
 func (d *DB) ListUserMembershipsWithDetails(ctx context.Context, userID string) ([]*rbac.MembershipWithDetails, error) {
+	// Deliberately unfiltered on expires_at: the admin membership listing
+	// (GET /api/v1/admin/users/{user_id}/memberships) relies on this query to
+	// surface rows flagged expired. Authorization and trace validation must use
+	// ListActiveUserMembershipsWithDetails instead.
 	query := `SELECT m.id, m.user_id, m.group_id, m.source, m.zk_credential_ref, m.expires_at, m.created_at, m.updated_at,
 	                 ` + prefixColumns("g", groupColumns) + `
 	          FROM user_memberships m
@@ -506,6 +510,29 @@ func (d *DB) ListUserMembershipsWithDetails(ctx context.Context, userID string) 
 	rows, err := d.conn.QueryContext(ctx, query, userID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list memberships with details: %w", err)
+	}
+	defer rows.Close()
+
+	return scanMembershipsWithDetails(rows)
+}
+
+// ListActiveUserMembershipsWithDetails returns the same joined rows as
+// ListUserMembershipsWithDetails, minus expired ones. This is the revocation
+// boundary for authorization and trace-validation paths that need the user's
+// organizations across every org: an expired time-boxed grant contributes
+// nothing, immediately (same fail-closed idiom as ListUserMembershipsInOrg;
+// NULL = never expires; the DB session runs in UTC).
+func (d *DB) ListActiveUserMembershipsWithDetails(ctx context.Context, userID string) ([]*rbac.MembershipWithDetails, error) {
+	query := `SELECT m.id, m.user_id, m.group_id, m.source, m.zk_credential_ref, m.expires_at, m.created_at, m.updated_at,
+	                 g.id, g.org_id, g.parent_id, g.slug, g.name, g.description, g.depth, g.path, g.is_org_admin, g.created_at, g.updated_at
+	          FROM user_memberships m
+	          JOIN groups g ON m.group_id = g.id
+	          WHERE m.user_id = $1
+	            AND (m.expires_at IS NULL OR m.expires_at > NOW())`
+
+	rows, err := d.conn.QueryContext(ctx, query, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list active memberships with details: %w", err)
 	}
 	defer rows.Close()
 

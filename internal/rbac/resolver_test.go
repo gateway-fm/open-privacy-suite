@@ -249,6 +249,9 @@ func (m *MockStore) ListUserMemberships(ctx context.Context, userID string) ([]*
 func (m *MockStore) ListUserMembershipsWithDetails(ctx context.Context, userID string) ([]*MembershipWithDetails, error) {
 	return nil, nil
 }
+func (m *MockStore) ListActiveUserMembershipsWithDetails(ctx context.Context, userID string) ([]*MembershipWithDetails, error) {
+	return nil, nil
+}
 func (m *MockStore) ListGroupMembers(ctx context.Context, groupID string) ([]*UserMembership, error) {
 	return nil, nil
 }
