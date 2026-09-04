@@ -15,5 +15,6 @@
 //
 // The dependency direction is one-way: server imports middleware, never the
 // reverse. internal/archtest enforces that this package stays free of
-// privacy-proxy/internal/{server,db,rbac}.
+// privacy-proxy/internal/{server,db,rbac,config} — the same set this doc
+// claims, so the promise above is pinned by a test rather than by convention.
 package middleware

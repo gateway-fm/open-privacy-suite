@@ -1,7 +1,7 @@
 // Package server hosts the HTTP surface: the JSON-RPC proxy hot path, the
 // auth and OAuth flows, the admin REST API, the explorer API, and the wiring
-// that assembles them (Server.New / NewWithVerifier) plus the background
-// workers they depend on.
+// that assembles them (New / NewWithVerifier, both package-level) plus the
+// background workers they depend on.
 //
 // The package is large, so this map exists to get you to the right file
 // without grepping. It lists families, not every file; `Server` methods are
