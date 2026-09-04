@@ -12,6 +12,7 @@ import (
 	"privacy-proxy/internal/explorer"
 	"privacy-proxy/internal/metrics"
 	"privacy-proxy/internal/proxy"
+	"privacy-proxy/internal/server/middleware"
 )
 
 // RD-1259: the processor is fully wired at construction. These tests lock the
@@ -38,8 +39,8 @@ func (stubAuditBuffer) Append([]byte) (uint64, error) { return 0, nil }
 
 func TestNewJSONRPCProcessor_OptionalDepsOmitted(t *testing.T) {
 	p := NewJSONRPCProcessor(JSONRPCProcessorConfig{
-		CircuitBreaker:     NewCircuitBreaker(),
-		ConcurrencyLimiter: NewConcurrencyLimiter(1, 0),
+		CircuitBreaker:     middleware.NewCircuitBreaker(),
+		ConcurrencyLimiter: middleware.NewConcurrencyLimiter(1, 0),
 	})
 
 	// RD-915 wire-level safe default: tracing ON until env says otherwise.
@@ -77,8 +78,8 @@ func TestNewJSONRPCProcessor_OptionalDepsInstalled(t *testing.T) {
 	m := &metrics.Metrics{}
 
 	p := NewJSONRPCProcessor(JSONRPCProcessorConfig{
-		CircuitBreaker:              NewCircuitBreaker(),
-		ConcurrencyLimiter:          NewConcurrencyLimiter(1, 0),
+		CircuitBreaker:              middleware.NewCircuitBreaker(),
+		ConcurrencyLimiter:          middleware.NewConcurrencyLimiter(1, 0),
 		Metrics:                     m,
 		TxVisibilityStore:           stubTxVisibilityProvider{},
 		AddressVisibilityResolver:   stubAddrVisResolver{},

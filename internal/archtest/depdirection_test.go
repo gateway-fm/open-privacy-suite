@@ -19,6 +19,7 @@ import (
 	_ "privacy-proxy/internal/audit"
 	_ "privacy-proxy/internal/config"
 	_ "privacy-proxy/internal/netguard"
+	_ "privacy-proxy/internal/server/middleware"
 )
 
 // TestDependencyDirection locks the dependency-direction invariants
@@ -31,6 +32,14 @@ import (
 //   - internal/audit must not depend on internal/db. Store implementations
 //     over *db.DB belong to the consumer (see the checkpoint store note in
 //     audit/checkpoint_worker.go and internal/server/retention_audit_store.go).
+//   - internal/server/middleware must not depend on internal/server, db,
+//     rbac or config (RD-1265). The middleware was extracted from the server
+//     package precisely because it needs none of them; a new edge back would
+//     undo the split and re-couple the request-path middleware to the
+//     persistence layer. config is in the list because the package doc
+//     promises these types are constructed from plain values and so are
+//     testable without a config — an invariant the gate has to pin, not just
+//     the doc assert.
 func TestDependencyDirection(t *testing.T) {
 	rules := []struct {
 		pkg       string
@@ -43,6 +52,15 @@ func TestDependencyDirection(t *testing.T) {
 		{
 			pkg:       "privacy-proxy/internal/audit",
 			forbidden: []string{"privacy-proxy/internal/db"},
+		},
+		{
+			pkg: "privacy-proxy/internal/server/middleware",
+			forbidden: []string{
+				"privacy-proxy/internal/server",
+				"privacy-proxy/internal/db",
+				"privacy-proxy/internal/rbac",
+				"privacy-proxy/internal/config",
+			},
 		},
 	}
 

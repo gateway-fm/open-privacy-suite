@@ -16,6 +16,7 @@ import (
 	"privacy-proxy/internal/db"
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
+	"privacy-proxy/internal/server/middleware"
 	"privacy-proxy/internal/tracer"
 )
 
@@ -177,8 +178,8 @@ func TestProxyOpenLoop(t *testing.T) {
 		AccessLogger:       database,
 		RuntimeTracer:      rt,
 		TraceValidator:     tv,
-		CircuitBreaker:     NewCircuitBreaker(),
-		ConcurrencyLimiter: NewConcurrencyLimiter(50, 0),
+		CircuitBreaker:     middleware.NewCircuitBreaker(),
+		ConcurrencyLimiter: middleware.NewConcurrencyLimiter(50, 0),
 	}
 	auditMode := "async"
 	if async {

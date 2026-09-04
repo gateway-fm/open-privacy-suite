@@ -1,4 +1,4 @@
-package server
+package middleware
 
 import (
 	"strings"
@@ -14,11 +14,11 @@ const (
 	maxCorrelationIDLen = 128
 )
 
-// correlationIDMiddleware extracts or generates a correlation ID for each request.
+// CorrelationID extracts or generates a correlation ID for each request.
 // It checks X-Correlation-ID first, then X-Request-ID, then generates a UUIDv4.
 // Client-supplied values are sanitized: capped at 128 chars, non-printable ASCII stripped.
 // If the value is invalid after sanitization, a fresh UUID is generated.
-func correlationIDMiddleware() gin.HandlerFunc {
+func CorrelationID() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var correlationID string
 
@@ -75,8 +75,8 @@ func sanitizeCorrelationID(id string) string {
 	return sanitized
 }
 
-// getCorrelationID retrieves the correlation ID from the gin context.
-func getCorrelationID(c *gin.Context) string {
+// GetCorrelationID retrieves the correlation ID from the gin context.
+func GetCorrelationID(c *gin.Context) string {
 	if id, exists := c.Get(correlationIDKey); exists {
 		if s, ok := id.(string); ok {
 			return s
