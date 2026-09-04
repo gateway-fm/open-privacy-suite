@@ -133,10 +133,13 @@ jobs:
         env:
           TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/privacy_proxy_test?sslmode=disable
         # -p 1 is required, not a tuning knob: every package here shares the ONE
-        # Postgres service above via TEST_DATABASE_URL, and several packages
-        # truncate global tables (access_logs, rbac_audit_log) in their
-        # fixtures. Running packages concurrently lets one package's truncate
-        # wipe rows another package's test just wrote, which surfaces as a
+        # Postgres service above via TEST_DATABASE_URL, and fixtures clear
+        # global tables between tests — ResetTestDatabase deletes from
+        # access_logs, rbac_audit_log and friends (DELETE rather than TRUNCATE,
+        # chosen there to avoid deadlocks under concurrency; see
+        # internal/db/test_helper.go). Avoiding deadlocks does not avoid data
+        # loss: run packages concurrently and one package's cleanup deletes
+        # rows another package's test has just written, which surfaces as a
         # random failure far from its cause. `make test-unit` has always used
         # -p 1 for exactly this reason (Makefile); CI diverged and was flaky.
         run: |
