@@ -92,6 +92,11 @@ function authFailureMessage(reason: string): string {
       return 'Your wallet’s proof could not be verified. Generate a new QR code and try again, or contact your administrator if this keeps happening.';
     case 'invalid_request':
       return 'Your wallet sent a response the server could not read. Generate a new QR code and try again.';
+    case 'network_not_supported':
+      // RD-1251. Neither the user's fault nor fixable by retrying: this
+      // deployment has no state resolver for the wallet's identity network, so
+      // say so plainly instead of inviting another scan that fails identically.
+      return 'This deployment does not support your wallet’s identity network, so its proof cannot be verified here. Retrying will not help — ask your administrator to enable that network, or sign in with a wallet on a supported one.';
     default:
       return 'Authentication failed. Generate a new QR code and try again, or contact your administrator.';
   }

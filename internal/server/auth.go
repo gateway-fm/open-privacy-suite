@@ -707,8 +707,8 @@ type SessionStatusResponse struct {
 	// that only read `completed` are unaffected.
 	Failed bool `json:"failed,omitempty"`
 	// Reason is one of: verification_failed, humanity_required,
-	// invalid_request, authentication_failed. Sensitive and unrecognised
-	// failures collapse to authentication_failed.
+	// invalid_request, network_not_supported, authentication_failed. Sensitive
+	// and unrecognised failures collapse to authentication_failed.
 	Reason string `json:"reason,omitempty"`
 }
 
@@ -716,7 +716,7 @@ type SessionStatusResponse struct {
 // Frontend polls this after displaying QR code to check if wallet has completed auth
 //
 // @Summary      Poll a Privado ID auth session for completion
-// @Description  The frontend polls this after showing the QR code to learn whether the wallet has completed authentication. While pending it returns `completed:false`; once complete it returns the issued tokens (and mirrors the access JWT into an HttpOnly cookie). If the wallet's proof was rejected it returns `failed:true` with a `reason`, so the caller can surface the failure immediately instead of polling until it times out. `reason` is one of `verification_failed`, `humanity_required`, `invalid_request`, or `authentication_failed`; sensitive and unrecognised failures collapse to `authentication_failed`, and the value never carries internal error detail. A rejection is not final: a wallet that retries successfully still completes the session, so callers should keep polling while presenting the failure. Deliberately not rate-limited: it is read-only polling during the login flow.
+// @Description  The frontend polls this after showing the QR code to learn whether the wallet has completed authentication. While pending it returns `completed:false`; once complete it returns the issued tokens (and mirrors the access JWT into an HttpOnly cookie). If the wallet's proof was rejected it returns `failed:true` with a `reason`, so the caller can surface the failure immediately instead of polling until it times out. `reason` is one of `verification_failed`, `humanity_required`, `invalid_request`, `network_not_supported`, or `authentication_failed`; sensitive and unrecognised failures collapse to `authentication_failed`, and the value never carries internal error detail. `network_not_supported` means this deployment has no state resolver for the wallet's identity network — retrying cannot help, and the operator needs to configure that network (the supported set is published by `GET /api/v1/auth/providers`); the code itself names no network. A rejection is not final: a wallet that retries successfully still completes the session, so callers should keep polling while presenting the failure. Deliberately not rate-limited: it is read-only polling during the login flow.
 // @Tags         Auth
 // @Produce      json
 // @Param        id path string true "auth session ID"

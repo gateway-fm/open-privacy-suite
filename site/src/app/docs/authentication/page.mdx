@@ -404,8 +404,11 @@ The reason comes from a fixed set and never carries internal detail:
 | `verification_failed` | The proof did not verify against the authorization request. | Generate a new QR code and retry. If it persists, check that the wallet's identity network is one this deployment supports. |
 | `humanity_required` | A ProofOfHumanity credential is required and was absent. | Complete verification, then retry. |
 | `invalid_request` | The wallet's callback body was unreadable. | Generate a new QR code and retry. |
+| `network_not_supported` | This deployment has no state resolver for the wallet's identity network, so the proof cannot be verified here. | Nothing — retrying cannot help. The operator must enable that network, or the user must sign in with a wallet on a supported one. |
 | `authentication_failed` | Anything else, including a banned account and internal faults. | Check the proxy log — the precise cause is recorded there. |
 
 A banned account and an internal fault both collapse to `authentication_failed` deliberately: the session ID is rendered in the on-screen QR code, so anyone who photographs it could otherwise poll for someone else's login outcome. Operators read the precise reason from the proxy log and from `GET /api/v1/admin/sessions`, which reports it unreduced.
+
+`network_not_supported` is reported rather than collapsed because it discloses nothing that is not already public: the set of supported networks is published by `GET /api/v1/auth/providers`, which takes no authentication, and the code itself names no network. Withholding it only cost the person at the browser the one piece of information that would have told them the deployment — not their wallet — needs attention.
 
 A rejection is **not final**, for the same reason. Because that session ID is visible, anyone who photographs the QR can post one bogus proof — so a failure must not be able to cancel a login that still succeeds. The login page shows the failure but keeps polling, and a wallet that retries successfully still completes the session. Any client polling this endpoint should do the same rather than treating `failed: true` as terminal.
