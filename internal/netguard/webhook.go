@@ -142,17 +142,12 @@ func ValidateWebhookURLForEnv(rawURL string, allowInsecure bool) error {
 		return fmt.Errorf("SIEM_WEBHOOK_URL must not target a loopback address")
 	}
 
-	// If the host is an IP literal, run proper CIDR checks.
+	// If the host is an IP literal, run the same range checks the dial-time
+	// guard applies to resolved addresses (CheckResolvedAddr is the shared
+	// rule set, so the two halves cannot drift apart).
 	if ip, ok := parseIPHost(host); ok {
-		// 0.0.0.0 and :: mean "this host"/all-interfaces when dialed on
-		// many stacks — a loopback-class destination.
-		if ip.IsUnspecified() {
-			return fmt.Errorf("SIEM_WEBHOOK_URL must not target the unspecified address (%s)", ip)
-		}
-		for _, blocked := range blockedCIDRs {
-			if blocked.Contains(ip) {
-				return fmt.Errorf("SIEM_WEBHOOK_URL targets a blocked IP range (%s is in %s)", ip, blocked)
-			}
+		if err := CheckResolvedAddr(ip); err != nil {
+			return fmt.Errorf("SIEM_WEBHOOK_URL: %w", err)
 		}
 	} else if strings.ContainsAny(host, ":%") {
 		// Looks like an IP literal (hostnames contain neither ':' nor '%')
