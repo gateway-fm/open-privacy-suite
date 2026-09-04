@@ -158,7 +158,7 @@ func (r *Resolver) computePermissions(ctx context.Context, userID, orgID string)
 			OrgID:          orgID,
 			AllowedMethods: []string{},
 			ContractAccess: make(map[string]ContractAccess),
-			Claims:  []Claim{},
+			Claims:         []Claim{},
 			ComputedAt:     time.Now(),
 			ExpiresAt:      time.Now().Add(r.cacheTTL),
 		}, nil
@@ -178,6 +178,13 @@ func (r *Resolver) computePermissions(ctx context.Context, userID, orgID string)
 		return r.computeOrgAdminPermissions(ctx, userID, orgID, memberships)
 	}
 
+	// Batch-load every group's access, grants and granted contracts up front,
+	// so the merge loop below issues no queries at all (RD-1263).
+	batch, err := r.loadGroupPerms(ctx, membershipGroupIDs(memberships), true)
+	if err != nil {
+		return nil, err
+	}
+
 	// Track final merged permissions across all memberships
 	var finalMethods []string
 	finalContractAccess := make(map[string]ContractAccess)
@@ -187,10 +194,7 @@ func (r *Resolver) computePermissions(ctx context.Context, userID, orgID string)
 
 	for _, m := range memberships {
 		// Get the group's own permissions directly (flat — no hierarchy walk)
-		membershipPerms, err := r.computeGroupPermissions(ctx, m.Group.ID)
-		if err != nil {
-			return nil, err
-		}
+		membershipPerms := r.groupPerms(batch, m.Group.ID)
 
 		if firstMembership {
 			// First membership - use its permissions as baseline
@@ -263,16 +267,22 @@ func (r *Resolver) computeOrgAdminPermissions(ctx context.Context, userID, orgID
 		}
 	}
 
-	// Still compute methods and API key from memberships (take the most permissive)
+	// Still compute methods and API key from memberships (take the most
+	// permissive). Only the groups' access rows are read: org admins already
+	// hold all claims on every contract above, so the grants and contracts
+	// halves are not consulted at all (RD-1263 — this path used to issue the
+	// full per-group query trio and discard the contract half).
+	batch, err := r.loadGroupPerms(ctx, membershipGroupIDs(memberships), false)
+	if err != nil {
+		return nil, err
+	}
+
 	var finalMethods []string
 	var finalRPCAPIKey string
 
 	for _, m := range memberships {
 		// Get the group's own permissions directly (flat — no hierarchy walk)
-		membershipPerms, err := r.computeGroupPermissions(ctx, m.Group.ID)
-		if err != nil {
-			return nil, err
-		}
+		membershipPerms := r.groupPerms(batch, m.Group.ID)
 
 		finalMethods = unionStrings(finalMethods, membershipPerms.AllowedMethods)
 		if finalRPCAPIKey == "" && membershipPerms.RPCAPIKey != "" {
@@ -293,15 +303,83 @@ func (r *Resolver) computeOrgAdminPermissions(ctx context.Context, userID, orgID
 	}, nil
 }
 
-// computeGroupPermissions computes permissions from a single group's own access
-// settings and contract grants (flat — no hierarchy walk).
-func (r *Resolver) computeGroupPermissions(ctx context.Context, groupID string) (*hierarchyPerms, error) {
-	access, err := r.store.GetGroupAccess(ctx, groupID)
+// groupPermsBatch holds the batch-loaded inputs the per-group permission
+// builder needs, so building each group's permissions costs no queries.
+type groupPermsBatch struct {
+	access    map[string]*GroupAccess
+	grants    map[string][]*ContractGrant
+	contracts map[string]*Contract
+}
+
+// membershipGroupIDs returns the distinct group IDs of the given memberships,
+// preserving membership order.
+func membershipGroupIDs(memberships []*MembershipWithDetails) []string {
+	ids := make([]string, 0, len(memberships))
+	seen := make(map[string]bool, len(memberships))
+	for _, m := range memberships {
+		if seen[m.Group.ID] {
+			continue
+		}
+		seen[m.Group.ID] = true
+		ids = append(ids, m.Group.ID)
+	}
+	return ids
+}
+
+// loadGroupPerms batch-loads everything groupPerms needs for the given groups:
+// their access rows, their contract grants, and the granted contracts. Three
+// queries regardless of group count — one when withGrants is false, which is
+// all the org-admin path reads (RD-1263: this replaced a per-group
+// GetGroupAccess + ListContractGrantsByGroup + GetContractsByIDs trio, so the
+// cache-miss fan-out no longer scales with membership count).
+//
+// The contracts query is skipped when no group has a grant, matching the
+// previous per-group behaviour.
+func (r *Resolver) loadGroupPerms(ctx context.Context, groupIDs []string, withGrants bool) (*groupPermsBatch, error) {
+	access, err := r.store.GetGroupAccessBatch(ctx, groupIDs)
 	if err != nil {
 		return nil, err
 	}
+	batch := &groupPermsBatch{access: access}
 
-	result := &hierarchyPerms{
+	if !withGrants {
+		return batch, nil
+	}
+
+	grants, err := r.store.ListContractGrantsBatch(ctx, groupIDs)
+	if err != nil {
+		return nil, err
+	}
+	batch.grants = grants
+
+	var contractIDs []string
+	seen := make(map[string]bool)
+	for _, groupID := range groupIDs {
+		for _, grant := range grants[groupID] {
+			if seen[grant.ContractID] {
+				continue
+			}
+			seen[grant.ContractID] = true
+			contractIDs = append(contractIDs, grant.ContractID)
+		}
+	}
+	if len(contractIDs) > 0 {
+		contracts, err := r.store.GetContractsByIDs(ctx, contractIDs)
+		if err != nil {
+			return nil, err
+		}
+		batch.contracts = contracts
+	}
+
+	return batch, nil
+}
+
+// groupPerms builds one group's permissions from batch-loaded data (flat — no
+// hierarchy walk). Pure in-memory: same result as querying that group directly.
+func (r *Resolver) groupPerms(batch *groupPermsBatch, groupID string) *groupPermSet {
+	access := batch.access[groupID]
+
+	result := &groupPermSet{
 		AllowedMethods: []string{},
 		ContractAccess: make(map[string]ContractAccess),
 		Claims:         []Claim{},
@@ -327,200 +405,33 @@ func (r *Resolver) computeGroupPermissions(ctx context.Context, groupID string) 
 		}
 	}
 
-	// Get contract grants for this group
-	grants, err := r.store.ListContractGrantsByGroup(ctx, groupID)
-	if err != nil {
-		return nil, err
-	}
-
-	if len(grants) > 0 {
-		// Batch load contracts
-		contractIDs := make([]string, len(grants))
-		for i, g := range grants {
-			contractIDs[i] = g.ContractID
+	// Build contract access from grants using group's claims. batch.grants is
+	// nil when the caller asked for access only; a nil-map read yields no
+	// grants, leaving ContractAccess empty.
+	for _, grant := range batch.grants[groupID] {
+		contract, ok := batch.contracts[grant.ContractID]
+		if !ok {
+			continue // Contract deleted, skip
 		}
-		contracts, err := r.store.GetContractsByIDs(ctx, contractIDs)
-		if err != nil {
-			return nil, err
-		}
-
-		// Build contract access from grants using group's claims
-		for _, grant := range grants {
-			contract, ok := contracts[grant.ContractID]
-			if !ok {
-				continue // Contract deleted, skip
-			}
-			address := strings.ToLower(contract.Address)
-			result.ContractAccess[address] = ContractAccess{
-				Claims:     result.Claims,
-				Functions:  grant.Functions,
-				EventRules: grant.EventRules,
-			}
+		address := strings.ToLower(contract.Address)
+		result.ContractAccess[address] = ContractAccess{
+			Claims:     result.Claims,
+			Functions:  grant.Functions,
+			EventRules: grant.EventRules,
 		}
 	}
 
-	return result, nil
+	return result
 }
 
-// hierarchyPerms holds permissions computed through a group hierarchy.
-type hierarchyPerms struct {
+// groupPermSet holds the permissions of a single group. Groups are flat since
+// RD-804 (parent_id is retained but ignored), so this is one group's own
+// access row plus its contract grants — callers merge across memberships.
+type groupPermSet struct {
 	AllowedMethods []string
 	ContractAccess map[string]ContractAccess // address -> access
 	Claims         []Claim
-	RPCAPIKey      string // First non-empty key found in hierarchy (deepest group wins)
-}
-
-// computeHierarchyPermissions computes permissions by traversing the group hierarchy
-// from root to leaf, applying INTERSECTION at each level (child narrows parent).
-func (r *Resolver) computeHierarchyPermissions(ctx context.Context, hierarchy []*Group) (*hierarchyPerms, error) {
-	if len(hierarchy) == 0 {
-		return &hierarchyPerms{
-			AllowedMethods: []string{},
-			ContractAccess: make(map[string]ContractAccess),
-			Claims:  []Claim{},
-		}, nil
-	}
-
-	// Start with no restrictions (nil means "all allowed" until we see the first actual permissions)
-	result := &hierarchyPerms{
-		AllowedMethods: nil,
-		ContractAccess: nil, // nil means "all allowed" until first group has grants
-		Claims:  nil,
-	}
-
-	// Collect all group IDs for batch queries
-	groupIDs := make([]string, len(hierarchy))
-	for i, group := range hierarchy {
-		groupIDs[i] = group.ID
-	}
-
-	// Batch load all group access settings and contract grants (2 queries instead of 2*N)
-	allAccess, err := r.store.GetGroupAccessBatch(ctx, groupIDs)
-	if err != nil {
-		return nil, err
-	}
-
-	allGrants, err := r.store.ListContractGrantsBatch(ctx, groupIDs)
-	if err != nil {
-		return nil, err
-	}
-
-	// Track contract data for batch loading
-	contractAddresses := make(map[string]string) // contractID -> address
-	var contractIDs []string                     // IDs to batch load
-
-	for _, group := range hierarchy {
-		access := allAccess[group.ID]
-
-		if access != nil {
-			// Apply INTERSECTION for allowed methods (restrictive inheritance).
-			// nil means "not set / inherit from parent" (no narrowing).
-			// []string{} means "explicitly empty / deny all" (narrows to empty).
-			if result.AllowedMethods == nil {
-				result.AllowedMethods = access.AllowedMethods
-			} else if access.AllowedMethods != nil {
-				result.AllowedMethods = intersectStrings(result.AllowedMethods, access.AllowedMethods)
-			}
-
-			// Apply INTERSECTION for default claims.
-			// nil means "not set / inherit from parent" (no narrowing).
-			// []Claim{} means "explicitly empty / deny all" (narrows to empty).
-			if result.Claims == nil {
-				result.Claims = access.Claims
-			} else if access.Claims != nil {
-				result.Claims = IntersectClaims(result.Claims, access.Claims)
-			}
-
-			// RPC API key: deepest group in hierarchy wins (last non-empty value).
-			// Decrypt stored value (no-op if encryption is disabled or value is plaintext).
-			if access.RPCAPIKey != nil && *access.RPCAPIKey != "" {
-				decrypted, err := crypto.Decrypt(*access.RPCAPIKey, r.encryptionKey)
-				if err != nil {
-					// Decryption failed — use the raw value (may be legacy plaintext)
-					result.RPCAPIKey = *access.RPCAPIKey
-				} else {
-					result.RPCAPIKey = decrypted
-				}
-			}
-		}
-
-		// Collect contract IDs we need to load
-		for _, grant := range allGrants[group.ID] {
-			if _, ok := contractAddresses[grant.ContractID]; !ok {
-				contractIDs = append(contractIDs, grant.ContractID)
-			}
-		}
-	}
-
-	// Batch load all contracts we need
-	if len(contractIDs) > 0 {
-		contracts, err := r.store.GetContractsByIDs(ctx, contractIDs)
-		if err != nil {
-			return nil, err
-		}
-		for id, contract := range contracts {
-			contractAddresses[id] = strings.ToLower(contract.Address)
-		}
-	}
-
-	// Now process grants using pre-loaded data (no additional DB queries)
-	// Claims come from the GROUP (via GroupAccess), not from the grant itself.
-	// The grant just establishes that the group has access to the contract,
-	// with optional function restrictions from the grant.
-	for _, group := range hierarchy {
-		access := allAccess[group.ID]
-
-		// Get the claims to use for this group's grants
-		// If group has no access settings, use empty claims
-		var groupClaims []Claim
-		if access != nil {
-			groupClaims = access.Claims
-		}
-
-		for _, grant := range allGrants[group.ID] {
-			address, ok := contractAddresses[grant.ContractID]
-			if !ok {
-				continue // Contract deleted, skip
-			}
-
-			// Initialize result.ContractAccess if this is the first grant we've seen
-			if result.ContractAccess == nil {
-				result.ContractAccess = make(map[string]ContractAccess)
-			}
-
-			// Apply contract grant with INTERSECTION logic
-			// Claims come from the group, functions come from the grant
-			if existing, ok := result.ContractAccess[address]; ok {
-				// Child narrows parent - intersect claims and functions
-				// Claims are intersected with group's claims (inherited from GroupAccess)
-				result.ContractAccess[address] = ContractAccess{
-					Claims:     IntersectClaims(existing.Claims, groupClaims),
-					Functions:  intersectFunctions(existing.Functions, grant.Functions),
-					EventRules: unionEventRules(existing.EventRules, grant.EventRules),
-				}
-			} else {
-				// First time seeing this contract in hierarchy - use group's claims
-				result.ContractAccess[address] = ContractAccess{
-					Claims:     groupClaims,
-					Functions:  grant.Functions,
-					EventRules: grant.EventRules,
-				}
-			}
-		}
-	}
-
-	// Ensure we return empty values instead of nil
-	if result.AllowedMethods == nil {
-		result.AllowedMethods = []string{}
-	}
-	if result.ContractAccess == nil {
-		result.ContractAccess = make(map[string]ContractAccess)
-	}
-	if result.Claims == nil {
-		result.Claims = []Claim{}
-	}
-
-	return result, nil
+	RPCAPIKey      string // The group's own key, "" when unset
 }
 
 // InvalidateUserPermissions invalidates the cache for a specific user.
