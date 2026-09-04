@@ -1,4 +1,4 @@
-package server
+package middleware
 
 import (
 	"bytes"
@@ -23,7 +23,7 @@ func TestBodyLimitMiddleware(t *testing.T) {
 
 	newRouter := func() *gin.Engine {
 		r := gin.New()
-		r.Use(bodyLimitMiddleware(max))
+		r.Use(BodyLimit(max))
 		r.POST("/x", func(c *gin.Context) {
 			// Handler reads the body so the MaxBytesReader backstop can fire.
 			b, err := io.ReadAll(c.Request.Body)

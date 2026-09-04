@@ -1,4 +1,4 @@
-package server
+package middleware
 
 import (
 	"sync"
@@ -16,9 +16,17 @@ type CircuitBreaker struct {
 
 // NewCircuitBreaker creates a circuit breaker with a 1-second cooldown.
 func NewCircuitBreaker() *CircuitBreaker {
+	return NewCircuitBreakerWithCooldown(time.Second)
+}
+
+// NewCircuitBreakerWithCooldown creates a circuit breaker with an explicit
+// cooldown. Callers outside this package need it to build a breaker that trips
+// for less than the production second — before the package split, tests reached
+// into the unexported fields directly, which is no longer possible.
+func NewCircuitBreakerWithCooldown(cooldown time.Duration) *CircuitBreaker {
 	return &CircuitBreaker{
 		tripped:  make(map[string]time.Time),
-		cooldown: time.Second,
+		cooldown: cooldown,
 	}
 }
 

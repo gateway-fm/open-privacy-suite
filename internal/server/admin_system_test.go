@@ -11,6 +11,7 @@ import (
 
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
+	"privacy-proxy/internal/server/middleware"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -44,8 +45,8 @@ func setupSystemAdminTestServer(t *testing.T) *testServerRBAC {
 		RateLimiter:        &noopRateLimiter{},
 		Proxy:              &proxy.Proxy{},
 		AccessLogger:       ts.db,
-		CircuitBreaker:     NewCircuitBreaker(),
-		ConcurrencyLimiter: NewConcurrencyLimiter(50, 0),
+		CircuitBreaker:     middleware.NewCircuitBreaker(),
+		ConcurrencyLimiter: middleware.NewConcurrencyLimiter(50, 0),
 		EthCallTracing:     &EthCallTracingConfig{Enabled: true, Timeout: 5 * time.Second},
 	})
 	ts.Server.jsonrpcProcessor = proc

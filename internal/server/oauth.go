@@ -15,6 +15,7 @@ import (
 	"time"
 
 	authpkg "privacy-proxy/internal/auth"
+	"privacy-proxy/internal/server/middleware"
 	"privacy-proxy/internal/types"
 
 	"github.com/gin-gonic/gin"
@@ -406,7 +407,7 @@ func (s *Server) handleOAuthSilentComplete(c *gin.Context) {
 	// — that endpoint can refuse the response if audit fails; here the code
 	// has already been minted and returning 500 would leave the user
 	// stranded with a valid auth code they can't redeem cleanly.)
-	if err := s.recordOAuthSilentSSO(c.Request.Context(), callerDID, oauthSession.ClientID, oauthSession.RedirectURI, getCorrelationID(c)); err != nil {
+	if err := s.recordOAuthSilentSSO(c.Request.Context(), callerDID, oauthSession.ClientID, oauthSession.RedirectURI, middleware.GetCorrelationID(c)); err != nil {
 		slog.Error("oauth silent-complete: audit write failed", "actor_did", callerDID, "client_id", oauthSession.ClientID, "err", err)
 	}
 

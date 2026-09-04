@@ -7,6 +7,7 @@ import (
 
 	"privacy-proxy/internal/db"
 	"privacy-proxy/internal/rbac"
+	"privacy-proxy/internal/server/middleware"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -30,8 +31,8 @@ func TestViewerAdminContracts(t *testing.T) {
 		RBACAccessCtrl:     ts.rbacAccessCtrl,
 		RateLimiter:        &noopRateLimiter{},
 		AccessLogger:       ts.db,
-		CircuitBreaker:     NewCircuitBreaker(),
-		ConcurrencyLimiter: NewConcurrencyLimiter(50, 0),
+		CircuitBreaker:     middleware.NewCircuitBreaker(),
+		ConcurrencyLimiter: middleware.NewConcurrencyLimiter(50, 0),
 	})
 
 	// --- Fixture ---
@@ -196,8 +197,8 @@ func TestApplyResponseFilter_AdminBypass_UsesUUIDFromAccessCheckResult(t *testin
 		RBACAccessCtrl:     ts.rbacAccessCtrl,
 		RateLimiter:        &noopRateLimiter{},
 		AccessLogger:       ts.db,
-		CircuitBreaker:     NewCircuitBreaker(),
-		ConcurrencyLimiter: NewConcurrencyLimiter(50, 0),
+		CircuitBreaker:     middleware.NewCircuitBreaker(),
+		ConcurrencyLimiter: middleware.NewConcurrencyLimiter(50, 0),
 	})
 
 	// Org with a contract; Alice is org admin (is_org_admin=true).

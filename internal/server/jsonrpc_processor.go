@@ -23,6 +23,7 @@ import (
 	"privacy-proxy/internal/metrics"
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
+	"privacy-proxy/internal/server/middleware"
 	"privacy-proxy/internal/tracer"
 )
 
@@ -72,8 +73,8 @@ type JSONRPCProcessor struct {
 	addrVisResolver addressVisibilityResolver
 
 	// Circuit breaker + concurrency limiter (replaces rate limiter for authenticated users)
-	circuitBreaker         *CircuitBreaker
-	concurrencyLimiter     *ConcurrencyLimiter
+	circuitBreaker         *middleware.CircuitBreaker
+	concurrencyLimiter     *middleware.ConcurrencyLimiter
 	defaultRPCAPIKey       string
 	defaultRPCAPIKeyHeader string // operator-wide header name from RPC_API_KEY_HEADER; empty => proxy.DefaultAPIKeyHeader
 
@@ -231,8 +232,8 @@ type JSONRPCProcessorConfig struct {
 	RateLimiter        RateLimiterInterface
 	Proxy              *proxy.Proxy
 	AccessLogger       AccessLogger
-	CircuitBreaker     *CircuitBreaker
-	ConcurrencyLimiter *ConcurrencyLimiter
+	CircuitBreaker     *middleware.CircuitBreaker
+	ConcurrencyLimiter *middleware.ConcurrencyLimiter
 	DefaultRPCAPIKey   string
 
 	// Optional send-path runtime tracing (nil = tracing-dependent methods
