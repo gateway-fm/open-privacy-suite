@@ -98,6 +98,31 @@ func (r *Resolver) ResolvePermissions(ctx context.Context, userID, orgID string)
 	r.inFlight[cacheKey] = entry
 	r.inFlightMu.Unlock()
 
+	// Snapshot the cache generation before reading any state (RD-1267). If a
+	// mutation commits while the compute is in flight, its invalidation finds
+	// nothing to delete — nothing is cached yet — and an unconditional
+	// publication would leave the pre-mutation permissions in the shared
+	// cache for the full TTL, keeping a revoked grant usable. Comparing the
+	// generation at publication time detects exactly that window.
+	//
+	// genKnown == false means we could not establish a baseline, in which
+	// case nothing is published: discarding costs one recompute, publishing
+	// blind risks serving stale permissions.
+	genStore, genCapable := r.store.(CacheGenerationStore)
+	var (
+		genBefore int64
+		genKnown  bool
+	)
+	if genCapable {
+		g, gErr := genStore.CacheGeneration(ctx)
+		if gErr != nil {
+			slog.Warn("rbac resolver: cannot read cache generation, skipping cache publication",
+				"user_id", userID, "org_id", orgID, "err", gErr)
+		} else {
+			genBefore, genKnown = g, true
+		}
+	}
+
 	// Compute permissions
 	perms, err := r.computePermissions(ctx, userID, orgID)
 
@@ -111,11 +136,31 @@ func (r *Resolver) ResolvePermissions(ctx context.Context, userID, orgID string)
 	// InvalidateUser / InvalidateOrg from a concurrent mutation and
 	// repopulate the cache with stale permissions for the 5-minute TTL.
 	if err == nil {
-		if cErr := r.store.SetCachedPermissions(ctx, perms); cErr != nil {
-			// Cache-write failure is not a correctness issue (the
-			// returned perms are still authoritative); a future call
-			// will re-resolve from the DB. Don't fail the request.
-			slog.Warn("rbac resolver: SetCachedPermissions failed", "user_id", userID, "org_id", orgID, "err", cErr)
+		switch {
+		case genCapable && genKnown:
+			published, cErr := genStore.SetCachedPermissionsAtGeneration(ctx, perms, genBefore)
+			switch {
+			case cErr != nil:
+				// Cache-write failure is not a correctness issue (the
+				// returned perms are still authoritative); a future call
+				// will re-resolve from the DB. Don't fail the request.
+				slog.Warn("rbac resolver: SetCachedPermissionsAtGeneration failed", "user_id", userID, "org_id", orgID, "err", cErr)
+			case !published:
+				// An invalidation committed during the compute. The caller
+				// still gets what was true when it was read; the cache stays
+				// empty so the next request resolves fresh state.
+				slog.Debug("rbac resolver: discarded cache publication, invalidated during compute (RD-1267)",
+					"user_id", userID, "org_id", orgID, "generation", genBefore)
+			}
+		case genCapable && !genKnown:
+			// Baseline unknown — already logged above. Fail safe: publish nothing.
+		default:
+			// Store without the generation capability (test doubles): keep the
+			// previous unconditional publish. Production uses *db.DB, which
+			// implements CacheGenerationStore under a compile-time assertion.
+			if cErr := r.store.SetCachedPermissions(ctx, perms); cErr != nil {
+				slog.Warn("rbac resolver: SetCachedPermissions failed", "user_id", userID, "org_id", orgID, "err", cErr)
+			}
 		}
 	}
 
