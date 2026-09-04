@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/lib/pq"
-
 	"privacy-proxy/internal/rbac"
 )
 
@@ -175,7 +173,7 @@ func (d *DB) ListOrganizationsByIDsPaginated(ctx context.Context, allowedIDs []s
 	}
 
 	var total int
-	if err := d.conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM organizations WHERE id = ANY($1)`, pq.Array(allowedIDs)).Scan(&total); err != nil {
+	if err := d.conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM organizations WHERE id = ANY($1)`, allowedIDs).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("failed to count organizations: %w", err)
 	}
 
@@ -184,7 +182,7 @@ func (d *DB) ListOrganizationsByIDsPaginated(ctx context.Context, allowedIDs []s
 	          WHERE id = ANY($1)
 	          ORDER BY created_at DESC, name ASC LIMIT $2 OFFSET $3`
 
-	rows, err := d.conn.QueryContext(ctx, query, pq.Array(allowedIDs), limit, offset)
+	rows, err := d.conn.QueryContext(ctx, query, allowedIDs, limit, offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to list organizations: %w", err)
 	}
