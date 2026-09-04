@@ -268,15 +268,20 @@ func (s *Server) deleteContract(c *gin.Context) {
 		return
 	}
 
-	// Invalidate cache for the entire org (grants may affect many groups)
-	s.rbacAccessCtrl.InvalidateOrg(c.Request.Context(), orgID)
-
-	if err := s.db.DeleteContract(c.Request.Context(), contract.ID); err != nil {
+	// Delete the contract and invalidate the org's cached permissions in ONE
+	// transaction (RD-1267). Invalidating first in a separate statement left a
+	// window where a compute could snapshot the already-bumped generation,
+	// read the still-present contract, and publish the stale permissions after
+	// the delete committed. Grants may affect many groups, so the whole org is
+	// invalidated.
+	if err := s.db.DeleteContractAndInvalidate(c.Request.Context(), contract.ID, orgID); err != nil {
 		respondInternalErrorAndLog(c, "failed to delete contract",
-			"admin_rbac_contract: DeleteContract failed",
+			"admin_rbac_contract: DeleteContractAndInvalidate failed",
 			"contract_id", contract.ID, "err", err)
 		return
 	}
+	// Process-local cache cannot join that transaction; clear it after commit.
+	s.rbacAccessCtrl.InvalidateOrgLocalCache(orgID)
 
 	c.JSON(http.StatusOK, gin.H{"message": "contract deleted"})
 }
@@ -1716,15 +1721,17 @@ func (s *Server) deleteContractGrant(c *gin.Context) {
 		return
 	}
 
-	// Invalidate cache before deleting
-	s.rbacAccessCtrl.InvalidateGroup(c.Request.Context(), groupID)
-
-	if err := s.db.DeleteContractGrant(c.Request.Context(), grant.ID); err != nil {
+	// Delete the grant and invalidate the group members' cached permissions in
+	// ONE transaction (RD-1267) — invalidating first in a separate statement
+	// let a revoked grant survive in the cache for the whole TTL.
+	if err := s.db.DeleteContractGrantAndInvalidate(c.Request.Context(), grant.ID, groupID); err != nil {
 		respondInternalErrorAndLog(c, "failed to delete grant",
-			"admin_rbac_contract: DeleteContractGrant failed",
+			"admin_rbac_contract: DeleteContractGrantAndInvalidate failed",
 			"grant_id", grant.ID, "err", err)
 		return
 	}
+	// Process-local cache cannot join that transaction; clear it after commit.
+	s.rbacAccessCtrl.InvalidateOrgLocalCache(orgID)
 
 	c.JSON(http.StatusOK, gin.H{"message": "grant deleted"})
 }

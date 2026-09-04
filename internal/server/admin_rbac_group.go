@@ -519,13 +519,19 @@ func (s *Server) deleteGroup(c *gin.Context) {
 		return
 	}
 
-	// Invalidate cache before deleting
-	s.rbacAccessCtrl.InvalidateGroup(c.Request.Context(), groupID)
-
-	if err := s.db.DeleteGroup(c.Request.Context(), groupID); err != nil {
+	// Delete the group and invalidate its members' cached permissions in ONE
+	// transaction (RD-1267) — invalidating first in a separate statement let a
+	// compute publish the pre-delete permissions after the delete committed,
+	// keeping the deleted group's access usable for the whole cache TTL.
+	if err := s.db.DeleteGroupAndInvalidate(c.Request.Context(), groupID); err != nil {
 		slog.Error("delete group: delete failed", "group_id", groupID, "err", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete group"})
 		return
+	}
+	// Process-local cache cannot join that transaction; clear it after commit.
+	// group was loaded before the delete, so its OrgID is still available.
+	if group != nil {
+		s.rbacAccessCtrl.InvalidateOrgLocalCache(group.OrgID)
 	}
 
 	if group != nil {
