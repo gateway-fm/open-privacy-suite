@@ -8,8 +8,6 @@ import (
 	"time"
 
 	"privacy-proxy/internal/rbac"
-
-	"github.com/lib/pq"
 )
 
 // Effective Permissions Cache operations
@@ -19,12 +17,12 @@ func (d *DB) GetCachedPermissions(ctx context.Context, userID, orgID string) (*r
 	          FROM effective_permissions_cache WHERE user_id = $1 AND org_id = $2 AND expires_at > $3`
 
 	perms := &rbac.EffectivePermissions{}
-	var allowedMethods, claimsArr pq.StringArray
+	var allowedMethods, claimsArr []string
 	var contractAccess []byte
 
 	err := d.conn.QueryRowContext(ctx, query, userID, orgID, time.Now()).Scan(
 		&perms.ID, &perms.UserID, &perms.OrgID,
-		&allowedMethods, &contractAccess, &claimsArr,
+		ScanTextArray(&allowedMethods), &contractAccess, ScanTextArray(&claimsArr),
 		&perms.ComputedAt, &perms.ExpiresAt,
 	)
 	if err == sql.ErrNoRows {
@@ -70,7 +68,7 @@ func (d *DB) SetCachedPermissions(ctx context.Context, perms *rbac.EffectivePerm
 
 	_, err := d.conn.ExecContext(ctx, query,
 		perms.ID, perms.UserID, perms.OrgID,
-		pq.Array(perms.AllowedMethods), contractAccess, pq.Array(claimsArr),
+		perms.AllowedMethods, contractAccess, claimsArr,
 		perms.ComputedAt, perms.ExpiresAt,
 	)
 	return err

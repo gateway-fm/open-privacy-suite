@@ -5,8 +5,6 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
-
-	"github.com/lib/pq"
 )
 
 // SaveTxVisibility stores visibleTo DIDs for a transaction.
@@ -27,7 +25,7 @@ func (d *DB) SaveTxVisibility(ctx context.Context, txHash string, visibleToDIDs 
 	query := `INSERT INTO tx_visible_to (tx_hash, visible_to_dids, sender_did, org_id)
 	          VALUES ($1, $2, $3, $4)
 	          ON CONFLICT (tx_hash) DO NOTHING`
-	_, err := d.conn.ExecContext(ctx, query, strings.ToLower(txHash), pq.Array(visibleToDIDs), senderDID, orgID)
+	_, err := d.conn.ExecContext(ctx, query, strings.ToLower(txHash), visibleToDIDs, senderDID, orgID)
 	if err != nil {
 		return fmt.Errorf("failed to save tx visibility: %w", err)
 	}
@@ -39,7 +37,7 @@ func (d *DB) SaveTxVisibility(ctx context.Context, txHash string, visibleToDIDs 
 func (d *DB) GetTxVisibility(ctx context.Context, txHash string) ([]string, error) {
 	query := `SELECT visible_to_dids FROM tx_visible_to WHERE tx_hash = $1 LIMIT 1`
 	var dids []string
-	err := d.conn.QueryRowContext(ctx, query, strings.ToLower(txHash)).Scan(pq.Array(&dids))
+	err := d.conn.QueryRowContext(ctx, query, strings.ToLower(txHash)).Scan(ScanTextArray(&dids))
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -64,7 +62,7 @@ func (d *DB) GetBatchTxVisibility(ctx context.Context, txHashes []string) (map[s
 	}
 
 	query := `SELECT tx_hash, visible_to_dids FROM tx_visible_to WHERE tx_hash = ANY($1)`
-	rows, err := d.conn.QueryContext(ctx, query, pq.Array(lower))
+	rows, err := d.conn.QueryContext(ctx, query, lower)
 	if err != nil {
 		return nil, fmt.Errorf("failed to batch get tx visibility: %w", err)
 	}
@@ -74,7 +72,7 @@ func (d *DB) GetBatchTxVisibility(ctx context.Context, txHashes []string) (map[s
 	for rows.Next() {
 		var txHash string
 		var dids []string
-		if err := rows.Scan(&txHash, pq.Array(&dids)); err != nil {
+		if err := rows.Scan(&txHash, ScanTextArray(&dids)); err != nil {
 			return nil, fmt.Errorf("failed to scan tx visibility row: %w", err)
 		}
 		result[txHash] = dids

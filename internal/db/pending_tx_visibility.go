@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-
-	"github.com/lib/pq"
 )
 
 // MaxVisibilityAttempts is the soft cap on reconciliation retries before a
@@ -18,14 +16,14 @@ const MaxVisibilityAttempts = 10
 
 // PendingTxVisibility is one outbox row for tx_visible_to.
 type PendingTxVisibility struct {
-	ID             int64
-	TxHash         string
-	VisibleToDIDs  []string
-	SenderDID      string
-	OrgID          string
-	AttemptCount   int
-	LastAttemptAt  sql.NullTime
-	LastError      sql.NullString
+	ID            int64
+	TxHash        string
+	VisibleToDIDs []string
+	SenderDID     string
+	OrgID         string
+	AttemptCount  int
+	LastAttemptAt sql.NullTime
+	LastError     sql.NullString
 }
 
 // EnqueuePendingTxVisibility writes one outbox row. Called from the JSON-RPC
@@ -41,7 +39,7 @@ func (d *DB) EnqueuePendingTxVisibility(ctx context.Context, txHash string, visi
 	`
 	_, err := d.conn.ExecContext(ctx, query,
 		strings.ToLower(txHash),
-		pq.Array(visibleToDIDs),
+		visibleToDIDs,
 		senderDID,
 		orgID,
 	)
@@ -76,7 +74,7 @@ func (d *DB) ListDuePendingTxVisibility(ctx context.Context, limit int) ([]*Pend
 	for rows.Next() {
 		row := &PendingTxVisibility{}
 		if err := rows.Scan(
-			&row.ID, &row.TxHash, pq.Array(&row.VisibleToDIDs),
+			&row.ID, &row.TxHash, ScanTextArray(&row.VisibleToDIDs),
 			&row.SenderDID, &row.OrgID,
 			&row.AttemptCount, &row.LastAttemptAt, &row.LastError,
 		); err != nil {
@@ -103,7 +101,7 @@ func (d *DB) PromotePendingTxVisibility(ctx context.Context, row *PendingTxVisib
 				ON CONFLICT (tx_hash) DO NOTHING
 			`
 			if _, err := tx.tx.ExecContext(ctx, insertQ,
-				row.TxHash, pq.Array(row.VisibleToDIDs), row.SenderDID, row.OrgID,
+				row.TxHash, row.VisibleToDIDs, row.SenderDID, row.OrgID,
 			); err != nil {
 				return fmt.Errorf("insert tx_visible_to: %w", err)
 			}

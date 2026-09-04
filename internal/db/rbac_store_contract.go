@@ -8,8 +8,6 @@ import (
 	"strings"
 
 	"privacy-proxy/internal/rbac"
-
-	"github.com/lib/pq"
 )
 
 // Contract operations
@@ -76,7 +74,7 @@ func getContractsByIDs(ctx context.Context, q DBTX, ids []string) (map[string]*r
 	query := `SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, allow_visibleto_unlock, events_allow_dynamic_payload, created_at, updated_at
 	          FROM contracts WHERE id = ANY($1)`
 
-	rows, err := q.QueryContext(ctx, query, pq.Array(ids))
+	rows, err := q.QueryContext(ctx, query, ids)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get contracts by IDs: %w", err)
 	}
@@ -184,8 +182,8 @@ func (d *DB) ListContractsPaginated(ctx context.Context, orgID string, limit, of
 
 // ContractListFilter contains optional filters for listing contracts.
 type ContractListFilter struct {
-	Search       string // ILIKE filter on name or address
-	CreatedAfter string // ISO8601 date — only contracts created on or after this date
+	Search        string // ILIKE filter on name or address
+	CreatedAfter  string // ISO8601 date — only contracts created on or after this date
 	CreatedBefore string // ISO8601 date — only contracts created before this date
 }
 
@@ -317,7 +315,7 @@ func (d *DB) GetBatchEventsAllowDynamicPayload(ctx context.Context, addresses []
 		FROM contracts
 		WHERE LOWER(address) = ANY($1)
 	`
-	rows, err := d.conn.QueryContext(ctx, query, pq.Array(lower))
+	rows, err := d.conn.QueryContext(ctx, query, lower)
 	if err != nil {
 		return nil, fmt.Errorf("batch events_allow_dynamic_payload: %w", err)
 	}
@@ -633,7 +631,7 @@ func (d *DB) ListContractGrantsBatch(ctx context.Context, groupIDs []string) (ma
 	query := `SELECT ` + contractGrantColumns + `
 	          FROM contract_grants WHERE group_id = ANY($1) ORDER BY created_at`
 
-	rows, err := d.conn.QueryContext(ctx, query, pq.Array(groupIDs))
+	rows, err := d.conn.QueryContext(ctx, query, groupIDs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to batch list contract grants: %w", err)
 	}
