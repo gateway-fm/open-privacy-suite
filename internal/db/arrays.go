@@ -1,7 +1,7 @@
 // Postgres array binding and scanning (RD-1261).
 //
-// Every array column in this schema is TEXT[] (19 of 19; see
-// internal/db/migrations). There is exactly ONE way to do each direction:
+// Every array column in this schema is TEXT[]. There is exactly ONE way to do
+// each direction:
 //
 //   - BIND: pass the Go slice directly — `[]string{...}`, `[]int64{...}`.
 //     The pgx stdlib driver implements driver.NamedValueChecker, so it encodes
@@ -14,12 +14,16 @@
 //     (`{a,b}`), which database/sql cannot assign to a *[]string, so the value
 //     needs a scanner that understands the array grammar.
 //
-// Both directions are byte-for-byte equivalent to the lib/pq helpers they
-// replaced, including the two cases that usually diverge between drivers:
-// a nil slice stores SQL NULL while an empty slice stores an empty array, and
-// a NULL column scans back to a nil slice while an empty array scans to a
-// non-nil empty slice. TestTextArrayRoundTrip pins all of it against a real
-// database.
+// Both directions produce the same SQL *values* as the lib/pq helpers they
+// replaced — not the same bytes on the wire: pgx's ArrayCodec prefers the
+// binary format for arrays, where lib/pq's helper sent a text value. What is
+// equivalent is the stored array and everything observable from SQL, including
+// the two cases that usually diverge between drivers: a nil slice stores SQL
+// NULL while an empty slice stores an empty array, and a NULL column scans
+// back to a nil slice while an empty array scans to a non-nil empty slice.
+// TestTextArrayRoundTrip pins all of it against a real database, and compares
+// the driver-written column against an array PostgreSQL builds from scalar
+// parameters so the assertion does not depend on the codec it is testing.
 package db
 
 import (

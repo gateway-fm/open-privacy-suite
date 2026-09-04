@@ -2,6 +2,7 @@ package db
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -104,6 +105,85 @@ func TestTextArrayRoundTrip(t *testing.T) {
 			if got[i] != want[i] {
 				t.Errorf("element %d: got %q want %q", i, got[i], want[i])
 			}
+		}
+	})
+
+	t.Run("stored value matches a server-built array", func(t *testing.T) {
+		// The other subtests write and read through the same pgx array codec,
+		// so a defect that mangles encoding and decoding symmetrically would
+		// still round-trip cleanly and prove nothing about what is actually
+		// stored. This subtest builds the expected array from *scalar*
+		// parameters, so PostgreSQL — not the array codec — constructs it, and
+		// compares the two server-side. That is an oracle the codec cannot
+		// fake in either direction.
+		want := []string{
+			`plain`,
+			`a,b`,
+			`has "quotes"`,
+			`back\slash`,
+			`{braces}`,
+			``,
+			`NULL`,
+			`  spaced  `,
+			`tab	inside`,
+			`unicode ✓ ключ`,
+		}
+		if _, err := conn.Exec(`INSERT INTO array_roundtrip VALUES ('oracle', $1)`, want); err != nil {
+			t.Fatalf("bind oracle row: %v", err)
+		}
+		// Own row for the empty case, so this subtest does not depend on an
+		// earlier one having run (it must survive `-run` filtering).
+		if _, err := conn.Exec(`INSERT INTO array_roundtrip VALUES ('oracle_empty', $1)`, []string{}); err != nil {
+			t.Fatalf("bind oracle empty row: %v", err)
+		}
+
+		// serverArrayExpr renders ARRAY[$2::text,$3::text,...] and the matching
+		// args, so every element crosses the wire as a plain string.
+		serverArrayExpr := func(id string, elems []string) (string, []any) {
+			placeholders := make([]string, len(elems))
+			args := make([]any, 0, len(elems)+1)
+			args = append(args, id)
+			for i, e := range elems {
+				placeholders[i] = fmt.Sprintf("$%d::text", i+2)
+				args = append(args, e)
+			}
+			return "ARRAY[" + strings.Join(placeholders, ",") + "]", args
+		}
+
+		expr, args := serverArrayExpr("oracle", want)
+		var equal bool
+		q := fmt.Sprintf(`SELECT vals = %s FROM array_roundtrip WHERE id = $1`, expr)
+		if err := conn.QueryRow(q, args...).Scan(&equal); err != nil {
+			t.Fatalf("server-side compare: %v", err)
+		}
+		if !equal {
+			// Surface the stored text so a failure is diagnosable.
+			var stored string
+			_ = conn.QueryRow(`SELECT vals::text FROM array_roundtrip WHERE id='oracle'`).Scan(&stored)
+			t.Errorf("driver-written array differs from the server-built array; stored=%s", stored)
+		}
+
+		// Negative control: the oracle has to be able to fail. Comparing the
+		// stored array against a deliberately altered expectation must report
+		// inequality — otherwise the check above is vacuous.
+		mangled := append([]string(nil), want...)
+		mangled[3] = `backslash` // drops the backslash that needs escaping
+		expr, args = serverArrayExpr("oracle", mangled)
+		q = fmt.Sprintf(`SELECT vals = %s FROM array_roundtrip WHERE id = $1`, expr)
+		if err := conn.QueryRow(q, args...).Scan(&equal); err != nil {
+			t.Fatalf("server-side compare (negative control): %v", err)
+		}
+		if equal {
+			t.Error("negative control passed: the server-side comparison cannot distinguish a wrong array, so the positive assertion proves nothing")
+		}
+
+		// The empty array is worth its own server-built comparison, since it
+		// is the case where a driver is most likely to emit NULL instead.
+		if err := conn.QueryRow(`SELECT vals = ARRAY[]::text[] FROM array_roundtrip WHERE id='oracle_empty'`).Scan(&equal); err != nil {
+			t.Fatalf("server-side compare (empty): %v", err)
+		}
+		if !equal {
+			t.Error("an empty slice must store an array equal to ARRAY[]::text[]")
 		}
 	})
 
