@@ -132,8 +132,15 @@ jobs:
       - name: Run unit tests with coverage
         env:
           TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/privacy_proxy_test?sslmode=disable
+        # -p 1 is required, not a tuning knob: every package here shares the ONE
+        # Postgres service above via TEST_DATABASE_URL, and several packages
+        # truncate global tables (access_logs, rbac_audit_log) in their
+        # fixtures. Running packages concurrently lets one package's truncate
+        # wipe rows another package's test just wrote, which surfaces as a
+        # random failure far from its cause. `make test-unit` has always used
+        # -p 1 for exactly this reason (Makefile); CI diverged and was flaky.
         run: |
-          go test ./internal/... -v -race -coverprofile=coverage.out -covermode=atomic
+          go test ./internal/... -v -race -p 1 -coverprofile=coverage.out -covermode=atomic
 
       - name: Run every Go E2E build-tag lane through the isolated harness
         env:
