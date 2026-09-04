@@ -136,19 +136,15 @@ func seedFlatOrg(m *MockStore, userID, orgID string, n, grantsPerGroup int, orgA
 	return groupIDs, addresses
 }
 
-// TestComputePermissionsQueryCount_Member characterizes the cache-miss
-// compute fan-out: today the flat path issues 1+3N store queries (one
-// ListUserMembershipsInOrg, then GetGroupAccess + ListContractGrantsByGroup +
-// GetContractsByIDs per group).
+// TestComputePermissionsQueryCount_Member pins the cache-miss compute fan-out
+// of the flat path at a constant 4 queries — ListUserMembershipsInOrg,
+// GetGroupAccessBatch, ListContractGrantsBatch, GetContractsByIDs — regardless
+// of how many groups the user belongs to (RD-1263; it used to be 1+3N, with
+// GetGroupAccess + ListContractGrantsByGroup + GetContractsByIDs per group).
 //
-// TODO(RD-1263): flip these assertions to the batched shape (no per-group
-// calls, <= 4 total) once the migration lands. The migration is blocked on an
-// internal/db fix: GetGroupAccessBatch omits the verbose_errors column and
-// ListContractGrantsBatch omits event_rules, so routing the live path through
-// them today silently drops event visibility (caught by
-// TestExplorerRedactorWiring_FullStack) and verbose_errors. The batch APIs'
-// only current caller is computeHierarchyPermissions, which is itself dead
-// code — the drift was dormant.
+// The per-group assertions below are the regression guard: if anyone
+// reintroduces a query inside the membership loop, the count stops being
+// constant and this test fails.
 func TestComputePermissionsQueryCount_Member(t *testing.T) {
 	const nGroups = 7
 	cs := newCountingStore(NewMockStore())
@@ -160,15 +156,24 @@ func TestComputePermissionsQueryCount_Member(t *testing.T) {
 		t.Fatalf("ResolvePermissions: %v", err)
 	}
 
-	// Current (pre-RD-1263) fan-out: scales linearly with group count.
-	if got := cs.count("GetGroupAccess"); got != nGroups {
-		t.Errorf("per-group GetGroupAccess called %d times; current behavior is %d (one per group)", got, nGroups)
+	// Batched fan-out: no per-group queries at all.
+	if got := cs.count("GetGroupAccess"); got != 0 {
+		t.Errorf("per-group GetGroupAccess called %d times; want 0 (batched via GetGroupAccessBatch)", got)
 	}
-	if got := cs.count("ListContractGrantsByGroup"); got != nGroups {
-		t.Errorf("per-group ListContractGrantsByGroup called %d times; current behavior is %d (one per group)", got, nGroups)
+	if got := cs.count("ListContractGrantsByGroup"); got != 0 {
+		t.Errorf("per-group ListContractGrantsByGroup called %d times; want 0 (batched via ListContractGrantsBatch)", got)
 	}
-	if got := cs.computeQueries(); got != 1+3*nGroups {
-		t.Errorf("compute path issued %d store queries for %d groups; current behavior is 1+3N = %d (got: %v)", got, nGroups, 1+3*nGroups, cs.calls)
+	if got := cs.count("GetGroupAccessBatch"); got != 1 {
+		t.Errorf("GetGroupAccessBatch called %d times; want exactly 1", got)
+	}
+	if got := cs.count("ListContractGrantsBatch"); got != 1 {
+		t.Errorf("ListContractGrantsBatch called %d times; want exactly 1", got)
+	}
+	if got := cs.count("GetContractsByIDs"); got != 1 {
+		t.Errorf("GetContractsByIDs called %d times; want exactly 1 (one batch for every group's grants)", got)
+	}
+	if got := cs.computeQueries(); got != 4 {
+		t.Errorf("compute path issued %d store queries for %d groups; want a constant 4 (got: %v)", got, nGroups, cs.calls)
 	}
 
 	// Semantics: union across memberships, claims expanded, every granted
@@ -194,10 +199,12 @@ func TestComputePermissionsQueryCount_Member(t *testing.T) {
 	}
 }
 
-// TestComputePermissionsQueryCount_OrgAdmin characterizes the org-admin
-// path's fan-out: 2+3N today (ListUserMembershipsInOrg + ListContracts + the
-// same three per-group queries). TODO(RD-1263): flip to <= 5 after the
-// batched migration lands (see the member test above for the blocker).
+// TestComputePermissionsQueryCount_OrgAdmin pins the org-admin path at a
+// constant 3 queries: ListUserMembershipsInOrg, ListContracts and
+// GetGroupAccessBatch. Org admins already hold every claim on every contract
+// in the org, so the grants and contracts halves are never read here — the
+// pre-RD-1263 path issued the full per-group trio (2+3N) and discarded the
+// contract half of every one of them.
 func TestComputePermissionsQueryCount_OrgAdmin(t *testing.T) {
 	const nGroups = 6
 	cs := newCountingStore(NewMockStore())
@@ -209,14 +216,24 @@ func TestComputePermissionsQueryCount_OrgAdmin(t *testing.T) {
 		t.Fatalf("ResolvePermissions: %v", err)
 	}
 
-	if got := cs.count("GetGroupAccess"); got != nGroups {
-		t.Errorf("per-group GetGroupAccess called %d times; current behavior is %d (one per group)", got, nGroups)
+	if got := cs.count("GetGroupAccess"); got != 0 {
+		t.Errorf("per-group GetGroupAccess called %d times; want 0 (batched)", got)
 	}
 	if got := cs.count("ListContracts"); got != 1 {
 		t.Errorf("ListContracts called %d times; want 1", got)
 	}
-	if got := cs.computeQueries(); got != 2+3*nGroups {
-		t.Errorf("org-admin compute path issued %d store queries for %d groups; current behavior is 2+3N = %d (got: %v)", got, nGroups, 2+3*nGroups, cs.calls)
+	if got := cs.count("GetGroupAccessBatch"); got != 1 {
+		t.Errorf("GetGroupAccessBatch called %d times; want exactly 1", got)
+	}
+	// The org-admin path must not read grants or contracts-by-id at all.
+	if got := cs.count("ListContractGrantsBatch"); got != 0 {
+		t.Errorf("ListContractGrantsBatch called %d times; want 0 (org admins get all contracts via ListContracts)", got)
+	}
+	if got := cs.count("GetContractsByIDs"); got != 0 {
+		t.Errorf("GetContractsByIDs called %d times; want 0 (org admins get all contracts via ListContracts)", got)
+	}
+	if got := cs.computeQueries(); got != 3 {
+		t.Errorf("org-admin compute path issued %d store queries for %d groups; want a constant 3 (got: %v)", got, nGroups, cs.calls)
 	}
 
 	// Org admins keep all claims and the union of allowed methods.
@@ -232,8 +249,9 @@ func TestComputePermissionsQueryCount_OrgAdmin(t *testing.T) {
 }
 
 // TestComputePermissionsQueryCount_NoGrants ensures GetContractsByIDs is
-// skipped entirely when no group has contract grants (1+2N today;
-// TODO(RD-1263): <= 3 after the batched migration).
+// skipped entirely when no group has contract grants, leaving 3 queries
+// (memberships + the two batches). This preserved the pre-RD-1263 behaviour of
+// not querying contracts when there is nothing to look up.
 func TestComputePermissionsQueryCount_NoGrants(t *testing.T) {
 	const nGroups = 3
 	cs := newCountingStore(NewMockStore())
@@ -246,7 +264,27 @@ func TestComputePermissionsQueryCount_NoGrants(t *testing.T) {
 	if got := cs.count("GetContractsByIDs"); got != 0 {
 		t.Errorf("GetContractsByIDs called %d times with zero grants; want 0", got)
 	}
-	if got := cs.computeQueries(); got != 1+2*nGroups {
-		t.Errorf("compute path issued %d store queries; current behavior is 1+2N = %d (got: %v)", got, 1+2*nGroups, cs.calls)
+	if got := cs.computeQueries(); got != 3 {
+		t.Errorf("compute path issued %d store queries; want a constant 3 (got: %v)", got, cs.calls)
+	}
+}
+
+// TestComputePermissionsQueryCount_ConstantInGroupCount is the direct
+// statement of the RD-1263 property: resolving a user with 3 groups and a user
+// with 40 groups must cost the same number of queries.
+func TestComputePermissionsQueryCount_ConstantInGroupCount(t *testing.T) {
+	counts := make(map[int]int)
+	for _, nGroups := range []int{3, 40} {
+		cs := newCountingStore(NewMockStore())
+		seedFlatOrg(cs.MockStore, "user-1", "org-1", nGroups, 2, false)
+
+		r := NewResolver(cs, time.Minute)
+		if _, err := r.ResolvePermissions(context.Background(), "user-1", "org-1"); err != nil {
+			t.Fatalf("ResolvePermissions (%d groups): %v", nGroups, err)
+		}
+		counts[nGroups] = cs.computeQueries()
+	}
+	if counts[3] != counts[40] {
+		t.Errorf("query count scales with group count: 3 groups → %d queries, 40 groups → %d; want equal", counts[3], counts[40])
 	}
 }
