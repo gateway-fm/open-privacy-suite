@@ -235,3 +235,73 @@ func buildDNSResponse(query []byte, answerA netip.Addr) ([]byte, bool) {
 	}
 	return append(resp, answer...), true
 }
+
+// TestGuardedDial_RelaxedStillBlocksMetadataAndLinkLocal locks the RD-1266
+// review finding: relaxed mode must relax ONLY the loopback/private ranges
+// that ValidateWebhookURLForEnv's relaxed mode accepts. Cloud-metadata,
+// link-local and unspecified destinations are refused in BOTH modes —
+// otherwise a public-looking name that rebinds to 169.254.169.254 would be
+// dialed in development even though the same literal URL is rejected.
+func TestGuardedDial_RelaxedStillBlocksMetadataAndLinkLocal(t *testing.T) {
+	alwaysBlocked := []string{
+		"169.254.169.254", // AWS/GCP/Azure instance metadata
+		"169.254.0.1",     // IPv4 link-local
+		"fe80::1",         // IPv6 link-local
+		"0.0.0.0",         // unspecified
+		"::",              // unspecified v6
+	}
+	for _, ip := range alwaysBlocked {
+		t.Run("relaxed/"+ip, func(t *testing.T) {
+			if err := CheckResolvedAddrForEnv(netip.MustParseAddr(ip), true); err == nil {
+				t.Fatalf("CheckResolvedAddrForEnv(%s, allowPrivate=true) = nil, want refusal", ip)
+			}
+		})
+	}
+
+	// The ranges relaxed mode legitimately needs stay reachable.
+	relaxedOK := []string{"127.0.0.1", "::1", "10.1.2.3", "192.168.1.5", "172.17.0.2", "100.64.0.1", "fd00::1"}
+	for _, ip := range relaxedOK {
+		t.Run("relaxed-allows/"+ip, func(t *testing.T) {
+			if err := CheckResolvedAddrForEnv(netip.MustParseAddr(ip), true); err != nil {
+				t.Fatalf("CheckResolvedAddrForEnv(%s, allowPrivate=true) = %v, want nil", ip, err)
+			}
+		})
+	}
+
+	// Strict mode still refuses every one of them.
+	for _, ip := range relaxedOK {
+		t.Run("strict-refuses/"+ip, func(t *testing.T) {
+			if err := CheckResolvedAddrForEnv(netip.MustParseAddr(ip), false); err == nil {
+				t.Fatalf("CheckResolvedAddrForEnv(%s, allowPrivate=false) = nil, want refusal", ip)
+			}
+		})
+	}
+}
+
+// TestGuardedDial_RelaxedRefusesMetadataThroughTheDialer proves the mode-aware
+// classification is actually wired into the relaxed dialer, not just available
+// as a function.
+func TestGuardedDial_RelaxedRefusesMetadataThroughTheDialer(t *testing.T) {
+	d := GuardedDialer(true)
+	if d.Control == nil {
+		t.Fatal("relaxed dialer has no Control hook — metadata/link-local would be reachable")
+	}
+	if err := d.Control("tcp4", "169.254.169.254:80", nil); err == nil {
+		t.Fatal("relaxed Control allowed the cloud-metadata address, want refusal")
+	}
+	if err := d.Control("tcp4", "127.0.0.1:80", nil); err != nil {
+		t.Fatalf("relaxed Control refused loopback (%v) — httptest servers must still work", err)
+	}
+}
+
+// TestGuardedTransport_DoesNotProxy pins the RD-1266 decision that these
+// clients dial their destination directly. See GuardedTransport's comment:
+// with a proxy in play the guard would classify the proxy's address and never
+// see the real destination, so the guarantee would silently become vacuous.
+func TestGuardedTransport_DoesNotProxy(t *testing.T) {
+	for _, relaxed := range []bool{false, true} {
+		if p := GuardedTransport(relaxed).Proxy; p != nil {
+			t.Fatalf("GuardedTransport(%v).Proxy != nil — the guard cannot see the destination through a proxy", relaxed)
+		}
+	}
+}

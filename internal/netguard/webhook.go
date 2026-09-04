@@ -15,36 +15,57 @@ import (
 	"strings"
 )
 
-// blockedCIDRs are the IP ranges that must never be used as a webhook
-// destination. netip.Prefix.Contains matches within one address family only,
-// which avoids the string-prefix pitfall where "172.0.0.1" or "10.io" could
-// bypass or trip a HasPrefix check.
+// The webhook destination blocklist is split by how far each range may be
+// relaxed, because relaxed (non-production) mode must relax LESS than "no
+// checks at all" (RD-1266 review).
+//
+// netip.Prefix.Contains matches within one address family only, which avoids
+// the string-prefix pitfall where "172.0.0.1" or "10.io" could bypass or trip
+// a HasPrefix check.
 //
 // Note: netip does NOT match IPv4-mapped IPv6 addresses (::ffff:a.b.c.d)
-// against IPv4 prefixes — parseIPHost Unmap()s them to IPv4 first, so the
-// IPv4 ranges below cover those forms too.
-var blockedCIDRs = func() []netip.Prefix {
-	ranges := []string{
-		"127.0.0.0/8",    // IPv4 loopback
-		"::1/128",        // IPv6 loopback
-		"169.254.0.0/16", // Link-local / cloud instance metadata (AWS, GCP, Azure)
-		"fe80::/10",      // IPv6 link-local
-		"10.0.0.0/8",     // RFC-1918 private
-		"172.16.0.0/12",  // RFC-1918 private (Docker bridge lives here)
-		"192.168.0.0/16", // RFC-1918 private
-		"100.64.0.0/10",  // CGNAT / Tailscale (shared address space)
-		"fc00::/7",       // IPv6 ULA — private, the v6 analogue of RFC-1918
-	}
+// against IPv4 prefixes — parseIPHost and CheckResolvedAddrForEnv Unmap() them
+// to IPv4 first, so the IPv4 ranges below cover those forms too.
+
+// alwaysBlockedCIDRs are refused in EVERY mode. Link-local carries the cloud
+// instance-metadata endpoint (169.254.169.254 on AWS, GCP and Azure), which is
+// the highest-value SSRF target in the whole range set and has no legitimate
+// use as a webhook destination — not even in development. Relaxed mode's
+// http:// allowlist (allowedHTTPCIDRs) deliberately omits these too, so
+// keeping them blocked here is what makes URL validation and dial-time
+// enforcement agree in relaxed mode as well as strict.
+var alwaysBlockedCIDRs = mustPrefixes(
+	"169.254.0.0/16", // Link-local / cloud instance metadata (AWS, GCP, Azure)
+	"fe80::/10",      // IPv6 link-local
+)
+
+// strictBlockedCIDRs are refused in strict (production) mode only. These are
+// exactly the ranges relaxed mode accepts — loopback for httptest servers, and
+// the private/CGNAT/ULA networks a local or VPC-side SIEM collector lives on
+// (mirrors allowedHTTPCIDRs plus loopback).
+var strictBlockedCIDRs = mustPrefixes(
+	"127.0.0.0/8",    // IPv4 loopback
+	"::1/128",        // IPv6 loopback
+	"10.0.0.0/8",     // RFC-1918 private
+	"172.16.0.0/12",  // RFC-1918 private (Docker bridge lives here)
+	"192.168.0.0/16", // RFC-1918 private
+	"100.64.0.0/10",  // CGNAT / Tailscale (shared address space)
+	"fc00::/7",       // IPv6 ULA — private, the v6 analogue of RFC-1918
+)
+
+// mustPrefixes parses CIDR literals at init, panicking on a typo rather than
+// silently shipping a blocklist with a hole in it.
+func mustPrefixes(ranges ...string) []netip.Prefix {
 	prefixes := make([]netip.Prefix, 0, len(ranges))
 	for _, r := range ranges {
 		p, err := netip.ParsePrefix(r)
 		if err != nil {
-			panic(fmt.Sprintf("netguard: invalid blockedCIDR %q: %v", r, err))
+			panic(fmt.Sprintf("netguard: invalid CIDR %q: %v", r, err))
 		}
 		prefixes = append(prefixes, p)
 	}
 	return prefixes
-}()
+}
 
 // normalizeHost lowercases the host and strips one trailing dot: DNS names
 // are case-insensitive and may be root-qualified, so name-based checks would
@@ -190,21 +211,10 @@ func requireLoopbackOrPrivate(host string) error {
 // Mirrors the operator-network ranges in server.localhostOnlyMiddleware so
 // the two trust boundaries share a single definition of "this is on our
 // network, cleartext is acceptable".
-var allowedHTTPCIDRs = func() []netip.Prefix {
-	ranges := []string{
-		"10.0.0.0/8",
-		"172.16.0.0/12",
-		"192.168.0.0/16",
-		"100.64.0.0/10",
-		"fc00::/7", // IPv6 ULA
-	}
-	prefixes := make([]netip.Prefix, 0, len(ranges))
-	for _, r := range ranges {
-		p, err := netip.ParsePrefix(r)
-		if err != nil {
-			panic(fmt.Sprintf("netguard: invalid allowedHTTPCIDR %q: %v", r, err))
-		}
-		prefixes = append(prefixes, p)
-	}
-	return prefixes
-}()
+var allowedHTTPCIDRs = mustPrefixes(
+	"10.0.0.0/8",
+	"172.16.0.0/12",
+	"192.168.0.0/16",
+	"100.64.0.0/10",
+	"fc00::/7", // IPv6 ULA
+)

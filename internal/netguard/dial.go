@@ -20,6 +20,21 @@ import (
 // fe80::1%en0 and ::ffff:10.0.0.1 are classified as the addresses they
 // actually reach.
 func CheckResolvedAddr(addr netip.Addr) error {
+	return CheckResolvedAddrForEnv(addr, false)
+}
+
+// CheckResolvedAddrForEnv is CheckResolvedAddr with the same relaxation
+// ValidateWebhookURLForEnv applies: when allowPrivate is true (non-production)
+// loopback and private/CGNAT/ULA destinations are permitted, because httptest
+// servers and local or VPC-side SIEM collectors legitimately live there.
+//
+// What relaxed mode does NOT permit is link-local — which carries the cloud
+// instance-metadata endpoint — or the unspecified address. Relaxing those
+// would let a public-looking hostname that resolves or rebinds to
+// 169.254.169.254 be dialed in development, even though the equivalent
+// literal URL is rejected by relaxed URL validation (RD-1266 review). The two
+// halves of the guard must agree in BOTH modes, not just in strict.
+func CheckResolvedAddrForEnv(addr netip.Addr, allowPrivate bool) error {
 	addr = addr.WithZone("").Unmap()
 
 	// An address we cannot classify must be refused, not allowed through.
@@ -27,11 +42,19 @@ func CheckResolvedAddr(addr netip.Addr) error {
 		return fmt.Errorf("destination address is not a valid IP")
 	}
 	// 0.0.0.0 and :: mean "this host"/all-interfaces when dialed on many
-	// stacks — a loopback-class destination.
+	// stacks — a loopback-class destination. Blocked in every mode.
 	if addr.IsUnspecified() {
 		return fmt.Errorf("destination %s is the unspecified address", addr)
 	}
-	for _, blocked := range blockedCIDRs {
+	for _, blocked := range alwaysBlockedCIDRs {
+		if blocked.Contains(addr) {
+			return fmt.Errorf("destination %s is in blocked IP range %s", addr, blocked)
+		}
+	}
+	if allowPrivate {
+		return nil
+	}
+	for _, blocked := range strictBlockedCIDRs {
 		if blocked.Contains(addr) {
 			return fmt.Errorf("destination %s is in blocked IP range %s", addr, blocked)
 		}
@@ -39,9 +62,8 @@ func CheckResolvedAddr(addr netip.Addr) error {
 	return nil
 }
 
-// GuardedDialer returns a dialer that refuses outbound connections to
-// loopback / RFC-1918 / link-local / CGNAT / IPv6-ULA / unspecified addresses
-// when allowPrivate is false.
+// GuardedDialer returns a dialer that refuses outbound connections to blocked
+// destinations, classified by CheckResolvedAddrForEnv.
 //
 // The check lives in net.Dialer.Control, which the runtime calls once per
 // candidate address *after* DNS resolution and *before* connect. That is what
@@ -50,37 +72,38 @@ func CheckResolvedAddr(addr netip.Addr) error {
 // Re-resolving the name ourselves would reintroduce the very race we are
 // closing, so we deliberately do not.
 //
-// When allowPrivate is true no dial restriction is installed, matching
-// ValidateWebhookURLForEnv's relaxed (non-production) mode where local
-// collectors and httptest servers are legitimate destinations.
+// The hook is installed in BOTH modes. allowPrivate widens what is acceptable
+// (loopback and private networks, for httptest servers and local collectors)
+// but never removes the guard: link-local — the cloud metadata endpoint — and
+// the unspecified address stay blocked in development too.
 //
 // The returned dialer is owned by the caller; tests may set Resolver on it.
 func GuardedDialer(allowPrivate bool) *net.Dialer {
-	d := &net.Dialer{
+	return &net.Dialer{
 		Timeout:   10 * time.Second,
 		KeepAlive: 30 * time.Second,
+		Control:   guardDialControl(allowPrivate),
 	}
-	if !allowPrivate {
-		d.Control = guardDialControl
-	}
-	return d
 }
 
-// guardDialControl is the net.Dialer.Control hook. address is always a
-// resolved "ip:port" at this point; anything we cannot parse is refused.
-func guardDialControl(_, address string, _ syscall.RawConn) error {
-	host, _, err := net.SplitHostPort(address)
-	if err != nil {
-		return fmt.Errorf("blocked outbound dial: cannot parse destination %q", address)
+// guardDialControl builds the net.Dialer.Control hook for a mode. address is
+// always a resolved "ip:port" at this point; anything we cannot parse is
+// refused.
+func guardDialControl(allowPrivate bool) func(string, string, syscall.RawConn) error {
+	return func(_, address string, _ syscall.RawConn) error {
+		host, _, err := net.SplitHostPort(address)
+		if err != nil {
+			return fmt.Errorf("blocked outbound dial: cannot parse destination %q", address)
+		}
+		addr, err := netip.ParseAddr(host)
+		if err != nil {
+			return fmt.Errorf("blocked outbound dial: destination %q is not a resolved IP", host)
+		}
+		if err := CheckResolvedAddrForEnv(addr, allowPrivate); err != nil {
+			return fmt.Errorf("blocked outbound dial: %w", err)
+		}
+		return nil
 	}
-	addr, err := netip.ParseAddr(host)
-	if err != nil {
-		return fmt.Errorf("blocked outbound dial: destination %q is not a resolved IP", host)
-	}
-	if err := CheckResolvedAddr(addr); err != nil {
-		return fmt.Errorf("blocked outbound dial: %w", err)
-	}
-	return nil
 }
 
 // GuardedDialContext is GuardedDialer's DialContext, for wiring straight into
@@ -89,16 +112,30 @@ func GuardedDialContext(allowPrivate bool) func(ctx context.Context, network, ad
 	return GuardedDialer(allowPrivate).DialContext
 }
 
-// GuardedTransport clones http.DefaultTransport (keeping its proxy, timeout
-// and HTTP/2 settings) and installs the dial-time SSRF guard. Use this for any
+// GuardedTransport clones http.DefaultTransport (keeping its timeout and
+// HTTP/2 settings) and installs the dial-time SSRF guard. Use this for any
 // client that POSTs to an operator-supplied destination.
 //
-// Limitation: the guard inspects the address being dialled. When an egress
-// proxy is configured (HTTP_PROXY/HTTPS_PROXY, inherited from
-// ProxyFromEnvironment), that address is the proxy's, and the proxy — not this
-// process — chooses the final destination. Proxy support is kept because
-// egress-proxied deployments need it, so operators relying on one must apply
-// destination policy at the proxy as well.
+// Proxying is explicitly DISABLED on the returned transport, and that is a
+// security decision rather than an oversight. The guard classifies the address
+// being dialled; with a proxy in play that address is the proxy's, and the
+// proxy — not this process — resolves and reaches the real destination. So a
+// proxied request would (a) get no destination checking at all, silently
+// making the guarantee vacuous, and (b) be refused anyway in strict mode
+// whenever the proxy itself sits on a private address, which is the normal
+// shape of an in-network egress proxy. Inheriting ProxyFromEnvironment here
+// therefore buys a footgun in both directions.
+//
+// These two clients (SIEM forwarder, audit tamper notifier) previously picked
+// up proxy support only implicitly, by using http.DefaultTransport; no
+// deployment in this repo configures HTTP_PROXY/HTTPS_PROXY for them. Note
+// internal/nodehttp keeps ProxyFromEnvironment for reaching the upstream node
+// — a different trust boundary, unaffected by this.
+//
+// If egress-proxied webhook delivery is ever required, it needs a deliberate
+// design (destination policy enforced at the proxy) rather than an ambient
+// environment variable; the failure mode meanwhile is a loud connection
+// error, not a quiet hole.
 func GuardedTransport(allowPrivate bool) *http.Transport {
 	base, ok := http.DefaultTransport.(*http.Transport)
 	if !ok {
@@ -108,5 +145,6 @@ func GuardedTransport(allowPrivate bool) *http.Transport {
 	}
 	t := base.Clone()
 	t.DialContext = GuardedDialContext(allowPrivate)
+	t.Proxy = nil
 	return t
 }
