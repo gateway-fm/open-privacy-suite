@@ -48,6 +48,30 @@
 -- EXPAND-ONLY: additive (CREATE TABLE + INSERT of one seed row). Not a
 -- hash-chained table; no chain considerations. Role separation unaffected —
 -- this is a main-DB operational table, not an audit table.
+--
+-- ⚠️ MIGRATION NUMBER — COORDINATION REQUIRED BEFORE THIS SHIPS.
+-- Two other open PRs also add a 070 migration: #410 (070_method_access_policies)
+-- and #466 (070_policy_check_log). Git will not report a conflict, because the
+-- filenames differ.
+--
+-- Why a "safe" higher number is NOT a fix: tern derives each migration's
+-- version from its SORTED POSITION in the directory, not from the digits in
+-- the filename, AND it requires the sequence to be contiguous. Renaming this
+-- file to 072 while 070/071 do not exist makes tern refuse to load the set at
+-- all ("failed to load migrations: Missing migration 70") — verified, the whole
+-- suite fails to start. So numbering ahead to dodge the clash is not available.
+--
+-- The hazard the numbering must avoid: if a file that sorts BEFORE an
+-- already-applied migration is added later, every later file's version shifts
+-- down by one. tern then compares against schema_version and treats the newly
+-- added migration as already applied, silently skipping its DDL while
+-- re-running the following one. A deployment can therefore come up with one
+-- PR's schema entirely absent and no error.
+--
+-- The only safe discipline: merge these PRs in a decided order, and rebase +
+-- renumber each later one to the next free CONTIGUOUS number (070, then 071,
+-- then 072) before it merges. Never merge two files carrying the same number,
+-- and never insert a number at or below the highest already applied anywhere.
 
 CREATE TABLE IF NOT EXISTS rbac_cache_generation (
     -- Single-row table: the CHECK pins the id so a second row cannot be
