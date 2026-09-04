@@ -90,6 +90,12 @@ func NewSIEMForwarder(cfg SIEMConfig) (*SIEMForwarder, error) {
 		cfg: cfg,
 		client: &http.Client{
 			Timeout: 10 * time.Second,
+			// Refuse private/loopback destinations at dial time, after DNS
+			// resolution (RD-1266). URL validation above can only inspect the
+			// hostname; this catches a name that resolves — or rebinds — to an
+			// internal address. Relaxed in non-production, matching the URL
+			// guard's own relaxation.
+			Transport: netguard.GuardedTransport(cfg.AllowInsecure),
 			// Disallow redirects: a redirect could lead to a private/internal
 			// address even when the original URL was validated (open-redirect SSRF).
 			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
