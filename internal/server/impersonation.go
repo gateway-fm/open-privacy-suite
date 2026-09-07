@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"privacy-proxy/internal/rbac"
+	"privacy-proxy/internal/server/middleware"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -338,7 +339,7 @@ func (s *Server) impersonationGateMiddleware() gin.HandlerFunc {
 			c.Request.URL.RawQuery,
 			decision,
 			reason,
-			getCorrelationID(c),
+			middleware.GetCorrelationID(c),
 		); logErr != nil {
 			// Body already sent — we can't unsend. Log loudly. The next
 			// caller attempting to use this admin's JWT will see the

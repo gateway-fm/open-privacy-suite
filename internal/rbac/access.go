@@ -860,14 +860,20 @@ func (c *AccessController) resolvePermissionsForRequest(ctx context.Context, req
 		}
 	}
 	if perms == nil {
-		// Resolve permissions (checks DB cache, then computes)
-		resolved, err := c.resolver.ResolvePermissions(ctx, user.ID, org.ID)
+		// Resolve permissions (checks DB cache, then computes).
+		//
+		// cacheable is the RD-1267 verdict: false when an invalidation
+		// committed while the compute was in flight. The request still gets
+		// the permissions, but caching them here would keep a just-revoked
+		// grant usable for the whole TTL — the shared SQL cache already
+		// refused the same entry, and this cache must agree with it.
+		resolved, cacheable, err := c.resolver.ResolvePermissionsCacheable(ctx, user.ID, org.ID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to resolve permissions: %w", err)
 		}
 		perms = resolved
 
-		if !req.BypassCache {
+		if !req.BypassCache && cacheable {
 			// Store in in-memory cache for the normal hot path.
 			c.cache.Set(perms)
 		}
@@ -938,7 +944,7 @@ func (c *AccessController) classifyValueTransferCarveout(ctx context.Context, re
 			}
 			if ownerOrgID == "" {
 				// Address is not a known contract — treat as EOA value transfer.
-				if requiredClaim != "" && !containsClaim(perms.Claims, requiredClaim) {
+				if requiredClaim != "" && !hasClaim(perms.Claims, requiredClaim) {
 					slog.Debug("access denied: missing claim for value transfer", "claim", requiredClaim, "target", req.TargetAddress, "user", req.UserExternalID)
 					return &AccessCheckResult{
 						Allowed: false,
@@ -1076,7 +1082,7 @@ func (c *AccessController) validateContractAccess(ctx context.Context, req *Acce
 	// Deployer auto-grant: if the user deployed this contract, they get access automatically.
 	// This happens even without explicit grants - the deployer should always be able to interact
 	// with their own contracts. Note: this does NOT grant upgrade/admin claims.
-	if access == nil || (requiredClaim != "" && !containsClaim(access.Claims, requiredClaim)) {
+	if access == nil || (requiredClaim != "" && !hasClaim(access.Claims, requiredClaim)) {
 		deployerID, err := c.store.GetContractDeployerByAddress(ctx, addr)
 		if err != nil {
 			return nil, true, fmt.Errorf("failed to check contract deployer: %w", err)
@@ -1132,7 +1138,7 @@ func (c *AccessController) validateContractAccess(ctx context.Context, req *Acce
 	}
 
 	// Check if user has the required claim on this contract
-	if requiredClaim != "" && !containsClaim(access.Claims, requiredClaim) {
+	if requiredClaim != "" && !hasClaim(access.Claims, requiredClaim) {
 		slog.Debug("access denied: missing claim on contract", "claim", requiredClaim, "contract", req.TargetAddress, "user", req.UserExternalID)
 		return &AccessCheckResult{
 			Allowed: false,
@@ -1173,7 +1179,7 @@ func (c *AccessController) validateContractAccess(ctx context.Context, req *Acce
 // (EIP-1967, EIP-2535). Returns handled=true with a deny result when a non-admin
 // requests a non-well-known slot.
 func (c *AccessController) validateStorageSlotAccess(req *AccessCheckRequest, access *ContractAccess) (*AccessCheckResult, bool) {
-	if !containsClaim(access.Claims, ClaimAdmin) {
+	if !hasClaim(access.Claims, ClaimAdmin) {
 		slot := extractStorageSlot(req.Params)
 		if !IsWellKnownStorageSlot(slot) {
 			slog.Debug("access denied: non-admin user accessing non-well-known storage slot",
@@ -1275,7 +1281,7 @@ func (c *AccessController) validateProxyUpgrade(ctx context.Context, req *Access
 		// regardless of proxy management state.
 		if len(calldata) >= 4 {
 			selector := hex.EncodeToString(calldata[:4])
-			if IsUpgradeSelector(selector) && !containsClaim(access.Claims, ClaimUpgrade) {
+			if IsUpgradeSelector(selector) && !hasClaim(access.Claims, ClaimUpgrade) {
 				return &AccessCheckResult{
 					Allowed: false,
 					Reason:  ErrContractAccessDenied,
@@ -1309,7 +1315,7 @@ func (c *AccessController) validateProxyUpgrade(ctx context.Context, req *Access
 func (c *AccessController) validateDeploymentWithoutTarget(req *AccessCheckRequest, user *User, org *Organization, perms *EffectivePermissions, requiredClaim Claim) (*AccessCheckResult, bool, error) {
 	// No target address but operation requires 'deploy' claim (contract deployment)
 	// Check if user has the deploy claim via default claims
-	if !containsClaim(perms.Claims, ClaimDeploy) {
+	if !hasClaim(perms.Claims, ClaimDeploy) {
 		return &AccessCheckResult{
 			Allowed: false,
 			Reason:  "access denied",
@@ -1356,12 +1362,12 @@ func (c *AccessController) checkAdditionalRequiredClaims(req *AccessCheckRequest
 		// For required claims, check if user has it on any registered contract or via default claims
 		hasClaimOnAnyContract := false
 		for _, access := range perms.ContractAccess {
-			if containsClaim(access.Claims, claim) {
+			if hasClaim(access.Claims, claim) {
 				hasClaimOnAnyContract = true
 				break
 			}
 		}
-		if !hasClaimOnAnyContract && !containsClaim(perms.Claims, claim) {
+		if !hasClaimOnAnyContract && !hasClaim(perms.Claims, claim) {
 			return &AccessCheckResult{
 				Allowed: false,
 				Reason:  "access denied",
@@ -1602,16 +1608,6 @@ func extractCalldata(method string, params []any) []byte {
 	}
 
 	return calldata
-}
-
-// containsClaim checks if a claim is in a slice.
-func containsClaim(claims []Claim, claim Claim) bool {
-	for _, c := range claims {
-		if c == claim {
-			return true
-		}
-	}
-	return false
 }
 
 // accessHasFunctionSelector checks if a function selector is allowed in the given ContractAccess.
@@ -1974,44 +1970,6 @@ func GetFunctionSelector(method string, params []any) string {
 	return ""
 }
 
-// ValidateGetLogsAccess validates eth_getLogs access based on address filter.
-// SECURITY: This function enforces that:
-// 1. eth_getLogs MUST have an address filter (prevent broad queries)
-// 2. User must have explicit contract access on ALL addresses in the filter.
-// This prevents users from querying logs from contracts they shouldn't see,
-// enforcing cross-org isolation.
-func ValidateGetLogsAccess(perms *EffectivePermissions, params []any) error {
-	if len(params) == 0 {
-		return fmt.Errorf("eth_getLogs: missing filter parameter")
-	}
-
-	filterObj, ok := params[0].(map[string]any)
-	if !ok {
-		return fmt.Errorf("eth_getLogs: invalid filter parameter type")
-	}
-
-	// Extract addresses from filter
-	addresses := extractGetLogsAddresses(filterObj)
-
-	// SECURITY: Require address filter to prevent broad queries
-	// Without this check, users could query ALL logs on the chain
-	if len(addresses) == 0 {
-		return fmt.Errorf("eth_getLogs: address filter required for security")
-	}
-
-	// Check each address against RBAC permissions
-	for _, addr := range addresses {
-		access := perms.GetContractAccess(addr)
-		if access == nil {
-			return fmt.Errorf("eth_getLogs: %s", ErrContractAccessDenied)
-		}
-		// Method allowlist already verified eth_getLogs is permitted;
-		// having a non-nil ContractAccess entry is sufficient.
-	}
-
-	return nil
-}
-
 // extractGetLogsAddresses extracts contract addresses from eth_getLogs filter.
 // The address field can be:
 // - A single address string: "0x..."
@@ -2043,88 +2001,6 @@ func extractGetLogsAddresses(filter map[string]any) []string {
 	}
 
 	return addresses
-}
-
-// GetGetLogsAddresses is an exported version for use by external callers.
-// Returns the list of addresses from eth_getLogs filter params.
-func GetGetLogsAddresses(params []any) []string {
-	if len(params) == 0 {
-		return nil
-	}
-
-	filterObj, ok := params[0].(map[string]any)
-	if !ok {
-		return nil
-	}
-
-	return extractGetLogsAddresses(filterObj)
-}
-
-// validateGetLogsAccessWithCrossOrgCheck validates eth_getLogs access with cross-org isolation.
-// For multi-org users, this allows accessing logs from contracts in ANY org they belong to.
-// Each address in the filter must be either:
-// - Owned by an org the user is a member of
-// - A public contract (not owned by any org) and the method is in the user's allowlist
-func (c *AccessController) validateGetLogsAccessWithCrossOrgCheck(ctx context.Context, perms *EffectivePermissions, userOrgIDs map[string]bool, params []any) error {
-	if len(params) == 0 {
-		return fmt.Errorf("eth_getLogs: missing filter parameter")
-	}
-
-	filterObj, ok := params[0].(map[string]any)
-	if !ok {
-		return fmt.Errorf("eth_getLogs: invalid filter parameter type")
-	}
-
-	// Extract addresses from filter
-	addresses := extractGetLogsAddresses(filterObj)
-
-	// SECURITY: Require address filter to prevent broad queries
-	// Without this check, users could query ALL logs on the chain
-	if len(addresses) == 0 {
-		return fmt.Errorf("eth_getLogs: address filter required for security")
-	}
-
-	// Check each address against RBAC permissions with multi-org support
-	for _, addr := range addresses {
-		// Check if user has EXPLICIT access to this contract in current org's permissions
-		hasExplicitAccess := perms.IsContractRegistered(addr)
-
-		// First, check multi-org ownership
-		ownerOrgID, err := c.store.GetContractOwnerOrgID(ctx, addr)
-		if err != nil {
-			return fmt.Errorf("eth_getLogs: failed to check contract owner: %w", err)
-		}
-
-		if ownerOrgID != "" {
-			// Contract is owned by an org - check if user is a member
-			if !userOrgIDs[ownerOrgID] {
-				return fmt.Errorf("eth_getLogs: %s", ErrContractAccessDenied)
-			}
-			// User is a member of the org that owns this contract - allow access
-			// (The org grants access to its members via group permissions)
-			continue
-		}
-
-		// Contract is not owned by any org — deny unless precompile.
-		// All unregistered addresses are private by default.
-		if !hasExplicitAccess {
-			if !precompile.IsPrecompileAddress(addr) {
-				return fmt.Errorf("eth_getLogs: %s", ErrContractAccessDenied)
-			}
-			// Precompile — always accessible (method allowlist already verified eth_getLogs).
-			continue
-		}
-
-		// For backwards compatibility: also check explicit access in current org
-		if hasExplicitAccess {
-			access := perms.GetContractAccess(addr)
-			if access == nil {
-				return fmt.Errorf("eth_getLogs: %s", ErrContractAccessDenied)
-			}
-		}
-	}
-
-	return nil
 }
 
 // validateGetLogsWithOrgContext validates eth_getLogs access using OrgContext for cross-org checks.
@@ -2259,6 +2135,21 @@ func (c *AccessController) InvalidateUser(ctx context.Context, userID string) er
 func (c *AccessController) InvalidateOrg(ctx context.Context, orgID string) error {
 	c.cache.InvalidateOrg(orgID)
 	return c.resolver.InvalidateOrgPermissions(ctx, orgID)
+}
+
+// InvalidateOrgLocalCache drops this process's in-memory permissions for an
+// org WITHOUT touching the shared SQL cache or its generation counter.
+//
+// It exists for the revoke handlers that invalidate the shared cache inside
+// the same transaction as their mutation (RD-1267): that transaction has
+// already bumped the generation and deleted the cache rows, so calling the
+// full InvalidateOrg afterwards would bump a second time and needlessly
+// invalidate concurrent computes. The in-memory cache is process-local and
+// cannot participate in that transaction, so it is cleared here instead —
+// after the mutation has committed, so nothing repopulates it from
+// pre-mutation state.
+func (c *AccessController) InvalidateOrgLocalCache(orgID string) {
+	c.cache.InvalidateOrg(orgID)
 }
 
 // InvalidateGroup invalidates cached permissions for all users in a group.

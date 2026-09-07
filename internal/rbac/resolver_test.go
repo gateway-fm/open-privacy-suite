@@ -3,19 +3,25 @@ package rbac
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
 
 // MockStore implements Store interface for testing
 type MockStore struct {
-	organizations     map[string]*Organization
-	groups            map[string]*Group
-	groupAccess       map[string]*GroupAccess
-	contracts         map[string]*Contract
-	contractGrants    map[string][]*ContractGrant
-	users             map[string]*User
-	memberships       map[string]*UserMembership
+	fakeStore
+	organizations  map[string]*Organization
+	groups         map[string]*Group
+	groupAccess    map[string]*GroupAccess
+	contracts      map[string]*Contract
+	contractGrants map[string][]*ContractGrant
+	users          map[string]*User
+	memberships    map[string]*UserMembership
+	// cacheMu guards cachedPermissions: concurrent ResolvePermissions
+	// callers hit Get/Set from multiple goroutines (the production cache
+	// store is thread-safe; the mock must be too for -race tests).
+	cacheMu           sync.RWMutex
 	cachedPermissions map[string]*EffectivePermissions
 	groupsByOrg       map[string][]*MembershipWithDetails
 }
@@ -34,7 +40,8 @@ func NewMockStore() *MockStore {
 	}
 }
 
-// Implement minimal Store interface for resolver tests
+// Behavioral overrides; every other Store method comes from the embedded
+// fakeStore as an inert zero-value return.
 
 func (m *MockStore) GetOrganization(ctx context.Context, id string) (*Organization, error) {
 	return m.organizations[id], nil
@@ -112,16 +119,22 @@ func (m *MockStore) ListUserMembershipsInOrg(ctx context.Context, userID, orgID 
 
 func (m *MockStore) GetCachedPermissions(ctx context.Context, userID, orgID string) (*EffectivePermissions, error) {
 	key := userID + ":" + orgID
+	m.cacheMu.RLock()
+	defer m.cacheMu.RUnlock()
 	return m.cachedPermissions[key], nil
 }
 
 func (m *MockStore) SetCachedPermissions(ctx context.Context, perms *EffectivePermissions) error {
 	key := perms.UserID + ":" + perms.OrgID
+	m.cacheMu.Lock()
+	defer m.cacheMu.Unlock()
 	m.cachedPermissions[key] = perms
 	return nil
 }
 
 func (m *MockStore) InvalidateCacheForUser(ctx context.Context, userID string) error {
+	m.cacheMu.Lock()
+	defer m.cacheMu.Unlock()
 	for key := range m.cachedPermissions {
 		if len(key) > len(userID) && key[:len(userID)] == userID {
 			delete(m.cachedPermissions, key)
@@ -131,6 +144,8 @@ func (m *MockStore) InvalidateCacheForUser(ctx context.Context, userID string) e
 }
 
 func (m *MockStore) InvalidateCacheForOrg(ctx context.Context, orgID string) error {
+	m.cacheMu.Lock()
+	defer m.cacheMu.Unlock()
 	for key := range m.cachedPermissions {
 		if len(key) > len(orgID) && key[len(key)-len(orgID):] == orgID {
 			delete(m.cachedPermissions, key)
@@ -141,6 +156,8 @@ func (m *MockStore) InvalidateCacheForOrg(ctx context.Context, orgID string) err
 
 func (m *MockStore) InvalidateCacheForGroup(ctx context.Context, groupID string) error {
 	// Clear all cache for simplicity in tests
+	m.cacheMu.Lock()
+	defer m.cacheMu.Unlock()
 	m.cachedPermissions = make(map[string]*EffectivePermissions)
 	return nil
 }
@@ -159,10 +176,6 @@ func (m *MockStore) ListContractGrantsBatch(ctx context.Context, groupIDs []stri
 	return result, nil
 }
 
-func (m *MockStore) ListContractGrantsByGroupWithContract(ctx context.Context, groupID string) ([]*ContractGrantWithGroup, error) {
-	return nil, nil
-}
-
 func (m *MockStore) GetContract(ctx context.Context, id string) (*Contract, error) {
 	return m.contracts[id], nil
 }
@@ -177,21 +190,6 @@ func (m *MockStore) GetContractsByIDs(ctx context.Context, ids []string) (map[st
 	return result, nil
 }
 
-// Stub implementations for other Store methods
-func (m *MockStore) CreateOrganization(ctx context.Context, org *Organization) error { return nil }
-func (m *MockStore) UpdateOrganization(ctx context.Context, org *Organization) error { return nil }
-func (m *MockStore) ListOrganizations(ctx context.Context) ([]*Organization, error)  { return nil, nil }
-func (m *MockStore) DeleteOrganization(ctx context.Context, id string) error         { return nil }
-func (m *MockStore) CreateGroup(ctx context.Context, group *Group) error             { return nil }
-func (m *MockStore) UpdateGroup(ctx context.Context, group *Group) error             { return nil }
-func (m *MockStore) ListGroups(ctx context.Context, orgID string) ([]*Group, error)  { return nil, nil }
-func (m *MockStore) ListGroupsPaginated(ctx context.Context, orgID string, limit, offset int) ([]*Group, int, error) {
-	return nil, 0, nil
-}
-func (m *MockStore) ListGroupsByParent(ctx context.Context, parentID string) ([]*Group, error) {
-	return nil, nil
-}
-func (m *MockStore) DeleteGroup(ctx context.Context, id string) error { return nil }
 func (m *MockStore) CreateGroupAccess(ctx context.Context, access *GroupAccess) error {
 	m.groupAccess[access.GroupID] = access
 	return nil
@@ -200,9 +198,7 @@ func (m *MockStore) UpdateGroupAccess(ctx context.Context, access *GroupAccess) 
 	m.groupAccess[access.GroupID] = access
 	return nil
 }
-func (m *MockStore) DeleteGroupAccess(ctx context.Context, groupID string) error { return nil }
-func (m *MockStore) CreateUser(ctx context.Context, user *User) error            { return nil }
-func (m *MockStore) GetUser(ctx context.Context, id string) (*User, error)       { return m.users[id], nil }
+func (m *MockStore) GetUser(ctx context.Context, id string) (*User, error) { return m.users[id], nil }
 func (m *MockStore) GetUserByExternalID(ctx context.Context, externalID string) (*User, error) {
 	for _, u := range m.users {
 		if u.ExternalID == externalID {
@@ -211,35 +207,6 @@ func (m *MockStore) GetUserByExternalID(ctx context.Context, externalID string) 
 	}
 	return nil, nil
 }
-func (m *MockStore) UpdateUser(ctx context.Context, user *User) error { return nil }
-func (m *MockStore) ListUsers(ctx context.Context, limit, offset int) ([]*User, error) {
-	return nil, nil
-}
-func (m *MockStore) DeleteUser(ctx context.Context, id string) error { return nil }
-func (m *MockStore) CreateMembership(ctx context.Context, membership *UserMembership) error {
-	return nil
-}
-func (m *MockStore) GetMembership(ctx context.Context, id string) (*UserMembership, error) {
-	return nil, nil
-}
-func (m *MockStore) GetMembershipByUserAndGroup(ctx context.Context, userID, groupID string) (*UserMembership, error) {
-	return nil, nil
-}
-func (m *MockStore) UpdateMembership(ctx context.Context, membership *UserMembership) error {
-	return nil
-}
-func (m *MockStore) ListUserMemberships(ctx context.Context, userID string) ([]*UserMembership, error) {
-	return nil, nil
-}
-func (m *MockStore) ListUserMembershipsWithDetails(ctx context.Context, userID string) ([]*MembershipWithDetails, error) {
-	return nil, nil
-}
-func (m *MockStore) ListGroupMembers(ctx context.Context, groupID string) ([]*UserMembership, error) {
-	return nil, nil
-}
-func (m *MockStore) DeleteMembership(ctx context.Context, id string) error        { return nil }
-func (m *MockStore) DeleteExpiredMemberships(ctx context.Context) (int64, error)  { return 0, nil }
-func (m *MockStore) CreateContract(ctx context.Context, contract *Contract) error { return nil }
 func (m *MockStore) GetContractByAddress(ctx context.Context, orgID, address string) (*Contract, error) {
 	for _, c := range m.contracts {
 		if c.OrgID == orgID && c.Address == address {
@@ -257,14 +224,6 @@ func (m *MockStore) GetContractByAddressGlobal(ctx context.Context, address stri
 	}
 	return nil, nil
 }
-func (m *MockStore) UpdateContract(ctx context.Context, contract *Contract) error { return nil }
-func (m *MockStore) ListContracts(ctx context.Context, orgID string) ([]*Contract, error) {
-	return nil, nil
-}
-func (m *MockStore) ListContractsPaginated(ctx context.Context, orgID string, limit, offset int) ([]*Contract, int, error) {
-	return nil, 0, nil
-}
-func (m *MockStore) DeleteContract(ctx context.Context, id string) error { return nil }
 func (m *MockStore) IsContractRegisteredToAnyOrg(ctx context.Context, address string) (bool, error) {
 	for _, c := range m.contracts {
 		if strings.ToLower(c.Address) == strings.ToLower(address) {
@@ -288,80 +247,6 @@ func (m *MockStore) GetContractOwnerOrgID(ctx context.Context, address string) (
 		}
 	}
 	return "", nil
-}
-func (m *MockStore) GetContractDeployerByAddress(ctx context.Context, address string) (*string, error) {
-	return nil, nil
-}
-func (m *MockStore) CreateContractGrant(ctx context.Context, grant *ContractGrant) error { return nil }
-func (m *MockStore) GetContractGrant(ctx context.Context, id string) (*ContractGrant, error) {
-	return nil, nil
-}
-func (m *MockStore) GetContractGrantByContractAndGroup(ctx context.Context, contractID, groupID string) (*ContractGrant, error) {
-	return nil, nil
-}
-func (m *MockStore) UpdateContractGrant(ctx context.Context, grant *ContractGrant) error { return nil }
-func (m *MockStore) ListContractGrantsByContract(ctx context.Context, contractID string) ([]*ContractGrant, error) {
-	return nil, nil
-}
-func (m *MockStore) DeleteContractGrant(ctx context.Context, id string) error { return nil }
-func (m *MockStore) GetContractGrantSummary(ctx context.Context, orgID string) (map[string]*ContractGrantSummary, error) { return nil, nil }
-func (m *MockStore) GetLinkedEthAddresses(ctx context.Context, did string) ([]string, error) {
-	return nil, nil
-}
-func (m *MockStore) SystemLinkEthAddress(_ context.Context, _, _ string) error { return nil }
-func (m *MockStore) GetOrgIDsForEthAddress(ctx context.Context, address string) ([]string, error) {
-	return nil, nil
-}
-func (m *MockStore) CleanupExpiredCache(ctx context.Context) (int64, error)         { return 0, nil }
-func (m *MockStore) CreateAuditLog(ctx context.Context, entry *AuditLogEntry) error { return nil }
-func (m *MockStore) ListAuditLogs(ctx context.Context, resourceType string, resourceID *string, limit, offset int) ([]*AuditLogEntry, error) {
-	return nil, nil
-}
-func (m *MockStore) ListAuditLogsByActor(ctx context.Context, actorID string, limit, offset int) ([]*AuditLogEntry, error) {
-	return nil, nil
-}
-
-// Preregistered address stubs
-func (m *MockStore) PreRegisterPlainCreate(ctx context.Context, orgID, address, note string) error {
-	return nil
-}
-func (m *MockStore) DeletePreregisteredAddressByAddress(ctx context.Context, address string) error {
-	return nil
-}
-func (m *MockStore) IsAddressPreregistered(ctx context.Context, orgID, address string) (bool, error) {
-	return false, nil
-}
-func (m *MockStore) MarkAddressUsed(ctx context.Context, address string) error {
-	return nil
-}
-
-// Shared infrastructure stubs
-func (m *MockStore) IsSharedInfrastructure(ctx context.Context, address string) (bool, error) {
-	return false, nil
-}
-func (m *MockStore) CreateSharedInfrastructure(ctx context.Context, infra *SharedInfrastructure) error {
-	return nil
-}
-func (m *MockStore) ListSharedInfrastructure(ctx context.Context) ([]*SharedInfrastructure, error) {
-	return nil, nil
-}
-func (m *MockStore) DeleteSharedInfrastructure(ctx context.Context, address string) error {
-	return nil
-}
-
-func (m *MockStore) GrantContractToDeployerGroup(ctx context.Context, orgID, contractID, deployerUserID string) error {
-	return nil
-}
-
-// Paginated list stubs
-func (m *MockStore) ListOrganizationsPaginated(ctx context.Context, limit, offset int) ([]*Organization, int, error) {
-	return nil, 0, nil
-}
-func (m *MockStore) ListGroupsWithAccessPaginated(ctx context.Context, orgID string, limit, offset int) ([]*GroupWithAccess, int, error) {
-	return nil, 0, nil
-}
-func (m *MockStore) ListUsersPaginated(ctx context.Context, limit, offset int) ([]*User, int, error) {
-	return nil, 0, nil
 }
 
 // Tests
@@ -1060,4 +945,3 @@ func TestResolverCachesPermissionsSynchronously(t *testing.T) {
 		}
 	})
 }
-

@@ -108,7 +108,7 @@ func setupVisTxTest(t *testing.T, ts *testServerRBAC) *visTxTestSetup {
 
 func TestApplyResponseFilter_GetTransactionByHash_ListedDIDSeesFullTx(t *testing.T) {
 	proc, ts := setupProcessorWithoutTracing(t)
-	proc.SetTxVisibilityStore(ts.db)
+	proc.txVisibilityStore = ts.db
 
 	setup := setupVisTxTest(t, ts)
 
@@ -128,7 +128,7 @@ func TestApplyResponseFilter_GetTransactionByHash_ListedDIDSeesFullTx(t *testing
 
 func TestApplyResponseFilter_GetTransactionByHash_UnlistedDIDGetsNull(t *testing.T) {
 	proc, ts := setupProcessorWithoutTracing(t)
-	proc.SetTxVisibilityStore(ts.db)
+	proc.txVisibilityStore = ts.db
 
 	_ = setupVisTxTest(t, ts)
 
@@ -155,7 +155,7 @@ func TestApplyResponseFilter_GetTransactionByHash_UnlistedDIDGetsNull(t *testing
 
 func TestApplyResponseFilter_GetTransactionByHash_ParticipantStillWorks(t *testing.T) {
 	proc, ts := setupProcessorWithoutTracing(t)
-	proc.SetTxVisibilityStore(ts.db)
+	proc.txVisibilityStore = ts.db
 
 	// A user whose linked address IS the tx sender — should get the tx via the
 	// normal participant path, independent of visibleTo.
@@ -182,7 +182,7 @@ func TestApplyResponseFilter_GetTransactionByHash_ParticipantStillWorks(t *testi
 
 func TestApplyResponseFilter_GetTransactionByBlockHashAndIndex_ListedDIDSeesFullTx(t *testing.T) {
 	proc, ts := setupProcessorWithoutTracing(t)
-	proc.SetTxVisibilityStore(ts.db)
+	proc.txVisibilityStore = ts.db
 
 	setup := setupVisTxTest(t, ts)
 
@@ -202,7 +202,7 @@ func TestApplyResponseFilter_GetTransactionByBlockHashAndIndex_ListedDIDSeesFull
 
 func TestApplyResponseFilter_GetTransactionByBlockNumberAndIndex_ListedDIDSeesFullTx(t *testing.T) {
 	proc, ts := setupProcessorWithoutTracing(t)
-	proc.SetTxVisibilityStore(ts.db)
+	proc.txVisibilityStore = ts.db
 
 	setup := setupVisTxTest(t, ts)
 
@@ -221,7 +221,7 @@ func TestApplyResponseFilter_GetTransactionByBlockNumberAndIndex_ListedDIDSeesFu
 
 func TestApplyResponseFilter_GetTransactionByBlockHashAndIndex_UnlistedDIDGetsNull(t *testing.T) {
 	proc, ts := setupProcessorWithoutTracing(t)
-	proc.SetTxVisibilityStore(ts.db)
+	proc.txVisibilityStore = ts.db
 
 	_ = setupVisTxTest(t, ts)
 

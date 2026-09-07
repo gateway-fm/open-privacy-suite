@@ -19,15 +19,15 @@ import (
 // overrides target the same connection, so behaviour is identical to the
 // pre-RD-1147 single-DB deployment.
 type disclosureAuditStore struct {
-	*db.DB         // main DB: satisfies the full disclosure.Store surface
-	auditDB *db.DB // access_logs reads route here
+	*db.DB              // main DB: satisfies the full disclosure.Store surface
+	auditDB *db.AuditDB // access_logs reads route here (RD-1256 role handle)
 }
 
 // compile-time assertion that the wrapper still satisfies disclosure.Store.
 var _ disclosure.Store = (*disclosureAuditStore)(nil)
 
 // newDisclosureAuditStore wraps the main DB so access_logs reads go to auditDB.
-func newDisclosureAuditStore(main, auditDB *db.DB) *disclosureAuditStore {
+func newDisclosureAuditStore(main *db.DB, auditDB *db.AuditDB) *disclosureAuditStore {
 	return &disclosureAuditStore{DB: main, auditDB: auditDB}
 }
 
@@ -43,13 +43,15 @@ func (s *disclosureAuditStore) GetActivitySummary(ctx context.Context, userExter
 
 // accessLogDB returns the handle that holds the access_logs audit trail: the
 // separate audit DB when configured, else the main DB. Server instances built
-// by New always set auditDB (== db when not separated); the nil fallback keeps
-// lightweight test Server literals that only set db working unchanged.
-func (s *Server) accessLogDB() *db.DB {
+// by New always set auditDB (== db's pool when not separated); the nil
+// fallback wraps s.db on the fly so lightweight test Server literals that only
+// set db keep working unchanged (RD-1256: callers always see the role-scoped
+// handle).
+func (s *Server) accessLogDB() *db.AuditDB {
 	if s.auditDB != nil {
 		return s.auditDB
 	}
-	return s.db
+	return db.NewAuditHandle(s.db)
 }
 
 // getActivityLogsForGrant resolves a disclosure grant's target external_id and

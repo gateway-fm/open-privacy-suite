@@ -6,8 +6,6 @@ import (
 
 	"privacy-proxy/internal/evm/precompile"
 	"privacy-proxy/internal/explorer"
-
-	"github.com/lib/pq"
 )
 
 // GetBatchVisibility resolves visibility rules for a list of addresses efficiently.
@@ -37,7 +35,7 @@ func (d *DB) GetBatchVisibility(ctx context.Context, viewerDID string, addresses
 		WHERE LOWER(eth_address) = ANY($1)
 		  AND revoked = false`
 
-	rows, err := d.conn.QueryContext(ctx, queryOwners, pq.Array(uniqueAddrs))
+	rows, err := d.conn.QueryContext(ctx, queryOwners, uniqueAddrs)
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +95,7 @@ func (d *DB) GetBatchVisibility(ctx context.Context, viewerDID string, addresses
 		orgContractDetect := `
 			SELECT LOWER(c.address) FROM contracts c
 			WHERE LOWER(c.address) = ANY($1)`
-		orgDetectRows, err := d.conn.QueryContext(ctx, orgContractDetect, pq.Array(publicAddrs))
+		orgDetectRows, err := d.conn.QueryContext(ctx, orgContractDetect, publicAddrs)
 		if err != nil {
 			return nil, err
 		}
@@ -131,7 +129,7 @@ func (d *DB) GetBatchVisibility(ctx context.Context, viewerDID string, addresses
 				  AND (g.is_org_admin = true
 				       OR cg.id IS NOT NULL)`
 
-			orgRows, err := d.conn.QueryContext(ctx, grantedGroupQuery, pq.Array(orgContractAddrs))
+			orgRows, err := d.conn.QueryContext(ctx, grantedGroupQuery, orgContractAddrs)
 			if err != nil {
 				return nil, err
 			}
@@ -170,7 +168,7 @@ func (d *DB) GetBatchVisibility(ctx context.Context, viewerDID string, addresses
 					  AND m.group_id = ANY($2)
 					  AND (m.expires_at IS NULL OR m.expires_at > NOW())`
 
-				memberRows, err := d.conn.QueryContext(ctx, memberQuery, viewerDID, pq.Array(groupIDSlice))
+				memberRows, err := d.conn.QueryContext(ctx, memberQuery, viewerDID, groupIDSlice)
 				if err != nil {
 					return nil, err
 				}
@@ -259,7 +257,7 @@ func (d *DB) GetBatchVisibilityDetailed(ctx context.Context, viewerDID string, a
 		WHERE LOWER(eth_address) = ANY($1)
 		  AND revoked = false`
 
-	rows, err := d.conn.QueryContext(ctx, queryOwners, pq.Array(uniqueAddrs))
+	rows, err := d.conn.QueryContext(ctx, queryOwners, uniqueAddrs)
 	if err != nil {
 		return nil, err
 	}
@@ -327,7 +325,7 @@ func (d *DB) GetBatchVisibilityDetailed(ctx context.Context, viewerDID string, a
 			FROM contracts c
 			WHERE LOWER(c.address) = ANY($1)`
 
-		orgDetectRows, err := d.conn.QueryContext(ctx, orgContractDetect, pq.Array(publicAddrs))
+		orgDetectRows, err := d.conn.QueryContext(ctx, orgContractDetect, publicAddrs)
 		if err != nil {
 			return nil, err
 		}
@@ -361,7 +359,7 @@ func (d *DB) GetBatchVisibilityDetailed(ctx context.Context, viewerDID string, a
 				  AND (g.is_org_admin = true
 				       OR cg.id IS NOT NULL)`
 
-			orgRows, err := d.conn.QueryContext(ctx, orgContractQuery, pq.Array(orgContractAddrs))
+			orgRows, err := d.conn.QueryContext(ctx, orgContractQuery, orgContractAddrs)
 			if err != nil {
 				return nil, err
 			}
@@ -399,7 +397,7 @@ func (d *DB) GetBatchVisibilityDetailed(ctx context.Context, viewerDID string, a
 					  AND m.group_id = ANY($2)
 					  AND (m.expires_at IS NULL OR m.expires_at > NOW())`
 
-				memberRows, err := d.conn.QueryContext(ctx, memberQuery, viewerDID, pq.Array(groupIDSlice))
+				memberRows, err := d.conn.QueryContext(ctx, memberQuery, viewerDID, groupIDSlice)
 				if err != nil {
 					return nil, err
 				}
@@ -628,7 +626,7 @@ func (d *DB) GetBatchEventAccess(ctx context.Context, viewerDID string, contract
 		    OR (cg.event_rules IS NOT NULL AND cg.event_rules::text != '[]' AND cg.event_rules::text != 'null')
 		  )`
 
-	rows, err := d.conn.QueryContext(ctx, query, pq.Array(uniqueAddrs), viewerDID)
+	rows, err := d.conn.QueryContext(ctx, query, uniqueAddrs, viewerDID)
 	if err != nil {
 		return nil, err
 	}

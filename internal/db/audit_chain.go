@@ -26,6 +26,10 @@ const ChainNameRBACAuditLog = "rbac_audit_log"
 // so the retention manager can attach the deleted id range and the new chain
 // anchor hash to the rbac_audit_log entry alongside the row count. All four
 // fields are zero-valued when Deleted == 0.
+//
+// The audit package owns its own copy of this vocabulary
+// (audit.PruneResult) so that audit never imports db (RD-1255); the
+// server-side retention adapter converts between the two.
 type PruneResult struct {
 	// Deleted is the number of rows deleted in this call.
 	Deleted int64

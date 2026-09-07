@@ -6,6 +6,7 @@ import (
 
 	"privacy-proxy/internal/db"
 	"privacy-proxy/internal/rbac"
+	"privacy-proxy/internal/server/middleware"
 	"privacy-proxy/internal/tracer"
 
 	"github.com/google/uuid"
@@ -27,15 +28,14 @@ func setupProcessorWithoutTracing(t *testing.T) (*JSONRPCProcessor, *testServerR
 	t.Helper()
 	ts := setupTestServerForRBAC(t)
 
-	proc := NewJSONRPCProcessor(
-		ts.rbacAccessCtrl,
-		&noopRateLimiter{},
-		nil, // no proxy needed for negative path tests
-		ts.db,
-		NewCircuitBreaker(),
-		NewConcurrencyLimiter(50, 0),
-		"",
-	)
+	proc := NewJSONRPCProcessor(JSONRPCProcessorConfig{
+		RBACAccessCtrl:     ts.rbacAccessCtrl,
+		RateLimiter:        &noopRateLimiter{},
+		Proxy:              nil, // no proxy needed for negative path tests
+		AccessLogger:       ts.db,
+		CircuitBreaker:     middleware.NewCircuitBreaker(),
+		ConcurrencyLimiter: middleware.NewConcurrencyLimiter(50, 0),
+	})
 	return proc, ts
 }
 
@@ -54,17 +54,16 @@ func setupProcessorWithTracing(t *testing.T) (*JSONRPCProcessor, *testServerRBAC
 
 	tv := rbac.NewTraceValidator(ts.db)
 
-	proc := NewJSONRPCProcessorWithTracing(
-		ts.rbacAccessCtrl,
-		&noopRateLimiter{},
-		nil, // no proxy needed
-		ts.db,
-		rt,
-		tv,
-		NewCircuitBreaker(),
-		NewConcurrencyLimiter(50, 0),
-		"",
-	)
+	proc := NewJSONRPCProcessor(JSONRPCProcessorConfig{
+		RBACAccessCtrl:     ts.rbacAccessCtrl,
+		RateLimiter:        &noopRateLimiter{},
+		Proxy:              nil, // no proxy needed
+		AccessLogger:       ts.db,
+		RuntimeTracer:      rt,
+		TraceValidator:     tv,
+		CircuitBreaker:     middleware.NewCircuitBreaker(),
+		ConcurrencyLimiter: middleware.NewConcurrencyLimiter(50, 0),
+	})
 	return proc, ts
 }
 

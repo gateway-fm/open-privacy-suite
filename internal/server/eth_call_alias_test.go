@@ -25,15 +25,8 @@ import (
 // state in t.Cleanup. Required because MethodAliases is package-global.
 func withMethodAlias(t *testing.T, method, target string) {
 	t.Helper()
-	prev, hadPrev := rbac.MethodAliases[method]
+	t.Cleanup(rbac.SnapshotMethodRegistriesForTest())
 	rbac.MethodAliases[method] = target
-	t.Cleanup(func() {
-		if hadPrev {
-			rbac.MethodAliases[method] = prev
-			return
-		}
-		delete(rbac.MethodAliases, method)
-	})
 }
 
 func TestEthCallTracing_AliasedMethodIsTraced(t *testing.T) {

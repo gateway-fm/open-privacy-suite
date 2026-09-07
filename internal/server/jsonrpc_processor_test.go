@@ -39,17 +39,17 @@ func TestResolveAPIKeyHeader(t *testing.T) {
 	}
 }
 
-// TestSetDefaultRPCAPIKeyHeader verifies the setter wires through to the
-// resolver, since the setter is the only public way operators (via Load())
-// can populate the operator-wide default.
-func TestSetDefaultRPCAPIKeyHeader(t *testing.T) {
-	p := &JSONRPCProcessor{}
+// TestRPCAPIKeyHeaderConfig verifies the constructor config wires the
+// operator-wide header (RPC_API_KEY_HEADER via Load()) through to the
+// resolver, and that omitting it keeps the proxy default.
+func TestRPCAPIKeyHeaderConfig(t *testing.T) {
+	p := NewJSONRPCProcessor(JSONRPCProcessorConfig{})
 	if got := p.resolveAPIKeyHeader(); got != proxy.DefaultAPIKeyHeader {
-		t.Fatalf("pre-set resolveAPIKeyHeader() = %q, want %q", got, proxy.DefaultAPIKeyHeader)
+		t.Fatalf("default resolveAPIKeyHeader() = %q, want %q", got, proxy.DefaultAPIKeyHeader)
 	}
-	p.SetDefaultRPCAPIKeyHeader("Custom-H")
+	p = NewJSONRPCProcessor(JSONRPCProcessorConfig{RPCAPIKeyHeader: "Custom-H"})
 	if got := p.resolveAPIKeyHeader(); got != "Custom-H" {
-		t.Errorf("post-set resolveAPIKeyHeader() = %q, want %q", got, "Custom-H")
+		t.Errorf("configured resolveAPIKeyHeader() = %q, want %q", got, "Custom-H")
 	}
 }
 

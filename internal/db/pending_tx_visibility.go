@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-
-	"github.com/lib/pq"
 )
 
 // MaxVisibilityAttempts is the soft cap on reconciliation retries before a
@@ -18,14 +16,14 @@ const MaxVisibilityAttempts = 10
 
 // PendingTxVisibility is one outbox row for tx_visible_to.
 type PendingTxVisibility struct {
-	ID             int64
-	TxHash         string
-	VisibleToDIDs  []string
-	SenderDID      string
-	OrgID          string
-	AttemptCount   int
-	LastAttemptAt  sql.NullTime
-	LastError      sql.NullString
+	ID            int64
+	TxHash        string
+	VisibleToDIDs []string
+	SenderDID     string
+	OrgID         string
+	AttemptCount  int
+	LastAttemptAt sql.NullTime
+	LastError     sql.NullString
 }
 
 // EnqueuePendingTxVisibility writes one outbox row. Called from the JSON-RPC
@@ -41,7 +39,7 @@ func (d *DB) EnqueuePendingTxVisibility(ctx context.Context, txHash string, visi
 	`
 	_, err := d.conn.ExecContext(ctx, query,
 		strings.ToLower(txHash),
-		pq.Array(visibleToDIDs),
+		visibleToDIDs,
 		senderDID,
 		orgID,
 	)
@@ -76,7 +74,7 @@ func (d *DB) ListDuePendingTxVisibility(ctx context.Context, limit int) ([]*Pend
 	for rows.Next() {
 		row := &PendingTxVisibility{}
 		if err := rows.Scan(
-			&row.ID, &row.TxHash, pq.Array(&row.VisibleToDIDs),
+			&row.ID, &row.TxHash, ScanTextArray(&row.VisibleToDIDs),
 			&row.SenderDID, &row.OrgID,
 			&row.AttemptCount, &row.LastAttemptAt, &row.LastError,
 		); err != nil {
@@ -92,34 +90,31 @@ func (d *DB) ListDuePendingTxVisibility(ctx context.Context, limit int) ([]*Pend
 // DO NOTHING — tx_visible_to is keyed by tx_hash so retries are idempotent)
 // then DELETE the pending row. Both succeed or both rollback.
 func (d *DB) PromotePendingTxVisibility(ctx context.Context, row *PendingTxVisibility) error {
-	tx, err := d.conn.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
+	// Concurrent reconciler instances can pick the same row; both statements
+	// are idempotent (ON CONFLICT DO NOTHING + delete-by-id), so the whole
+	// transaction is safe to retry on deadlock.
+	return withRetry(ctx, func() error {
+		return d.WithTx(ctx, func(tx *Tx) error {
+			const insertQ = `
+				INSERT INTO tx_visible_to (tx_hash, visible_to_dids, sender_did, org_id)
+				VALUES ($1, $2, $3, $4)
+				ON CONFLICT (tx_hash) DO NOTHING
+			`
+			if _, err := tx.tx.ExecContext(ctx, insertQ,
+				row.TxHash, row.VisibleToDIDs, row.SenderDID, row.OrgID,
+			); err != nil {
+				return fmt.Errorf("insert tx_visible_to: %w", err)
+			}
 
-	const insertQ = `
-		INSERT INTO tx_visible_to (tx_hash, visible_to_dids, sender_did, org_id)
-		VALUES ($1, $2, $3, $4)
-		ON CONFLICT (tx_hash) DO NOTHING
-	`
-	if _, err := tx.ExecContext(ctx, insertQ,
-		row.TxHash, pq.Array(row.VisibleToDIDs), row.SenderDID, row.OrgID,
-	); err != nil {
-		return fmt.Errorf("insert tx_visible_to: %w", err)
-	}
-
-	const deleteQ = `DELETE FROM pending_tx_visibility WHERE id = $1`
-	res, err := tx.ExecContext(ctx, deleteQ, row.ID)
-	if err != nil {
-		return fmt.Errorf("delete pending row: %w", err)
-	}
-	if affected, _ := res.RowsAffected(); affected != 1 {
-		// Row vanished between SELECT and DELETE — another reconciler
-		// instance picked it up. Not an error; the work is done.
-		return tx.Commit()
-	}
-	return tx.Commit()
+			// A zero-row delete means another reconciler instance already
+			// promoted this row. Not an error; the work is done.
+			const deleteQ = `DELETE FROM pending_tx_visibility WHERE id = $1`
+			if _, err := tx.tx.ExecContext(ctx, deleteQ, row.ID); err != nil {
+				return fmt.Errorf("delete pending row: %w", err)
+			}
+			return nil
+		})
+	})
 }
 
 // MarkPendingTxVisibilityFailed records a transient failure on an outbox row.
