@@ -595,9 +595,19 @@ func (s *Server) forwardSimulationTraceWithAPIKey(ctx context.Context, rpc dryRu
 		}
 		return nil, fmt.Errorf("trace failed: %s", rpcResp.Error.Message)
 	}
+	// Fail closed on an absent or empty trace. A "result": null or {} payload
+	// parses into a TraceResult with zero call targets, which the validator
+	// would otherwise accept (no target to deny) and surface as allow. The
+	// live RPC path treats a missing trace as tracing-unavailable; mirror it.
+	if len(rpcResp.Result) == 0 || string(rpcResp.Result) == "null" || string(rpcResp.Result) == "{}" {
+		return nil, fmt.Errorf("trace returned no result")
+	}
 	parsed, err := tracer.ParseCallTraceResult(rpcResp.Result)
 	if err != nil {
 		return nil, fmt.Errorf("could not validate trace: %w", err)
+	}
+	if parsed == nil {
+		return nil, fmt.Errorf("trace returned no result")
 	}
 	_ = ctx
 	return &simulationTraceResult{
