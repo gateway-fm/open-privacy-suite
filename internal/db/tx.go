@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 )
 
@@ -55,10 +56,26 @@ func (d *DB) WithTx(ctx context.Context, fn func(*Tx) error) error {
 
 	if err := fn(tx); err != nil {
 		if rbErr := tx.Rollback(); rbErr != nil {
-			return fmt.Errorf("tx failed: %v, rollback failed: %w", err, rbErr)
+			return wrapTxAndRollbackErrors(err, rbErr)
 		}
 		return err
 	}
 
 	return tx.Commit()
+}
+
+// wrapTxAndRollbackErrors combines a failed transaction body with a failed
+// rollback so that BOTH stay inspectable.
+//
+// errors.Join rather than a %v/%w pair: retry.go classifies retriable
+// failures with errors.As on *pgconn.PgError, and formatting the original
+// cause with %v dropped it from the unwrap chain — so a deadlock whose
+// rollback also failed was unclassifiable and silently lost its retry
+// (RD-1278). The rollback failure matters too, because it means the
+// connection was left in a bad state, so neither error may be discarded.
+func wrapTxAndRollbackErrors(err, rbErr error) error {
+	return errors.Join(
+		fmt.Errorf("tx failed: %w", err),
+		fmt.Errorf("rollback failed: %w", rbErr),
+	)
 }
