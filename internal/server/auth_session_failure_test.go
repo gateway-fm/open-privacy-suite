@@ -69,6 +69,9 @@ func TestHandleAuthSessionStatus_CollapsesSensitiveReason(t *testing.T) {
 		{"internal error collapses", AuthFailInternalError, AuthFailWireGeneric},
 		{"raw error text collapses", "dial tcp 10.0.0.5:8545: connection refused", AuthFailWireGeneric},
 		{"humanity passes through", AuthFailHumanityRequired, AuthFailHumanityRequired},
+		// RD-1251: reaches the poller so the login page can report a missing
+		// deployment setting instead of a bare "authentication failed".
+		{"unsupported network passes through", AuthFailNetworkUnsupported, AuthFailNetworkUnsupported},
 	}
 
 	for _, tt := range tests {
