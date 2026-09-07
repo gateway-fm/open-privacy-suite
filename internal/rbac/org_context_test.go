@@ -9,11 +9,12 @@ import (
 
 // MockOrgContextStore implements Store interface for OrgContext tests
 type MockOrgContextStore struct {
+	fakeStore
 	memberships           []*MembershipWithDetails
 	organizations         map[string]*Organization
-	contractOwners        map[string]string // address -> orgID
+	contractOwners        map[string]string          // address -> orgID
 	addressOwnedByOrg     map[string]map[string]bool // address -> orgID -> bool
-	registeredToAnyOrg    map[string]bool // address -> bool
+	registeredToAnyOrg    map[string]bool            // address -> bool
 	membershipsErr        error
 	orgErr                error
 	contractOwnerErr      error
@@ -62,92 +63,14 @@ func (m *MockOrgContextStore) IsContractRegisteredToAnyOrg(ctx context.Context, 
 	return m.registeredToAnyOrg[address], nil
 }
 
-// Implement remaining Store interface methods as no-ops for tests
-func (m *MockOrgContextStore) CreateOrganization(ctx context.Context, org *Organization) error { return nil }
-func (m *MockOrgContextStore) GetOrganizationBySlug(ctx context.Context, slug string) (*Organization, error) { return nil, nil }
-func (m *MockOrgContextStore) UpdateOrganization(ctx context.Context, org *Organization) error { return nil }
-func (m *MockOrgContextStore) ListOrganizations(ctx context.Context) ([]*Organization, error) { return nil, nil }
-func (m *MockOrgContextStore) ListOrganizationsPaginated(ctx context.Context, limit, offset int) ([]*Organization, int, error) { return nil, 0, nil }
-func (m *MockOrgContextStore) DeleteOrganization(ctx context.Context, id string) error { return nil }
-func (m *MockOrgContextStore) CreateGroup(ctx context.Context, group *Group) error { return nil }
-func (m *MockOrgContextStore) GetGroup(ctx context.Context, id string) (*Group, error) { return nil, nil }
-func (m *MockOrgContextStore) GetGroupBySlug(ctx context.Context, orgID, slug string) (*Group, error) { return nil, nil }
-func (m *MockOrgContextStore) UpdateGroup(ctx context.Context, group *Group) error { return nil }
-func (m *MockOrgContextStore) ListGroups(ctx context.Context, orgID string) ([]*Group, error) { return nil, nil }
-func (m *MockOrgContextStore) ListGroupsByParent(ctx context.Context, parentID string) ([]*Group, error) { return nil, nil }
-func (m *MockOrgContextStore) DeleteGroup(ctx context.Context, id string) error { return nil }
-func (m *MockOrgContextStore) GetGroupHierarchy(ctx context.Context, groupID string) ([]*Group, error) { return nil, nil }
-func (m *MockOrgContextStore) CreateContract(ctx context.Context, contract *Contract) error { return nil }
-func (m *MockOrgContextStore) GetContract(ctx context.Context, id string) (*Contract, error) { return nil, nil }
-func (m *MockOrgContextStore) GetContractsByIDs(ctx context.Context, ids []string) (map[string]*Contract, error) { return nil, nil }
-func (m *MockOrgContextStore) GetContractByAddress(ctx context.Context, orgID, address string) (*Contract, error) { return nil, nil }
-func (m *MockOrgContextStore) GetContractByAddressGlobal(ctx context.Context, address string) (*Contract, error) { return nil, nil }
-func (m *MockOrgContextStore) UpdateContract(ctx context.Context, contract *Contract) error { return nil }
-func (m *MockOrgContextStore) ListContracts(ctx context.Context, orgID string) ([]*Contract, error) { return nil, nil }
-func (m *MockOrgContextStore) ListContractsPaginated(ctx context.Context, orgID string, limit, offset int) ([]*Contract, int, error) { return nil, 0, nil }
-func (m *MockOrgContextStore) DeleteContract(ctx context.Context, id string) error { return nil }
-func (m *MockOrgContextStore) GetContractDeployerByAddress(ctx context.Context, address string) (*string, error) { return nil, nil }
-func (m *MockOrgContextStore) CreateContractGrant(ctx context.Context, grant *ContractGrant) error { return nil }
-func (m *MockOrgContextStore) GetContractGrant(ctx context.Context, id string) (*ContractGrant, error) { return nil, nil }
-func (m *MockOrgContextStore) UpdateContractGrant(ctx context.Context, grant *ContractGrant) error { return nil }
-func (m *MockOrgContextStore) ListContractGrants(ctx context.Context, contractID string) ([]*ContractGrant, error) { return nil, nil }
-func (m *MockOrgContextStore) ListContractGrantsByGroup(ctx context.Context, groupID string) ([]*ContractGrant, error) { return nil, nil }
-func (m *MockOrgContextStore) ListContractGrantsBatch(ctx context.Context, groupIDs []string) (map[string][]*ContractGrant, error) { return make(map[string][]*ContractGrant), nil }
-func (m *MockOrgContextStore) DeleteContractGrant(ctx context.Context, id string) error { return nil }
-func (m *MockOrgContextStore) GetContractGrantSummary(ctx context.Context, orgID string) (map[string]*ContractGrantSummary, error) { return nil, nil }
-func (m *MockOrgContextStore) CreateUser(ctx context.Context, user *User) error { return nil }
-func (m *MockOrgContextStore) GetUser(ctx context.Context, id string) (*User, error) { return nil, nil }
-func (m *MockOrgContextStore) GetUserByExternalID(ctx context.Context, externalID string) (*User, error) { return nil, nil }
-func (m *MockOrgContextStore) UpdateUser(ctx context.Context, user *User) error { return nil }
-func (m *MockOrgContextStore) ListUsers(ctx context.Context, limit, offset int) ([]*User, error) { return nil, nil }
-func (m *MockOrgContextStore) ListUsersPaginated(ctx context.Context, limit, offset int) ([]*User, int, error) { return nil, 0, nil }
-func (m *MockOrgContextStore) DeleteUser(ctx context.Context, id string) error { return nil }
-func (m *MockOrgContextStore) CreateMembership(ctx context.Context, m2 *UserMembership) error { return nil }
-func (m *MockOrgContextStore) GetMembership(ctx context.Context, id string) (*UserMembership, error) { return nil, nil }
-func (m *MockOrgContextStore) GetMembershipByUserAndGroup(ctx context.Context, userID, groupID string) (*UserMembership, error) { return nil, nil }
-func (m *MockOrgContextStore) ListUserMemberships(ctx context.Context, userID string) ([]*UserMembership, error) { return nil, nil }
-func (m *MockOrgContextStore) ListUserMembershipsInOrg(ctx context.Context, userID, orgID string) ([]*MembershipWithDetails, error) { return nil, nil }
-func (m *MockOrgContextStore) ListGroupMembers(ctx context.Context, groupID string) ([]*UserMembership, error) { return nil, nil }
-func (m *MockOrgContextStore) DeleteMembership(ctx context.Context, id string) error { return nil }
-func (m *MockOrgContextStore) DeleteExpiredMemberships(ctx context.Context) (int64, error) { return 0, nil }
-func (m *MockOrgContextStore) CreateGroupAccess(ctx context.Context, access *GroupAccess) error { return nil }
-func (m *MockOrgContextStore) GetGroupAccess(ctx context.Context, groupID string) (*GroupAccess, error) { return nil, nil }
-func (m *MockOrgContextStore) GetGroupAccessBatch(ctx context.Context, groupIDs []string) (map[string]*GroupAccess, error) { return make(map[string]*GroupAccess), nil }
-func (m *MockOrgContextStore) UpdateGroupAccess(ctx context.Context, access *GroupAccess) error { return nil }
-func (m *MockOrgContextStore) DeleteGroupAccess(ctx context.Context, groupID string) error { return nil }
-func (m *MockOrgContextStore) GetCachedPermissions(ctx context.Context, userID, orgID string) (*EffectivePermissions, error) { return nil, nil }
-func (m *MockOrgContextStore) CreatePreregisteredAddress(ctx context.Context, addr *PreregisteredAddress) error { return nil }
-func (m *MockOrgContextStore) GetPreregisteredAddress(ctx context.Context, id string) (*PreregisteredAddress, error) { return nil, nil }
-func (m *MockOrgContextStore) PreRegisterPlainCreate(ctx context.Context, orgID, address, note string) error { return nil }
-func (m *MockOrgContextStore) DeletePreregisteredAddressByAddress(ctx context.Context, address string) error { return nil }
-func (m *MockOrgContextStore) ListGroupsPaginated(ctx context.Context, orgID string, limit, offset int) ([]*Group, int, error) { return nil, 0, nil }
-func (m *MockOrgContextStore) ListGroupsWithAccessPaginated(ctx context.Context, orgID string, limit, offset int) ([]*GroupWithAccess, int, error) { return nil, 0, nil }
-func (m *MockOrgContextStore) GetContractGrantByContractAndGroup(ctx context.Context, contractID, groupID string) (*ContractGrant, error) { return nil, nil }
-func (m *MockOrgContextStore) ListContractGrantsByContract(ctx context.Context, contractID string) ([]*ContractGrant, error) { return nil, nil }
-func (m *MockOrgContextStore) ListContractGrantsByGroupWithContract(ctx context.Context, groupID string) ([]*ContractGrantWithGroup, error) { return nil, nil }
-func (m *MockOrgContextStore) UpdateMembership(ctx context.Context, membership *UserMembership) error { return nil }
-func (m *MockOrgContextStore) SetCachedPermissions(ctx context.Context, perms *EffectivePermissions) error { return nil }
-func (m *MockOrgContextStore) InvalidateCacheForUser(ctx context.Context, userID string) error { return nil }
-func (m *MockOrgContextStore) InvalidateCacheForOrg(ctx context.Context, orgID string) error { return nil }
-func (m *MockOrgContextStore) InvalidateCacheForGroup(ctx context.Context, groupID string) error { return nil }
-func (m *MockOrgContextStore) CleanupExpiredCache(ctx context.Context) (int64, error) { return 0, nil }
-func (m *MockOrgContextStore) CreateAuditLog(ctx context.Context, entry *AuditLogEntry) error { return nil }
-func (m *MockOrgContextStore) ListAuditLogs(ctx context.Context, resourceType string, resourceID *string, limit, offset int) ([]*AuditLogEntry, error) { return nil, nil }
-func (m *MockOrgContextStore) ListAuditLogsByActor(ctx context.Context, actorID string, limit, offset int) ([]*AuditLogEntry, error) { return nil, nil }
-func (m *MockOrgContextStore) IsAddressPreregistered(ctx context.Context, orgID, address string) (bool, error) { return false, nil }
-func (m *MockOrgContextStore) MarkAddressUsed(ctx context.Context, address string) error { return nil }
-func (m *MockOrgContextStore) GetLinkedEthAddresses(ctx context.Context, did string) ([]string, error) { return nil, nil }
-func (m *MockOrgContextStore) SystemLinkEthAddress(_ context.Context, _, _ string) error { return nil }
-func (m *MockOrgContextStore) GetOrgIDsForEthAddress(ctx context.Context, address string) ([]string, error) {
-	return nil, nil
+// The two batch reads return empty (non-nil) maps rather than inheriting the
+// shared fake's nil, preserving this double's original behavior exactly.
+func (m *MockOrgContextStore) ListContractGrantsBatch(ctx context.Context, groupIDs []string) (map[string][]*ContractGrant, error) {
+	return make(map[string][]*ContractGrant), nil
 }
-func (m *MockOrgContextStore) GrantContractToDeployerGroup(ctx context.Context, orgID, contractID, deployerUserID string) error { return nil }
-
-// Shared infrastructure stubs
-func (m *MockOrgContextStore) IsSharedInfrastructure(ctx context.Context, address string) (bool, error) { return false, nil }
-func (m *MockOrgContextStore) CreateSharedInfrastructure(ctx context.Context, infra *SharedInfrastructure) error { return nil }
-func (m *MockOrgContextStore) ListSharedInfrastructure(ctx context.Context) ([]*SharedInfrastructure, error) { return nil, nil }
-func (m *MockOrgContextStore) DeleteSharedInfrastructure(ctx context.Context, address string) error { return nil }
+func (m *MockOrgContextStore) GetGroupAccessBatch(ctx context.Context, groupIDs []string) (map[string]*GroupAccess, error) {
+	return make(map[string]*GroupAccess), nil
+}
 
 func TestNewOrgContext(t *testing.T) {
 	ctx := context.Background()
@@ -308,7 +231,7 @@ func TestNewOrgContextForOrg(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected error for non-member access")
 		}
-		if !strings.Contains(err.Error(),"not a member") {
+		if !strings.Contains(err.Error(), "not a member") {
 			t.Errorf("unexpected error message: %v", err)
 		}
 	})
@@ -797,4 +720,3 @@ func TestOrgContext_PublicContext(t *testing.T) {
 		}
 	})
 }
-

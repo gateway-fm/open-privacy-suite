@@ -24,27 +24,42 @@ import (
 // transparent pass-through identical to the pre-RD-1147 single-store behaviour.
 type retentionAuditStore struct {
 	main         *db.DB
-	auditAdminDB *db.DB
+	auditAdminDB *db.AuditAdminDB // RD-1256 role handle: prune/count only
 }
 
 var _ audit.RetentionStore = (*retentionAuditStore)(nil)
 
-func newRetentionAuditStore(main, auditAdminDB *db.DB) *retentionAuditStore {
+func newRetentionAuditStore(main *db.DB, auditAdminDB *db.AuditAdminDB) *retentionAuditStore {
 	return &retentionAuditStore{main: main, auditAdminDB: auditAdminDB}
 }
 
 // --- access_logs prune: audit admin pool -----------------------------------
 
-func (s *retentionAuditStore) CleanupAccessLogs(ctx context.Context, olderThan time.Time) (db.PruneResult, error) {
-	return s.auditAdminDB.CleanupAccessLogs(ctx, olderThan)
+func (s *retentionAuditStore) CleanupAccessLogs(ctx context.Context, olderThan time.Time) (audit.PruneResult, error) {
+	res, err := s.auditAdminDB.CleanupAccessLogs(ctx, olderThan)
+	return toAuditPruneResult(res), err
 }
 
 func (s *retentionAuditStore) CountAccessLogsTotal(ctx context.Context) (int64, error) {
 	return s.auditAdminDB.CountAccessLogsTotal(ctx)
 }
 
-func (s *retentionAuditStore) TrimAccessLogsFIFOBatch(ctx context.Context, maxRows int64, batchSize int) (db.PruneResult, error) {
-	return s.auditAdminDB.TrimAccessLogsFIFOBatch(ctx, maxRows, batchSize)
+func (s *retentionAuditStore) TrimAccessLogsFIFOBatch(ctx context.Context, maxRows int64, batchSize int) (audit.PruneResult, error) {
+	res, err := s.auditAdminDB.TrimAccessLogsFIFOBatch(ctx, maxRows, batchSize)
+	return toAuditPruneResult(res), err
+}
+
+// toAuditPruneResult maps the db-owned prune metadata onto the audit-owned
+// vocabulary. The two structs are deliberately separate types: audit must not
+// import db (RD-1255), so this adapter — not the interface — pays the
+// conversion.
+func toAuditPruneResult(res db.PruneResult) audit.PruneResult {
+	return audit.PruneResult{
+		Deleted:    res.Deleted,
+		LowestID:   res.LowestID,
+		HighestID:  res.HighestID,
+		AnchorHash: res.AnchorHash,
+	}
 }
 
 // --- everything else: main DB ----------------------------------------------

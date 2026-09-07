@@ -22,6 +22,7 @@ import (
 	"privacy-proxy/internal/db"
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
+	"privacy-proxy/internal/server/middleware"
 	"privacy-proxy/internal/tracer"
 )
 
@@ -29,7 +30,7 @@ import (
 // per-request cost end-to-end — decode + ecrecover + RBAC access check + audit
 // + forward — with the Ethereum node MOCKED (instant canned responses), so the
 // number reflects the proxy, not node execution. b.RunParallel simulates
-// concurrent load; NewConcurrencyLimiter(50, 0) mirrors the per-user cap, so keep
+// concurrent load; middleware.NewConcurrencyLimiter(50, 0) mirrors the per-user cap, so keep
 // -cpu <= 50 for single-user runs (seed more users to exceed it).
 //
 // CI: run on a LINUX runner against a real Postgres for representative fsync
@@ -153,22 +154,29 @@ func benchProcessor(b *testing.B, async bool) (*JSONRPCProcessor, string, *Proce
 	rbacCtrl := rbac.NewAccessController(database, 5*time.Minute)
 	rt := tracer.NewRuntimeTracer(tracer.RuntimeTracerConfig{NodeURL: node.URL, Enabled: true, TieredEnabled: true, Timeout: 5 * time.Second})
 	tv := rbac.NewTraceValidator(database)
-	proc := NewJSONRPCProcessorWithTracing(
-		rbacCtrl, &noopRateLimiter{}, proxy.New(node.URL), database, rt, tv,
-		NewCircuitBreaker(), NewConcurrencyLimiter(50, 0), "",
-	)
-
+	procCfg := JSONRPCProcessorConfig{
+		RBACAccessCtrl:     rbacCtrl,
+		RateLimiter:        &noopRateLimiter{},
+		Proxy:              proxy.New(node.URL),
+		AccessLogger:       database,
+		RuntimeTracer:      rt,
+		TraceValidator:     tv,
+		CircuitBreaker:     middleware.NewCircuitBreaker(),
+		ConcurrencyLimiter: middleware.NewConcurrencyLimiter(50, 0),
+	}
 	var buf *buffer.Buffer
 	if async {
 		buf, err = buffer.Open(b.TempDir())
 		if err != nil {
 			b.Fatalf("buffer: %v", err)
 		}
-		proc.SetAuditBuffer(buf)
+		procCfg.AuditBuffer = buf
 	} else {
 		seed, _ := database.GetLatestAccessLogHash(ctx)
-		proc.SetEnhancedAudit(database, audit.NewHashChain(seed), nil, false)
+		procCfg.EnhancedAuditLogger = database
+		procCfg.HashChain = audit.NewHashChain(seed)
 	}
+	proc := NewJSONRPCProcessor(procCfg)
 
 	rawHex, body := signedValueTransfer(b)
 	req := &ProcessRequest{UserID: did, Method: "eth_sendRawTransaction", Params: []any{rawHex}, Body: body, ClientIP: "127.0.0.1"}

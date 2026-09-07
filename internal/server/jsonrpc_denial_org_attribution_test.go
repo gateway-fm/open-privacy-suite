@@ -61,7 +61,8 @@ func TestProcess_MethodDenialLogsCallerOrg(t *testing.T) {
 	orgID, did := seedOrgMemberWithMethods(t, ctx, ts.db, []string{"eth_call"})
 
 	cl := &captureEnhancedLogger{}
-	proc.SetEnhancedAudit(cl, audit.NewHashChain(""), nil, false)
+	proc.enhancedLogger = cl
+	proc.hashChain = audit.NewHashChain("")
 
 	res := proc.Process(ctx, &ProcessRequest{
 		UserID:   did,

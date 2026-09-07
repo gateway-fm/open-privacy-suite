@@ -7,7 +7,12 @@ import (
 )
 
 // DBTX is an interface satisfied by both *sql.DB and *sql.Tx.
-// This allows methods to work with either a connection or a transaction.
+//
+// It is the shared-querier seam for every query that exists on both *DB and
+// *Tx (RD-1257): the SQL + scan logic lives in one unexported function taking
+// a DBTX, and the *DB / *Tx methods are thin delegations passing d.conn or
+// t.tx. Never hand-copy a query between the two receivers — the copies drift
+// (dropped columns, skipped normalization; see tx_twin_divergence_test.go).
 type DBTX interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)

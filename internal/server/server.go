@@ -10,6 +10,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
+
 	"privacy-proxy/internal/audit"
 	"privacy-proxy/internal/audit/buffer"
 	"privacy-proxy/internal/audit/sealer"
@@ -28,6 +30,7 @@ import (
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
 	privacyredis "privacy-proxy/internal/redis"
+	"privacy-proxy/internal/server/middleware"
 	"privacy-proxy/internal/tracer"
 	"strconv"
 	"strings"
@@ -59,9 +62,6 @@ const (
 	ChallengeTTL             = 5 * time.Minute
 	ChallengeCleanupInterval = 1 * time.Minute
 
-	// Rate limiter cleanup interval
-	RateLimiterCleanupInterval = 10 * time.Second
-
 	// ENS resolution timeout
 	ENSResolutionTimeout = 30 * time.Second
 
@@ -82,13 +82,18 @@ type Server struct {
 	// not enforced) — never main. It aliases db (main) only in the co-located case
 	// where the resolved DSN equals DATABASE_URL (dev/tests). All access_logs
 	// reads/writes go through this handle.
-	auditDB *db.DB
+	//
+	// RD-1256: role-scoped type — exposes only the access_logs/audit-chain
+	// surface, so calling a main-DB method on it is a compile error.
+	auditDB *db.AuditDB
 	// auditAdminDB is the ADMIN/owner handle for the audit Postgres (RD-1147):
 	// runs audit-DB migrations and access_logs retention prune (DELETE). When
 	// AUDIT_ADMIN_DATABASE_URL is unset it is DERIVED to "<name>_audit" (a
 	// separate DB), never main; it aliases db (main) only when the resolved DSN
 	// equals DATABASE_URL (co-located dev/tests, where the pool is reused).
-	auditAdminDB         *db.DB
+	//
+	// RD-1256: role-scoped type — migrations + retention pruning only.
+	auditAdminDB         *db.AuditAdminDB
 	rbacAccessCtrl       *rbac.AccessController
 	proxy                *proxy.Proxy
 	privadoVerifier      PrivadoVerifier
@@ -137,7 +142,7 @@ type Server struct {
 // checkpointAdapter bridges *db.DB to the audit package's CheckpointStore and
 // CheckpointReader interfaces (the audit package deliberately does not import
 // db; this adapter, in the server layer which imports both, does the mapping).
-type checkpointAdapter struct{ db *db.DB }
+type checkpointAdapter struct{ db *db.AuditDB }
 
 func (a checkpointAdapter) ChainStats(ctx context.Context, chainName string) (int64, int64, string, error) {
 	return a.db.GetAccessLogChainStats(ctx, chainName)
@@ -246,12 +251,16 @@ func (s *Server) Stop() {
 		s.redisCloser.Close()
 	}
 	// RD-1147: close the separate audit pools if (and only if) they are distinct
-	// handles from the main DB. When the audit DB is not separated they alias
-	// s.db and must not be double-closed.
-	if s.auditDB != nil && s.auditDB != s.db {
+	// pools from the main DB. When the audit DB is not separated the role
+	// handles wrap s.db's pool and must not double-close it. Pool identity is
+	// compared via Conn() because the RD-1256 role handles are distinct wrapper
+	// values even when they share one pool.
+	if s.auditDB != nil && (s.db == nil || s.auditDB.Conn() != s.db.Conn()) {
 		s.auditDB.Close()
 	}
-	if s.auditAdminDB != nil && s.auditAdminDB != s.db && s.auditAdminDB != s.auditDB {
+	if s.auditAdminDB != nil &&
+		(s.db == nil || s.auditAdminDB.Conn() != s.db.Conn()) &&
+		(s.auditDB == nil || s.auditAdminDB.Conn() != s.auditDB.Conn()) {
 		s.auditAdminDB.Close()
 	}
 	if s.db != nil {
@@ -403,18 +412,22 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	// append-only seal is not enforced in this mode anyway (owner credentials),
 	// consistent with the documented co-located/derived-default behaviour. The
 	// Close() logic already guards against double-closing a reused pool.
-	var auditAdminDB *db.DB
+	var auditAdminPool *db.DB
 	if cfg.AuditAdminDatabaseURL == cfg.DatabaseURL {
-		auditAdminDB = database
+		auditAdminPool = database
 	} else {
-		auditAdminDB, err = db.NewWithoutMigrate(cfg.AuditAdminDatabaseURL, db.WithPool(cfg.DBMaxOpenConns, cfg.DBMaxIdleConns, cfg.DBConnMaxLifetime))
+		auditAdminPool, err = db.NewWithoutMigrate(cfg.AuditAdminDatabaseURL, db.WithPool(cfg.DBMaxOpenConns, cfg.DBMaxIdleConns, cfg.DBConnMaxLifetime))
 		if err != nil {
 			database.Close()
 			return nil, fmt.Errorf("failed to open audit admin database: %w", err)
 		}
 	}
+	// RD-1256: from here on the audit pools are only reachable through their
+	// role-scoped handles, so a main-DB call on an audit handle is a compile
+	// error instead of a grants-and-convention violation.
+	auditAdminDB := db.NewAuditAdminHandle(auditAdminPool)
 	if mErr := auditAdminDB.MigrateAuditOnly(context.Background(), migrationsaudit.FS); mErr != nil {
-		if auditAdminDB != database {
+		if auditAdminPool != database {
 			auditAdminDB.Close()
 		}
 		database.Close()
@@ -424,22 +437,23 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	// Runtime pool: restricted role, NO migrations (it lacks DDL rights; the
 	// admin pool above already migrated the audit DB). Reuse the main or admin
 	// pool when the runtime DSN matches (see the pool-reuse note above).
-	var auditDB *db.DB
+	var auditPool *db.DB
 	switch {
 	case cfg.AuditDatabaseURL == cfg.DatabaseURL:
-		auditDB = database
+		auditPool = database
 	case cfg.AuditDatabaseURL == cfg.AuditAdminDatabaseURL:
-		auditDB = auditAdminDB
+		auditPool = auditAdminPool
 	default:
-		auditDB, err = db.NewWithoutMigrate(cfg.AuditDatabaseURL, db.WithPool(cfg.DBMaxOpenConns, cfg.DBMaxIdleConns, cfg.DBConnMaxLifetime))
+		auditPool, err = db.NewWithoutMigrate(cfg.AuditDatabaseURL, db.WithPool(cfg.DBMaxOpenConns, cfg.DBMaxIdleConns, cfg.DBConnMaxLifetime))
 		if err != nil {
-			if auditAdminDB != database {
+			if auditAdminPool != database {
 				auditAdminDB.Close()
 			}
 			database.Close()
 			return nil, fmt.Errorf("failed to open audit runtime database: %w", err)
 		}
 	}
+	auditDB := db.NewAuditHandle(auditPool)
 	if cfg.AuditDatabaseURL == cfg.AuditAdminDatabaseURL {
 		// Derived-default deployment (or an operator pointing both DSNs at the
 		// same owner identity): the runtime pool connects as the owner, so the
@@ -537,7 +551,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		// Rate limiter is always in-memory: per-user RPC rate limiting was removed
 		// in PR #120 (moved to the upstream RPC proxy). The remaining rate limiter
 		// is only used for trace-endpoint throttling, which is single-instance safe.
-		rateLimiter = NewRateLimiter(RateLimiterCleanupInterval)
+		rateLimiter = middleware.NewRateLimiter(middleware.RateLimiterCleanupInterval)
 		oauthSessionStore = privacyredis.NewOAuthSessionStore(redisClient, OAuthSessionTTL, DefaultMaxOAuthSessions)
 		rbacCache := privacyredis.NewPermissionCache(redisClient, RBACCacheTTL)
 		rbacAccessCtrl = rbac.NewAccessControllerWithCache(database, RBACCacheTTL, rbacCache)
@@ -545,7 +559,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		slog.Info("using in-memory state stores")
 		sessionStore = auth.NewSessionStore(SessionTTL, SessionCleanupInterval)
 		challengeStore = NewChallengeStore(ChallengeTTL, ChallengeCleanupInterval)
-		rateLimiter = NewRateLimiter(RateLimiterCleanupInterval)
+		rateLimiter = middleware.NewRateLimiter(middleware.RateLimiterCleanupInterval)
 		oauthSessionStore = NewOAuthSessionStore(OAuthSessionTTL, OAuthCleanupInterval, DefaultMaxOAuthSessions)
 		rbacAccessCtrl = rbac.NewAccessController(database, RBACCacheTTL)
 	}
@@ -691,27 +705,10 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		go s.explorerReconnectLoop(cfg.ExplorerDatabaseURL, database, cfg.IndexerURL)
 	}
 
-	// Initialize circuit breaker and concurrency limiter for upstream RPC proxy
-	circuitBreaker := NewCircuitBreaker()
-	concurrencyLimiter := NewConcurrencyLimiter(cfg.MaxConcurrentRequests, cfg.MaxConcurrentAnonymousRequests)
-
-	// Initialize JSON-RPC processor with dependencies. RD-1147: the basic
-	// LogAccess fallback (used only when the chained/buffered audit write fails)
-	// targets the audit DB too, so no access-log row ever lands in the main DB
-	// when the audit DB is separated. auditDB == database when not separated.
-	if runtimeTracer != nil {
-		s.jsonrpcProcessor = NewJSONRPCProcessorWithTracing(rbacAccessCtrl, rateLimiter, proxySvc, auditDB, runtimeTracer, traceValidator, circuitBreaker, concurrencyLimiter, cfg.RPCAPIKey)
-	} else {
-		s.jsonrpcProcessor = NewJSONRPCProcessor(rbacAccessCtrl, rateLimiter, proxySvc, auditDB, circuitBreaker, concurrencyLimiter, cfg.RPCAPIKey)
-	}
-	s.jsonrpcProcessor.SetMetrics(m)
-	s.jsonrpcProcessor.SetTxVisibilityStore(database)
-	// RD-1214: same DB the explorer redactor resolves through, so the RPC log
-	// field-redaction hides identical embedded addresses (symmetry).
-	s.jsonrpcProcessor.SetAddressVisibilityResolver(database)
-	s.jsonrpcProcessor.SetDefaultRPCAPIKeyHeader(cfg.RPCAPIKeyHeader)
-	s.jsonrpcProcessor.SetEthCallTracing(cfg.RuntimeTracingEthCallEnabled, cfg.EthCallTraceTimeout)
-	s.jsonrpcProcessor.SetIntraOrgGrantTracing(cfg.RuntimeTracingIntraOrgGrantsEnabled)
+	// The JSON-RPC processor is constructed AFTER the compliance / audit /
+	// visibility blocks below, once every dependency exists, so it is fully
+	// wired at construction — no post-construction Set* step to forget
+	// (RD-1259). Nothing between here and that point touches it.
 
 	// Initialize compliance checker for travel rule enforcement
 	if cfg.EnableTravelRule {
@@ -720,7 +717,6 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		// per-org setting. Per-org compliance config overrides this.
 		checker.SetDefaultEnforcementMode(compliance.EnforcementMode(cfg.ComplianceDefaultMode))
 		s.complianceChecker = checker
-		s.jsonrpcProcessor.SetComplianceChecker(checker)
 		slog.Info("travel rule compliance enabled", "record_expiry", cfg.TravelRecordExpiry, "default_enforcement_mode", cfg.ComplianceDefaultMode)
 
 		// Start background CoinGecko price fetcher (unless disabled)
@@ -786,10 +782,6 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		slog.Info("SIEM forwarding enabled", "webhook", cfg.SIEMWebhookURL, "batch_size", cfg.SIEMBatchSize, "flush_interval", cfg.SIEMFlushInterval)
 	}
 
-	// Wire enhanced audit into JSON-RPC processor
-	// RD-1147: access_logs writes (synchronous chained path) go to the audit DB.
-	s.jsonrpcProcessor.SetEnhancedAudit(auditDB, hashChain, siemForwarder, cfg.AuditLogParams)
-
 	// RD-1112: async access-log auditing. When AUDIT_BUFFER_DIR is set, the hot
 	// path appends each entry to a durable Pebble buffer and a single background
 	// sealer drains it into the access_logs chain off the request path — removing
@@ -854,7 +846,6 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		s.auditSealerCancel = sealerCancel
 		go s.auditSealer.Run(sealerCtx)
 
-		s.jsonrpcProcessor.SetAuditBuffer(auditBuf)
 		slog.Info("async access-log auditing enabled (RD-1112)", "buffer_dir", cfg.AuditBufferDir)
 	}
 
@@ -916,16 +907,53 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	reconcilerCfg := DefaultVisibilityReconcilerConfig()
 	s.visibilityReconciler = NewVisibilityReconciler(database, reconcilerCfg)
 	s.visibilityReconciler.Start(context.Background())
-	// Event-driven drain: the send path kicks the reconciler right after it
-	// enqueues a visibleTo row, so recipients see the tx within ms; the
-	// periodic ticker is only the retry/outage backstop.
-	if s.jsonrpcProcessor != nil {
-		s.jsonrpcProcessor.SetVisibilityKick(s.visibilityReconciler.Kick)
-	}
 	slog.Info("visibility reconciler started",
 		"backstop_interval", reconcilerCfg.Interval,
 		"batch", reconcilerCfg.BatchSize,
 		"drain", "event-driven")
+
+	// Initialize the JSON-RPC processor, fully wired at construction (RD-1259).
+	// Every dependency above exists by now; there is no Set* step to forget.
+	// RD-1147: the AccessLogger fallback (used only when the chained/buffered
+	// audit write fails) targets the audit DB too, so no access-log row ever
+	// lands in the main DB when the audit DB is separated. auditDB == database
+	// when not separated. RD-1214: AddressVisibilityResolver is the same DB the
+	// explorer redactor resolves through, so the RPC log field-redaction hides
+	// identical embedded addresses (symmetry). VisibilityKick: the send path
+	// kicks the reconciler right after it enqueues a visibleTo row, so
+	// recipients see the tx within ms; the periodic ticker is only the
+	// retry/outage backstop.
+	var procAuditBuffer AuditBuffer
+	if s.auditBuffer != nil {
+		procAuditBuffer = s.auditBuffer
+	}
+	s.jsonrpcProcessor = NewJSONRPCProcessor(JSONRPCProcessorConfig{
+		RBACAccessCtrl:            rbacAccessCtrl,
+		RateLimiter:               rateLimiter,
+		Proxy:                     proxySvc,
+		AccessLogger:              auditDB,
+		CircuitBreaker:            middleware.NewCircuitBreaker(),
+		ConcurrencyLimiter:        middleware.NewConcurrencyLimiter(cfg.MaxConcurrentRequests, cfg.MaxConcurrentAnonymousRequests),
+		DefaultRPCAPIKey:          cfg.RPCAPIKey,
+		RuntimeTracer:             runtimeTracer,
+		TraceValidator:            traceValidator,
+		Metrics:                   m,
+		TxVisibilityStore:         database,
+		AddressVisibilityResolver: database,
+		RPCAPIKeyHeader:           cfg.RPCAPIKeyHeader,
+		ComplianceChecker:         s.complianceChecker,
+		EnhancedAuditLogger:       auditDB,
+		HashChain:                 hashChain,
+		SIEMForwarder:             siemForwarder,
+		AuditLogParams:            cfg.AuditLogParams,
+		AuditBuffer:               procAuditBuffer,
+		VisibilityKick:            s.visibilityReconciler.Kick,
+		EthCallTracing: &EthCallTracingConfig{
+			Enabled: cfg.RuntimeTracingEthCallEnabled,
+			Timeout: cfg.EthCallTraceTimeout,
+		},
+		IntraOrgGrantTracingEnabled: cfg.RuntimeTracingIntraOrgGrantsEnabled,
+	})
 
 	// RD-858: scheduled audit hash-chain integrity verifier. Default
 	// interval 15m (config: AUDIT_INTEGRITY_VERIFY_INTERVAL). On
@@ -993,6 +1021,13 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		slog.Warn("ADMIN_API_TOKEN is not set - admin API is unprotected, any request from the private network will be accepted without authentication")
 	}
 
+	// Startup registration is done: from here on the registries are read
+	// lock-free by request handlers, so any further RegisterExtraNamespaces
+	// call is a data race and panics (RD-1262). Armed only on the success
+	// path: a construction that fails partway must leave the process able
+	// to retry NewWithVerifier (registration included) without panicking.
+	rbac.ArmMethodRegistries()
+
 	return s, nil
 }
 
@@ -1034,7 +1069,7 @@ func (s *Server) setupRouter() *gin.Engine {
 	router.Use(s.metrics.HTTPMiddleware())
 
 	// Correlation ID middleware (generates/propagates request IDs for audit trail)
-	router.Use(correlationIDMiddleware())
+	router.Use(middleware.CorrelationID())
 
 	// CORS middleware for frontend
 	router.Use(s.corsMiddleware())
@@ -1174,7 +1209,7 @@ func (s *Server) setupRouter() *gin.Engine {
 	{
 		// Admin endpoints - private network + token auth + org scoping
 		admin := apiV1.Group("/admin")
-		admin.Use(bodyLimitMiddleware(MaxRequestBodySize), s.localhostOnlyMiddleware(), adminAuth, orgScope)
+		admin.Use(middleware.BodyLimit(MaxRequestBodySize), s.localhostOnlyMiddleware(), adminAuth, orgScope)
 		{
 			admin.GET("/logs", s.getLogs)
 			admin.GET("/status", s.getStatus)
@@ -1350,7 +1385,7 @@ func (s *Server) handleJSONRPC(c *gin.Context) {
 		Params:           params,
 		Body:             body,
 		ClientIP:         c.ClientIP(),
-		CorrelationID:    getCorrelationID(c),
+		CorrelationID:    middleware.GetCorrelationID(c),
 		BypassPermsCache: impersonating,
 	}
 	result := s.jsonrpcProcessor.Process(c.Request.Context(), procReq)
@@ -1911,7 +1946,8 @@ type ExtraWildcardInfo struct {
 
 // buildExtraWildcardsResponse projects the rbac.Wildcards registry into the
 // status response shape (namespace name → prefix + deny list). Returns nil when
-// no wildcards are registered so the JSON omits the field.
+// no wildcards are registered so the JSON omits the field. Deny is cloned:
+// the response must not alias the live registry slice (RD-1262).
 func buildExtraWildcardsResponse() map[string]ExtraWildcardInfo {
 	if len(rbac.Wildcards) == 0 {
 		return nil
@@ -1920,8 +1956,24 @@ func buildExtraWildcardsResponse() map[string]ExtraWildcardInfo {
 	for _, w := range rbac.Wildcards {
 		out[w.Namespace] = ExtraWildcardInfo{
 			Prefix: w.Prefix,
-			Deny:   w.Deny,
+			Deny:   slices.Clone(w.Deny),
 		}
+	}
+	return out
+}
+
+// snapshotExtraNamespaces deep-copies the rbac.ExtraNamespaces registry for
+// the status response. The response must not carry the live package-global
+// map by reference — a consumer mutating it would be editing RBAC state
+// (RD-1262). Returns nil when nothing is registered so the JSON field keeps
+// its omitempty behavior.
+func snapshotExtraNamespaces() map[string][]string {
+	if len(rbac.ExtraNamespaces) == 0 {
+		return nil
+	}
+	out := make(map[string][]string, len(rbac.ExtraNamespaces))
+	for ns, methods := range rbac.ExtraNamespaces {
+		out[ns] = slices.Clone(methods)
 	}
 	return out
 }
@@ -1991,7 +2043,7 @@ func (s *Server) getStatus(c *gin.Context) {
 			ComplianceDefaultMode: complianceMode,
 		},
 		Methods: MethodsStatus{
-			ExtraNamespaces: rbac.ExtraNamespaces,
+			ExtraNamespaces: snapshotExtraNamespaces(),
 			ExtraWildcards:  buildExtraWildcardsResponse(),
 		},
 	}
@@ -2151,7 +2203,7 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 				To:            compTo,
 				Data:          compData,
 				Value:         compValue,
-				CorrelationID: getCorrelationID(c),
+				CorrelationID: middleware.GetCorrelationID(c),
 			})
 			if compErr != nil {
 				slog.Error("admin test-request: compliance check failed", "method", input.Method, "error", compErr)

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"privacy-proxy/internal/audit"
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/db"
 )
@@ -20,3 +21,13 @@ import (
 // auth is not imported by internal/db, so its guard is anchored here in the
 // wiring layer instead.)
 var _ auth.BannedChecker = (*db.DB)(nil)
+
+// RD-1256: the role-scoped audit handles must keep satisfying every audit
+// surface the wiring hands them to. A dropped delegation on db.AuditDB would
+// otherwise only surface as a wiring compile error far from the cause (or, for
+// the interface-typed paths, at request time).
+var (
+	_ AccessLogger         = (*db.AuditDB)(nil)
+	_ EnhancedAccessLogger = (*db.AuditDB)(nil)
+	_ audit.SeedReader     = (*db.AuditDB)(nil)
+)

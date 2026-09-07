@@ -1,4 +1,4 @@
-package server
+package middleware
 
 import (
 	"net/http"
@@ -18,9 +18,9 @@ func init() {
 
 func setupCorrelationRouter() *gin.Engine {
 	r := gin.New()
-	r.Use(correlationIDMiddleware())
+	r.Use(CorrelationID())
 	r.GET("/test", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"correlation_id": getCorrelationID(c)})
+		c.JSON(http.StatusOK, gin.H{"correlation_id": GetCorrelationID(c)})
 	})
 	return r
 }
@@ -131,11 +131,11 @@ func TestCorrelationIDMiddleware_ResponseHeader(t *testing.T) {
 
 func TestCorrelationIDMiddleware_ContextSet(t *testing.T) {
 	r := gin.New()
-	r.Use(correlationIDMiddleware())
+	r.Use(CorrelationID())
 
 	var ctxID string
 	r.GET("/test", func(c *gin.Context) {
-		ctxID = getCorrelationID(c)
+		ctxID = GetCorrelationID(c)
 		c.Status(http.StatusOK)
 	})
 

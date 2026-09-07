@@ -4,8 +4,6 @@ import (
 	"context"
 	"log/slog"
 	"time"
-
-	"privacy-proxy/internal/db"
 )
 
 // RetentionConfig holds per-table retention durations and the cleanup interval.
@@ -55,12 +53,38 @@ const (
 	maxAccessLogTrimIterations = 50
 )
 
+// PruneResult carries the metadata an audit-of-the-audit row needs after a
+// prune operation. CleanupAccessLogs and TrimAccessLogsFIFOBatch return this
+// so the retention manager can attach the deleted id range and the new chain
+// anchor hash to the rbac_audit_log entry alongside the row count. All four
+// fields are zero-valued when Deleted == 0.
+//
+// This is the audit package's own vocabulary (RD-1255): RetentionStore
+// implementations over the persistence layer live with the consumer (see
+// internal/server/retention_audit_store.go), because audit must not import
+// db — the same rule the checkpoint store documents in checkpoint_worker.go.
+type PruneResult struct {
+	// Deleted is the number of rows deleted in this call.
+	Deleted int64
+	// LowestID is the lowest id deleted; useful so an auditor can reconstruct
+	// the deleted range from "rows [LowestID..HighestID] are gone".
+	LowestID int64
+	// HighestID is the highest id deleted. Equals the new anchor's
+	// last_pruned_id (set inside the same transaction as the DELETE).
+	HighestID int64
+	// AnchorHash is the entry_hash now persisted in audit_chain_anchor for
+	// chain "access_logs". Equals the deleted row's stored entry_hash, or
+	// the previous anchor when that row's entry_hash was NULL (process crash
+	// between insert and UpdateAccessLogHash).
+	AnchorHash string
+}
+
 // RetentionStore defines the database operations needed for retention cleanup.
 type RetentionStore interface {
 	// CleanupAccessLogs returns a PruneResult so the retention manager can
 	// surface deleted-range metadata + the new chain anchor hash in the
 	// audit-of-the-audit row.
-	CleanupAccessLogs(ctx context.Context, olderThan time.Time) (db.PruneResult, error)
+	CleanupAccessLogs(ctx context.Context, olderThan time.Time) (PruneResult, error)
 	CleanupComplianceLogs(ctx context.Context, olderThan time.Time) (int64, error)
 	CleanupRBACAuditLogs(ctx context.Context, olderThan time.Time) (int64, error)
 	CleanupUsedTravelRecords(ctx context.Context, olderThan time.Time) (int64, error)
@@ -78,7 +102,7 @@ type RetentionStore interface {
 	// describing the deleted range and the new chain anchor for this batch.
 	// Implementations MUST update the access_logs hash chain anchor in the
 	// same transaction so the chain stays verifiable across pruning cuts.
-	TrimAccessLogsFIFOBatch(ctx context.Context, maxRows int64, batchSize int) (db.PruneResult, error)
+	TrimAccessLogsFIFOBatch(ctx context.Context, maxRows int64, batchSize int) (PruneResult, error)
 
 	// LogAuditAction records an audit-of-the-audit row in rbac_audit_log so
 	// retention prunes themselves are auditable. action is a stable string

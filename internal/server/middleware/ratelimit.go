@@ -1,9 +1,15 @@
-package server
+package middleware
 
 import (
 	"sync"
 	"time"
 )
+
+// RateLimiterCleanupInterval is how often the rate limiter prunes stale
+// per-user windows and daily counters. It is the limiter's own housekeeping
+// cadence — it has no meaning outside NewRateLimiter — so it lives here rather
+// than with the server's request-handling policy constants.
+const RateLimiterCleanupInterval = 10 * time.Second
 
 // RateLimiter provides rate limiting based on user-specific limits.
 // It uses a sliding window for per-second limits and a daily counter for daily limits.

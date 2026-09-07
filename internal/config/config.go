@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"privacy-proxy/internal/audit"
 	"privacy-proxy/internal/auth"
+	"privacy-proxy/internal/netguard"
 	"privacy-proxy/internal/proxy"
 
 	"golang.org/x/crypto/bcrypt"
@@ -971,14 +971,14 @@ func (c *Config) Validate() error {
 
 	// Validate SIEM webhook URL against SSRF if configured.
 	if c.SIEMWebhookURL != "" {
-		if err := audit.ValidateWebhookURL(c.SIEMWebhookURL); err != nil {
+		if err := netguard.ValidateWebhookURL(c.SIEMWebhookURL); err != nil {
 			return err
 		}
 	}
 
 	// RD-858: same SSRF guard for the audit tamper webhook.
 	if c.AuditTamperWebhookURL != "" {
-		if err := audit.ValidateWebhookURL(c.AuditTamperWebhookURL); err != nil {
+		if err := netguard.ValidateWebhookURL(c.AuditTamperWebhookURL); err != nil {
 			return fmt.Errorf("AUDIT_TAMPER_WEBHOOK_URL: %w", err)
 		}
 	}

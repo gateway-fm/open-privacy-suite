@@ -163,34 +163,41 @@ func (d *DB) EnsureUserExistsWithMembership(ctx context.Context, user *rbac.User
 //
 // Returns an error if the deployer has no group with deploy claim in the org.
 func (d *DB) GrantContractToDeployerGroup(ctx context.Context, orgID, contractID, deployerUserID string) error {
-	// Find the deployer's group with deploy claim in this org.
-	query := `
-		SELECT g.id
-		FROM user_memberships m
-		JOIN groups g ON g.id = m.group_id
-		JOIN group_access ga ON ga.group_id = g.id
-		WHERE m.user_id = $1
-		  AND g.org_id = $2
-		  AND 'deploy' = ANY(ga.claims)
-		  AND (m.expires_at IS NULL OR m.expires_at > NOW())
-		LIMIT 1`
+	// The deploy path can race concurrent admin writes touching the same
+	// grant rows; the whole SELECT+INSERT is idempotent (ON CONFLICT DO
+	// NOTHING), so it is safe to retry on deadlock as one transaction.
+	return withRetry(ctx, func() error {
+		return d.WithTx(ctx, func(tx *Tx) error {
+			// Find the deployer's group with deploy claim in this org.
+			query := `
+				SELECT g.id
+				FROM user_memberships m
+				JOIN groups g ON g.id = m.group_id
+				JOIN group_access ga ON ga.group_id = g.id
+				WHERE m.user_id = $1
+				  AND g.org_id = $2
+				  AND 'deploy' = ANY(ga.claims)
+				  AND (m.expires_at IS NULL OR m.expires_at > NOW())
+				LIMIT 1`
 
-	var groupID string
-	err := d.conn.QueryRowContext(ctx, query, deployerUserID, orgID).Scan(&groupID)
-	if err != nil {
-		return fmt.Errorf("deployer has no group with deploy claim in org %s: %w", orgID, err)
-	}
+			var groupID string
+			err := tx.tx.QueryRowContext(ctx, query, deployerUserID, orgID).Scan(&groupID)
+			if err != nil {
+				return fmt.Errorf("deployer has no group with deploy claim in org %s: %w", orgID, err)
+			}
 
-	// Add contract grant (idempotent).
-	grantID := uuid.New().String()
-	_, err = d.conn.ExecContext(ctx,
-		`INSERT INTO contract_grants (id, contract_id, group_id)
-		 VALUES ($1, $2, $3)
-		 ON CONFLICT (contract_id, group_id) DO NOTHING`,
-		grantID, contractID, groupID,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to create contract grant: %w", err)
-	}
-	return nil
+			// Add contract grant (idempotent).
+			grantID := uuid.New().String()
+			_, err = tx.tx.ExecContext(ctx,
+				`INSERT INTO contract_grants (id, contract_id, group_id)
+				 VALUES ($1, $2, $3)
+				 ON CONFLICT (contract_id, group_id) DO NOTHING`,
+				grantID, contractID, groupID,
+			)
+			if err != nil {
+				return fmt.Errorf("failed to create contract grant: %w", err)
+			}
+			return nil
+		})
+	})
 }

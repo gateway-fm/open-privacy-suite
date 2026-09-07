@@ -10,8 +10,7 @@ import (
 // a "<prefix>*" entry in allowed_methods matches a method only when a
 // registered global WildcardNamespace covers it (deny list checked there).
 func TestEffectivePermissions_HasMethod_Glob(t *testing.T) {
-	origWildcards := Wildcards
-	defer func() { Wildcards = origWildcards }()
+	defer SnapshotMethodRegistriesForTest()()
 
 	Wildcards = []*WildcardNamespace{
 		{
@@ -58,8 +57,7 @@ func TestEffectivePermissions_HasMethod_Glob(t *testing.T) {
 // behavior is identical when no wildcards are configured: glob entries simply
 // don't match anything (no operator opt-in → no surface).
 func TestEffectivePermissions_HasMethod_NoWildcardsRegistered(t *testing.T) {
-	origWildcards := Wildcards
-	defer func() { Wildcards = origWildcards }()
+	defer SnapshotMethodRegistriesForTest()()
 	Wildcards = nil
 
 	perms := &EffectivePermissions{AllowedMethods: []string{"eth_call", "linea_*"}}
