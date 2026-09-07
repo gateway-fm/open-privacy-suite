@@ -9,9 +9,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/rbac"
-	"privacy-proxy/internal/apimodels"
 )
 
 // shared_infrastructure admin API (KD-1, follow-up to M5 / RD-915).

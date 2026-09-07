@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/config"
-	"privacy-proxy/internal/apimodels"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"

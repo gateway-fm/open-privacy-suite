@@ -10,13 +10,13 @@ import (
 	"testing"
 	"time"
 
+	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/compliance"
 	"privacy-proxy/internal/config"
 	"privacy-proxy/internal/db"
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
-	"privacy-proxy/internal/apimodels"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
