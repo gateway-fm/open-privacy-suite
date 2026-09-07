@@ -13,7 +13,9 @@ package apispec
 import (
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -95,9 +97,44 @@ func resolveBaseRev(baseRef string) (string, error) {
 	return strings.TrimSpace(out), nil
 }
 
+// gitLocationEnvVars point git at a specific repository instead of letting it
+// discover one from the working directory. `git push` exports GIT_DIR when it
+// runs the pre-push hook, and that alone breaks this plumbing: with GIT_DIR set
+// git treats the *current* directory as the top of the work tree, so
+// `rev-parse --show-prefix` returns empty, the repo-relative path collapses to a
+// bare filename, ls-tree reports it absent, and the append-only rule goes
+// vacuous. Discovery from the working directory is exactly what is wanted here,
+// so these are stripped from the subprocess environment.
+var gitLocationEnvVars = []string{
+	"GIT_DIR",
+	"GIT_WORK_TREE",
+	"GIT_COMMON_DIR",
+	"GIT_INDEX_FILE",
+	"GIT_OBJECT_DIRECTORY",
+	"GIT_ALTERNATE_OBJECT_DIRECTORIES",
+	"GIT_PREFIX",
+	"GIT_NAMESPACE",
+}
+
 func git(args ...string) (string, error) {
-	out, err := exec.Command("git", args...).CombinedOutput()
+	cmd := exec.Command("git", args...)
+	cmd.Env = withoutGitLocation(os.Environ())
+	out, err := cmd.CombinedOutput()
 	return string(out), err
+}
+
+// withoutGitLocation removes the repository-location variables from an
+// environment, leaving everything else untouched.
+func withoutGitLocation(env []string) []string {
+	kept := make([]string, 0, len(env))
+	for _, entry := range env {
+		name, _, _ := strings.Cut(entry, "=")
+		if slices.Contains(gitLocationEnvVars, name) {
+			continue
+		}
+		kept = append(kept, entry)
+	}
+	return kept
 }
 
 func gitReason(out string, err error) string {
@@ -133,5 +170,56 @@ func TestBaseRevLookupCanReadTheBaseline(t *testing.T) {
 	}
 	if len(parseNameList([]byte(got.content))) == 0 {
 		t.Errorf("%s at HEAD parsed to zero names — the append-only rule would be vacuous", baselinePath)
+	}
+}
+
+// TestBaseRevLookupSurvivesGitHookEnvironment pins a defect that made this gate
+// break every `git push` while passing when run on its own. Hooks inherit
+// GIT_DIR (and friends) from git, which redefines where the work tree root is;
+// the lookup then could not find the baseline it had just committed. Reproducing
+// the hook environment is the only way this stays fixed, since the ordinary test
+// run does not have these variables set.
+func TestBaseRevLookupSurvivesGitHookEnvironment(t *testing.T) {
+	if !inGitWorkTree() {
+		t.Skip("not a git work tree")
+	}
+
+	// The value git itself would export: this worktree's git directory.
+	gitDir, err := git("rev-parse", "--absolute-git-dir")
+	if err != nil {
+		t.Fatalf("git rev-parse --absolute-git-dir: %s", gitReason(gitDir, err))
+	}
+	for _, name := range []string{"GIT_DIR", "GIT_INDEX_FILE", "GIT_PREFIX"} {
+		t.Setenv(name, strings.TrimSpace(gitDir))
+	}
+
+	got, err := readAtBaseRev("HEAD", baselinePath)
+	if err != nil {
+		t.Fatalf("readAtBaseRev(HEAD, %s) under a hook environment: %v", baselinePath, err)
+	}
+	if !got.found {
+		t.Fatalf("%s reported absent at HEAD under a hook environment, but it is "+
+			"committed there. The repository-location variables git exports to "+
+			"hooks are leaking into the subprocess: %v", baselinePath, gitLocationEnvVars)
+	}
+	if strings.TrimSpace(got.content) == "" {
+		t.Fatal("baseline read as empty under a hook environment")
+	}
+}
+
+func TestWithoutGitLocation(t *testing.T) {
+	in := []string{
+		"PATH=/usr/bin",
+		"GIT_DIR=/somewhere/.git",
+		"GIT_AUTHOR_NAME=keep me",
+		"GIT_WORK_TREE=/somewhere",
+		"HOME=/home/u",
+		"GIT_INDEX_FILE=/somewhere/.git/index",
+	}
+	want := []string{"PATH=/usr/bin", "GIT_AUTHOR_NAME=keep me", "HOME=/home/u"}
+
+	got := withoutGitLocation(in)
+	if !slices.Equal(got, want) {
+		t.Errorf("withoutGitLocation() = %q, want %q", got, want)
 	}
 }
