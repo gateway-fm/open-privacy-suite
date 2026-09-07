@@ -1,4 +1,4 @@
-package server
+package apimodels
 
 // Spec-only request/response mirror structs for the CORE server handlers
 // (RD-1166): the proxied JSON-RPC endpoint, the /api/v1/me/* profile

@@ -14,6 +14,7 @@ import (
 	core "github.com/iden3/go-iden3-core/v2"
 	"github.com/iden3/go-iden3-core/v2/w3c"
 
+	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/db"
 	"privacy-proxy/internal/rbac"
 )
@@ -27,14 +28,6 @@ import (
 // disclosing "this group exists but is in another org" would itself be a
 // cross-org leak (see RD-916).
 const errMembershipForeignOrg = "access denied to target group"
-
-// userListItem extends rbac.User with the user's group memberships for the
-// list response. Memberships are scoped to the caller's accessible orgs
-// for non-super-admin callers (cross-org isolation).
-type userListItem struct {
-	*rbac.User
-	Groups []rbac.UserGroupMembership `json:"groups"`
-}
 
 // requireUserInCallerScope ensures the target user shares at least one
 // org with the caller's admin scope (full or read-only). Returns true
@@ -244,11 +237,11 @@ func narrowMembershipScope(scopedOrgIDs []string, orgID string) []string {
 // @Param        role query string false "Filter by role" Enums(org_admin, admin, member)
 // @Param        limit query int false "Max rows to return (default 50)"
 // @Param        offset query int false "Rows to skip for pagination (default 0)"
-// @Success      200 {object} userListResponse
-// @Failure      400 {object} APIError "invalid role filter"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "source address not on the private network, or operator token (tenant data not readable)"
-// @Failure      500 {object} APIError
+// @Success      200 {object} apimodels.UserListResponse
+// @Failure      400 {object} apimodels.APIError "invalid role filter"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network, or operator token (tenant data not readable)"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/users [get]
 func (s *Server) listRBACUsers(c *gin.Context) {
@@ -302,9 +295,9 @@ func (s *Server) listRBACUsers(c *gin.Context) {
 		return
 	}
 
-	items := make([]userListItem, len(users))
+	items := make([]apimodels.UserListItem, len(users))
 	for i, u := range users {
-		items[i] = userListItem{User: u, Groups: memberships[u.ID]}
+		items[i] = apimodels.UserListItem{User: u, Groups: memberships[u.ID]}
 		if items[i].Groups == nil {
 			items[i].Groups = []rbac.UserGroupMembership{}
 		}
@@ -321,9 +314,9 @@ func (s *Server) listRBACUsers(c *gin.Context) {
 // @Produce      json
 // @Param        user_id path string true "User ID (UUID)"
 // @Success      200 {object} rbac.User
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "source address not on the private network, user outside the caller's scope (opaque; also covers not-found), or operator token (tenant data not readable)"
-// @Failure      500 {object} APIError
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network, user outside the caller's scope (opaque; also covers not-found), or operator token (tenant data not readable)"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/users/{user_id} [get]
 func (s *Server) getRBACUser(c *gin.Context) {
@@ -357,12 +350,12 @@ func (s *Server) getRBACUser(c *gin.Context) {
 // @Accept       json
 // @Produce      json
 // @Param        user_id path string true "User ID (UUID)"
-// @Param        request body rbacUserUpdateRequest true "fields to update (all optional)"
+// @Param        request body apimodels.RBACUserUpdateRequest true "fields to update (all optional)"
 // @Success      200 {object} rbac.User
-// @Failure      400 {object} APIError "invalid request body, or an attempt to ban your own account"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "source address not on the private network, or user outside the caller's full-admin scope (opaque; also covers not-found)"
-// @Failure      500 {object} APIError
+// @Failure      400 {object} apimodels.APIError "invalid request body, or an attempt to ban your own account"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network, or user outside the caller's full-admin scope (opaque; also covers not-found)"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/users/{user_id} [put]
 func (s *Server) updateRBACUser(c *gin.Context) {
@@ -476,10 +469,10 @@ func (s *Server) updateRBACUser(c *gin.Context) {
 // @Tags         Admin: RBAC
 // @Produce      json
 // @Param        user_id path string true "User ID (UUID)"
-// @Success      200 {object} userLinkedAddressesResponse
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "source address not on the private network, user outside the caller's scope (opaque; also covers not-found), or operator token (tenant data not readable)"
-// @Failure      500 {object} APIError
+// @Success      200 {object} apimodels.UserLinkedAddressesResponse
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network, user outside the caller's scope (opaque; also covers not-found), or operator token (tenant data not readable)"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/users/{user_id}/linked-addresses [get]
 func (s *Server) getUserLinkedAddresses(c *gin.Context) {
@@ -539,10 +532,10 @@ func (s *Server) getUserLinkedAddresses(c *gin.Context) {
 // @Tags         Admin: RBAC
 // @Produce      json
 // @Param        user_id path string true "User ID (UUID)"
-// @Success      200 {object} APIMessage "user deleted"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "source address not on the private network, or user outside the caller's full-admin scope (opaque; also covers not-found)"
-// @Failure      500 {object} APIError
+// @Success      200 {object} apimodels.APIMessage "user deleted"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network, or user outside the caller's full-admin scope (opaque; also covers not-found)"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/users/{user_id} [delete]
 func (s *Server) deleteRBACUser(c *gin.Context) {
@@ -600,27 +593,12 @@ func (s *Server) deleteRBACUser(c *gin.Context) {
 
 // Membership handlers
 
-// membershipListItem is a membership-with-details plus a server-computed
-// `expired` flag, so the admin UI can tell a live time-boxed grant from one
-// whose window has already lapsed. `expired` mirrors the RBAC resolver's
-// `expires_at > NOW()` access filter (RD-1157): a grant is expired once
-// `expires_at <= now`, so the boundary the badge shows matches enforcement.
-// (The resolver's clock is the database's NOW(); this uses the app's UTC now —
-// not the identical instant, but the boundary semantics are the same and the
-// skew is immaterial for a display badge.) The raw expires_at is still carried
-// on the embedded membership.
-type membershipListItem struct {
-	Membership *rbac.UserMembership `json:"membership"`
-	Group      *rbac.Group          `json:"group"`
-	Expired    bool                 `json:"expired"`
-}
-
 // withExpiryStatus maps memberships-with-details to list items, flagging any
 // whose expires_at is at or before now (matching the resolver's
 // `expires_at > NOW()` boundary). A nil expires_at is a permanent membership
 // and is never flagged expired.
-func withExpiryStatus(memberships []*rbac.MembershipWithDetails, now time.Time) []membershipListItem {
-	items := make([]membershipListItem, 0, len(memberships))
+func withExpiryStatus(memberships []*rbac.MembershipWithDetails, now time.Time) []apimodels.MembershipListItem {
+	items := make([]apimodels.MembershipListItem, 0, len(memberships))
 	for _, m := range memberships {
 		if m == nil {
 			continue
@@ -630,7 +608,7 @@ func withExpiryStatus(memberships []*rbac.MembershipWithDetails, now time.Time) 
 		// inactive. !After(now) is that boundary (Before(now) would wrongly treat
 		// == now as still live).
 		expired := m.Membership != nil && m.Membership.ExpiresAt != nil && !m.Membership.ExpiresAt.After(now)
-		items = append(items, membershipListItem{Membership: m.Membership, Group: m.Group, Expired: expired})
+		items = append(items, apimodels.MembershipListItem{Membership: m.Membership, Group: m.Group, Expired: expired})
 	}
 	return items
 }
@@ -642,10 +620,10 @@ func withExpiryStatus(memberships []*rbac.MembershipWithDetails, now time.Time) 
 // @Tags         Admin: RBAC
 // @Produce      json
 // @Param        user_id path string true "User ID (UUID)"
-// @Success      200 {array} membershipListItem
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "source address not on the private network, user outside the caller's scope (opaque), or operator token (tenant data not readable)"
-// @Failure      500 {object} APIError
+// @Success      200 {array} apimodels.MembershipListItem
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network, user outside the caller's scope (opaque), or operator token (tenant data not readable)"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/users/{user_id}/memberships [get]
 func (s *Server) listUserMemberships(c *gin.Context) {
@@ -733,13 +711,13 @@ func parseMembershipExpiry(c *gin.Context, raw *string) (*time.Time, bool) {
 // @Accept       json
 // @Produce      json
 // @Param        user_id path string true "User ID (UUID)"
-// @Param        request body membershipCreateRequest true "membership to create"
+// @Param        request body apimodels.MembershipCreateRequest true "membership to create"
 // @Success      201 {object} rbac.UserMembership
-// @Failure      400 {object} APIError "invalid body or expires_at (must be RFC3339 and in the future)"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "source address not on the private network, target group outside the caller's full-admin scope (opaque), tier-2 JWT adding to an org-admin group, or operator token adding to a regular group"
-// @Failure      409 {object} APIError "user is already a member of this group"
-// @Failure      500 {object} APIError
+// @Failure      400 {object} apimodels.APIError "invalid body or expires_at (must be RFC3339 and in the future)"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network, target group outside the caller's full-admin scope (opaque), tier-2 JWT adding to an org-admin group, or operator token adding to a regular group"
+// @Failure      409 {object} apimodels.APIError "user is already a member of this group"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/users/{user_id}/memberships [post]
 func (s *Server) createUserMembership(c *gin.Context) {
@@ -1021,13 +999,13 @@ func isRelaxedDIDSyntax(did string) bool {
 // @Accept       json
 // @Produce      json
 // @Param        org_id path string true "Organization ID (UUID)"
-// @Param        request body membershipByDIDRequest true "onboarding request"
-// @Success      201 {object} membershipByDIDResponse
-// @Failure      400 {object} APIError "invalid body, invalid DID, or expires_at (must be RFC3339 and in the future)"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "source address not on the private network, path org outside the caller's full-admin scope, target group not in the path org (opaque), tier-2 JWT onboarding into an org-admin group, or operator token onboarding into a regular group"
-// @Failure      409 {object} APIError "user is already a member of this group"
-// @Failure      500 {object} APIError
+// @Param        request body apimodels.MembershipByDIDRequest true "onboarding request"
+// @Success      201 {object} apimodels.MembershipByDIDResponse
+// @Failure      400 {object} apimodels.APIError "invalid body, invalid DID, or expires_at (must be RFC3339 and in the future)"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network, path org outside the caller's full-admin scope, target group not in the path org (opaque), tier-2 JWT onboarding into an org-admin group, or operator token onboarding into a regular group"
+// @Failure      409 {object} apimodels.APIError "user is already a member of this group"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/memberships/by-did [post]
 func (s *Server) createMembershipByDID(c *gin.Context) {
@@ -1200,12 +1178,12 @@ func (s *Server) createMembershipByDID(c *gin.Context) {
 // @Accept       json
 // @Produce      json
 // @Param        org_id path string true "Organization ID (UUID)"
-// @Param        request body membershipByDIDRemovalRequest true "removal request"
-// @Success      200 {object} APIMessage "membership deleted"
-// @Failure      400 {object} APIError "invalid body"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "source address not on the private network, path org outside the caller's full-admin scope, target group not in the path org / DID not found / no membership (all opaque), tier-2 JWT removing from an org-admin group, or operator token removing from a regular group"
-// @Failure      500 {object} APIError
+// @Param        request body apimodels.MembershipByDIDRemovalRequest true "removal request"
+// @Success      200 {object} apimodels.APIMessage "membership deleted"
+// @Failure      400 {object} apimodels.APIError "invalid body"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network, path org outside the caller's full-admin scope, target group not in the path org / DID not found / no membership (all opaque), tier-2 JWT removing from an org-admin group, or operator token removing from a regular group"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/memberships/by-did [delete]
 func (s *Server) deleteMembershipByDID(c *gin.Context) {
@@ -1326,10 +1304,10 @@ func (s *Server) deleteMembershipByDID(c *gin.Context) {
 // @Produce      json
 // @Param        user_id path string true "User ID (UUID)"
 // @Param        membership_id path string true "Membership ID (UUID)"
-// @Success      200 {object} APIMessage "membership deleted"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "source address not on the private network, membership's group outside the caller's full-admin scope (opaque; also covers not-found), tier-2 JWT removing from an org-admin group, or operator token removing from a regular group"
-// @Failure      500 {object} APIError
+// @Success      200 {object} apimodels.APIMessage "membership deleted"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network, membership's group outside the caller's full-admin scope (opaque; also covers not-found), tier-2 JWT removing from an org-admin group, or operator token removing from a regular group"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/users/{user_id}/memberships/{membership_id} [delete]
 func (s *Server) deleteUserMembership(c *gin.Context) {
@@ -1423,9 +1401,9 @@ func (s *Server) deleteUserMembership(c *gin.Context) {
 // @Param        user_id path string true "User ID (UUID)"
 // @Param        org query string false "Organization slug to resolve against (default \"default\")"
 // @Success      200 {object} rbac.EffectivePermissions
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "source address not on the private network, user or queried org outside the caller's scope (opaque), or operator token (tenant data not readable)"
-// @Failure      500 {object} APIError
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network, user or queried org outside the caller's scope (opaque), or operator token (tenant data not readable)"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/users/{user_id}/effective-permissions [get]
 func (s *Server) getEffectivePermissions(c *gin.Context) {
@@ -1497,10 +1475,10 @@ func (s *Server) getEffectivePermissions(c *gin.Context) {
 // @Produce      json
 // @Param        request body rbac.AccessCheckRequest true "access-check request"
 // @Success      200 {object} rbac.AccessCheckResult
-// @Failure      400 {object} APIError "invalid request body"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "source address not on the private network, target org/user outside the caller's scope (opaque), or operator token (tenant data not readable)"
-// @Failure      500 {object} APIError
+// @Failure      400 {object} apimodels.APIError "invalid request body"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network, target org/user outside the caller's scope (opaque), or operator token (tenant data not readable)"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/access/check [post]
 func (s *Server) checkAccessAPI(c *gin.Context) {
@@ -1572,8 +1550,8 @@ func (s *Server) checkAccessAPI(c *gin.Context) {
 // @Tags         Admin: RBAC
 // @Produce      json
 // @Success      200 {object} rbac.CacheStats
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "source address not on the private network, or caller is not a super-admin"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network, or caller is not a super-admin"
 // @Security     AdminToken
 // @Router       /api/v1/admin/cache/stats [get]
 func (s *Server) getCacheStats(c *gin.Context) {
@@ -1601,10 +1579,10 @@ func (s *Server) getCacheStats(c *gin.Context) {
 // @Description  Returns ETH addresses linked to more than one DID — potential key-sharing or key-compromise events to review. A super-admin (full X-Admin-Token) receives the cluster-wide list; a tier-2 org-admin JWT receives only collisions involving at least one user in its org scope, so it cannot read foreign-org DIDs or addresses.
 // @Tags         Admin: RBAC
 // @Produce      json
-// @Success      200 {object} ethAddressCollisionsResponse
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "source address not on the private network"
-// @Failure      500 {object} APIError
+// @Success      200 {object} apimodels.EthAddressCollisionsResponse
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/eth-addresses/collisions [get]
 func (s *Server) getEthAddressCollisions(c *gin.Context) {

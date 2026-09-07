@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/version"
 
 	"github.com/stretchr/testify/assert"
@@ -39,7 +40,7 @@ func TestHandleGetVersion_ReflectsBuildInfo(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code)
 
-	var resp systemVersionResponse
+	var resp apimodels.SystemVersionResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 
 	assert.Equal(t, "v1.2.3-test", resp.Version)

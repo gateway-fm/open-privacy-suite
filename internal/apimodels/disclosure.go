@@ -1,4 +1,4 @@
-package server
+package apimodels
 
 // Spec-only request/response models for the disclosure handlers (RD-1166).
 //

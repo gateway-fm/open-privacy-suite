@@ -136,8 +136,10 @@ func TestOpenAPIDeclaresNullableGrantFunctions_RD1201(t *testing.T) {
 
 	for _, schema := range []string{
 		"privacy-proxy_internal_rbac.ContractGrant",
-		"internal_server.contractGrantCreateRequest",
-		"internal_server.contractGrantUpdateRequest",
+		// RD-1265 moved the transport models to internal/apimodels and
+		// exported them; swag names schemas after the declaring package.
+		"privacy-proxy_internal_apimodels.ContractGrantCreateRequest",
+		"privacy-proxy_internal_apimodels.ContractGrantUpdateRequest",
 	} {
 		s, ok := spec.Components.Schemas[schema]
 		require.True(t, ok, "schema %s missing from spec", schema)

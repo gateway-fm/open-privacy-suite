@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/rbac"
 
@@ -114,29 +115,6 @@ func randomToken(n int) string {
 
 // --- Handlers ---
 
-// AzureURLResponse is the response from GET /api/v1/auth/azure/url.
-type AzureURLResponse struct {
-	URL   string `json:"url"`
-	State string `json:"state"`
-}
-
-// AzureCallbackRequest is the body for POST /api/v1/auth/azure/callback.
-type AzureCallbackRequest struct {
-	Code        string `json:"code" binding:"required"`
-	State       string `json:"state" binding:"required"`
-	RedirectURI string `json:"redirect_uri" binding:"required"`
-}
-
-// ProvidersResponse is the response from GET /api/v1/auth/providers.
-type ProvidersResponse struct {
-	Providers []string `json:"providers"`
-	// Networks lists the iden3 "blockchain:network" identifiers this deployment
-	// has a state resolver for (e.g. ["billions:main","privado:main"]). The
-	// login UI uses it to avoid advertising a wallet network that cannot be
-	// verified here (RD-1241). Always present, possibly empty.
-	Networks []string `json:"networks"`
-}
-
 // handleAzureAuthURL handles GET /api/v1/auth/azure/url.
 // Returns the Microsoft authorization URL and a CSRF state token.
 //
@@ -145,9 +123,9 @@ type ProvidersResponse struct {
 // @Tags         Auth
 // @Produce      json
 // @Param        redirect_uri query string true "post-login redirect URI (must be allowlisted)"
-// @Success      200 {object} AzureURLResponse
-// @Failure      400 {object} APIError "redirect_uri missing or not allowed"
-// @Failure      404 {object} APIError "Azure AD authentication not configured"
+// @Success      200 {object} apimodels.AzureURLResponse
+// @Failure      400 {object} apimodels.APIError "redirect_uri missing or not allowed"
+// @Failure      404 {object} apimodels.APIError "Azure AD authentication not configured"
 // @Router       /api/v1/auth/azure/url [get]
 func (s *Server) handleAzureAuthURL(c *gin.Context) {
 	if s.azureAuthenticator == nil {
@@ -168,7 +146,7 @@ func (s *Server) handleAzureAuthURL(c *gin.Context) {
 
 	state, nonce := s.azureStateStore.Create()
 	url := s.azureAuthenticator.GetAuthorizationURL(redirectURI, state, nonce)
-	c.JSON(http.StatusOK, AzureURLResponse{URL: url, State: state})
+	c.JSON(http.StatusOK, apimodels.AzureURLResponse{URL: url, State: state})
 }
 
 // handleAzureCallback handles POST /api/v1/auth/azure/callback.
@@ -179,13 +157,13 @@ func (s *Server) handleAzureAuthURL(c *gin.Context) {
 // @Tags         Auth
 // @Accept       json
 // @Produce      json
-// @Param        request body AzureCallbackRequest true "authorization code, CSRF state, and redirect URI"
-// @Success      200 {object} AuthResponse
-// @Failure      400 {object} APIError "invalid request, redirect_uri not allowed, or invalid/expired state token"
-// @Failure      401 {object} APIError "Azure AD authentication failed or invalid tenant ID in token"
-// @Failure      403 {object} APIError "tenant not authorized, auto-provisioning disabled, tenant mismatch, or account banned"
-// @Failure      404 {object} APIError "Azure AD authentication not configured"
-// @Failure      500 {object} APIError "failed to check tenant authorization, provision user, or issue tokens"
+// @Param        request body apimodels.AzureCallbackRequest true "authorization code, CSRF state, and redirect URI"
+// @Success      200 {object} apimodels.AuthResponse
+// @Failure      400 {object} apimodels.APIError "invalid request, redirect_uri not allowed, or invalid/expired state token"
+// @Failure      401 {object} apimodels.APIError "Azure AD authentication failed or invalid tenant ID in token"
+// @Failure      403 {object} apimodels.APIError "tenant not authorized, auto-provisioning disabled, tenant mismatch, or account banned"
+// @Failure      404 {object} apimodels.APIError "Azure AD authentication not configured"
+// @Failure      500 {object} apimodels.APIError "failed to check tenant authorization, provision user, or issue tokens"
 // @Router       /api/v1/auth/azure/callback [post]
 func (s *Server) handleAzureCallback(c *gin.Context) {
 	if s.azureAuthenticator == nil {
@@ -193,7 +171,7 @@ func (s *Server) handleAzureCallback(c *gin.Context) {
 		return
 	}
 
-	var req AzureCallbackRequest
+	var req apimodels.AzureCallbackRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request format"})
 		return
@@ -372,21 +350,12 @@ func (s *Server) completeAzureLogin(c *gin.Context, identity *auth.AzureIdentity
 
 	s.recordAuthAttempt(providerMetric, "success")
 
-	c.JSON(http.StatusOK, AuthResponse{
+	c.JSON(http.StatusOK, apimodels.AuthResponse{
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
 		TokenType:    "Bearer",
 		ExpiresIn:    int(AccessTokenTTL.Seconds()),
 	})
-}
-
-// AzureServicePrincipalRequest is the body for
-// POST /api/v1/auth/azure/service-principal. The client obtains the Azure AD
-// access token out-of-band via the OAuth2 client-credentials grant
-// (`scope=<resource>/.default`) against its own tenant, then exchanges it here
-// for our local tokens.
-type AzureServicePrincipalRequest struct {
-	AccessToken string `json:"access_token" binding:"required"`
 }
 
 // handleAzureServicePrincipal handles POST /api/v1/auth/azure/service-principal.
@@ -403,13 +372,13 @@ type AzureServicePrincipalRequest struct {
 // @Tags         Auth
 // @Accept       json
 // @Produce      json
-// @Param        request body AzureServicePrincipalRequest true "Azure AD access token from the client-credentials grant"
-// @Success      200 {object} AuthResponse
-// @Failure      400 {object} APIError "invalid request format"
-// @Failure      401 {object} APIError "Azure AD authentication failed or invalid tenant ID in token"
-// @Failure      403 {object} APIError "tenant not authorized, auto-provisioning disabled, tenant mismatch, or account banned"
-// @Failure      404 {object} APIError "Azure AD authentication not configured"
-// @Failure      500 {object} APIError "failed to check tenant authorization, provision user, or issue tokens"
+// @Param        request body apimodels.AzureServicePrincipalRequest true "Azure AD access token from the client-credentials grant"
+// @Success      200 {object} apimodels.AuthResponse
+// @Failure      400 {object} apimodels.APIError "invalid request format"
+// @Failure      401 {object} apimodels.APIError "Azure AD authentication failed or invalid tenant ID in token"
+// @Failure      403 {object} apimodels.APIError "tenant not authorized, auto-provisioning disabled, tenant mismatch, or account banned"
+// @Failure      404 {object} apimodels.APIError "Azure AD authentication not configured"
+// @Failure      500 {object} apimodels.APIError "failed to check tenant authorization, provision user, or issue tokens"
 // @Router       /api/v1/auth/azure/service-principal [post]
 func (s *Server) handleAzureServicePrincipal(c *gin.Context) {
 	if s.azureAuthenticator == nil {
@@ -417,7 +386,7 @@ func (s *Server) handleAzureServicePrincipal(c *gin.Context) {
 		return
 	}
 
-	var req AzureServicePrincipalRequest
+	var req apimodels.AzureServicePrincipalRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request format"})
 		return
@@ -443,14 +412,14 @@ func (s *Server) handleAzureServicePrincipal(c *gin.Context) {
 // @Description  Returns the identifiers of the authentication providers this deployment has configured (always includes "privado"; adds "azuread" when Azure AD is enabled), plus the iden3 identity networks it has a state resolver for (e.g. "privado:main", "billions:main"), so the login UI can render the right options and avoid advertising a wallet network this deployment cannot verify. Deployment capability only -- no tenant or user data. Public.
 // @Tags         Auth
 // @Produce      json
-// @Success      200 {object} ProvidersResponse
+// @Success      200 {object} apimodels.ProvidersResponse
 // @Router       /api/v1/auth/providers [get]
 func (s *Server) handleAuthProviders(c *gin.Context) {
 	providers := []string{"privado"}
 	if s.azureAuthenticator != nil {
 		providers = append(providers, "azuread")
 	}
-	c.JSON(http.StatusOK, ProvidersResponse{
+	c.JSON(http.StatusOK, apimodels.ProvidersResponse{
 		Providers: providers,
 		Networks:  s.registeredNetworks(),
 	})

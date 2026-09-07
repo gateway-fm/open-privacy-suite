@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 
+	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/rbac"
 	"privacy-proxy/internal/tracer"
 
@@ -53,19 +54,6 @@ import (
 // so a user who is also in Org B has Org B's grants resolved to nothing
 // in this context. Cross-org existence is hidden behind a generic 404.
 
-// dryRunRequest is the JSON body of POST /api/orgs/:org_id/dry-run.
-type dryRunRequest struct {
-	UserDID string         `json:"user_did" binding:"required"`
-	RPC     dryRunRPCBlock `json:"rpc" binding:"required"`
-}
-
-// dryRunRPCBlock carries the JSON-RPC method + params that the admin
-// is asking the proxy to evaluate as the impersonated user.
-type dryRunRPCBlock struct {
-	Method string `json:"method" binding:"required"`
-	Params []any  `json:"params"`
-}
-
 // dryRunResponse is the handler's reply.
 type dryRunResponse struct {
 	Decision string `json:"decision"` // "allow" | "deny"
@@ -76,19 +64,6 @@ type dryRunResponse struct {
 	Trace             json.RawMessage   `json:"trace,omitempty"`
 	LogsEmitted       []json.RawMessage `json:"logs_emitted,omitempty"`
 	LogsVisibleToUser []json.RawMessage `json:"logs_visible_to_user,omitempty"`
-}
-
-// dryRunResponseDoc is the OpenAPI mirror of dryRunResponse (RD-1166):
-// swag cannot schema json.RawMessage, so the spec documents those
-// pass-through fields as free-form JSON values. Wire shape is identical.
-// Spec-only; never constructed at runtime.
-type dryRunResponseDoc struct {
-	Decision          string `json:"decision" example:"allow"`
-	Reason            string `json:"reason,omitempty"`
-	Response          any    `json:"response,omitempty"`
-	Trace             any    `json:"trace,omitempty"`
-	LogsEmitted       []any  `json:"logs_emitted,omitempty"`
-	LogsVisibleToUser []any  `json:"logs_visible_to_user,omitempty"`
 }
 
 // supported method allowlist for Phase 1. Read methods pass through
@@ -119,14 +94,14 @@ var dryRunTraceMethods = map[string]bool{
 // @Accept       json
 // @Produce      json
 // @Param        org_id path string true "Organization ID (UUID)"
-// @Param        request body dryRunRequest true "impersonation request (user_did and rpc.method/params)"
-// @Success      200 {object} dryRunResponseDoc
-// @Failure      400 {object} APIError "invalid body, unsupported method, self-dry-run, or missing user_did/rpc.method"
-// @Failure      401 {object} APIError "missing admin authentication (no admin_subject)"
-// @Failure      403 {object} APIError "source address not on the private network, or X-Admin-Token/operator credentials used (dry-run requires a tier-2 admin JWT)"
-// @Failure      404 {object} APIError "impersonated user not found or not a member of the path org (opaque)"
-// @Failure      500 {object} APIError "internal error (includes audit-log write failure — response withheld)"
-// @Failure      502 {object} APIError "upstream node error or trace failure"
+// @Param        request body apimodels.DryRunRequest true "impersonation request (user_did and rpc.method/params)"
+// @Success      200 {object} apimodels.DryRunResponseDoc
+// @Failure      400 {object} apimodels.APIError "invalid body, unsupported method, self-dry-run, or missing user_did/rpc.method"
+// @Failure      401 {object} apimodels.APIError "missing admin authentication (no admin_subject)"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network, or X-Admin-Token/operator credentials used (dry-run requires a tier-2 admin JWT)"
+// @Failure      404 {object} apimodels.APIError "impersonated user not found or not a member of the path org (opaque)"
+// @Failure      500 {object} apimodels.APIError "internal error (includes audit-log write failure — response withheld)"
+// @Failure      502 {object} apimodels.APIError "upstream node error or trace failure"
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/dry-run [post]
 func (s *Server) handleDryRun(c *gin.Context) {
@@ -160,7 +135,7 @@ func (s *Server) handleDryRun(c *gin.Context) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, MaxRequestBodySize)
 
 	// Parse body.
-	var req dryRunRequest
+	var req apimodels.DryRunRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 		return
@@ -488,7 +463,7 @@ type dryRunTraceResult struct {
 // recovery uses the chain-id-aware signer; signature must be valid
 // (admins running dry-run on a malformed signed blob get a clear
 // decode error, not a silent pass).
-func (s *Server) forwardDryRunTrace(ctx context.Context, rpc dryRunRPCBlock) (*dryRunTraceResult, error) {
+func (s *Server) forwardDryRunTrace(ctx context.Context, rpc apimodels.DryRunRPCBlock) (*dryRunTraceResult, error) {
 	if s.proxy == nil {
 		return nil, fmt.Errorf("proxy not configured")
 	}
@@ -767,7 +742,7 @@ func (s *Server) filterDryRunLogs(ctx context.Context, logs []json.RawMessage, p
 // forwardDryRunRead forwards a read-only RPC call to the upstream node
 // and returns the raw response body for embedding in the dry-run
 // reply. No redaction here — see the caller's comment for why.
-func (s *Server) forwardDryRunRead(ctx context.Context, rpc dryRunRPCBlock, clientIP string) (json.RawMessage, error) {
+func (s *Server) forwardDryRunRead(ctx context.Context, rpc apimodels.DryRunRPCBlock, clientIP string) (json.RawMessage, error) {
 	if s.proxy == nil {
 		return nil, fmt.Errorf("proxy not configured")
 	}
@@ -795,7 +770,7 @@ func (s *Server) forwardDryRunRead(ctx context.Context, rpc dryRunRPCBlock, clie
 func (s *Server) recordImpersonation(
 	ctx context.Context,
 	actorDID, impersonatedDID, orgID string,
-	rpc dryRunRPCBlock,
+	rpc apimodels.DryRunRPCBlock,
 	decision, reason, correlationID string,
 ) error {
 	if s.db == nil {
@@ -851,7 +826,7 @@ func dryRunParamsHash(method string, params []any) string {
 // processRawTransaction does. Derived from the undecoded params it has no
 // target at all, which skips the contract gates entirely and waves every
 // raw tx through to the tracer whatever it points at.
-func dryRunAccessRequest(userDID, orgID string, rpc dryRunRPCBlock) (*rbac.AccessCheckRequest, error) {
+func dryRunAccessRequest(userDID, orgID string, rpc apimodels.DryRunRPCBlock) (*rbac.AccessCheckRequest, error) {
 	method, params := rpc.Method, rpc.Params
 	if rbac.ResolveMethodAlias(method) == "eth_sendRawTransaction" {
 		rawHex, err := extractRawTxHex(params)

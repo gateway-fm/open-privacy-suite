@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"privacy-proxy/internal/apimodels"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -53,7 +54,7 @@ func TestHandleAuthVerify_BillionsBootstrap_MockBypass(t *testing.T) {
 	router.ServeHTTP(openW, openReq)
 	require.Equal(t, http.StatusOK, openW.Code, "auth/request should succeed even with PoH on")
 
-	var open AuthRequestResponse
+	var open apimodels.AuthRequestResponse
 	require.NoError(t, json.Unmarshal(openW.Body.Bytes(), &open))
 	require.NotEmpty(t, open.SessionID)
 
@@ -61,7 +62,7 @@ func TestHandleAuthVerify_BillionsBootstrap_MockBypass(t *testing.T) {
 	// tag) sees the "mock." prefix and short-circuits to a synthetic DID
 	// without ever calling privadoVerifier — so the PoH gate at line ~489
 	// of auth.go cannot fire.
-	verifyBody := AuthVerifyRequest{
+	verifyBody := apimodels.AuthVerifyRequest{
 		SessionID: open.SessionID,
 		JWZToken:  "mock.did:privado:billions_bypass_test",
 	}
@@ -76,7 +77,7 @@ func TestHandleAuthVerify_BillionsBootstrap_MockBypass(t *testing.T) {
 	require.Equal(t, http.StatusOK, verifyW.Code,
 		"mock-login must bypass PoH; got status %d body %s", verifyW.Code, verifyW.Body.String())
 
-	var resp AuthResponse
+	var resp apimodels.AuthResponse
 	require.NoError(t, json.Unmarshal(verifyW.Body.Bytes(), &resp))
 	assert.NotEmpty(t, resp.AccessToken, "mock-login must mint an access token")
 	assert.NotEmpty(t, resp.RefreshToken, "mock-login must mint a refresh token")

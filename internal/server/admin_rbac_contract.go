@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/db"
 	"privacy-proxy/internal/proxy"
@@ -33,10 +34,10 @@ import (
 // @Param        search query string false "Case-insensitive filter over contract name or address"
 // @Param        created_after query string false "Only contracts created on or after this ISO 8601 date"
 // @Param        created_before query string false "Only contracts created before this ISO 8601 date"
-// @Success      200 {object} contractListResponse
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "operator token cannot read tenant data, or caller is out of org scope"
-// @Failure      500 {object} APIError
+// @Success      200 {object} apimodels.ContractListResponse
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "operator token cannot read tenant data, or caller is out of org scope"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/contracts [get]
 func (s *Server) listContracts(c *gin.Context) {
@@ -70,13 +71,13 @@ func (s *Server) listContracts(c *gin.Context) {
 // @Accept       json
 // @Produce      json
 // @Param        org_id path string true "Organization ID"
-// @Param        request body contractCreateRequest true "contract to create"
+// @Param        request body apimodels.ContractCreateRequest true "contract to create"
 // @Success      201 {object} rbac.Contract
-// @Failure      400 {object} APIError "invalid body or invalid Ethereum address format"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "operator token cannot manage per-org contracts, or caller is out of org scope"
-// @Failure      409 {object} APIError "a contract with this address already exists in the organization"
-// @Failure      500 {object} APIError
+// @Failure      400 {object} apimodels.APIError "invalid body or invalid Ethereum address format"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "operator token cannot manage per-org contracts, or caller is out of org scope"
+// @Failure      409 {object} apimodels.APIError "a contract with this address already exists in the organization"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/contracts [post]
 func (s *Server) createContract(c *gin.Context) {
@@ -139,10 +140,10 @@ func (s *Server) createContract(c *gin.Context) {
 // @Param        org_id path string true "Organization ID"
 // @Param        address path string true "Contract address (0x-prefixed hex)"
 // @Success      200 {object} rbac.Contract
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "operator token cannot read tenant data, or caller is out of org scope"
-// @Failure      404 {object} APIError "contract not found"
-// @Failure      500 {object} APIError
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "operator token cannot read tenant data, or caller is out of org scope"
+// @Failure      404 {object} apimodels.APIError "contract not found"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/contracts/{address} [get]
 func (s *Server) getContract(c *gin.Context) {
@@ -176,13 +177,13 @@ func (s *Server) getContract(c *gin.Context) {
 // @Produce      json
 // @Param        org_id path string true "Organization ID"
 // @Param        address path string true "Contract address (0x-prefixed hex)"
-// @Param        request body contractUpdateRequest true "fields to update"
+// @Param        request body apimodels.ContractUpdateRequest true "fields to update"
 // @Success      200 {object} rbac.Contract
-// @Failure      400 {object} APIError "invalid request body"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "operator token cannot manage per-org contracts, or caller is out of org scope"
-// @Failure      404 {object} APIError "contract not found"
-// @Failure      500 {object} APIError
+// @Failure      400 {object} apimodels.APIError "invalid request body"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "operator token cannot manage per-org contracts, or caller is out of org scope"
+// @Failure      404 {object} apimodels.APIError "contract not found"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/contracts/{address} [put]
 func (s *Server) updateContract(c *gin.Context) {
@@ -241,11 +242,11 @@ func (s *Server) updateContract(c *gin.Context) {
 // @Produce      json
 // @Param        org_id path string true "Organization ID"
 // @Param        address path string true "Contract address (0x-prefixed hex)"
-// @Success      200 {object} APIMessage "contract deleted"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "operator token cannot manage per-org contracts, or caller is out of org scope"
-// @Failure      404 {object} APIError "contract not found"
-// @Failure      500 {object} APIError
+// @Success      200 {object} apimodels.APIMessage "contract deleted"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "operator token cannot manage per-org contracts, or caller is out of org scope"
+// @Failure      404 {object} apimodels.APIError "contract not found"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/contracts/{address} [delete]
 func (s *Server) deleteContract(c *gin.Context) {
@@ -296,13 +297,13 @@ func (s *Server) deleteContract(c *gin.Context) {
 // @Produce      json
 // @Param        org_id path string true "Organization ID"
 // @Param        address path string true "Contract address (0x-prefixed hex)"
-// @Param        request body contractABIUpdateRequest true "ABI JSON array"
+// @Param        request body apimodels.ContractABIUpdateRequest true "ABI JSON array"
 // @Success      200 {object} rbac.Contract
-// @Failure      400 {object} APIError "invalid body, or ABI is not a valid JSON array"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "operator token cannot manage per-org contracts, or caller is out of org scope"
-// @Failure      404 {object} APIError "contract not found"
-// @Failure      500 {object} APIError
+// @Failure      400 {object} apimodels.APIError "invalid body, or ABI is not a valid JSON array"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "operator token cannot manage per-org contracts, or caller is out of org scope"
+// @Failure      404 {object} apimodels.APIError "contract not found"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/contracts/{address}/abi [put]
 func (s *Server) updateContractABI(c *gin.Context) {
@@ -387,13 +388,13 @@ func (s *Server) updateContractABI(c *gin.Context) {
 // @Produce      json
 // @Param        org_id path string true "Organization ID"
 // @Param        address path string true "Contract address (0x-prefixed hex)"
-// @Param        request body contractVisibleToUnlockRequest true "flag value"
+// @Param        request body apimodels.ContractVisibleToUnlockRequest true "flag value"
 // @Success      200 {object} rbac.Contract
-// @Failure      400 {object} APIError "invalid body, or allow_visibleto_unlock is missing"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "operator token cannot manage per-org contracts, or caller is out of org scope"
-// @Failure      404 {object} APIError "contract not found"
-// @Failure      500 {object} APIError
+// @Failure      400 {object} apimodels.APIError "invalid body, or allow_visibleto_unlock is missing"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "operator token cannot manage per-org contracts, or caller is out of org scope"
+// @Failure      404 {object} apimodels.APIError "contract not found"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/contracts/{address}/visibleto-unlock [put]
 func (s *Server) updateContractAllowVisibleToUnlock(c *gin.Context) {
@@ -484,13 +485,13 @@ func (s *Server) updateContractAllowVisibleToUnlock(c *gin.Context) {
 // @Produce      json
 // @Param        org_id path string true "Organization ID"
 // @Param        address path string true "Contract address (0x-prefixed hex)"
-// @Param        request body contractEventsAllowDynamicPayloadRequest true "flag value"
+// @Param        request body apimodels.ContractEventsAllowDynamicPayloadRequest true "flag value"
 // @Success      200 {object} rbac.Contract
-// @Failure      400 {object} APIError "invalid address, invalid body, or events_allow_dynamic_payload is missing"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "super-admin token required"
-// @Failure      404 {object} APIError "contract not found"
-// @Failure      500 {object} APIError
+// @Failure      400 {object} apimodels.APIError "invalid address, invalid body, or events_allow_dynamic_payload is missing"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "super-admin token required"
+// @Failure      404 {object} apimodels.APIError "contract not found"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/contracts/{address}/events-allow-dynamic-payload [put]
 func (s *Server) updateContractEventsAllowDynamicPayload(c *gin.Context) {
@@ -568,12 +569,12 @@ func (s *Server) updateContractEventsAllowDynamicPayload(c *gin.Context) {
 // @Produce      json
 // @Param        org_id path string true "Organization ID"
 // @Param        address path string true "Contract address (0x-prefixed hex)"
-// @Success      200 {object} contractEventsResponse
-// @Failure      400 {object} APIError "the stored ABI could not be parsed"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "operator token cannot read tenant data, or caller is out of org scope"
-// @Failure      404 {object} APIError "contract not found"
-// @Failure      500 {object} APIError
+// @Success      200 {object} apimodels.ContractEventsResponse
+// @Failure      400 {object} apimodels.APIError "the stored ABI could not be parsed"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "operator token cannot read tenant data, or caller is out of org scope"
+// @Failure      404 {object} apimodels.APIError "contract not found"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/contracts/{address}/events [get]
 func (s *Server) listContractEvents(c *gin.Context) {
@@ -613,15 +614,6 @@ func (s *Server) listContractEvents(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"events": events})
 }
 
-// ContractSyncStatus represents the on-chain status of a contract
-type ContractSyncStatus struct {
-	ID      string `json:"id"`
-	Address string `json:"address"`
-	Name    string `json:"name"`
-	Status  string `json:"status"` // "exists", "missing", "error"
-	Error   string `json:"error,omitempty"`
-}
-
 // checkContractsOnChain checks all contracts against the chain and returns their status.
 // POST /orgs/:org_id/contracts/sync-check
 //
@@ -630,10 +622,10 @@ type ContractSyncStatus struct {
 // @Tags         Admin: RBAC
 // @Produce      json
 // @Param        org_id path string true "Organization ID"
-// @Success      200 {object} contractSyncCheckResponse
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "caller is out of org scope"
-// @Failure      500 {object} APIError
+// @Success      200 {object} apimodels.ContractSyncCheckResponse
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "caller is out of org scope"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/contracts/sync-check [post]
 func (s *Server) checkContractsOnChain(c *gin.Context) {
@@ -653,17 +645,17 @@ func (s *Server) checkContractsOnChain(c *gin.Context) {
 	if len(contracts) == 0 {
 		c.JSON(http.StatusOK, gin.H{
 			"total":    0,
-			"existing": []ContractSyncStatus{},
-			"missing":  []ContractSyncStatus{},
-			"errors":   []ContractSyncStatus{},
+			"existing": []apimodels.ContractSyncStatus{},
+			"missing":  []apimodels.ContractSyncStatus{},
+			"errors":   []apimodels.ContractSyncStatus{},
 		})
 		return
 	}
 
-	var existing, missing, errors []ContractSyncStatus
+	var existing, missing, errors []apimodels.ContractSyncStatus
 
 	for _, contract := range contracts {
-		status := ContractSyncStatus{
+		status := apimodels.ContractSyncStatus{
 			ID:      contract.ID,
 			Address: contract.Address,
 			Name:    contract.Name,
@@ -710,12 +702,12 @@ func (s *Server) checkContractsOnChain(c *gin.Context) {
 // @Accept       json
 // @Produce      json
 // @Param        org_id path string true "Organization ID"
-// @Param        request body contractSyncDeleteRequest true "contract IDs to delete"
-// @Success      200 {object} contractSyncDeleteResponse
-// @Failure      400 {object} APIError "invalid body, or no contract IDs provided"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "operator token cannot manage per-org contracts, or caller is out of org scope"
-// @Failure      500 {object} APIError
+// @Param        request body apimodels.ContractSyncDeleteRequest true "contract IDs to delete"
+// @Success      200 {object} apimodels.ContractSyncDeleteResponse
+// @Failure      400 {object} apimodels.APIError "invalid body, or no contract IDs provided"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "operator token cannot manage per-org contracts, or caller is out of org scope"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/contracts/sync-delete [post]
 func (s *Server) deleteStaleContracts(c *gin.Context) {
@@ -1209,10 +1201,10 @@ func autoAddSelfConstraints(rules []rbac.EventRule, abiJSON string) []rbac.Event
 // @Param        org_id path string true "Organization ID"
 // @Param        address path string true "Contract address (0x-prefixed hex)"
 // @Success      200 {array} rbac.ContractGrant
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "operator token cannot read tenant data, or caller is out of org scope"
-// @Failure      404 {object} APIError "contract not found"
-// @Failure      500 {object} APIError
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "operator token cannot read tenant data, or caller is out of org scope"
+// @Failure      404 {object} apimodels.APIError "contract not found"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/contracts/{address}/grants [get]
 func (s *Server) listContractGrants(c *gin.Context) {
@@ -1254,13 +1246,13 @@ func (s *Server) listContractGrants(c *gin.Context) {
 // @Produce      json
 // @Param        org_id path string true "Organization ID"
 // @Param        address path string true "Contract address (0x-prefixed hex)"
-// @Param        request body contractGrantCreateRequest true "grant to create"
+// @Param        request body apimodels.ContractGrantCreateRequest true "grant to create"
 // @Success      201 {object} rbac.ContractGrant
-// @Failure      400 {object} APIError "invalid body, invalid event rules, or event_rules set without a resolvable ABI"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "operator token cannot manage per-org grants, caller is out of org scope, or a param rule references a cross-org / unregistered address"
-// @Failure      404 {object} APIError "contract not found"
-// @Failure      500 {object} APIError
+// @Failure      400 {object} apimodels.APIError "invalid body, invalid event rules, or event_rules set without a resolvable ABI"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "operator token cannot manage per-org grants, caller is out of org scope, or a param rule references a cross-org / unregistered address"
+// @Failure      404 {object} apimodels.APIError "contract not found"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/contracts/{address}/grants [post]
 func (s *Server) createContractGrant(c *gin.Context) {
@@ -1390,13 +1382,13 @@ func (s *Server) createContractGrant(c *gin.Context) {
 // @Param        org_id path string true "Organization ID"
 // @Param        address path string true "Contract address (0x-prefixed hex)"
 // @Param        group_id path string true "Group ID the grant belongs to"
-// @Param        request body contractGrantUpdateRequest true "fields to update"
+// @Param        request body apimodels.ContractGrantUpdateRequest true "fields to update"
 // @Success      200 {object} rbac.ContractGrant
-// @Failure      400 {object} APIError "invalid body, invalid functions/event_rules, or event_rules set without a resolvable ABI"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "operator token cannot manage per-org grants, caller is out of org scope, or a param rule references a cross-org / unregistered address"
-// @Failure      404 {object} APIError "contract or grant not found"
-// @Failure      500 {object} APIError
+// @Failure      400 {object} apimodels.APIError "invalid body, invalid functions/event_rules, or event_rules set without a resolvable ABI"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "operator token cannot manage per-org grants, caller is out of org scope, or a param rule references a cross-org / unregistered address"
+// @Failure      404 {object} apimodels.APIError "contract or grant not found"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/contracts/{address}/grants/{group_id} [put]
 func (s *Server) updateContractGrant(c *gin.Context) {
@@ -1560,11 +1552,11 @@ func (s *Server) updateContractGrant(c *gin.Context) {
 // @Tags         Admin: RBAC
 // @Produce      json
 // @Param        address path string true "Contract address (0x-prefixed hex)"
-// @Success      200 {object} contractLookupFullResponse "full payload for super-admin / owning-org admin; out-of-scope JWT admins receive contractLookupMinimalResponse instead"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "operator token cannot read tenant data"
-// @Failure      404 {object} APIError "contract not found"
-// @Failure      500 {object} APIError
+// @Success      200 {object} apimodels.ContractLookupFullResponse "full payload for super-admin / owning-org admin; out-of-scope JWT admins receive ContractLookupMinimalResponse instead"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "operator token cannot read tenant data"
+// @Failure      404 {object} apimodels.APIError "contract not found"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/contracts/by-address/{address} [get]
 func (s *Server) lookupContractByAddress(c *gin.Context) {
@@ -1651,9 +1643,9 @@ func (s *Server) lookupContractByAddress(c *gin.Context) {
 // @Produce      json
 // @Param        org_id path string true "Organization ID"
 // @Success      200 {object} map[string]rbac.ContractGrantSummary "grant summary keyed by contract ID"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "operator token cannot read tenant data, or caller is out of org scope"
-// @Failure      500 {object} APIError
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "operator token cannot read tenant data, or caller is out of org scope"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/contracts/grant-summary [get]
 func (s *Server) getContractGrantSummary(c *gin.Context) {
@@ -1681,11 +1673,11 @@ func (s *Server) getContractGrantSummary(c *gin.Context) {
 // @Param        org_id path string true "Organization ID"
 // @Param        address path string true "Contract address (0x-prefixed hex)"
 // @Param        group_id path string true "Group ID the grant belongs to"
-// @Success      200 {object} APIMessage "grant deleted"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "operator token cannot manage per-org grants, or caller is out of org scope"
-// @Failure      404 {object} APIError "contract or grant not found"
-// @Failure      500 {object} APIError
+// @Success      200 {object} apimodels.APIMessage "grant deleted"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "operator token cannot manage per-org grants, or caller is out of org scope"
+// @Failure      404 {object} apimodels.APIError "contract or grant not found"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/contracts/{address}/grants/{group_id} [delete]
 func (s *Server) deleteContractGrant(c *gin.Context) {
@@ -1761,12 +1753,12 @@ func validateEventRules(rules []rbac.EventRule) string {
 // @Accept       json
 // @Produce      json
 // @Param        org_id path string true "Organization ID"
-// @Param        request body contractBatchMoveRequest true "move request (provide exactly one of target_group_id or new_group)"
-// @Success      200 {object} contractBatchMoveResponse
-// @Failure      400 {object} APIError "invalid body, too many contract IDs, missing/ambiguous target, or a contract/group not in this org"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "operator token cannot manage per-org contracts, or caller is out of org scope"
-// @Failure      500 {object} APIError
+// @Param        request body apimodels.ContractBatchMoveRequest true "move request (provide exactly one of target_group_id or new_group)"
+// @Success      200 {object} apimodels.ContractBatchMoveResponse
+// @Failure      400 {object} apimodels.APIError "invalid body, too many contract IDs, missing/ambiguous target, or a contract/group not in this org"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "operator token cannot manage per-org contracts, or caller is out of org scope"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/contracts/batch-move [post]
 func (s *Server) batchMoveContracts(c *gin.Context) {

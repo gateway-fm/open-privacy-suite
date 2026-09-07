@@ -1,12 +1,12 @@
-package server
+package apimodels
 
 // Spec-only response models (RD-1166). Handlers that respond through the
 // gin.H-based helpers in http_responses.go have no Go type to reference from
 // swaggo annotations; these mirror those wire shapes exactly. They are never
 // constructed at runtime — annotation references only.
 
-// healthResponse is the GET /health body.
-type healthResponse struct {
+// HealthResponse is the GET /health body.
+type HealthResponse struct {
 	Status string `json:"status" example:"ok"`
 }
 

@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/server/apispec"
 )
 
@@ -38,9 +39,14 @@ func (s *Server) handleOpenAPISpec(c *gin.Context) {
 // @Tags         System
 // @Produce      plain
 // @Success      200 {string} string "Prometheus text exposition format"
-// @Failure      403 {object} APIError "source address not on the private network"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network"
 // @Router       /metrics [get]
 func specMetricsEndpoint() {}
 
 // Reference the annotation carriers so linters don't flag them as unused.
 var _ = []any{generalAPIInfo, specMetricsEndpoint}
+
+// swaggo resolves an annotation's apimodels.Type through this file's import
+// list, but a reference from a comment is not Go usage — so without this the
+// import would be stripped and `make api-spec` would fail. See RD-1265.
+var _ = apimodels.APIError{}

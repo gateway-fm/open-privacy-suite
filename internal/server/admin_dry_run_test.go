@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
 
@@ -309,7 +310,7 @@ func TestDryRun_FunctionLevelRules(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			rpc := dryRunRPCBlock{
+			rpc := apimodels.DryRunRPCBlock{
 				Method: "eth_call",
 				Params: []any{
 					map[string]any{
@@ -347,7 +348,7 @@ func TestDryRunAccessRequest_MatchesEnforcementDerivation(t *testing.T) {
 			"to":   "0xAbC0000000000000000000000000000000000001",
 			"data": "0x70a08231ff",
 		}, "latest"}
-		got, err := dryRunAccessRequest("did:x", "org", dryRunRPCBlock{Method: "eth_call", Params: params})
+		got, err := dryRunAccessRequest("did:x", "org", apimodels.DryRunRPCBlock{Method: "eth_call", Params: params})
 		require.NoError(t, err)
 		assert.Equal(t, rbac.ResolveMethodAlias("eth_call"), got.AccessMethod)
 		assert.Equal(t, rbac.GetTargetAddress("eth_call", params), got.TargetAddress)
@@ -358,7 +359,7 @@ func TestDryRunAccessRequest_MatchesEnforcementDerivation(t *testing.T) {
 	t.Run("eth_sendRawTransaction", func(t *testing.T) {
 		to := common.HexToAddress("0x3333333333333333333333333333333333333333")
 		rawHex := drSignedRawTx(t, &to, []byte{0x70, 0xa0, 0x82, 0x31})
-		got, err := dryRunAccessRequest("did:x", "org", dryRunRPCBlock{
+		got, err := dryRunAccessRequest("did:x", "org", apimodels.DryRunRPCBlock{
 			Method: "eth_sendRawTransaction", Params: []any{rawHex},
 		})
 		require.NoError(t, err)
@@ -374,7 +375,7 @@ func TestDryRunAccessRequest_MatchesEnforcementDerivation(t *testing.T) {
 	})
 
 	t.Run("undecodable raw tx is an error, not an empty target", func(t *testing.T) {
-		_, err := dryRunAccessRequest("did:x", "org", dryRunRPCBlock{
+		_, err := dryRunAccessRequest("did:x", "org", apimodels.DryRunRPCBlock{
 			Method: "eth_sendRawTransaction", Params: []any{"0xnotrealhex"},
 		})
 		require.Error(t, err)
@@ -431,7 +432,7 @@ func TestDryRun_FunctionRuleTraceStaysInPathOrg(t *testing.T) {
 
 	w := dryRunPost(t, f.srv, f.orgID, "jwt_admin", f.adminDID, map[string]any{
 		"user_did": userDID,
-		"rpc": dryRunRPCBlock{
+		"rpc": apimodels.DryRunRPCBlock{
 			Method: "eth_sendTransaction",
 			Params: []any{map[string]any{"to": wrapperAddr, "data": selector}},
 		},
@@ -490,7 +491,7 @@ func TestDryRun_RawTransactionChecksDecodedTarget(t *testing.T) {
 			to := common.HexToAddress(tc.to)
 			w := dryRunPost(t, f.srv, f.orgID, "jwt_admin", f.adminDID, map[string]any{
 				"user_did": senderDID,
-				"rpc": dryRunRPCBlock{
+				"rpc": apimodels.DryRunRPCBlock{
 					Method: "eth_sendRawTransaction",
 					Params: []any{drSignedRawTx(t, &to, []byte{0xab, 0xcd, 0xab, 0xcd})},
 				},
@@ -645,7 +646,7 @@ func TestDryRun_RawSendTransactionMalformedAudit(t *testing.T) {
 
 	t.Run("records decode error before returning bad request", func(t *testing.T) {
 		f := setupDryRunFixture(t)
-		rpc := dryRunRPCBlock{
+		rpc := apimodels.DryRunRPCBlock{
 			Method: "eth_sendRawTransaction",
 			Params: []any{rawHex},
 		}
@@ -689,7 +690,7 @@ func TestDryRun_RawSendTransactionMalformedAudit(t *testing.T) {
 			assert.NoError(t, dropErr)
 		})
 
-		rpc := dryRunRPCBlock{
+		rpc := apimodels.DryRunRPCBlock{
 			Method: "eth_sendRawTransaction",
 			Params: []any{rawHex},
 		}

@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/db"
-	"privacy-proxy/internal/server"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -123,7 +123,7 @@ func TestE2E_Explorer_ViewableAddresses(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	body, _ := io.ReadAll(resp.Body)
-	var result server.ViewableAddressesResponse
+	var result apimodels.ViewableAddressesResponse
 	err = json.Unmarshal(body, &result)
 	require.NoError(t, err)
 
@@ -157,7 +157,7 @@ func TestE2E_Explorer_AnonymousViewer(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	body, _ := io.ReadAll(resp.Body)
-	var result server.ViewableAddressesResponse
+	var result apimodels.ViewableAddressesResponse
 	err = json.Unmarshal(body, &result)
 	require.NoError(t, err)
 
@@ -218,7 +218,7 @@ func TestE2E_Explorer_MultipleAddressesPerUser(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	body, _ := io.ReadAll(resp.Body)
-	var result server.ViewableAddressesResponse
+	var result apimodels.ViewableAddressesResponse
 	err = json.Unmarshal(body, &result)
 	require.NoError(t, err)
 

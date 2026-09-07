@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/db"
 
@@ -75,7 +76,7 @@ func TestAutoKYCAzureUserProvisioning(t *testing.T) {
 		w := login(oid)
 		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 
-		var resp AuthResponse
+		var resp apimodels.AuthResponse
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 		assert.NotEmpty(t, resp.AccessToken)
 

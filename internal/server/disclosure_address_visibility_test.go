@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/disclosure"
 	"privacy-proxy/internal/explorer"
@@ -291,7 +292,7 @@ func TestAddressTransactions_FullDisclosureGrantVisibility(t *testing.T) {
 		assert.Equal(t, http.StatusOK, w.Code,
 			"full disclosure grant should allow address transactions access")
 
-		var resp AddressTransactionsResponse
+		var resp apimodels.AddressTransactionsResponse
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 		assert.GreaterOrEqual(t, len(resp.Transactions), 1)
 	})

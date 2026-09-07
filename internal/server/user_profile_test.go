@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/config"
 	"privacy-proxy/internal/db"
@@ -135,7 +136,7 @@ func TestGetMyOrganizations_NoMemberships(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	var response map[string][]UserOrgResponse
+	var response map[string][]apimodels.UserOrgResponse
 	err = json.Unmarshal(w.Body.Bytes(), &response)
 	require.NoError(t, err)
 	assert.Empty(t, response["organizations"])
@@ -196,7 +197,7 @@ func TestGetMyOrganizations_SingleOrg(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	var response map[string][]UserOrgResponse
+	var response map[string][]apimodels.UserOrgResponse
 	err = json.Unmarshal(w.Body.Bytes(), &response)
 	require.NoError(t, err)
 	require.Len(t, response["organizations"], 1)
@@ -284,7 +285,7 @@ func TestGetMyOrganizations_MultipleOrgs(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	var response map[string][]UserOrgResponse
+	var response map[string][]apimodels.UserOrgResponse
 	err = json.Unmarshal(w.Body.Bytes(), &response)
 	require.NoError(t, err)
 	assert.Len(t, response["organizations"], 2)
@@ -362,7 +363,7 @@ func TestGetMyOrganizations_UserCannotSeeOtherUsersOrgs(t *testing.T) {
 	router.ServeHTTP(wA, reqA)
 
 	assert.Equal(t, http.StatusOK, wA.Code)
-	var responseA map[string][]UserOrgResponse
+	var responseA map[string][]apimodels.UserOrgResponse
 	err = json.Unmarshal(wA.Body.Bytes(), &responseA)
 	require.NoError(t, err)
 	require.Len(t, responseA["organizations"], 1)
@@ -378,7 +379,7 @@ func TestGetMyOrganizations_UserCannotSeeOtherUsersOrgs(t *testing.T) {
 	router.ServeHTTP(wB, reqB)
 
 	assert.Equal(t, http.StatusOK, wB.Code)
-	var responseB map[string][]UserOrgResponse
+	var responseB map[string][]apimodels.UserOrgResponse
 	err = json.Unmarshal(wB.Body.Bytes(), &responseB)
 	require.NoError(t, err)
 	assert.Empty(t, responseB["organizations"], "User B should not see any orgs")
@@ -456,7 +457,7 @@ func TestGetMyOrganizations_DeduplicatesOrgs(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	var response map[string][]UserOrgResponse
+	var response map[string][]apimodels.UserOrgResponse
 	err = json.Unmarshal(w.Body.Bytes(), &response)
 	require.NoError(t, err)
 

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/rbac"
 
@@ -177,44 +178,6 @@ type AuthRequest struct {
 	JWZToken string `json:"jwz_token" binding:"required"`
 }
 
-// AuthResponse represents the response from /auth endpoint
-type AuthResponse struct {
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-	TokenType    string `json:"token_type"`
-	ExpiresIn    int    `json:"expires_in"` // seconds
-}
-
-// RefreshRequest represents the request body for /refresh endpoint
-type RefreshRequest struct {
-	RefreshToken string `json:"refresh_token" binding:"required"`
-}
-
-// RevokeRequest represents the request body for /revoke endpoint
-type RevokeRequest struct {
-	RefreshToken string `json:"refresh_token" binding:"required"`
-	AccessToken  string `json:"access_token"` // Optional: if provided, also revokes the access token
-}
-
-// AuthRequestResponse represents the response from /auth/request endpoint
-type AuthRequestResponse struct {
-	SessionID   string                                `json:"session_id"`
-	AuthRequest *protocol.AuthorizationRequestMessage `json:"auth_request"`
-}
-
-// AuthVerifyRequest represents the request body for /auth/verify endpoint
-type AuthVerifyRequest struct {
-	SessionID string `json:"session_id" binding:"required"`
-	JWZToken  string `json:"jwz_token" binding:"required"`
-}
-
-// AuthRequestBody represents optional request body for /auth/request endpoint
-type AuthRequestBody struct {
-	// CallbackOrigin is the browser's window.location.origin (e.g., "http://max-mac:5173")
-	// Used to construct callback URLs that work from any hostname (localhost, Tailscale, etc.)
-	CallbackOrigin string `json:"callback_origin"`
-}
-
 // handleAuthRequest handles POST /auth/request - creates authorization request
 // Step 1: Client requests authentication, server creates proof request
 //
@@ -223,14 +186,14 @@ type AuthRequestBody struct {
 // @Tags         Auth
 // @Accept       json
 // @Produce      json
-// @Param        request body AuthRequestBody false "optional callback origin"
-// @Success      200 {object} AuthRequestResponse
-// @Failure      500 {object} APIError "VERIFIER_ID not configured (production) or failed to create the authorization request"
-// @Failure      503 {object} APIError "authentication service at capacity"
+// @Param        request body apimodels.AuthRequestBody false "optional callback origin"
+// @Success      200 {object} apimodels.AuthRequestResponse
+// @Failure      500 {object} apimodels.APIError "VERIFIER_ID not configured (production) or failed to create the authorization request"
+// @Failure      503 {object} apimodels.APIError "authentication service at capacity"
 // @Router       /api/v1/auth/request [post]
 func (s *Server) handleAuthRequest(c *gin.Context) {
 	// Parse optional request body for callback_origin
-	var reqBody AuthRequestBody
+	var reqBody apimodels.AuthRequestBody
 	_ = c.ShouldBindJSON(&reqBody) // Ignore errors - body is optional
 
 	// Generate session ID first (needed for callback URL)
@@ -279,7 +242,7 @@ func (s *Server) handleAuthRequest(c *gin.Context) {
 			return
 		}
 
-		c.JSON(http.StatusOK, AuthRequestResponse{
+		c.JSON(http.StatusOK, apimodels.AuthRequestResponse{
 			SessionID:   sessionID,
 			AuthRequest: mockAuthReq,
 		})
@@ -330,7 +293,7 @@ func (s *Server) handleAuthRequest(c *gin.Context) {
 	}
 
 	// Return authorization request and session ID
-	c.JSON(http.StatusOK, AuthRequestResponse{
+	c.JSON(http.StatusOK, apimodels.AuthRequestResponse{
 		SessionID:   sessionID,
 		AuthRequest: authReq,
 	})
@@ -402,11 +365,11 @@ func (s *Server) scheduleDemoAutoAuth(sessionID string) {
 // @Produce      json
 // @Param        session query string true "auth session ID from /auth/request"
 // @Param        request body object true "JWZ token, as {\"token\":\"<jwz>\"} or the raw token string"
-// @Success      200 {object} AuthResponse
-// @Failure      400 {object} APIError "missing session parameter, unreadable body, or missing JWZ token"
-// @Failure      401 {object} UnsupportedNetworkError "session not found/expired; JWZ verification failed (opaque); or the wallet's iden3 network is not configured here (error: network_not_supported)"
-// @Failure      403 {object} HumanityVerificationError "ProofOfHumanity verification required, or account banned"
-// @Failure      500 {object} APIError "failed to persist user record or issue tokens"
+// @Success      200 {object} apimodels.AuthResponse
+// @Failure      400 {object} apimodels.APIError "missing session parameter, unreadable body, or missing JWZ token"
+// @Failure      401 {object} apimodels.UnsupportedNetworkError "session not found/expired; JWZ verification failed (opaque); or the wallet's iden3 network is not configured here (error: network_not_supported)"
+// @Failure      403 {object} apimodels.HumanityVerificationError "ProofOfHumanity verification required, or account banned"
+// @Failure      500 {object} apimodels.APIError "failed to persist user record or issue tokens"
 // @Router       /api/v1/auth/callback [post]
 func (s *Server) handleAuthCallback(c *gin.Context) {
 	// Get session ID from query parameter (wallet includes it in callback URL)
@@ -475,15 +438,15 @@ func (s *Server) handleAuthCallback(c *gin.Context) {
 // @Tags         Auth
 // @Accept       json
 // @Produce      json
-// @Param        request body AuthVerifyRequest true "session ID and JWZ token"
-// @Success      200 {object} AuthResponse
-// @Failure      400 {object} APIError "invalid request body"
-// @Failure      401 {object} UnsupportedNetworkError "session not found/expired; JWZ verification failed (opaque); or the wallet's iden3 network is not configured here (error: network_not_supported)"
-// @Failure      403 {object} HumanityVerificationError "ProofOfHumanity verification required, or account banned"
-// @Failure      500 {object} APIError "failed to persist user record or issue tokens"
+// @Param        request body apimodels.AuthVerifyRequest true "session ID and JWZ token"
+// @Success      200 {object} apimodels.AuthResponse
+// @Failure      400 {object} apimodels.APIError "invalid request body"
+// @Failure      401 {object} apimodels.UnsupportedNetworkError "session not found/expired; JWZ verification failed (opaque); or the wallet's iden3 network is not configured here (error: network_not_supported)"
+// @Failure      403 {object} apimodels.HumanityVerificationError "ProofOfHumanity verification required, or account banned"
+// @Failure      500 {object} apimodels.APIError "failed to persist user record or issue tokens"
 // @Router       /api/v1/auth/verify [post]
 func (s *Server) handleAuthVerify(c *gin.Context) {
-	var req AuthVerifyRequest
+	var req apimodels.AuthVerifyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		respondBadRequestAndLog(c, "invalid request body",
 			"auth: handleAuthVerify invalid body", "err", err)
@@ -512,13 +475,6 @@ func (s *Server) handleAuthVerify(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
-// HumanityVerificationError represents a failure to verify ProofOfHumanity
-type HumanityVerificationError struct {
-	Error     string `json:"error"`
-	Message   string `json:"message"`
-	VerifyURL string `json:"verify_url"`
-}
-
 // failAuthSession records a rejected auth attempt on the session so the polling
 // browser is told what happened (RD-1242). The wallet already has the error in
 // its own response; this is the only channel the browser has.
@@ -545,7 +501,7 @@ func (s *Server) failAuthSession(sessionID, reason string) {
 
 // verifyAndIssueTokens is a helper that verifies JWZ proof and issues JWT tokens
 // Returns the response or sends error and returns nil
-func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authRequest *protocol.AuthorizationRequestMessage, sessionID string) (*AuthResponse, error) {
+func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authRequest *protocol.AuthorizationRequestMessage, sessionID string) (*apimodels.AuthResponse, error) {
 	var userDID string
 	var err error
 	var zkClaims *auth.ZKRoleClaims
@@ -691,25 +647,12 @@ func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authReque
 	}
 	s.recordAuthAttempt(provider, "success")
 
-	return &AuthResponse{
+	return &apimodels.AuthResponse{
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
 		TokenType:    "Bearer",
 		ExpiresIn:    int(AccessTokenTTL.Seconds()),
 	}, nil
-}
-
-// SessionStatusResponse represents the response for session status polling
-type SessionStatusResponse struct {
-	Completed bool          `json:"completed"`
-	Tokens    *AuthResponse `json:"tokens,omitempty"`
-	// Failed reports that the wallet's proof was rejected. Additive: clients
-	// that only read `completed` are unaffected.
-	Failed bool `json:"failed,omitempty"`
-	// Reason is one of: verification_failed, humanity_required,
-	// invalid_request, network_not_supported, authentication_failed. Sensitive
-	// and unrecognised failures collapse to authentication_failed.
-	Reason string `json:"reason,omitempty"`
 }
 
 // handleAuthSessionStatus handles GET /api/auth/session/:id/status - poll for session completion
@@ -720,9 +663,9 @@ type SessionStatusResponse struct {
 // @Tags         Auth
 // @Produce      json
 // @Param        id path string true "auth session ID"
-// @Success      200 {object} SessionStatusResponse
-// @Failure      400 {object} APIError "session ID required"
-// @Failure      404 {object} APIError "session not found or expired"
+// @Success      200 {object} apimodels.SessionStatusResponse
+// @Failure      400 {object} apimodels.APIError "session ID required"
+// @Failure      404 {object} apimodels.APIError "session not found or expired"
 // @Router       /api/v1/auth/session/{id}/status [get]
 func (s *Server) handleAuthSessionStatus(c *gin.Context) {
 	sessionID := c.Param("id")
@@ -744,14 +687,14 @@ func (s *Server) handleAuthSessionStatus(c *gin.Context) {
 		// above stays the only signal about session existence - a failed
 		// session looks like any other live one to an ID that does not exist.
 		if session.Failed {
-			c.JSON(http.StatusOK, SessionStatusResponse{
+			c.JSON(http.StatusOK, apimodels.SessionStatusResponse{
 				Completed: false,
 				Failed:    true,
 				Reason:    wireAuthFailureReason(session.FailureReason),
 			})
 			return
 		}
-		c.JSON(http.StatusOK, SessionStatusResponse{Completed: false})
+		c.JSON(http.StatusOK, apimodels.SessionStatusResponse{Completed: false})
 		return
 	}
 
@@ -762,9 +705,9 @@ func (s *Server) handleAuthSessionStatus(c *gin.Context) {
 	auth.SetAccessCookie(c, session.AccessToken, AccessTokenTTL)
 
 	// Session is completed - return tokens
-	c.JSON(http.StatusOK, SessionStatusResponse{
+	c.JSON(http.StatusOK, apimodels.SessionStatusResponse{
 		Completed: true,
-		Tokens: &AuthResponse{
+		Tokens: &apimodels.AuthResponse{
 			AccessToken:  session.AccessToken,
 			RefreshToken: session.RefreshToken,
 			TokenType:    "Bearer",
@@ -780,15 +723,15 @@ func (s *Server) handleAuthSessionStatus(c *gin.Context) {
 // @Tags         Auth
 // @Accept       json
 // @Produce      json
-// @Param        request body RefreshRequest true "refresh token"
-// @Success      200 {object} AuthResponse
-// @Failure      400 {object} APIError "invalid request body"
-// @Failure      401 {object} APIError "refresh token invalid, expired, revoked, or not found"
-// @Failure      403 {object} APIError "account is banned"
-// @Failure      500 {object} APIError "failed to check or issue tokens"
+// @Param        request body apimodels.RefreshRequest true "refresh token"
+// @Success      200 {object} apimodels.AuthResponse
+// @Failure      400 {object} apimodels.APIError "invalid request body"
+// @Failure      401 {object} apimodels.APIError "refresh token invalid, expired, revoked, or not found"
+// @Failure      403 {object} apimodels.APIError "account is banned"
+// @Failure      500 {object} apimodels.APIError "failed to check or issue tokens"
 // @Router       /api/v1/refresh [post]
 func (s *Server) handleRefresh(c *gin.Context) {
-	var req RefreshRequest
+	var req apimodels.RefreshRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		respondBadRequestAndLog(c, "invalid request body",
 			"auth: handleRefresh invalid body", "err", err)
@@ -890,7 +833,7 @@ func (s *Server) handleRefresh(c *gin.Context) {
 	// so browser navigations keep working after rotation.
 	auth.SetAccessCookie(c, accessToken, AccessTokenTTL)
 
-	c.JSON(http.StatusOK, AuthResponse{
+	c.JSON(http.StatusOK, apimodels.AuthResponse{
 		AccessToken:  accessToken,
 		RefreshToken: newRefreshToken,
 		TokenType:    "Bearer",
@@ -904,16 +847,6 @@ type IntrospectRequest struct {
 	TokenTypeHint string `form:"token_type_hint"` // Optional: "access_token" or "refresh_token"
 }
 
-// IntrospectResponse represents the response from /introspect endpoint (RFC 7662)
-type IntrospectResponse struct {
-	Active    bool   `json:"active"`
-	Sub       string `json:"sub,omitempty"`        // Subject (user DID)
-	Exp       int64  `json:"exp,omitempty"`        // Expiration time
-	Iat       int64  `json:"iat,omitempty"`        // Issued at time
-	TokenType string `json:"token_type,omitempty"` // "access_token" or "refresh_token"
-	KYC       bool   `json:"kyc,omitempty"`        // KYC status (only for access tokens)
-}
-
 // handleIntrospect handles POST /introspect - token introspection per RFC 7662
 // Allows clients to validate tokens and retrieve basic token metadata
 //
@@ -924,8 +857,8 @@ type IntrospectResponse struct {
 // @Produce      json
 // @Param        token formData string true "the token to introspect"
 // @Param        token_type_hint formData string false "\"access_token\" or \"refresh_token\""
-// @Success      200 {object} IntrospectResponse
-// @Failure      400 {object} APIError "token is required"
+// @Success      200 {object} apimodels.IntrospectResponse
+// @Failure      400 {object} apimodels.APIError "token is required"
 // @Router       /api/v1/introspect [post]
 func (s *Server) handleIntrospect(c *gin.Context) {
 	var req IntrospectRequest
@@ -941,11 +874,11 @@ func (s *Server) handleIntrospect(c *gin.Context) {
 		tokenID := auth.HashToken(req.Token)
 		isRevoked, _ := s.db.IsAccessTokenRevoked(c.Request.Context(), tokenID)
 		if isRevoked {
-			c.JSON(http.StatusOK, IntrospectResponse{Active: false})
+			c.JSON(http.StatusOK, apimodels.IntrospectResponse{Active: false})
 			return
 		}
 
-		c.JSON(http.StatusOK, IntrospectResponse{
+		c.JSON(http.StatusOK, apimodels.IntrospectResponse{
 			Active:    true,
 			Sub:       accessClaims.Subject,
 			Exp:       accessClaims.ExpiresAt.Unix(),
@@ -963,11 +896,11 @@ func (s *Server) handleIntrospect(c *gin.Context) {
 		tokenHash := auth.HashToken(req.Token)
 		storedToken, err := s.db.GetRefreshToken(c.Request.Context(), tokenHash)
 		if err != nil || storedToken == nil || storedToken.Revoked {
-			c.JSON(http.StatusOK, IntrospectResponse{Active: false})
+			c.JSON(http.StatusOK, apimodels.IntrospectResponse{Active: false})
 			return
 		}
 
-		c.JSON(http.StatusOK, IntrospectResponse{
+		c.JSON(http.StatusOK, apimodels.IntrospectResponse{
 			Active:    true,
 			Sub:       refreshClaims.Subject,
 			Exp:       refreshClaims.ExpiresAt.Unix(),
@@ -978,7 +911,7 @@ func (s *Server) handleIntrospect(c *gin.Context) {
 	}
 
 	// Token is invalid or expired
-	c.JSON(http.StatusOK, IntrospectResponse{Active: false})
+	c.JSON(http.StatusOK, apimodels.IntrospectResponse{Active: false})
 }
 
 // handleRevoke handles POST /revoke - revokes refresh and optionally access tokens
@@ -988,13 +921,13 @@ func (s *Server) handleIntrospect(c *gin.Context) {
 // @Tags         Auth
 // @Accept       json
 // @Produce      json
-// @Param        request body RevokeRequest true "refresh token, and optional access token"
-// @Success      200 {object} APIMessage "token revoked successfully"
-// @Failure      400 {object} APIError "invalid request body"
-// @Failure      500 {object} APIError "failed to revoke token"
+// @Param        request body apimodels.RevokeRequest true "refresh token, and optional access token"
+// @Success      200 {object} apimodels.APIMessage "token revoked successfully"
+// @Failure      400 {object} apimodels.APIError "invalid request body"
+// @Failure      500 {object} apimodels.APIError "failed to revoke token"
 // @Router       /api/v1/revoke [post]
 func (s *Server) handleRevoke(c *gin.Context) {
-	var req RevokeRequest
+	var req apimodels.RevokeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		respondBadRequestAndLog(c, "invalid request body",
 			"auth: handleRevoke invalid body", "err", err)

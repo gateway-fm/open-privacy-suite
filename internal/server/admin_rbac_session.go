@@ -1,30 +1,12 @@
 package server
 
 import (
+	"privacy-proxy/internal/apimodels"
+
 	"github.com/gin-gonic/gin"
 )
 
 // Session management handlers
-
-// SessionListResponse represents the response for listing sessions.
-type SessionListResponse struct {
-	Sessions []*sessionInfoResponse `json:"sessions"`
-	Total    int64                  `json:"total"`
-}
-
-type sessionInfoResponse struct {
-	ID          string `json:"id"`
-	CreatedAt   string `json:"created_at"`
-	ExpiresAt   string `json:"expires_at"`
-	Completed   bool   `json:"completed"`
-	CompletedAt string `json:"completed_at,omitempty"`
-	// Failure state (RD-1242). This is the operator channel for the PRECISE
-	// reason: the polled session-status endpoint collapses oracle-sensitive
-	// codes, this super-admin view does not.
-	Failed        bool   `json:"failed,omitempty"`
-	FailureReason string `json:"failure_reason,omitempty"`
-	FailedAt      string `json:"failed_at,omitempty"`
-}
 
 // listSessions exposes the in-flight auth session store. The entries
 // are not org-tagged — they're cluster-wide auth-flow sessions, so a
@@ -35,9 +17,9 @@ type sessionInfoResponse struct {
 // @Description  Returns the in-flight authentication sessions (id, created/expiry/completed timestamps, and for a rejected wallet proof the precise failure reason) held in the session store. These are cluster-wide auth-flow sessions, not org-tagged, so the endpoint is restricted to the super-admin (full X-Admin-Token); tier-2 org-admin JWTs and the operator token are rejected with 403.
 // @Tags         Admin: RBAC
 // @Produce      json
-// @Success      200 {object} SessionListResponse
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "source address not on the private network, caller is not a super-admin, or operator token (tenant data not readable)"
+// @Success      200 {object} apimodels.SessionListResponse
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network, caller is not a super-admin, or operator token (tenant data not readable)"
 // @Security     AdminToken
 // @Router       /api/v1/admin/sessions [get]
 func (s *Server) listSessions(c *gin.Context) {
@@ -52,9 +34,9 @@ func (s *Server) listSessions(c *gin.Context) {
 	count := s.sessionStore.Count()
 
 	// Convert to response format
-	var responseItems []*sessionInfoResponse
+	var responseItems []*apimodels.SessionInfoResponse
 	for _, session := range sessions {
-		item := &sessionInfoResponse{
+		item := &apimodels.SessionInfoResponse{
 			ID:        session.ID,
 			CreatedAt: session.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 			ExpiresAt: session.ExpiresAt.Format("2006-01-02T15:04:05Z07:00"),
@@ -73,7 +55,7 @@ func (s *Server) listSessions(c *gin.Context) {
 		responseItems = append(responseItems, item)
 	}
 
-	respondOK(c, SessionListResponse{
+	respondOK(c, apimodels.SessionListResponse{
 		Sessions: responseItems,
 		Total:    count,
 	})
@@ -89,10 +71,10 @@ func (s *Server) listSessions(c *gin.Context) {
 // @Tags         Admin: RBAC
 // @Produce      json
 // @Param        session_id path string true "Auth session ID"
-// @Success      200 {object} APIMessage "session deleted"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "source address not on the private network, or caller is not a super-admin"
-// @Failure      404 {object} APIError "session not found or expired"
+// @Success      200 {object} apimodels.APIMessage "session deleted"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network, or caller is not a super-admin"
+// @Failure      404 {object} apimodels.APIError "session not found or expired"
 // @Security     AdminToken
 // @Router       /api/v1/admin/sessions/{session_id} [delete]
 func (s *Server) deleteSession(c *gin.Context) {

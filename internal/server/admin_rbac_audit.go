@@ -1,6 +1,7 @@
 package server
 
 import (
+	"privacy-proxy/internal/apimodels"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -30,11 +31,11 @@ import (
 // @Param        actor_id query string false "Filter by actor (required unless resource_type is given)"
 // @Param        limit query int false "Max rows to return (default 100, max 1000)"
 // @Param        offset query int false "Rows to skip for pagination (default 0)"
-// @Success      200 {array} AuditLogEntryDoc
-// @Failure      400 {object} APIError "at least one filter (resource_type or actor_id) is required"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "source address not on the private network, or operator token (tenant data not readable)"
-// @Failure      500 {object} APIError
+// @Success      200 {array} apimodels.AuditLogEntryDoc
+// @Failure      400 {object} apimodels.APIError "at least one filter (resource_type or actor_id) is required"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network, or operator token (tenant data not readable)"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/audit-logs [get]
 func (s *Server) listAuditLogs(c *gin.Context) {
@@ -134,3 +135,8 @@ func callerOrgScope(c *gin.Context) []string {
 	// orgs" — the SQL layer should return zero rows in that case.
 	return out
 }
+
+// swaggo resolves an annotation's apimodels.Type through this file's import
+// list, but a reference from a comment is not Go usage — so without this the
+// import would be stripped and `make api-spec` would fail. See RD-1265.
+var _ = apimodels.APIError{}

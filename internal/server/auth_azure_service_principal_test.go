@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/db"
 
@@ -132,7 +133,7 @@ func TestHandleAzureServicePrincipal(t *testing.T) {
 		w := post(map[string]interface{}{"access_token": mintToken("sp-allowed-oid", allowedTID)})
 		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 
-		var resp AuthResponse
+		var resp apimodels.AuthResponse
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 		assert.NotEmpty(t, resp.AccessToken)
 		assert.NotEmpty(t, resp.RefreshToken)

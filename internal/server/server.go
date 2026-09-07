@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"slices"
 
+	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/audit"
 	"privacy-proxy/internal/audit/buffer"
 	"privacy-proxy/internal/audit/sealer"
@@ -1293,7 +1294,7 @@ func (s *Server) setupRouter() *gin.Engine {
 // @Description  Liveness probe. GET returns {"status":"ok"}; HEAD returns an empty 200.
 // @Tags         System
 // @Produce      json
-// @Success      200 {object} healthResponse
+// @Success      200 {object} apimodels.HealthResponse
 // @Router       /health [get]
 // @Router       /health [head]
 func (s *Server) handleHealth(c *gin.Context) {
@@ -1301,7 +1302,7 @@ func (s *Server) handleHealth(c *gin.Context) {
 		c.Status(http.StatusOK)
 		return
 	}
-	c.JSON(http.StatusOK, healthResponse{Status: "ok"})
+	c.JSON(http.StatusOK, apimodels.HealthResponse{Status: "ok"})
 }
 
 // MaxRequestBodySize is the maximum allowed request body size (1MB).
@@ -1324,16 +1325,16 @@ const MaxRequestBodySize = 1 << 20 // 1MB
 // @Accept       json
 // @Produce      json
 // @Param        org_id path string false "Organization the access decision resolves against (only on /rpc/{org_id})"
-// @Param        request body JSONRPCRequestEnvelope true "JSON-RPC 2.0 request"
-// @Success      200 {object} JSONRPCResponseEnvelope "JSON-RPC response; may carry a JSON-RPC-level error member"
-// @Failure      400 {object} APIError "unreadable body, malformed/batch JSON-RPC, or invalid visibleTo"
-// @Failure      401 {object} APIError "identity required but unresolved on a trace method (debug_traceCall / debug_traceTransaction)"
-// @Failure      403 {object} APIError "runtime-trace or compliance denial"
-// @Failure      404 {object} APIError "method not allowed for the caller (denials are masked as method not found)"
-// @Failure      413 {object} APIError "request body too large"
-// @Failure      429 {object} APIError "concurrency limit or upstream rate limit"
-// @Failure      500 {object} APIError "trace-validation or compliance-check error"
-// @Failure      502 {object} APIError "failed to forward to the upstream node"
+// @Param        request body apimodels.JSONRPCRequestEnvelope true "JSON-RPC 2.0 request"
+// @Success      200 {object} apimodels.JSONRPCResponseEnvelope "JSON-RPC response; may carry a JSON-RPC-level error member"
+// @Failure      400 {object} apimodels.APIError "unreadable body, malformed/batch JSON-RPC, or invalid visibleTo"
+// @Failure      401 {object} apimodels.APIError "identity required but unresolved on a trace method (debug_traceCall / debug_traceTransaction)"
+// @Failure      403 {object} apimodels.APIError "runtime-trace or compliance denial"
+// @Failure      404 {object} apimodels.APIError "method not allowed for the caller (denials are masked as method not found)"
+// @Failure      413 {object} apimodels.APIError "request body too large"
+// @Failure      429 {object} apimodels.APIError "concurrency limit or upstream rate limit"
+// @Failure      500 {object} apimodels.APIError "trace-validation or compliance-check error"
+// @Failure      502 {object} apimodels.APIError "failed to forward to the upstream node"
 // @Security     BearerAuth
 // @Router       /rpc [post]
 // @Router       /rpc/{org_id} [post]
@@ -1444,11 +1445,11 @@ func (s *Server) handleJSONRPC(c *gin.Context) {
 // @Param        to query string false "End of time range (RFC3339)"
 // @Param        limit query int false "Max rows (default 100, capped server-side)"
 // @Param        offset query int false "Row offset for pagination (default 0)"
-// @Success      200 {object} AdminLogsResponse
-// @Failure      400 {object} APIError "invalid filter (e.g. status_code+outcome together, bad timestamp)"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "source address not on the private network"
-// @Failure      500 {object} APIError
+// @Success      200 {object} apimodels.AdminLogsResponse
+// @Failure      400 {object} apimodels.APIError "invalid filter (e.g. status_code+outcome together, bad timestamp)"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/logs [get]
 func (s *Server) getLogs(c *gin.Context) {
@@ -1922,39 +1923,17 @@ func (s *Server) localhostOnlyMiddleware() gin.HandlerFunc {
 	}
 }
 
-// StatusResponse represents the system status
-type StatusResponse struct {
-	Proxy    ProxyStatus    `json:"proxy"`
-	Node     NodeStatus     `json:"node"`
-	Security SecurityStatus `json:"security"`
-	Methods  MethodsStatus  `json:"methods"`
-}
-
-// MethodsStatus exposes available RPC methods to the admin frontend.
-type MethodsStatus struct {
-	ExtraNamespaces map[string][]string          `json:"extra_namespaces,omitempty"`
-	ExtraWildcards  map[string]ExtraWildcardInfo `json:"extra_wildcards,omitempty"`
-}
-
-// ExtraWildcardInfo describes a chain namespace running in prefix-wildcard mode.
-// The frontend uses this to render a single togglable picker entry per
-// wildcard-enabled namespace, plus a read-only view of the deny list.
-type ExtraWildcardInfo struct {
-	Prefix string   `json:"prefix"`
-	Deny   []string `json:"deny,omitempty"`
-}
-
 // buildExtraWildcardsResponse projects the rbac.Wildcards registry into the
 // status response shape (namespace name → prefix + deny list). Returns nil when
 // no wildcards are registered so the JSON omits the field. Deny is cloned:
 // the response must not alias the live registry slice (RD-1262).
-func buildExtraWildcardsResponse() map[string]ExtraWildcardInfo {
+func buildExtraWildcardsResponse() map[string]apimodels.ExtraWildcardInfo {
 	if len(rbac.Wildcards) == 0 {
 		return nil
 	}
-	out := make(map[string]ExtraWildcardInfo, len(rbac.Wildcards))
+	out := make(map[string]apimodels.ExtraWildcardInfo, len(rbac.Wildcards))
 	for _, w := range rbac.Wildcards {
-		out[w.Namespace] = ExtraWildcardInfo{
+		out[w.Namespace] = apimodels.ExtraWildcardInfo{
 			Prefix: w.Prefix,
 			Deny:   slices.Clone(w.Deny),
 		}
@@ -1978,28 +1957,6 @@ func snapshotExtraNamespaces() map[string][]string {
 	return out
 }
 
-// ProxyStatus represents the proxy status
-type ProxyStatus struct {
-	Status string `json:"status"`
-	Port   string `json:"port"`
-}
-
-// SecurityStatus represents the security configuration status
-type SecurityStatus struct {
-	TravelRuleEnabled bool `json:"travel_rule_enabled"`
-	// ComplianceDefaultMode is the cluster-wide default compliance enforcement
-	// mode ("enforce" | "monitor"). Per-org config may override it. (RD-1044)
-	ComplianceDefaultMode string `json:"compliance_default_mode"`
-}
-
-// NodeStatus represents the node status
-type NodeStatus struct {
-	Status    string `json:"status"`
-	URL       string `json:"url"`
-	LatencyMs int64  `json:"latency_ms"`
-	Error     string `json:"error,omitempty"`
-}
-
 // getStatus reports proxy, upstream-node, security, and available-method
 // status for the admin dashboard.
 //
@@ -2007,9 +1964,9 @@ type NodeStatus struct {
 // @Description  Operational status: proxy liveness and port, upstream node health/latency, compliance/travel-rule configuration, and the extra RPC namespaces/wildcards available to the frontend.
 // @Tags         Admin: ops
 // @Produce      json
-// @Success      200 {object} StatusResponse
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "source address not on the private network"
+// @Success      200 {object} apimodels.StatusResponse
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network"
 // @Security     AdminToken
 // @Router       /api/v1/admin/status [get]
 func (s *Server) getStatus(c *gin.Context) {
@@ -2027,44 +1984,28 @@ func (s *Server) getStatus(c *gin.Context) {
 		complianceMode = s.config.ComplianceDefaultMode
 	}
 
-	status := StatusResponse{
-		Proxy: ProxyStatus{
+	status := apimodels.StatusResponse{
+		Proxy: apimodels.ProxyStatus{
 			Status: "running",
 			Port:   proxyPort,
 		},
-		Node: NodeStatus{
+		Node: apimodels.NodeStatus{
 			Status:    nodeHealth.Status,
 			URL:       nodeHealth.URL,
 			LatencyMs: nodeHealth.LatencyMs,
 			Error:     nodeHealth.Error,
 		},
-		Security: SecurityStatus{
+		Security: apimodels.SecurityStatus{
 			TravelRuleEnabled:     s.complianceChecker != nil,
 			ComplianceDefaultMode: complianceMode,
 		},
-		Methods: MethodsStatus{
+		Methods: apimodels.MethodsStatus{
 			ExtraNamespaces: snapshotExtraNamespaces(),
 			ExtraWildcards:  buildExtraWildcardsResponse(),
 		},
 	}
 
 	c.JSON(http.StatusOK, status)
-}
-
-// TestRequestInput represents the input for test request
-type TestRequestInput struct {
-	Method   string        `json:"method"`
-	Params   []interface{} `json:"params"`
-	JWTToken string        `json:"jwt_token,omitempty"`
-	OrgID    string        `json:"org_id,omitempty"`
-}
-
-// TestRequestResponse represents the response for test request
-type TestRequestResponse struct {
-	Result    interface{} `json:"result,omitempty"`
-	Error     string      `json:"error,omitempty"`
-	LatencyMs int64       `json:"latency_ms,omitempty"`
-	Identity  string      `json:"identity,omitempty"` // The identity used for access control
 }
 
 // handleTestRequest runs a single JSON-RPC method through the full access /
@@ -2077,20 +2018,20 @@ type TestRequestResponse struct {
 // @Tags         Admin: ops
 // @Accept       json
 // @Produce      json
-// @Param        request body TestRequestInput true "method, params, and optional jwt_token / org_id"
-// @Success      200 {object} TestRequestResponse "forwarded result (or an upstream JSON-RPC error message) plus latency"
-// @Failure      400 {object} APIError "invalid request body or invalid JWT"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} TestRequestResponse "RBAC or compliance denied (network-gate rejections return the generic error envelope)"
-// @Failure      500 {object} TestRequestResponse "access-check error"
-// @Failure      502 {object} TestRequestResponse "failed to reach the upstream node"
+// @Param        request body apimodels.TestRequestInput true "method, params, and optional jwt_token / org_id"
+// @Success      200 {object} apimodels.TestRequestResponse "forwarded result (or an upstream JSON-RPC error message) plus latency"
+// @Failure      400 {object} apimodels.APIError "invalid request body or invalid JWT"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.TestRequestResponse "RBAC or compliance denied (network-gate rejections return the generic error envelope)"
+// @Failure      500 {object} apimodels.TestRequestResponse "access-check error"
+// @Failure      502 {object} apimodels.TestRequestResponse "failed to reach the upstream node"
 // @Security     AdminToken
 // @Router       /api/v1/admin/test-request [post]
 func (s *Server) handleTestRequest(c *gin.Context) {
 	// RD-1147: diagnostic access-log writes go to the audit DB (== main when not
 	// split). accessLogDB() also guards lightweight test Server literals.
 	auditDB := s.accessLogDB()
-	var input TestRequestInput
+	var input apimodels.TestRequestInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		// gin validator messages name struct fields — that's fine for a
 		// localhost-only admin endpoint, but echo the error type only,
@@ -2140,7 +2081,7 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 		// CheckAccess errors expose RBAC internals (DB shape, cache
 		// state, store-layer codes) — operator-only. RD-934.
 		slog.Error("test-request: CheckAccess errored", "identity", testIdentity, "method", input.Method, "err", err)
-		c.JSON(http.StatusInternalServerError, TestRequestResponse{
+		c.JSON(http.StatusInternalServerError, apimodels.TestRequestResponse{
 			Error:    "access check failed",
 			Identity: testIdentity,
 		})
@@ -2154,7 +2095,7 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 		// RD-877 cardinality-guard message ("multiple organizations…")
 		// and similar diagnostics to admin scripts. RD-934.
 		slog.Info("test-request: RBAC denied", "identity", testIdentity, "method", input.Method, "reason", result.Reason)
-		c.JSON(http.StatusForbidden, TestRequestResponse{
+		c.JSON(http.StatusForbidden, apimodels.TestRequestResponse{
 			Error:    "access denied",
 			Identity: testIdentity,
 		})
@@ -2176,7 +2117,7 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 				// Opaque client message; raw decode/RLP errors stay in slog.
 				// (RD-1178 #10 / RD-934)
 				slog.Warn("admin test-request: extract raw transaction failed", "error", extractErr)
-				c.JSON(http.StatusBadRequest, TestRequestResponse{
+				c.JSON(http.StatusBadRequest, apimodels.TestRequestResponse{
 					Error:    "failed to extract raw transaction",
 					Identity: testIdentity,
 				})
@@ -2186,7 +2127,7 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 			compFrom, compTo, compData, compValue, _, decodeErr = decodeRawTransaction(rawTxHex)
 			if decodeErr != nil {
 				slog.Warn("admin test-request: decode raw transaction failed", "error", decodeErr)
-				c.JSON(http.StatusBadRequest, TestRequestResponse{
+				c.JSON(http.StatusBadRequest, apimodels.TestRequestResponse{
 					Error:    "failed to decode raw transaction",
 					Identity: testIdentity,
 				})
@@ -2207,7 +2148,7 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 			})
 			if compErr != nil {
 				slog.Error("admin test-request: compliance check failed", "method", input.Method, "error", compErr)
-				c.JSON(http.StatusInternalServerError, TestRequestResponse{
+				c.JSON(http.StatusInternalServerError, apimodels.TestRequestResponse{
 					Error:    "compliance check failed",
 					Identity: testIdentity,
 				})
@@ -2220,7 +2161,7 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 				// carry token addresses / sanction text / thresholds) stays in
 				// compliance_log + slog. Same treatment as the live /rpc path.
 				slog.Info("admin test-request: compliance denied", "method", input.Method, "reason", compResult.Reason)
-				c.JSON(http.StatusForbidden, TestRequestResponse{
+				c.JSON(http.StatusForbidden, apimodels.TestRequestResponse{
 					Error:    "compliance denied: " + sanitizeComplianceReason(compResult.Reason),
 					Identity: testIdentity,
 				})
@@ -2248,7 +2189,7 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 		// Opaque client message; the raw upstream forward error (which can
 		// reveal the node URL, dial/TLS internals) stays in slog. (RD-1178 #10 / RD-934)
 		slog.Warn("admin test-request: upstream forward failed", "method", input.Method, "error", err)
-		c.JSON(http.StatusBadGateway, TestRequestResponse{
+		c.JSON(http.StatusBadGateway, apimodels.TestRequestResponse{
 			Error:     "upstream request failed",
 			LatencyMs: latency,
 			Identity:  testIdentity,
@@ -2260,7 +2201,7 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 	var rpcResp proxy.JSONRPCResponse
 	if err := json.Unmarshal(respBody, &rpcResp); err != nil {
 		auditDB.LogAccess(c.Request.Context(), testIdentity, input.Method, http.StatusBadGateway, c.ClientIP())
-		c.JSON(http.StatusBadGateway, TestRequestResponse{
+		c.JSON(http.StatusBadGateway, apimodels.TestRequestResponse{
 			Error:     "invalid JSON-RPC response",
 			LatencyMs: latency,
 			Identity:  testIdentity,
@@ -2273,7 +2214,7 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 
 	// Return JSON-RPC response (may contain RPC-level error, that's fine - HTTP 200)
 	if rpcResp.Error != nil {
-		c.JSON(http.StatusOK, TestRequestResponse{
+		c.JSON(http.StatusOK, apimodels.TestRequestResponse{
 			Error:     rpcResp.Error.Message,
 			LatencyMs: latency,
 			Identity:  testIdentity,
@@ -2281,7 +2222,7 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, TestRequestResponse{
+	c.JSON(http.StatusOK, apimodels.TestRequestResponse{
 		Result:    rpcResp.Result,
 		LatencyMs: latency,
 		Identity:  testIdentity,
@@ -2307,9 +2248,9 @@ func (s *Server) registerUserProfileRoutes(router *gin.Engine) {
 // @Description  Whether the authenticated user is a tier-2 org admin or a read-only admin, and in which organizations. A user with no DB record (or only a tier-3 "admin" claim) gets is_admin=false.
 // @Tags         Profile
 // @Produce      json
-// @Success      200 {object} MyAdminStatusResponse
-// @Failure      401 {object} APIError "missing or invalid token"
-// @Failure      500 {object} APIError
+// @Success      200 {object} apimodels.MyAdminStatusResponse
+// @Failure      401 {object} apimodels.APIError "missing or invalid token"
+// @Failure      500 {object} apimodels.APIError
 // @Security     BearerAuth
 // @Router       /api/v1/me/admin-status [get]
 func (s *Server) getMyAdminStatus(c *gin.Context) {
@@ -2353,22 +2294,15 @@ func (s *Server) getMyAdminStatus(c *gin.Context) {
 	})
 }
 
-// UserOrgResponse represents an organization the user belongs to.
-type UserOrgResponse struct {
-	ID   string `json:"id"`
-	Slug string `json:"slug"`
-	Name string `json:"name"`
-}
-
 // getMyOrganizations returns the organizations the authenticated user belongs to.
 //
 // @Summary      My organizations
 // @Description  The organizations the authenticated user belongs to, de-duplicated across group memberships.
 // @Tags         Profile
 // @Produce      json
-// @Success      200 {object} MyOrganizationsResponse
-// @Failure      401 {object} APIError "missing or invalid token, or user not found"
-// @Failure      500 {object} APIError
+// @Success      200 {object} apimodels.MyOrganizationsResponse
+// @Failure      401 {object} apimodels.APIError "missing or invalid token, or user not found"
+// @Failure      500 {object} apimodels.APIError
 // @Security     BearerAuth
 // @Router       /api/v1/me/orgs [get]
 func (s *Server) getMyOrganizations(c *gin.Context) {
@@ -2393,13 +2327,13 @@ func (s *Server) getMyOrganizations(c *gin.Context) {
 	}
 
 	// Collect unique orgs
-	orgMap := make(map[string]*UserOrgResponse)
+	orgMap := make(map[string]*apimodels.UserOrgResponse)
 	for _, m := range memberships {
 		if m.Group != nil && m.Group.OrgID != "" {
 			if _, exists := orgMap[m.Group.OrgID]; !exists {
 				org, err := s.db.GetOrganization(c.Request.Context(), m.Group.OrgID)
 				if err == nil && org != nil {
-					orgMap[org.ID] = &UserOrgResponse{
+					orgMap[org.ID] = &apimodels.UserOrgResponse{
 						ID:   org.ID,
 						Slug: org.Slug,
 						Name: org.Name,
@@ -2410,7 +2344,7 @@ func (s *Server) getMyOrganizations(c *gin.Context) {
 	}
 
 	// Convert to slice
-	orgs := make([]*UserOrgResponse, 0, len(orgMap))
+	orgs := make([]*apimodels.UserOrgResponse, 0, len(orgMap))
 	for _, org := range orgMap {
 		orgs = append(orgs, org)
 	}

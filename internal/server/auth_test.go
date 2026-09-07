@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/config"
 	"privacy-proxy/internal/db"
@@ -206,7 +207,7 @@ func TestHandleAuthRequest_Success(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	var response AuthRequestResponse
+	var response apimodels.AuthRequestResponse
 	err := json.Unmarshal(w.Body.Bytes(), &response)
 	require.NoError(t, err)
 	assert.NotEmpty(t, response.SessionID)
@@ -242,7 +243,7 @@ func TestHandleAuthRequest_IdenComContract(t *testing.T) {
 	router.ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
 
-	var response AuthRequestResponse
+	var response apimodels.AuthRequestResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
 	require.NotNil(t, response.AuthRequest)
 
@@ -278,7 +279,7 @@ func TestHandleAuthCallback_Success(t *testing.T) {
 	router.ServeHTTP(w1, req1)
 
 	assert.Equal(t, http.StatusOK, w1.Code)
-	var authReqResp AuthRequestResponse
+	var authReqResp apimodels.AuthRequestResponse
 	json.Unmarshal(w1.Body.Bytes(), &authReqResp)
 	sessionID := authReqResp.SessionID
 
@@ -295,7 +296,7 @@ func TestHandleAuthCallback_Success(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w2.Code)
 
-	var response AuthResponse
+	var response apimodels.AuthResponse
 	err := json.Unmarshal(w2.Body.Bytes(), &response)
 	require.NoError(t, err)
 	assert.NotEmpty(t, response.AccessToken)
@@ -319,7 +320,7 @@ func TestHandleAuthCallback_VerificationFailure(t *testing.T) {
 	w1 := httptest.NewRecorder()
 	router.ServeHTTP(w1, req1)
 
-	var authReqResp AuthRequestResponse
+	var authReqResp apimodels.AuthRequestResponse
 	json.Unmarshal(w1.Body.Bytes(), &authReqResp)
 	sessionID := authReqResp.SessionID
 
@@ -361,12 +362,12 @@ func TestHandleAuthVerify_DevelopmentOnly(t *testing.T) {
 		w1 := httptest.NewRecorder()
 		router.ServeHTTP(w1, req1)
 
-		var authReqResp AuthRequestResponse
+		var authReqResp apimodels.AuthRequestResponse
 		json.Unmarshal(w1.Body.Bytes(), &authReqResp)
 		sessionID := authReqResp.SessionID
 
 		// Step 2: Verify with proof
-		verifyReq := AuthVerifyRequest{
+		verifyReq := apimodels.AuthVerifyRequest{
 			SessionID: sessionID,
 			JWZToken:  "mock.jwz.token",
 		}
@@ -379,7 +380,7 @@ func TestHandleAuthVerify_DevelopmentOnly(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, w2.Code)
 
-		var response AuthResponse
+		var response apimodels.AuthResponse
 		err := json.Unmarshal(w2.Body.Bytes(), &response)
 		require.NoError(t, err)
 		assert.NotEmpty(t, response.AccessToken)
@@ -412,7 +413,7 @@ func TestHandleAuthCallback_VerifierIDMismatch(t *testing.T) {
 	router.ServeHTTP(w1, req1)
 
 	assert.Equal(t, http.StatusOK, w1.Code)
-	var authReqResp AuthRequestResponse
+	var authReqResp apimodels.AuthRequestResponse
 	json.Unmarshal(w1.Body.Bytes(), &authReqResp)
 	sessionID := authReqResp.SessionID
 
@@ -484,7 +485,7 @@ func TestHandleRefresh_Success(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	var response AuthResponse
+	var response apimodels.AuthResponse
 	err = json.Unmarshal(w.Body.Bytes(), &response)
 	require.NoError(t, err)
 	assert.NotEmpty(t, response.AccessToken)
@@ -763,7 +764,7 @@ func TestHandleRefresh_SetsAccessCookie(t *testing.T) {
 	ck := findCookie(t, w, auth.AccessCookieName)
 	require.NotNil(t, ck, "refresh must re-issue the pp_access cookie so the browser stays in sync after rotation")
 	// Cookie value should match the new access token in the JSON body.
-	var resp AuthResponse
+	var resp apimodels.AuthResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, resp.AccessToken, ck.Value)
 	assert.True(t, ck.HttpOnly)

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/auth"
 
 	"github.com/gin-gonic/gin"
@@ -32,11 +33,11 @@ func linkAddressViaHTTP(t *testing.T, router *gin.Engine, token, address string)
 	router.ServeHTTP(w1, req1)
 	require.Equal(t, http.StatusOK, w1.Code)
 
-	var cr ChallengeResponse
+	var cr apimodels.ChallengeResponse
 	require.NoError(t, json.Unmarshal(w1.Body.Bytes(), &cr))
 
 	// Step 2: verify with mock signature
-	body, _ := json.Marshal(VerifyLinkRequest{
+	body, _ := json.Marshal(apimodels.VerifyLinkRequest{
 		Nonce:     cr.Nonce,
 		Address:   address,
 		Signature: "0x" + strings.Repeat("a", 130),

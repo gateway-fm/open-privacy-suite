@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"privacy-proxy/internal/apimodels"
 	"strings"
 	"testing"
 
@@ -17,7 +18,7 @@ import (
 // minutes and then claimed a timeout. These tests pin the status endpoint
 // reporting the rejection instead.
 
-func statusOf(t *testing.T, srv *Server, sessionID string) (int, SessionStatusResponse) {
+func statusOf(t *testing.T, srv *Server, sessionID string) (int, apimodels.SessionStatusResponse) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
@@ -27,7 +28,7 @@ func statusOf(t *testing.T, srv *Server, sessionID string) (int, SessionStatusRe
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	var body SessionStatusResponse
+	var body apimodels.SessionStatusResponse
 	if w.Code == http.StatusOK {
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
 	}

@@ -1,0 +1,13 @@
+# Schema names deliberately removed or renamed from the published OpenAPI
+# document, with the reason. Guarded by schema_names_test.go.
+#
+# Empty is the healthy state. An entry here says "we knowingly changed a
+# client-visible name" — it is not a way to silence the gate. Remove an entry
+# once the corresponding name is gone from schema_names_baseline.txt too.
+#
+# Format: one old schema name per line, optionally followed by `# reason`.
+#
+# The RD-1265 rename of the 144 internal_server.* schemas to
+# privacy-proxy_internal_server_apimodels.* is recorded in the baseline file's
+# git history rather than here, because it predates this gate: the baseline was
+# seeded from the post-move document in the same commit that introduced both.
