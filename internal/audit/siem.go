@@ -83,7 +83,7 @@ func NewSIEMForwarder(cfg SIEMConfig) (*SIEMForwarder, error) {
 		cfg.FlushInterval = 30 * time.Second
 	}
 	if err := netguard.ValidateWebhookURLForEnv(cfg.WebhookURL, cfg.AllowInsecure); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("siem webhook url: %w", err)
 	}
 
 	return &SIEMForwarder{
