@@ -83,6 +83,19 @@ func (r *Resolver) ResolvePermissions(ctx context.Context, userID, orgID string)
 // whether a mutation happened to race the compute, and the flag must not be
 // serialised into the cached payload.
 func (r *Resolver) ResolvePermissionsCacheable(ctx context.Context, userID, orgID string) (*EffectivePermissions, bool, error) {
+	return r.resolveCacheable(ctx, userID, orgID, true)
+}
+
+// resolveCacheable is ResolvePermissionsCacheable with an explicit
+// singleflight-participation flag.
+//
+// joinInFlight == false means "do not wait on another goroutine's compute".
+// It is set for exactly one case: a waiter that woke to a non-publishable
+// verdict and must recompute (RD-1276). Without it the retry could join
+// another in-flight compute and inherit a stale verdict again, so recursion
+// is bounded at one extra pass — the retry either claims the singleflight
+// slot itself or computes standalone.
+func (r *Resolver) resolveCacheable(ctx context.Context, userID, orgID string, joinInFlight bool) (*EffectivePermissions, bool, error) {
 	cacheKey := userID + ":" + orgID
 
 	// Check in-memory cache first (fast path)
@@ -92,44 +105,80 @@ func (r *Resolver) ResolvePermissionsCacheable(ctx context.Context, userID, orgI
 	}
 	if cached != nil {
 		// Already published by whoever computed it, so it is safe to hold in
-		// an upper cache as well.
+		// an upper cache as well: publication is generation-guarded, so a
+		// cached entry is by construction one that no invalidation raced.
 		return cached, true, nil
 	}
 
-	// Check if another goroutine is already computing this permission
-	r.inFlightMu.RLock()
-	entry, exists := r.inFlight[cacheKey]
-	r.inFlightMu.RUnlock()
+	if joinInFlight {
+		// Check if another goroutine is already computing this permission
+		r.inFlightMu.RLock()
+		entry, exists := r.inFlight[cacheKey]
+		r.inFlightMu.RUnlock()
 
-	if exists {
-		// Wait for the in-progress computation
-		select {
-		case <-entry.done:
-			return entry.perms, entry.publishable, entry.err
-		case <-ctx.Done():
-			return nil, false, ctx.Err()
+		if exists {
+			return r.awaitEntry(ctx, entry, userID, orgID)
 		}
 	}
 
 	// No computation in progress, start one
-	entry = &inFlightEntry{
+	entry := &inFlightEntry{
 		done: make(chan struct{}),
 	}
 
 	r.inFlightMu.Lock()
 	// Double-check after acquiring write lock
 	if existing, exists := r.inFlight[cacheKey]; exists {
-		// Another goroutine beat us, wait on their computation
 		r.inFlightMu.Unlock()
-		select {
-		case <-existing.done:
-			return existing.perms, existing.publishable, existing.err
-		case <-ctx.Done():
-			return nil, false, ctx.Err()
+		if joinInFlight {
+			// Another goroutine beat us, wait on their computation
+			return r.awaitEntry(ctx, existing, userID, orgID)
 		}
+		// Retry pass: waiting again is what produced the stale verdict, so
+		// compute standalone instead. The publication is generation-guarded
+		// either way; the cost is one duplicate compute in a window that only
+		// opens when a mutation races a resolve.
+		return r.computeAndPublish(ctx, userID, orgID, nil)
 	}
 	r.inFlight[cacheKey] = entry
 	r.inFlightMu.Unlock()
+
+	return r.computeAndPublish(ctx, userID, orgID, entry)
+}
+
+// awaitEntry blocks on an in-flight compute owned by another goroutine and
+// decides what the waiter may do with the result.
+func (r *Resolver) awaitEntry(ctx context.Context, entry *inFlightEntry, userID, orgID string) (*EffectivePermissions, bool, error) {
+	select {
+	case <-entry.done:
+	case <-ctx.Done():
+		return nil, false, ctx.Err()
+	}
+	if entry.err != nil {
+		return nil, false, entry.err
+	}
+	if !entry.publishable {
+		// The computing goroutine established that it could not confirm its
+		// result against the cache generation — usually because an
+		// invalidation committed mid-compute. That goroutine may still serve
+		// its own result: it read the state, and read-then-act always has
+		// that window. A waiter is different. It never ran the compute, so
+		// serving it a result already known to be pre-mutation means its own
+		// read — and the access decision AccessController makes from it — is
+		// answered from state the resolver has positively determined is
+		// stale. Recompute instead (RD-1276).
+		slog.Debug("rbac resolver: waiter recomputing rather than inheriting a non-publishable result (RD-1276)",
+			"user_id", userID, "org_id", orgID)
+		return r.resolveCacheable(ctx, userID, orgID, false)
+	}
+	return entry.perms, true, nil
+}
+
+// computeAndPublish computes the permission set and publishes it under the
+// generation guard. entry may be nil, meaning this compute does not own a
+// singleflight slot: nothing is broadcast and there is no map entry to remove.
+func (r *Resolver) computeAndPublish(ctx context.Context, userID, orgID string, entry *inFlightEntry) (*EffectivePermissions, bool, error) {
+	cacheKey := userID + ":" + orgID
 
 	// Snapshot the cache generation before reading any state (RD-1267). If a
 	// mutation commits while the compute is in flight, its invalidation finds
@@ -141,19 +190,15 @@ func (r *Resolver) ResolvePermissionsCacheable(ctx context.Context, userID, orgI
 	// genKnown == false means we could not establish a baseline, in which
 	// case nothing is published: discarding costs one recompute, publishing
 	// blind risks serving stale permissions.
-	genStore, genCapable := r.store.(CacheGenerationStore)
 	var (
 		genBefore int64
 		genKnown  bool
 	)
-	if genCapable {
-		g, gErr := genStore.CacheGeneration(ctx)
-		if gErr != nil {
-			slog.Warn("rbac resolver: cannot read cache generation, skipping cache publication",
-				"user_id", userID, "org_id", orgID, "err", gErr)
-		} else {
-			genBefore, genKnown = g, true
-		}
+	if g, gErr := r.store.CacheGeneration(ctx); gErr != nil {
+		slog.Warn("rbac resolver: cannot read cache generation, skipping cache publication",
+			"user_id", userID, "org_id", orgID, "err", gErr)
+	} else {
+		genBefore, genKnown = g, true
 	}
 
 	// Compute permissions
@@ -174,8 +219,8 @@ func (r *Resolver) ResolvePermissionsCacheable(ctx context.Context, userID, orgI
 	publishable := false
 	if err == nil {
 		switch {
-		case genCapable && genKnown:
-			published, cErr := genStore.SetCachedPermissionsAtGeneration(ctx, perms, genBefore)
+		case genKnown:
+			published, cErr := r.store.SetCachedPermissionsAtGeneration(ctx, perms, genBefore)
 			switch {
 			case cErr != nil:
 				// Cache-write failure is not a correctness issue (the
@@ -194,29 +239,27 @@ func (r *Resolver) ResolvePermissionsCacheable(ctx context.Context, userID, orgI
 			default:
 				publishable = true
 			}
-		case genCapable && !genKnown:
-			// Baseline unknown — already logged above. Fail safe: publish nothing.
 		default:
-			// Store without the generation capability (test doubles): keep the
-			// previous unconditional publish. Production uses *db.DB, which
-			// implements CacheGenerationStore under a compile-time assertion.
-			publishable = true
-			if cErr := r.store.SetCachedPermissions(ctx, perms); cErr != nil {
-				slog.Warn("rbac resolver: SetCachedPermissions failed", "user_id", userID, "org_id", orgID, "err", cErr)
-			}
+			// Baseline unknown — already logged above. Fail closed: publish
+			// nothing. There is no unguarded fallback; every Store implements
+			// the generation capability (RD-1276).
 		}
 	}
 
-	// Store result and broadcast to all waiting goroutines
-	entry.perms = perms
-	entry.err = err
-	entry.publishable = publishable
-	close(entry.done)
+	// Store result and broadcast to all waiting goroutines. entry is nil for a
+	// standalone recompute, which owns no singleflight slot: there is nobody
+	// waiting on it and no map entry to remove.
+	if entry != nil {
+		entry.perms = perms
+		entry.err = err
+		entry.publishable = publishable
+		close(entry.done)
 
-	// Clean up in-flight entry
-	r.inFlightMu.Lock()
-	delete(r.inFlight, cacheKey)
-	r.inFlightMu.Unlock()
+		// Clean up in-flight entry
+		r.inFlightMu.Lock()
+		delete(r.inFlight, cacheKey)
+		r.inFlightMu.Unlock()
+	}
 
 	if err != nil {
 		return nil, false, err
