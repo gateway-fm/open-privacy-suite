@@ -148,7 +148,10 @@ func TestValidateWebhookURLForEnv(t *testing.T) {
 		{"prod [fe80::1%25en0] rejected (zoned link-local)", "https://[fe80::1%25en0]/ingest", false, true, "blocked IP range"},
 		{"prod [fc00::1%25en0] rejected (zoned ULA)", "https://[fc00::1%25en0]/ingest", false, true, "blocked IP range"},
 		{"prod bare-percent host rejected fail-closed", "https://a%25b/ingest", false, true, "not a valid IP literal"},
-		{"prod unbracketed :: rejected fail-closed", "https://::/ingest", false, true, "not a valid IP literal"},
+		// net/url changed whether this malformed authority is rejected while
+		// parsing or by our IP-literal guard. The security contract is that it
+		// fails closed, not which layer supplies the diagnostic.
+		{"prod unbracketed :: rejected fail-closed", "https://::/ingest", false, true, ""},
 		{"prod 0.0.0.0 rejected (unspecified)", "https://0.0.0.0/ingest", false, true, "unspecified"},
 		{"prod [::] rejected (unspecified)", "https://[::]/ingest", false, true, "unspecified"},
 		{"prod empty host rejected", "https:///ingest", false, true, "host"},

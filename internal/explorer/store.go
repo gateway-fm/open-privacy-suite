@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
-	"github.com/lib/pq"
 )
 
 type Store struct {
@@ -238,7 +237,7 @@ func (s *Store) GetBlocksFiltered(ctx context.Context, limit int, beforeBlock *u
 		WHERE t.block_number = ANY($%d)%s 
 		GROUP BY t.block_number`, nextArg, visClause)
 
-	args := append(visArgs, pq.Array(blockNums))
+	args := append(visArgs, blockNums)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
@@ -653,13 +652,13 @@ func visibilityWhereClause(filter *VisibilityFilter, argIdx int) (string, []any,
 			parts = append(parts, fmt.Sprintf(
 				"LOWER(t.from_address) = ANY($%d) OR LOWER(COALESCE(t.to_address, '')) = ANY($%d)",
 				argIdx, argIdx))
-			args = append(args, pq.Array(filter.VisibleAddresses))
+			args = append(args, filter.VisibleAddresses)
 			argIdx++
 		}
 
 		if len(filter.VisibleTxHashes) > 0 {
 			parts = append(parts, fmt.Sprintf("t.hash = ANY($%d)", argIdx))
-			args = append(args, pq.Array(filter.VisibleTxHashes))
+			args = append(args, filter.VisibleTxHashes)
 			argIdx++
 		}
 
@@ -672,7 +671,7 @@ func visibilityWhereClause(filter *VisibilityFilter, argIdx int) (string, []any,
 		(t.to_address IS NULL AND LOWER(t.from_address) = ANY($%d))
 		OR (LOWER(t.from_address) = ANY($%d) AND LOWER(t.to_address) = ANY($%d))
 	)`, argIdx, argIdx, argIdx)
-	return clause, []any{pq.Array(filter.HiddenAddresses)}, argIdx + 1
+	return clause, []any{filter.HiddenAddresses}, argIdx + 1
 }
 
 // GetTransactionsFiltered returns transactions with visibility filtering applied at SQL level.
@@ -946,7 +945,7 @@ func (s *Store) FindLogParticipantTxs(ctx context.Context, viewerAddrs []string,
 		WHERE tx_hash = ANY($1)
 		  AND topic0   = ANY($2)
 		  AND (topic1 = ANY($3) OR topic2 = ANY($3) OR topic3 = ANY($3))`,
-		pq.Array(normHashes), pq.Array(accepted), pq.Array(paddedTopics))
+		normHashes, accepted, paddedTopics)
 	if err != nil {
 		return nil, fmt.Errorf("FindLogParticipantTxs: %w", err)
 	}
@@ -1014,7 +1013,7 @@ func (s *Store) FindTransferParticipantTxs(ctx context.Context, visibleAddrs []s
 	// would do a full table scan on every /transactions hit.
 	query := `SELECT DISTINCT tx_hash FROM token_transfers
 		WHERE (LOWER(from_address) = ANY($1) OR LOWER(to_address) = ANY($1))`
-	args := []any{pq.Array(norm)}
+	args := []any{norm}
 	if beforeBlock != nil {
 		query += ` AND block_number < $2`
 		args = append(args, *beforeBlock)

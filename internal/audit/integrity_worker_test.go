@@ -30,14 +30,15 @@ func TestWebhookNotifier_DoesNotFollowRedirects(t *testing.T) {
 	}))
 	defer origin.Close()
 
-	// Construct through the real constructor so the test exercises the
-	// client it builds; the validated public URL is then swapped for the
-	// local origin (the URL check itself is covered in netguard's tests).
-	n, err := NewWebhookNotifier("https://tamper.example.com/hook")
+	// Construct through the real constructor so the test exercises the client
+	// it builds. The relaxed variant is required because the dial-time SSRF
+	// guard (RD-1266) refuses loopback destinations in strict mode — swapping
+	// a public URL for a 127.0.0.1 one, as this test used to, is exactly the
+	// rebinding shape that guard exists to stop.
+	n, err := newWebhookNotifierForEnv(origin.URL, true)
 	if err != nil {
-		t.Fatalf("NewWebhookNotifier: %v", err)
+		t.Fatalf("newWebhookNotifierForEnv: %v", err)
 	}
-	n.URL = origin.URL
 
 	n.Notify(context.Background(), &Result{})
 
@@ -46,5 +47,31 @@ func TestWebhookNotifier_DoesNotFollowRedirects(t *testing.T) {
 	}
 	if got := redirectTargetHits.Load(); got != 0 {
 		t.Fatalf("redirect target hits = %d, want 0 — the notifier followed a redirect", got)
+	}
+}
+
+// TestWebhookNotifier_StrictClientRefusesPrivateAtDial locks the RD-1266
+// property on the tamper-webhook client: the destination is refused when the
+// address it actually reaches is private, even though the URL itself passed
+// validation. Constructed strict, as production does, then pointed at a
+// loopback server — the shape a DNS rebind produces.
+func TestWebhookNotifier_StrictClientRefusesPrivateAtDial(t *testing.T) {
+	var hits atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	n, err := NewWebhookNotifier("https://tamper.example.com/hook")
+	if err != nil {
+		t.Fatalf("NewWebhookNotifier: %v", err)
+	}
+	n.URL = srv.URL
+
+	n.Notify(context.Background(), &Result{})
+
+	if got := hits.Load(); got != 0 {
+		t.Fatalf("loopback server hits = %d, want 0 — the dial guard must refuse before connect", got)
 	}
 }

@@ -22,6 +22,7 @@ import (
 	"privacy-proxy/internal/db"
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
+	"privacy-proxy/internal/server/middleware"
 	"privacy-proxy/internal/tracer"
 )
 
@@ -29,7 +30,7 @@ import (
 // per-request cost end-to-end — decode + ecrecover + RBAC access check + audit
 // + forward — with the Ethereum node MOCKED (instant canned responses), so the
 // number reflects the proxy, not node execution. b.RunParallel simulates
-// concurrent load; NewConcurrencyLimiter(50, 0) mirrors the per-user cap, so keep
+// concurrent load; middleware.NewConcurrencyLimiter(50, 0) mirrors the per-user cap, so keep
 // -cpu <= 50 for single-user runs (seed more users to exceed it).
 //
 // CI: run on a LINUX runner against a real Postgres for representative fsync
@@ -160,8 +161,8 @@ func benchProcessor(b *testing.B, async bool) (*JSONRPCProcessor, string, *Proce
 		AccessLogger:       database,
 		RuntimeTracer:      rt,
 		TraceValidator:     tv,
-		CircuitBreaker:     NewCircuitBreaker(),
-		ConcurrencyLimiter: NewConcurrencyLimiter(50, 0),
+		CircuitBreaker:     middleware.NewCircuitBreaker(),
+		ConcurrencyLimiter: middleware.NewConcurrencyLimiter(50, 0),
 	}
 	var buf *buffer.Buffer
 	if async {
