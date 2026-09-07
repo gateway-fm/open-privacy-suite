@@ -771,23 +771,6 @@ func TestDetectMulticall(t *testing.T) {
 }
 
 func TestHelperFunctions(t *testing.T) {
-	t.Run("intersectStrings", func(t *testing.T) {
-		a := []string{"a", "b", "c"}
-		b := []string{"b", "c", "d"}
-		result := intersectStrings(a, b)
-
-		if len(result) != 2 {
-			t.Errorf("Expected 2 elements, got %d: %v", len(result), result)
-		}
-	})
-
-	t.Run("intersectStrings empty", func(t *testing.T) {
-		result := intersectStrings([]string{}, []string{"a", "b"})
-		if len(result) != 0 {
-			t.Errorf("Expected empty result, got %v", result)
-		}
-	})
-
 	t.Run("unionStrings", func(t *testing.T) {
 		a := []string{"a", "b"}
 		b := []string{"b", "c"}

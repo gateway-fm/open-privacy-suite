@@ -540,27 +540,6 @@ func (r *Resolver) InvalidateGroupPermissions(ctx context.Context, groupID strin
 
 // Helper functions
 
-// intersectStrings returns the intersection of two string slices (case-insensitive).
-func intersectStrings(a, b []string) []string {
-	if len(a) == 0 || len(b) == 0 {
-		return []string{}
-	}
-
-	set := make(map[string]bool)
-	for _, s := range a {
-		set[strings.ToLower(s)] = true
-	}
-
-	var result []string
-	for _, s := range b {
-		if set[strings.ToLower(s)] {
-			result = append(result, s)
-		}
-	}
-
-	return result
-}
-
 // unionStrings returns the union of two string slices (case-insensitive dedup).
 func unionStrings(a, b []string) []string {
 	set := make(map[string]string) // lowercase -> original
@@ -617,46 +596,6 @@ func unionClaims(a, b []Claim) []Claim {
 	result := make([]Claim, 0, len(set))
 	for c := range set {
 		result = append(result, c)
-	}
-	return result
-}
-
-// intersectFunctions returns the intersection of two FunctionRule slices by selector.
-// If either is nil, it means "all functions allowed" - return the other.
-// If both are nil, return nil (all allowed).
-// If both have values, return rules whose selectors appear in both (keeping the
-// stricter param_rules from whichever side has them).
-func intersectFunctions(a, b []FunctionRule) []FunctionRule {
-	// nil means "all functions allowed"
-	if a == nil {
-		return b
-	}
-	if b == nil {
-		return a
-	}
-
-	// Non-nil but empty = "no functions allowed" — intersection with anything is empty
-	if len(a) == 0 || len(b) == 0 {
-		return []FunctionRule{}
-	}
-
-	// Index b by selector for O(n) lookup
-	bMap := make(map[string]FunctionRule, len(b))
-	for _, rule := range b {
-		bMap[strings.ToLower(rule.Selector)] = rule
-	}
-
-	result := []FunctionRule{}
-	for _, ruleA := range a {
-		if ruleB, ok := bMap[strings.ToLower(ruleA.Selector)]; ok {
-			// Both sides allow this selector - keep the one with param rules
-			// (stricter). If both have param rules, keep b's (child narrows parent).
-			merged := ruleA
-			if len(ruleB.ParamRules) > 0 {
-				merged.ParamRules = ruleB.ParamRules
-			}
-			result = append(result, merged)
-		}
 	}
 	return result
 }
