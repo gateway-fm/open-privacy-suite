@@ -1537,7 +1537,7 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 				Error: &ProcessError{StatusCode: http.StatusForbidden, Message: sendTraceDenyTracerError, Reason: ReasonTracingUnavailable},
 			}
 		}
-		memberships, err := p.rbacAccessCtrl.Store().ListUserMembershipsWithDetails(ctx, user.ID)
+		memberships, err := p.rbacAccessCtrl.Store().ListActiveUserMembershipsWithDetails(ctx, user.ID)
 		if err != nil {
 			p.recordRPCOutcome(req.Method, "send_trace_denied", start)
 			req.denialReason = ReasonTracingUnavailable // RD-1137

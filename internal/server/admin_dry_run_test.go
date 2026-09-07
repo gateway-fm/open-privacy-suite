@@ -471,8 +471,27 @@ func TestDryRun_RawTransactionChecksDecodedTarget(t *testing.T) {
 	drCreateGrant(t, f.srv.db, drCreateContract(t, f.srv.db, f.orgID, grantedAddr, "DRGranted"), groupID)
 	drCreateContract(t, f.srv.db, f.orgID, ungrantedAddr, "DRUngranted")
 
-	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{}}`))
+	// Return a realistic callTracer frame whose top-level CALL targets the
+	// decoded raw-tx recipient. An empty `{}` result now fails closed (treated
+	// as an upstream trace error), so the stub must echo a well-formed frame.
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Params []json.RawMessage `json:"params"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		to := grantedAddr
+		if len(req.Params) > 0 {
+			var tx map[string]any
+			if json.Unmarshal(req.Params[0], &tx) == nil {
+				if v, ok := tx["to"].(string); ok && v != "" {
+					to = v
+				}
+			}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"jsonrpc": "2.0", "id": 1,
+			"result": map[string]any{"type": "CALL", "from": "0x0000000000000000000000000000000000000000", "to": to},
+		})
 	}))
 	t.Cleanup(stub.Close)
 	f.srv.proxy = proxy.New(stub.URL)
@@ -711,6 +730,20 @@ func TestDryRun_RawSendTransactionMalformedAudit(t *testing.T) {
 		).Scan(&count))
 		assert.Zero(t, count)
 	})
+}
+
+func TestPolicyCheckTraceTransaction_StripsVisibleToWithoutMutatingInput(t *testing.T) {
+	original := map[string]any{
+		"to":        "0x000000000000000000000000000000000000ac51",
+		"data":      "0x12345678",
+		"visibleTo": []any{"did:example:recipient"},
+	}
+
+	traceTx := policyCheckTraceTransaction(original)
+
+	assert.NotContains(t, traceTx, "visibleTo")
+	assert.Contains(t, original, "visibleTo")
+	assert.Equal(t, original["to"], traceTx["to"])
 }
 
 // ---- fixture helpers -------------------------------------------------

@@ -34,6 +34,25 @@ var nullableProperties = map[string][]string{
 	"internal_server.contractGrantUpdateRequest": {"functions"},
 }
 
+// subjectSchema is the policy-check subject, rewritten to mutually exclusive
+// oneOf alternatives: exactly one of did or address is required. swag cannot
+// express the either/or runtime contract from the two optional Go fields, so
+// generated clients otherwise see both as optional and combinable.
+const subjectSchema = "internal_server.policyCheckSubject"
+
+var subjectOneOf = []any{
+	map[string]any{
+		"type":       "object",
+		"properties": map[string]any{"did": map[string]any{"type": "string"}},
+		"required":   []any{"did"},
+	},
+	map[string]any{
+		"type":       "object",
+		"properties": map[string]any{"address": map[string]any{"type": "string"}},
+		"required":   []any{"address"},
+	},
+}
+
 func main() {
 	jsonPath := "internal/server/apispec/swagger.json"
 	yamlPath := "internal/server/apispec/swagger.yaml"
@@ -45,7 +64,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "api-spec-postprocess: %s: %v\n", yamlPath, err)
 		os.Exit(1)
 	}
-	fmt.Printf("api-spec-postprocess: %d schema(s) made nullable in %s + %s\n",
+	fmt.Printf("api-spec-postprocess: %d schema(s) made nullable, subject oneOf applied in %s + %s\n",
 		len(nullableProperties), jsonPath, yamlPath)
 }
 
@@ -89,6 +108,18 @@ func patchJSON(path string) error {
 		}
 	}
 
+	// Subject oneOf rewrite (idempotent: a schema already carrying oneOf is
+	// left alone).
+	subject, err := dig[map[string]any](schemas, subjectSchema)
+	if err != nil {
+		return err
+	}
+	if _, already := subject["oneOf"]; !already {
+		delete(subject, "properties")
+		delete(subject, "type")
+		subject["oneOf"] = subjectOneOf
+	}
+
 	// Canonical serialization: sorted keys, 4-space indent, HTML-escaped —
 	// the same shape swag's own marshaling produces for nested objects.
 	out, err := json.MarshalIndent(doc, "", "    ")
@@ -119,7 +150,67 @@ func patchYAML(path string) error {
 			}
 		}
 	}
+	lines, err = patchYAMLSubjectOneOf(lines)
+	if err != nil {
+		return err
+	}
 	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
+}
+
+// patchYAMLSubjectOneOf replaces the policyCheckSubject object body with its
+// mutually exclusive oneOf alternatives and returns the updated line slice.
+// The generated block is fixed (schema key at 4 spaces, "properties:" at 8,
+// address/did at 10, "type: object" closing at 6), so the replacement is an
+// exact anchored swap that fails loudly if swag changes its layout.
+func patchYAMLSubjectOneOf(lines []string) ([]string, error) {
+	anchor := "    " + subjectSchema + ":"
+	at := -1
+	for i, line := range lines {
+		if line == anchor {
+			at = i
+			break
+		}
+	}
+	if at == -1 {
+		return nil, fmt.Errorf("yaml: schema %q not found", subjectSchema)
+	}
+	// Idempotent re-run: already rewritten.
+	if at+1 < len(lines) && strings.HasPrefix(lines[at+1], "      oneOf:") {
+		return lines, nil
+	}
+	want := []string{
+		"      properties:",
+		"        address:",
+		"          type: string",
+		"        did:",
+		"          type: string",
+		"      type: object",
+	}
+	for j, w := range want {
+		if at+1+j >= len(lines) || lines[at+1+j] != w {
+			return nil, fmt.Errorf("yaml: schema %q: unexpected generated body at line %d (got %q, want %q)", subjectSchema, at+2+j, lines[at+1+j], w)
+		}
+	}
+	replacement := []string{
+		"      oneOf:",
+		"      - properties:",
+		"          did:",
+		"            type: string",
+		"        required:",
+		"        - did",
+		"        type: object",
+		"      - properties:",
+		"          address:",
+		"            type: string",
+		"        required:",
+		"        - address",
+		"        type: object",
+	}
+	out := make([]string, 0, len(lines)-len(want)+len(replacement))
+	out = append(out, lines[:at+1]...)
+	out = append(out, replacement...)
+	out = append(out, lines[at+1+len(want):]...)
+	return out, nil
 }
 
 // patchYAMLProperty rewrites `type: <scalar>` to a [<scalar>, "null"] block
@@ -198,4 +289,3 @@ func containsNull(types []any) bool {
 	}
 	return false
 }
-
