@@ -14,6 +14,7 @@ import (
 	"privacy-proxy/internal/explorer"
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
+	"privacy-proxy/internal/server/middleware"
 
 	"github.com/gin-gonic/gin"
 	grpccodes "google.golang.org/grpc/codes"
@@ -137,7 +138,7 @@ type GrantTransaction struct {
 // - G15: explorerLogRedactionMiddleware strips Ethereum addresses from logged request paths.
 func (s *Server) registerExplorerRoutes(router *gin.Engine) {
 	explorer := router.Group("/api/v1/explorer")
-	explorer.Use(bodyLimitMiddleware(MaxRequestBodySize))
+	explorer.Use(middleware.BodyLimit(MaxRequestBodySize))
 	explorer.Use(s.localhostOnlyMiddleware())
 	explorer.Use(auth.OptionalJWTAuthMiddleware(s.jwtService, s.db))
 	// G15: Redact Ethereum addresses from access log paths

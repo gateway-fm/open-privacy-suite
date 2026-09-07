@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"privacy-proxy/internal/rbac"
+	"privacy-proxy/internal/server/middleware"
 	"privacy-proxy/internal/tracer"
 
 	"github.com/stretchr/testify/assert"
@@ -86,8 +87,8 @@ func setupProcessorWithCapturingTracer(t *testing.T, srv *httptest.Server) (*JSO
 		AccessLogger:       ts.db,
 		RuntimeTracer:      rt,
 		TraceValidator:     tv,
-		CircuitBreaker:     NewCircuitBreaker(),
-		ConcurrencyLimiter: NewConcurrencyLimiter(50, 0),
+		CircuitBreaker:     middleware.NewCircuitBreaker(),
+		ConcurrencyLimiter: middleware.NewConcurrencyLimiter(50, 0),
 		EthCallTracing:     &EthCallTracingConfig{Enabled: true, Timeout: 5 * time.Second},
 	})
 	return proc, ts

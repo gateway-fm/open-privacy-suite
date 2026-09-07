@@ -6,6 +6,7 @@ import (
 
 	"privacy-proxy/internal/db"
 	"privacy-proxy/internal/rbac"
+	"privacy-proxy/internal/server/middleware"
 	"privacy-proxy/internal/tracer"
 
 	"github.com/google/uuid"
@@ -32,8 +33,8 @@ func setupProcessorWithoutTracing(t *testing.T) (*JSONRPCProcessor, *testServerR
 		RateLimiter:        &noopRateLimiter{},
 		Proxy:              nil, // no proxy needed for negative path tests
 		AccessLogger:       ts.db,
-		CircuitBreaker:     NewCircuitBreaker(),
-		ConcurrencyLimiter: NewConcurrencyLimiter(50, 0),
+		CircuitBreaker:     middleware.NewCircuitBreaker(),
+		ConcurrencyLimiter: middleware.NewConcurrencyLimiter(50, 0),
 	})
 	return proc, ts
 }
@@ -60,8 +61,8 @@ func setupProcessorWithTracing(t *testing.T) (*JSONRPCProcessor, *testServerRBAC
 		AccessLogger:       ts.db,
 		RuntimeTracer:      rt,
 		TraceValidator:     tv,
-		CircuitBreaker:     NewCircuitBreaker(),
-		ConcurrencyLimiter: NewConcurrencyLimiter(50, 0),
+		CircuitBreaker:     middleware.NewCircuitBreaker(),
+		ConcurrencyLimiter: middleware.NewConcurrencyLimiter(50, 0),
 	})
 	return proc, ts
 }

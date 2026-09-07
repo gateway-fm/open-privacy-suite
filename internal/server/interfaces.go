@@ -3,6 +3,7 @@ package server
 import (
 	"github.com/iden3/iden3comm/v2/protocol"
 	"privacy-proxy/internal/auth"
+	"privacy-proxy/internal/server/middleware"
 	"privacy-proxy/internal/types"
 )
 
@@ -86,7 +87,7 @@ type ChallengeManager interface {
 // to avoid a circular dependency.
 var (
 	_ SessionManager       = (*auth.SessionStore)(nil)
-	_ RateLimiterInterface = (*RateLimiter)(nil)
+	_ RateLimiterInterface = (*middleware.RateLimiter)(nil)
 	_ OAuthSessionManager  = (*OAuthSessionStore)(nil)
 	_ AzureStateManager    = (*AzureStateStore)(nil)
 	_ ChallengeManager     = (*ChallengeStore)(nil)
