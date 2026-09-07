@@ -18,9 +18,12 @@ import (
 )
 
 // seedDBCache writes a synthetic DB permission-cache entry for (user, org).
-// Used by RD-838 tests to reliably reproduce the "stale cached entry" state —
-// the real cache is populated via a fire-and-forget goroutine inside the
-// resolver, which is racy to observe from a test.
+// Used by RD-838 tests to reliably reproduce the "stale cached entry" state
+// without depending on the resolver's own publication, which is guarded: it
+// only writes when the cache generation has not moved (RD-1267), so a test
+// cannot simply ask for a resolve and rely on a row appearing. This calls the
+// concrete *db.DB method, deliberately bypassing the guard — seeding a known
+// row is exactly the case the guard should not police.
 func seedDBCache(t *testing.T, server *testServerRBAC, userID, orgID string) {
 	t.Helper()
 	err := server.db.SetCachedPermissions(context.Background(), &rbac.EffectivePermissions{
@@ -91,17 +94,20 @@ func TestCacheInvalidation_MembershipToggle(t *testing.T) {
 	require.Equal(t, 1, server.rbacAccessCtrl.CacheStats().Entries,
 		"in-memory cache should have exactly one entry after CheckAccess")
 
-	// Wait for the resolver's fire-and-forget cache write to land before we
-	// trigger the invalidation. Without this barrier the goroutine started by
-	// CheckAccess (resolver.go:118 — `go r.store.SetCachedPermissions(...)`)
-	// can run AFTER the DELETE handler, resurrecting the cache row and
-	// producing a flaky "DB permission cache must be cleared" failure on CI
-	// (race detector slows goroutine scheduling enough to make it observable).
+	// Confirm the resolver's cache write landed before we trigger the
+	// invalidation, so the test is genuinely exercising "invalidate an
+	// existing row" and not "invalidate nothing".
+	//
+	// This was originally a race barrier: the publish ran in a goroutine
+	// started by CheckAccess, which could land AFTER the DELETE handler and
+	// resurrect the row. That goroutine is gone — the publish is now
+	// synchronous inside the resolve, under the generation guard — so this is
+	// a plain precondition assertion and should pass on the first poll.
 	require.Eventually(t, func() bool {
 		cached, err := server.db.GetCachedPermissions(ctx, user.ID, org.ID)
 		return err == nil && cached != nil
 	}, 5*time.Second, 10*time.Millisecond,
-		"resolver fire-and-forget cache write should land before invalidation test")
+		"resolver cache write should have landed before the invalidation test runs")
 
 	// Seed the DB cache synchronously so we can reliably observe invalidation.
 	// (The Eventually above guarantees the goroutine is done; this upsert
