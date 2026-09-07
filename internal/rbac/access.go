@@ -860,14 +860,20 @@ func (c *AccessController) resolvePermissionsForRequest(ctx context.Context, req
 		}
 	}
 	if perms == nil {
-		// Resolve permissions (checks DB cache, then computes)
-		resolved, err := c.resolver.ResolvePermissions(ctx, user.ID, org.ID)
+		// Resolve permissions (checks DB cache, then computes).
+		//
+		// cacheable is the RD-1267 verdict: false when an invalidation
+		// committed while the compute was in flight. The request still gets
+		// the permissions, but caching them here would keep a just-revoked
+		// grant usable for the whole TTL — the shared SQL cache already
+		// refused the same entry, and this cache must agree with it.
+		resolved, cacheable, err := c.resolver.ResolvePermissionsCacheable(ctx, user.ID, org.ID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to resolve permissions: %w", err)
 		}
 		perms = resolved
 
-		if !req.BypassCache {
+		if !req.BypassCache && cacheable {
 			// Store in in-memory cache for the normal hot path.
 			c.cache.Set(perms)
 		}
@@ -2129,6 +2135,21 @@ func (c *AccessController) InvalidateUser(ctx context.Context, userID string) er
 func (c *AccessController) InvalidateOrg(ctx context.Context, orgID string) error {
 	c.cache.InvalidateOrg(orgID)
 	return c.resolver.InvalidateOrgPermissions(ctx, orgID)
+}
+
+// InvalidateOrgLocalCache drops this process's in-memory permissions for an
+// org WITHOUT touching the shared SQL cache or its generation counter.
+//
+// It exists for the revoke handlers that invalidate the shared cache inside
+// the same transaction as their mutation (RD-1267): that transaction has
+// already bumped the generation and deleted the cache rows, so calling the
+// full InvalidateOrg afterwards would bump a second time and needlessly
+// invalidate concurrent computes. The in-memory cache is process-local and
+// cannot participate in that transaction, so it is cleared here instead —
+// after the mutation has committed, so nothing repopulates it from
+// pre-mutation state.
+func (c *AccessController) InvalidateOrgLocalCache(orgID string) {
+	c.cache.InvalidateOrg(orgID)
 }
 
 // InvalidateGroup invalidates cached permissions for all users in a group.

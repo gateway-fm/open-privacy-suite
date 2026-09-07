@@ -30,6 +30,12 @@ type inFlightEntry struct {
 	done  chan struct{} // closed when computation is complete
 	perms *EffectivePermissions
 	err   error
+	// publishable carries the RD-1267 verdict to singleflight waiters. A
+	// waiter never ran the compute, so it cannot re-derive whether an
+	// invalidation raced it; it must inherit the computing goroutine's
+	// answer, or the waiter would copy discarded permissions into the
+	// upper cache that the computing goroutine correctly withheld.
+	publishable bool
 }
 
 // NewResolver creates a new permission resolver.
@@ -51,16 +57,43 @@ func (r *Resolver) SetEncryptionKey(key []byte) {
 // It first checks the cache, then computes permissions if not cached.
 // Uses single-flight pattern to prevent cache stampede when multiple requests
 // come in simultaneously for the same user+org combination.
+//
+// Callers that copy the result into a longer-lived cache of their own must use
+// ResolvePermissionsCacheable instead — see its doc comment.
 func (r *Resolver) ResolvePermissions(ctx context.Context, userID, orgID string) (*EffectivePermissions, error) {
+	perms, _, err := r.ResolvePermissionsCacheable(ctx, userID, orgID)
+	return perms, err
+}
+
+// ResolvePermissionsCacheable is ResolvePermissions plus the RD-1267 verdict:
+// cacheable reports whether the returned permissions may be copied into a
+// longer-lived cache.
+//
+// cacheable is false when an invalidation committed while the compute was in
+// flight, or when the guard could not establish that it did not. The caller
+// still receives the permissions — they were true of the state that was read,
+// and the request that triggered the resolve is entitled to them — but
+// persisting them would leave a just-revoked grant usable for the whole cache
+// TTL. AccessController therefore skips its in-memory/Redis PermissionCache
+// write when this is false; the next request resolves fresh state.
+//
+// The verdict is returned separately rather than carried on
+// EffectivePermissions because it describes this *resolution*, not the
+// permission set: the same permissions are publishable or not depending on
+// whether a mutation happened to race the compute, and the flag must not be
+// serialised into the cached payload.
+func (r *Resolver) ResolvePermissionsCacheable(ctx context.Context, userID, orgID string) (*EffectivePermissions, bool, error) {
 	cacheKey := userID + ":" + orgID
 
 	// Check in-memory cache first (fast path)
 	cached, err := r.store.GetCachedPermissions(ctx, userID, orgID)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if cached != nil {
-		return cached, nil
+		// Already published by whoever computed it, so it is safe to hold in
+		// an upper cache as well.
+		return cached, true, nil
 	}
 
 	// Check if another goroutine is already computing this permission
@@ -72,9 +105,9 @@ func (r *Resolver) ResolvePermissions(ctx context.Context, userID, orgID string)
 		// Wait for the in-progress computation
 		select {
 		case <-entry.done:
-			return entry.perms, entry.err
+			return entry.perms, entry.publishable, entry.err
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, false, ctx.Err()
 		}
 	}
 
@@ -90,13 +123,38 @@ func (r *Resolver) ResolvePermissions(ctx context.Context, userID, orgID string)
 		r.inFlightMu.Unlock()
 		select {
 		case <-existing.done:
-			return existing.perms, existing.err
+			return existing.perms, existing.publishable, existing.err
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, false, ctx.Err()
 		}
 	}
 	r.inFlight[cacheKey] = entry
 	r.inFlightMu.Unlock()
+
+	// Snapshot the cache generation before reading any state (RD-1267). If a
+	// mutation commits while the compute is in flight, its invalidation finds
+	// nothing to delete — nothing is cached yet — and an unconditional
+	// publication would leave the pre-mutation permissions in the shared
+	// cache for the full TTL, keeping a revoked grant usable. Comparing the
+	// generation at publication time detects exactly that window.
+	//
+	// genKnown == false means we could not establish a baseline, in which
+	// case nothing is published: discarding costs one recompute, publishing
+	// blind risks serving stale permissions.
+	genStore, genCapable := r.store.(CacheGenerationStore)
+	var (
+		genBefore int64
+		genKnown  bool
+	)
+	if genCapable {
+		g, gErr := genStore.CacheGeneration(ctx)
+		if gErr != nil {
+			slog.Warn("rbac resolver: cannot read cache generation, skipping cache publication",
+				"user_id", userID, "org_id", orgID, "err", gErr)
+		} else {
+			genBefore, genKnown = g, true
+		}
+	}
 
 	// Compute permissions
 	perms, err := r.computePermissions(ctx, userID, orgID)
@@ -110,18 +168,49 @@ func (r *Resolver) ResolvePermissions(ctx context.Context, userID, orgID string)
 	// stays synchronous: the previous fire-and-forget goroutine could race
 	// InvalidateUser / InvalidateOrg from a concurrent mutation and
 	// repopulate the cache with stale permissions for the 5-minute TTL.
+	// publishable mirrors the SQL publication decision so upper caches make the
+	// same call (RD-1267). It stays false unless we positively establish that
+	// no invalidation raced this compute.
+	publishable := false
 	if err == nil {
-		if cErr := r.store.SetCachedPermissions(ctx, perms); cErr != nil {
-			// Cache-write failure is not a correctness issue (the
-			// returned perms are still authoritative); a future call
-			// will re-resolve from the DB. Don't fail the request.
-			slog.Warn("rbac resolver: SetCachedPermissions failed", "user_id", userID, "org_id", orgID, "err", cErr)
+		switch {
+		case genCapable && genKnown:
+			published, cErr := genStore.SetCachedPermissionsAtGeneration(ctx, perms, genBefore)
+			switch {
+			case cErr != nil:
+				// Cache-write failure is not a correctness issue (the
+				// returned perms are still authoritative); a future call
+				// will re-resolve from the DB. Don't fail the request.
+				// Not publishable: the write failing means we never
+				// confirmed the generation still held, so an upper cache
+				// must not hold the entry either.
+				slog.Warn("rbac resolver: SetCachedPermissionsAtGeneration failed", "user_id", userID, "org_id", orgID, "err", cErr)
+			case !published:
+				// An invalidation committed during the compute. The caller
+				// still gets what was true when it was read; the cache stays
+				// empty so the next request resolves fresh state.
+				slog.Debug("rbac resolver: discarded cache publication, invalidated during compute (RD-1267)",
+					"user_id", userID, "org_id", orgID, "generation", genBefore)
+			default:
+				publishable = true
+			}
+		case genCapable && !genKnown:
+			// Baseline unknown — already logged above. Fail safe: publish nothing.
+		default:
+			// Store without the generation capability (test doubles): keep the
+			// previous unconditional publish. Production uses *db.DB, which
+			// implements CacheGenerationStore under a compile-time assertion.
+			publishable = true
+			if cErr := r.store.SetCachedPermissions(ctx, perms); cErr != nil {
+				slog.Warn("rbac resolver: SetCachedPermissions failed", "user_id", userID, "org_id", orgID, "err", cErr)
+			}
 		}
 	}
 
 	// Store result and broadcast to all waiting goroutines
 	entry.perms = perms
 	entry.err = err
+	entry.publishable = publishable
 	close(entry.done)
 
 	// Clean up in-flight entry
@@ -130,10 +219,10 @@ func (r *Resolver) ResolvePermissions(ctx context.Context, userID, orgID string)
 	r.inFlightMu.Unlock()
 
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
-	return perms, nil
+	return perms, publishable, nil
 }
 
 // computePermissions calculates effective permissions using the contract-centric RBAC model.
