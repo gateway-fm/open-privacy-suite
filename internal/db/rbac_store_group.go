@@ -7,8 +7,6 @@ import (
 	"strings"
 
 	"privacy-proxy/internal/rbac"
-
-	"github.com/lib/pq"
 )
 
 // Group operations
@@ -198,7 +196,7 @@ func scanGroupsWithAccess(rows *sql.Rows) ([]*rbac.GroupWithAccess, error) {
 
 		// Access fields (nullable from LEFT JOIN)
 		var accessID sql.NullString
-		var allowedMethods, claimsStr pq.StringArray
+		var allowedMethods, claimsStr []string
 		var rpcAPIKey sql.NullString
 		var verboseErrors sql.NullBool
 		var accessCreatedAt, accessUpdatedAt sql.NullTime
@@ -206,7 +204,7 @@ func scanGroupsWithAccess(rows *sql.Rows) ([]*rbac.GroupWithAccess, error) {
 		if err := rows.Scan(
 			&group.ID, &group.OrgID, &parentID, &group.Slug, &group.Name,
 			&description, &group.Depth, &group.Path, &group.IsOrgAdmin, &group.IsOrgReadonlyAdmin, &group.IsSystem, &group.AutoCreated, &group.CreatedAt, &group.UpdatedAt,
-			&accessID, &allowedMethods, &claimsStr, &rpcAPIKey, &verboseErrors, &accessCreatedAt, &accessUpdatedAt,
+			&accessID, ScanTextArray(&allowedMethods), ScanTextArray(&claimsStr), &rpcAPIKey, &verboseErrors, &accessCreatedAt, &accessUpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan group with access: %w", err)
 		}
@@ -415,7 +413,7 @@ func createGroupAccess(ctx context.Context, q DBTX, access *rbac.GroupAccess) er
 
 	return q.QueryRowContext(ctx, query,
 		access.ID, access.GroupID,
-		pq.Array(access.AllowedMethods), pq.Array(claims),
+		access.AllowedMethods, claims,
 		access.RPCAPIKey, access.VerboseErrors,
 	).Scan(&access.CreatedAt, &access.UpdatedAt)
 }
@@ -434,12 +432,12 @@ const groupAccessColumns = `id, group_id, allowed_methods, claims, rpc_api_key, 
 // *sql.Row or a *sql.Rows positioned on a row.
 func scanGroupAccessRow(s interface{ Scan(dest ...any) error }) (*rbac.GroupAccess, error) {
 	access := &rbac.GroupAccess{}
-	var allowedMethods, defaultClaims pq.StringArray
+	var allowedMethods, defaultClaims []string
 	var rpcAPIKey sql.NullString
 
 	err := s.Scan(
 		&access.ID, &access.GroupID,
-		&allowedMethods, &defaultClaims,
+		ScanTextArray(&allowedMethods), ScanTextArray(&defaultClaims),
 		&rpcAPIKey, &access.VerboseErrors,
 		&access.CreatedAt, &access.UpdatedAt,
 	)
@@ -478,7 +476,7 @@ func (d *DB) GetGroupAccessBatch(ctx context.Context, groupIDs []string) (map[st
 	query := `SELECT ` + groupAccessColumns + `
 	          FROM group_access WHERE group_id = ANY($1)`
 
-	rows, err := d.conn.QueryContext(ctx, query, pq.Array(groupIDs))
+	rows, err := d.conn.QueryContext(ctx, query, groupIDs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to batch get group access: %w", err)
 	}
@@ -519,7 +517,7 @@ func (d *DB) UpdateGroupAccess(ctx context.Context, access *rbac.GroupAccess) er
 
 	return d.conn.QueryRowContext(ctx, query,
 		access.ID, access.GroupID,
-		pq.Array(access.AllowedMethods), pq.Array(claims),
+		access.AllowedMethods, claims,
 		access.RPCAPIKey, access.VerboseErrors,
 	).Scan(&access.CreatedAt, &access.UpdatedAt)
 }
