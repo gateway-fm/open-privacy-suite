@@ -1,4 +1,4 @@
-FROM golang:1.25-trixie AS builder-base
+FROM golang:1.26.6-trixie AS builder-base
 
 # Install build dependencies for CGO (required by go-rapidsnark).
 # `apt-get upgrade` pulls patched libc/curl/etc. on every build to clear
