@@ -6,8 +6,6 @@ import (
 	"fmt"
 
 	"privacy-proxy/internal/rbac"
-
-	"github.com/lib/pq"
 )
 
 // Every *Tx method that has a *DB counterpart delegates to the shared
@@ -158,7 +156,7 @@ func (t *Tx) DeleteContractGrantsByContractAndGroups(ctx context.Context, contra
 		return nil
 	}
 	query := `DELETE FROM contract_grants WHERE contract_id = $1 AND group_id = ANY($2)`
-	_, err := t.tx.ExecContext(ctx, query, contractID, pq.Array(groupIDs))
+	_, err := t.tx.ExecContext(ctx, query, contractID, groupIDs)
 	return err
 }
 
@@ -180,7 +178,7 @@ func (t *Tx) GetGroupsByIDs(ctx context.Context, orgID string, ids []string) ([]
 	}
 	query := `SELECT id, org_id, parent_id, slug, name, description, depth, path, is_org_admin, is_org_readonly_admin, is_system, auto_created, created_at, updated_at
 	          FROM groups WHERE org_id = $1 AND id = ANY($2)`
-	rows, err := t.tx.QueryContext(ctx, query, orgID, pq.Array(ids))
+	rows, err := t.tx.QueryContext(ctx, query, orgID, ids)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get groups by IDs: %w", err)
 	}
@@ -197,7 +195,7 @@ func (t *Tx) GetAutoCreatedGroupIDsForContracts(ctx context.Context, contractIDs
 	query := `SELECT DISTINCT g.id FROM groups g
 	          JOIN contract_grants cg ON g.id = cg.group_id
 	          WHERE g.auto_created = true AND cg.contract_id = ANY($1)`
-	rows, err := t.tx.QueryContext(ctx, query, pq.Array(contractIDs))
+	rows, err := t.tx.QueryContext(ctx, query, contractIDs)
 	if err != nil {
 		return nil, err
 	}

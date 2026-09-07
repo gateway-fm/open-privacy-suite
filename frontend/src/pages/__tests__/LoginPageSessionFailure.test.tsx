@@ -85,6 +85,26 @@ describe('LoginPage — rejected wallet proof (RD-1242)', () => {
     );
   }, 15000);
 
+  // RD-1251: the deployment is missing a setting — not the user's fault, and
+  // not fixable by retrying. The generic copy sent operators hunting a bad
+  // proof instead of a missing config value.
+  it('explains an unsupported wallet network instead of a generic failure', async () => {
+    setSessionFailed('network_not_supported');
+    renderLoginPage();
+
+    await waitFor(
+      () => {
+        expect(screen.getByTestId('auth-error')).toBeInTheDocument();
+      },
+      { timeout: 5000 }
+    );
+
+    expect(screen.getByText(/identity network/i)).toBeInTheDocument();
+    expect(
+      screen.queryByText(/^Authentication failed\. Generate a new QR code/i)
+    ).not.toBeInTheDocument();
+  });
+
   it('routes a missing humanity credential to its own step, not a generic error', async () => {
     setSessionFailed('humanity_required');
     renderLoginPage();

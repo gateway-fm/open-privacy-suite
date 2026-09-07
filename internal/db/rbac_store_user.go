@@ -8,8 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lib/pq"
-
 	"privacy-proxy/internal/rbac"
 )
 
@@ -149,7 +147,7 @@ func buildUserFilterClauses(filter UserFilter) (from string, where string, args 
 		conditions = append(conditions, fmt.Sprintf(`EXISTS (
 		    SELECT 1 FROM user_memberships m_grp
 		    WHERE m_grp.user_id = u.id AND m_grp.group_id = ANY($%d))`, argNum))
-		args = append(args, pq.Array(filter.GroupIDs))
+		args = append(args, filter.GroupIDs)
 		argNum++
 	}
 
@@ -161,7 +159,7 @@ func buildUserFilterClauses(filter UserFilter) (from string, where string, args 
 		    SELECT 1 FROM user_memberships m_scope
 		    JOIN groups g_scope ON m_scope.group_id = g_scope.id
 		    WHERE m_scope.user_id = u.id AND g_scope.org_id = ANY($%d))`, argNum))
-		args = append(args, pq.Array(filter.ScopedOrgIDs))
+		args = append(args, filter.ScopedOrgIDs)
 		argNum++
 	}
 
@@ -193,7 +191,7 @@ func roleOrgAdminClause(scopedOrgIDs []string, args *[]any, argNum *int) string 
 	scope := ""
 	if scopedOrgIDs != nil {
 		scope = fmt.Sprintf(" AND g_role.org_id = ANY($%d)", *argNum)
-		*args = append(*args, pq.Array(scopedOrgIDs))
+		*args = append(*args, scopedOrgIDs)
 		*argNum++
 	}
 	return fmt.Sprintf(`EXISTS (
@@ -209,7 +207,7 @@ func roleAdminClause(scopedOrgIDs []string, args *[]any, argNum *int) string {
 	scope := ""
 	if scopedOrgIDs != nil {
 		scope = fmt.Sprintf(" AND g_adm.org_id = ANY($%d)", *argNum)
-		*args = append(*args, pq.Array(scopedOrgIDs))
+		*args = append(*args, scopedOrgIDs)
 		*argNum++
 	}
 	return fmt.Sprintf(`EXISTS (
@@ -341,11 +339,11 @@ func (d *DB) ListGroupMembershipsForUsers(ctx context.Context, userIDs []string,
 	          FROM user_memberships m
 	          JOIN groups g ON m.group_id = g.id
 	          WHERE m.user_id = ANY($1)`
-	args := []any{pq.Array(userIDs)}
+	args := []any{userIDs}
 
 	if scopedOrgIDs != nil {
 		query += ` AND g.org_id = ANY($2)`
-		args = append(args, pq.Array(scopedOrgIDs))
+		args = append(args, scopedOrgIDs)
 	}
 
 	query += ` ORDER BY g.name ASC`

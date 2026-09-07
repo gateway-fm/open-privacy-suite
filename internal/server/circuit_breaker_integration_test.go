@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"privacy-proxy/internal/proxy"
+	"privacy-proxy/internal/server/middleware"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -33,10 +34,7 @@ func TestCircuitBreaker_Integration_Upstream429(t *testing.T) {
 	}))
 	defer mockRPC.Close()
 
-	cb := &CircuitBreaker{
-		tripped:  make(map[string]time.Time),
-		cooldown: 100 * time.Millisecond,
-	}
+	cb := middleware.NewCircuitBreakerWithCooldown(100 * time.Millisecond)
 	proxyClient := proxy.New(mockRPC.URL)
 	apiKey := "test-api-key-123"
 	body := []byte(`{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}`)
@@ -70,7 +68,7 @@ func TestCircuitBreaker_Integration_Upstream429(t *testing.T) {
 // TestCircuitBreaker_Integration_PerAPIKeyIsolation verifies tripping one key
 // does not affect another.
 func TestCircuitBreaker_Integration_PerAPIKeyIsolation(t *testing.T) {
-	cb := NewCircuitBreaker()
+	cb := middleware.NewCircuitBreaker()
 	cb.Trip("key-a")
 	assert.True(t, cb.IsOpen("key-a"))
 	assert.False(t, cb.IsOpen("key-b"), "key-b unaffected by key-a trip")
@@ -115,11 +113,8 @@ func TestCircuitBreaker_Integration_FullProcessorFlow(t *testing.T) {
 	}))
 	defer mockRPC.Close()
 
-	cb := &CircuitBreaker{
-		tripped:  make(map[string]time.Time),
-		cooldown: 50 * time.Millisecond,
-	}
-	cl := NewConcurrencyLimiter(10, 0)
+	cb := middleware.NewCircuitBreakerWithCooldown(50 * time.Millisecond)
+	cl := middleware.NewConcurrencyLimiter(10, 0)
 	proxyClient := proxy.New(mockRPC.URL)
 	apiKey := "group-a-key"
 	userID := "user-123"

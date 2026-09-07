@@ -30,6 +30,7 @@ import (
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
 	privacyredis "privacy-proxy/internal/redis"
+	"privacy-proxy/internal/server/middleware"
 	"privacy-proxy/internal/tracer"
 	"strconv"
 	"strings"
@@ -60,9 +61,6 @@ const (
 	SessionCleanupInterval   = 1 * time.Minute
 	ChallengeTTL             = 5 * time.Minute
 	ChallengeCleanupInterval = 1 * time.Minute
-
-	// Rate limiter cleanup interval
-	RateLimiterCleanupInterval = 10 * time.Second
 
 	// ENS resolution timeout
 	ENSResolutionTimeout = 30 * time.Second
@@ -553,7 +551,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		// Rate limiter is always in-memory: per-user RPC rate limiting was removed
 		// in PR #120 (moved to the upstream RPC proxy). The remaining rate limiter
 		// is only used for trace-endpoint throttling, which is single-instance safe.
-		rateLimiter = NewRateLimiter(RateLimiterCleanupInterval)
+		rateLimiter = middleware.NewRateLimiter(middleware.RateLimiterCleanupInterval)
 		oauthSessionStore = privacyredis.NewOAuthSessionStore(redisClient, OAuthSessionTTL, DefaultMaxOAuthSessions)
 		rbacCache := privacyredis.NewPermissionCache(redisClient, RBACCacheTTL)
 		rbacAccessCtrl = rbac.NewAccessControllerWithCache(database, RBACCacheTTL, rbacCache)
@@ -561,7 +559,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		slog.Info("using in-memory state stores")
 		sessionStore = auth.NewSessionStore(SessionTTL, SessionCleanupInterval)
 		challengeStore = NewChallengeStore(ChallengeTTL, ChallengeCleanupInterval)
-		rateLimiter = NewRateLimiter(RateLimiterCleanupInterval)
+		rateLimiter = middleware.NewRateLimiter(middleware.RateLimiterCleanupInterval)
 		oauthSessionStore = NewOAuthSessionStore(OAuthSessionTTL, OAuthCleanupInterval, DefaultMaxOAuthSessions)
 		rbacAccessCtrl = rbac.NewAccessController(database, RBACCacheTTL)
 	}
@@ -934,8 +932,8 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		RateLimiter:               rateLimiter,
 		Proxy:                     proxySvc,
 		AccessLogger:              auditDB,
-		CircuitBreaker:            NewCircuitBreaker(),
-		ConcurrencyLimiter:        NewConcurrencyLimiter(cfg.MaxConcurrentRequests, cfg.MaxConcurrentAnonymousRequests),
+		CircuitBreaker:            middleware.NewCircuitBreaker(),
+		ConcurrencyLimiter:        middleware.NewConcurrencyLimiter(cfg.MaxConcurrentRequests, cfg.MaxConcurrentAnonymousRequests),
 		DefaultRPCAPIKey:          cfg.RPCAPIKey,
 		RuntimeTracer:             runtimeTracer,
 		TraceValidator:            traceValidator,
@@ -1071,7 +1069,7 @@ func (s *Server) setupRouter() *gin.Engine {
 	router.Use(s.metrics.HTTPMiddleware())
 
 	// Correlation ID middleware (generates/propagates request IDs for audit trail)
-	router.Use(correlationIDMiddleware())
+	router.Use(middleware.CorrelationID())
 
 	// CORS middleware for frontend
 	router.Use(s.corsMiddleware())
@@ -1211,7 +1209,7 @@ func (s *Server) setupRouter() *gin.Engine {
 	{
 		// Admin endpoints - private network + token auth + org scoping
 		admin := apiV1.Group("/admin")
-		admin.Use(bodyLimitMiddleware(MaxRequestBodySize), s.localhostOnlyMiddleware(), adminAuth, orgScope)
+		admin.Use(middleware.BodyLimit(MaxRequestBodySize), s.localhostOnlyMiddleware(), adminAuth, orgScope)
 		{
 			admin.GET("/logs", s.getLogs)
 			admin.GET("/status", s.getStatus)
@@ -1387,7 +1385,7 @@ func (s *Server) handleJSONRPC(c *gin.Context) {
 		Params:           params,
 		Body:             body,
 		ClientIP:         c.ClientIP(),
-		CorrelationID:    getCorrelationID(c),
+		CorrelationID:    middleware.GetCorrelationID(c),
 		BypassPermsCache: impersonating,
 	}
 	result := s.jsonrpcProcessor.Process(c.Request.Context(), procReq)
@@ -2205,7 +2203,7 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 				To:            compTo,
 				Data:          compData,
 				Value:         compValue,
-				CorrelationID: getCorrelationID(c),
+				CorrelationID: middleware.GetCorrelationID(c),
 			})
 			if compErr != nil {
 				slog.Error("admin test-request: compliance check failed", "method", input.Method, "error", compErr)
