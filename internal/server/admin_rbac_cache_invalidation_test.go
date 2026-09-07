@@ -110,8 +110,9 @@ func TestCacheInvalidation_MembershipToggle(t *testing.T) {
 		"resolver cache write should have landed before the invalidation test runs")
 
 	// Seed the DB cache synchronously so we can reliably observe invalidation.
-	// (The Eventually above guarantees the goroutine is done; this upsert
-	// gives us a stable row identity for the post-delete assertion.)
+	// (The assertion above confirms the resolver's own write is already in
+	// place; this upsert gives us a stable row identity for the post-delete
+	// assertion.)
 	seedDBCache(t, server, user.ID, org.ID)
 	dbCached, err := server.db.GetCachedPermissions(ctx, user.ID, org.ID)
 	require.NoError(t, err)

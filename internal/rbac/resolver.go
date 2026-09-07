@@ -30,11 +30,12 @@ type inFlightEntry struct {
 	done  chan struct{} // closed when computation is complete
 	perms *EffectivePermissions
 	err   error
-	// publishable carries the RD-1267 verdict to singleflight waiters. A
-	// waiter never ran the compute, so it cannot re-derive whether an
-	// invalidation raced it; it must inherit the computing goroutine's
-	// answer, or the waiter would copy discarded permissions into the
-	// upper cache that the computing goroutine correctly withheld.
+	// publishable carries the RD-1267 verdict to singleflight waiters: false
+	// means the computing goroutine could not confirm its result against the
+	// cache generation. That goroutine may still serve its own result, but a
+	// waiter never ran the compute, so it does not inherit the verdict — it
+	// recomputes rather than answer from state already known to be
+	// pre-mutation (RD-1276; see awaitEntry for the full reasoning).
 	publishable bool
 }
 
