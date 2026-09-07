@@ -17,6 +17,7 @@ import (
 	"privacy-proxy/internal/db"
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
+	"privacy-proxy/internal/server/middleware"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -295,7 +296,7 @@ func TestPolicyCheck_RejectsUnlinkedSender(t *testing.T) {
 
 func TestPolicyCheck_UsesConcurrencyLimit(t *testing.T) {
 	f := setupPCFixture(t)
-	limiter := NewConcurrencyLimiter(1, 1)
+	limiter := middleware.NewConcurrencyLimiter(1, 1)
 	require.True(t, limiter.TryAcquire(policyCheckLimiterKey))
 	defer limiter.Release(policyCheckLimiterKey)
 	f.srv.jsonrpcProcessor = &JSONRPCProcessor{concurrencyLimiter: limiter}
@@ -304,10 +305,8 @@ func TestPolicyCheck_UsesConcurrencyLimit(t *testing.T) {
 		"subject":   map[string]any{"did": f.userDID},
 		"operation": pcBalanceOfCallOp(f.contractAddr, f.userAddr),
 	})
-	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
-	resp := decodePolicyCheckResponse(t, w)
-	assert.False(t, resp.Allowed)
-	assert.Equal(t, ReasonConcurrencyLimited, resp.Reason)
+	// Concurrency exhaustion is operational unavailability, not a policy deny.
+	require.Equal(t, http.StatusTooManyRequests, w.Code, "body: %s", w.Body.String())
 }
 
 func TestPolicyCheck_UsesTraceRateLimit(t *testing.T) {
@@ -319,10 +318,8 @@ func TestPolicyCheck_UsesTraceRateLimit(t *testing.T) {
 	}
 
 	w := policyCheckPost(t, f.srv, "admin_token", body)
-	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
-	resp := decodePolicyCheckResponse(t, w)
-	assert.False(t, resp.Allowed)
-	assert.Equal(t, ReasonRateLimited, resp.Reason)
+	// A spent trace rate budget is operational unavailability, not a policy deny.
+	require.Equal(t, http.StatusTooManyRequests, w.Code, "body: %s", w.Body.String())
 }
 
 // policyCheckPostRaw posts a raw body, for cases a marshalled struct cannot
@@ -810,7 +807,6 @@ func TestPolicyCheck_WriteRunsCompliancePreview(t *testing.T) {
 
 func TestPolicyCheck_TraceUnavailableFailsClosed(t *testing.T) {
 	f := setupPCFixture(t)
-	ctx := context.Background()
 	node := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"jsonrpc": "2.0",
@@ -827,16 +823,8 @@ func TestPolicyCheck_TraceUnavailableFailsClosed(t *testing.T) {
 		"operation": pcBalanceOfCallOp(f.contractAddr, f.userAddr),
 	})
 
-	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
-	resp := decodePolicyCheckResponse(t, w)
-	assert.False(t, resp.Allowed)
-	assert.Equal(t, "upstream_error", resp.Reason)
-
-	var reason string
-	require.NoError(t, f.db.Conn().QueryRowContext(ctx, `
-		SELECT reason FROM policy_check_log
-		 WHERE subject_did = $1 ORDER BY created_at DESC LIMIT 1`, f.userDID).Scan(&reason))
-	assert.Equal(t, "upstream_error", reason)
+	// An upstream trace failure is operational unavailability: 503, never a deny.
+	require.Equal(t, http.StatusServiceUnavailable, w.Code, "body: %s", w.Body.String())
 }
 
 func TestPolicyCheck_TraceUsesResolvedUpstreamCredential(t *testing.T) {

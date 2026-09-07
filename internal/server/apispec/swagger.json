@@ -12109,7 +12109,7 @@
         },
         "/api/v1/admin/policy-check": {
             "post": {
-                "description": "Privacy-policy verdict for a trusted infrastructure caller. Subject is a DID or Ethereum address. Operation is a JSON-RPC method and params. EVM execution methods use debug_traceCall with the same upstream credential as live calls. Write methods also run a side-effect-free compliance preview. The endpoint does not submit the call or consume a travel-rule record. A supplied sender must link to the subject. Trace checks are limited to 100 RPS and 10000 per day. debug_traceCall and debug_traceTransaction are not supported. Requires the full X-Admin-Token credential. The operator token and JWT admin credentials are not accepted. Every evaluation is audited and fails closed.",
+                "description": "Privacy-policy verdict for a trusted infrastructure caller. Subject is a DID or Ethereum address. Operation is a JSON-RPC method and params. EVM execution methods use debug_traceCall with the same upstream credential as live calls. Write methods also run a side-effect-free compliance preview. The endpoint does not submit the call or consume a travel-rule record. A supplied sender must link to the subject. Trace checks share the per-caller concurrency and rate budget of live calls. debug_traceCall and debug_traceTransaction are not supported. Requires the full X-Admin-Token credential. The operator token and JWT admin credentials are not accepted. Every evaluation is audited and fails closed. Operational failures (upstream trace errors, concurrency or rate exhaustion) return 429 or 503, never a policy verdict.",
                 "requestBody": {
                     "content": {
                         "application/json": {
@@ -12171,6 +12171,16 @@
                         },
                         "description": "source address not on the private network, or the credential cannot read tenant policy"
                     },
+                    "429": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/internal_server.APIError"
+                                }
+                            }
+                        },
+                        "description": "concurrency or rate budget exhausted; operational, not a policy verdict"
+                    },
                     "500": {
                         "content": {
                             "application/json": {
@@ -12180,6 +12190,16 @@
                             }
                         },
                         "description": "internal error (includes audit-log write failure, response withheld)"
+                    },
+                    "503": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/internal_server.APIError"
+                                }
+                            }
+                        },
+                        "description": "policy simulation unavailable (upstream trace failure); operational, not a policy verdict"
                     }
                 },
                 "security": [

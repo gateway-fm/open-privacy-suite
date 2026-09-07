@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"privacy-proxy/internal/compliance"
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
+	"privacy-proxy/internal/server/middleware"
 	"privacy-proxy/internal/tracer"
 
 	gethcommon "github.com/ethereum/go-ethereum/common"
@@ -87,9 +89,15 @@ const policyCheckLimiterKey = "admin_policy_check"
 
 const policyCheckTraceTimeout = 5 * time.Second
 
-const (
-	policyCheckTraceRPSLimit   = 100
-	policyCheckTraceDailyLimit = 10000
+// errSimRateLimited and errSimConcurrencyLimited mark operational unavailability
+// (per-caller concurrency cap or trace rate budget), not a policy verdict. The
+// handler answers 429, never a deny.
+var (
+	errSimRateLimited        = errors.New("policy-check trace rate limit reached")
+	errSimConcurrencyLimited = errors.New("policy-check concurrency limit reached")
+	// errSimUpstreamUnavailable wraps any upstream/trace failure (node error,
+	// timeout, empty or malformed trace): a transient condition, answered 503.
+	errSimUpstreamUnavailable = errors.New("policy-check simulation upstream unavailable")
 )
 
 // sanitizePolicyCheckReason is the client-facing sanitizer: one of
@@ -151,7 +159,7 @@ func (s *Server) resolvePolicyCheckSubject(ctx context.Context, subj policyCheck
 // handlePolicyCheck handles POST /api/v1/admin/policy-check.
 //
 // @Summary      Check whether a subject would be allowed to make an RPC call
-// @Description  Privacy-policy verdict for a trusted infrastructure caller. Subject is a DID or Ethereum address. Operation is a JSON-RPC method and params. EVM execution methods use debug_traceCall with the same upstream credential as live calls. Write methods also run a side-effect-free compliance preview. The endpoint does not submit the call or consume a travel-rule record. A supplied sender must link to the subject. Trace checks are limited to 100 RPS and 10000 per day. debug_traceCall and debug_traceTransaction are not supported. Requires the full X-Admin-Token credential. The operator token and JWT admin credentials are not accepted. Every evaluation is audited and fails closed.
+// @Description  Privacy-policy verdict for a trusted infrastructure caller. Subject is a DID or Ethereum address. Operation is a JSON-RPC method and params. EVM execution methods use debug_traceCall with the same upstream credential as live calls. Write methods also run a side-effect-free compliance preview. The endpoint does not submit the call or consume a travel-rule record. A supplied sender must link to the subject. Trace checks share the per-caller concurrency and rate budget of live calls. debug_traceCall and debug_traceTransaction are not supported. Requires the full X-Admin-Token credential. The operator token and JWT admin credentials are not accepted. Every evaluation is audited and fails closed. Operational failures (upstream trace errors, concurrency or rate exhaustion) return 429 or 503, never a policy verdict.
 // @Tags         Admin: RBAC
 // @Accept       json
 // @Produce      json
@@ -160,7 +168,9 @@ func (s *Server) resolvePolicyCheckSubject(ctx context.Context, subj policyCheck
 // @Failure      400 {object} APIError "invalid body, missing operation.method, an invalid subject address, or subject has neither/both of did and address"
 // @Failure      401 {object} APIError "missing or invalid X-Admin-Token"
 // @Failure      403 {object} APIError "source address not on the private network, or the credential cannot read tenant policy"
+// @Failure      429 {object} APIError "concurrency or rate budget exhausted; operational, not a policy verdict"
 // @Failure      500 {object} APIError "internal error (includes audit-log write failure, response withheld)"
+// @Failure      503 {object} APIError "policy simulation unavailable (upstream trace failure); operational, not a policy verdict"
 // @Security     AdminToken
 // @Router       /api/v1/admin/policy-check [post]
 func (s *Server) handlePolicyCheck(c *gin.Context) {
@@ -210,7 +220,7 @@ func (s *Server) handlePolicyCheck(c *gin.Context) {
 	}
 	operation := req.Operation.rpcBlock()
 
-	correlationID := getCorrelationID(c)
+	correlationID := middleware.GetCorrelationID(c)
 	did, denyReason, err := s.resolvePolicyCheckSubject(ctx, req.Subject)
 	if err != nil {
 		if errors.Is(err, errPolicyCheckSubjectMalformed) {
@@ -278,10 +288,21 @@ func (s *Server) handlePolicyCheck(c *gin.Context) {
 		wireReason, auditReason, err = s.simulatePolicyCheck(ctx, did, operation, accessReq, result)
 		if err != nil {
 			// Caller-controlled operation shapes (malformed params) are a client
-			// error; only infrastructure failures are 500.
+			// error, not a denial and not an infrastructure failure.
 			var clientErr *simulationClientError
 			if errors.As(err, &clientErr) {
 				respondBadRequest(c, "invalid operation")
+				return
+			}
+			// Operational unavailability is not a policy verdict: answer 429/503
+			// so a caller cannot mistake a busy or degraded node for a deny.
+			switch {
+			case errors.Is(err, errSimRateLimited), errors.Is(err, errSimConcurrencyLimited):
+				respondTooManyRequests(c, "policy-check trace capacity exhausted; retry later")
+				return
+			case errors.Is(err, errSimUpstreamUnavailable):
+				slog.Warn("policy-check: simulation upstream unavailable", "subject_did", did, "method", operation.Method, "err", err)
+				respondServiceUnavailable(c, "policy simulation unavailable; retry later")
 				return
 			}
 			slog.Error("policy-check: simulation failed", "subject_did", did, "method", operation.Method, "err", err)
@@ -339,19 +360,22 @@ func (s *Server) simulatePolicyCheck(
 	if err != nil || perms == nil {
 		return "", "", errors.New("resolved policy permissions are unavailable")
 	}
-	var limiter *ConcurrencyLimiter
+	var limiter *middleware.ConcurrencyLimiter
 	if s.jsonrpcProcessor != nil {
 		limiter = s.jsonrpcProcessor.concurrencyLimiter
 	}
 	if limiter != nil && !limiter.TryAcquire(policyCheckLimiterKey) {
-		return ReasonConcurrencyLimited, ReasonConcurrencyLimited, nil
+		return "", "", errSimConcurrencyLimited
 	}
 	if limiter != nil {
 		defer limiter.Release(policyCheckLimiterKey)
 	}
+	// Reuse the operator-configured per-caller trace budget (nil limits fall
+	// back to the deployment defaults inside CheckAndIncrement). No
+	// policy-check-specific hardcoded quota.
 	if s.jsonrpcProcessor != nil && s.jsonrpcProcessor.rateLimiter != nil {
-		if allowed, _ := s.jsonrpcProcessor.rateLimiter.CheckAndIncrement(policyCheckLimiterKey, intPtr(policyCheckTraceRPSLimit), intPtr(policyCheckTraceDailyLimit)); !allowed {
-			return ReasonRateLimited, ReasonRateLimited, nil
+		if allowed, _ := s.jsonrpcProcessor.rateLimiter.CheckAndIncrement(policyCheckLimiterKey, nil, nil); !allowed {
+			return "", "", errSimRateLimited
 		}
 	}
 	traceCtx, cancel := context.WithTimeout(ctx, policyCheckTraceTimeout)
@@ -373,12 +397,16 @@ func (s *Server) simulatePolicyCheck(
 			if errors.As(traceErr, &clientErr) {
 				return "", "", traceErr
 			}
-			slog.Warn("policy-check: trace unavailable", "method", op.Method, "err", traceErr)
-			return "upstream_error", "upstream_error", nil
+			// Any other trace failure (node error, timeout, empty/malformed
+			// trace) is a transient upstream condition: surface 503, not a deny.
+			return "", "", fmt.Errorf("%w: %v", errSimUpstreamUnavailable, traceErr)
+		}
+		if traceResult == nil || traceResult.Parsed == nil {
+			return "", "", fmt.Errorf("%w: trace returned no result", errSimUpstreamUnavailable)
 		}
 		if validationErr := s.validatePolicyCheckTrace(ctx, user, perms, accessResult.OrgID, accessReq.TargetAddress, traceResult.Parsed); validationErr != nil {
 			if validationErr.StatusCode >= http.StatusInternalServerError {
-				return "", "", errors.New("policy trace validation is unavailable")
+				return "", "", fmt.Errorf("%w: trace validation unavailable", errSimUpstreamUnavailable)
 			}
 			wireReason = sanitizePolicyCheckReason(validationErr.Message)
 			auditReason = sanitizeDryRunReason(validationErr.Message)
@@ -468,8 +496,6 @@ func (s *Server) validatePolicyCheckTrace(
 	}
 	return s.validateTraceWithOrgIDs(ctx, user, perms, orgID, targetAddr, traceResult, userOrgIDs, userHasDeploy)
 }
-
-func intPtr(value int) *int { return &value }
 
 func policyCheckUnsupportedTraceMethod(method string) bool {
 	switch rbac.ResolveMethodAlias(method) {
