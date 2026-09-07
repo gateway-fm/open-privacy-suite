@@ -522,7 +522,7 @@ func (d *DB) ListUserMembershipsWithDetails(ctx context.Context, userID string) 
 // NULL = never expires; the DB session runs in UTC).
 func (d *DB) ListActiveUserMembershipsWithDetails(ctx context.Context, userID string) ([]*rbac.MembershipWithDetails, error) {
 	query := `SELECT m.id, m.user_id, m.group_id, m.source, m.zk_credential_ref, m.expires_at, m.created_at, m.updated_at,
-	                 g.id, g.org_id, g.parent_id, g.slug, g.name, g.description, g.depth, g.path, g.is_org_admin, g.created_at, g.updated_at
+	                 ` + prefixColumns("g", groupColumns) + `
 	          FROM user_memberships m
 	          JOIN groups g ON m.group_id = g.id
 	          WHERE m.user_id = $1
