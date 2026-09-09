@@ -50,7 +50,7 @@
     "axios": "^1.18.0",
     "uuid": "^14.0.0",
     "follow-redirects": "^1.16.0",
-    "zod@<4.4.0": "4.4.0"
+    "zod@<4.5.0": "4.5.4"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.0.0",
