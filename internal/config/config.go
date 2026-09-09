@@ -972,7 +972,7 @@ func (c *Config) Validate() error {
 	// Validate SIEM webhook URL against SSRF if configured.
 	if c.SIEMWebhookURL != "" {
 		if err := netguard.ValidateWebhookURL(c.SIEMWebhookURL); err != nil {
-			return err
+			return fmt.Errorf("SIEM_WEBHOOK_URL: %w", err)
 		}
 	}
 

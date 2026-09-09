@@ -6,9 +6,17 @@
 // what lets internal/config validate webhook URLs without transitively
 // depending on the audit and persistence layers (RD-1255; enforced by
 // internal/archtest).
+//
+// Errors returned here are BARE REASONS ("must use https in production, got
+// \"http\"") and deliberately name no configuration setting: this package is
+// shared by three callers, so naming one of them produced messages like
+// "AUDIT_TAMPER_WEBHOOK_URL: SIEM_WEBHOOK_URL must use https" (RD-1277). The
+// caller owns the identifier and prefixes it — internal/config names the env
+// var, internal/audit names the destination.
 package netguard
 
 import (
+	"errors"
 	"fmt"
 	"net/netip"
 	"net/url"
@@ -128,7 +136,7 @@ func ValidateWebhookURL(rawURL string) error {
 func ValidateWebhookURLForEnv(rawURL string, allowInsecure bool) error {
 	u, err := url.Parse(rawURL)
 	if err != nil {
-		return fmt.Errorf("invalid SIEM webhook URL: %w", err)
+		return fmt.Errorf("invalid webhook URL: %w", err)
 	}
 
 	switch u.Scheme {
@@ -136,17 +144,17 @@ func ValidateWebhookURLForEnv(rawURL string, allowInsecure bool) error {
 		// Always allowed; fall through to the host check below.
 	case "http":
 		if !allowInsecure {
-			return fmt.Errorf("SIEM_WEBHOOK_URL must use https in production, got %q", u.Scheme)
+			return fmt.Errorf("must use https in production, got %q", u.Scheme)
 		}
 		// Allow HTTP only when the destination is loopback or a private
 		// network. Cleartext POST to a public host is still rejected so a
 		// misconfigured dev box can't leak audit data to the internet.
 		if err := requireLoopbackOrPrivate(u.Hostname()); err != nil {
-			return fmt.Errorf("SIEM_WEBHOOK_URL: %w", err)
+			return err
 		}
 		return nil
 	default:
-		return fmt.Errorf("SIEM_WEBHOOK_URL scheme must be http or https, got %q", u.Scheme)
+		return fmt.Errorf("scheme must be http or https, got %q", u.Scheme)
 	}
 
 	host := normalizeHost(u.Hostname())
@@ -154,13 +162,13 @@ func ValidateWebhookURLForEnv(rawURL string, allowInsecure bool) error {
 	// A URL without a host ("https:///path", "https://:8080/") classifies
 	// as nothing below — require one.
 	if host == "" {
-		return fmt.Errorf("SIEM_WEBHOOK_URL must include a host")
+		return errors.New("must include a host")
 	}
 
 	// localhost by name — any case, optionally root-qualified, including
 	// RFC 6761 *.localhost subdomains — aliases loopback; block it.
 	if isLocalhostName(host) {
-		return fmt.Errorf("SIEM_WEBHOOK_URL must not target a loopback address")
+		return errors.New("must not target a loopback address")
 	}
 
 	// If the host is an IP literal, run the same range checks the dial-time
@@ -168,13 +176,13 @@ func ValidateWebhookURLForEnv(rawURL string, allowInsecure bool) error {
 	// rule set, so the two halves cannot drift apart).
 	if ip, ok := parseIPHost(host); ok {
 		if err := CheckResolvedAddr(ip); err != nil {
-			return fmt.Errorf("SIEM_WEBHOOK_URL: %w", err)
+			return err
 		}
 	} else if strings.ContainsAny(host, ":%") {
 		// Looks like an IP literal (hostnames contain neither ':' nor '%')
 		// but does not parse — fail closed rather than treat it as a
 		// hostname and skip the range checks.
-		return fmt.Errorf("SIEM_WEBHOOK_URL host %q is not a valid IP literal", host)
+		return fmt.Errorf("host %q is not a valid IP literal", host)
 	}
 
 	return nil

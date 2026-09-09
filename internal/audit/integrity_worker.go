@@ -231,7 +231,7 @@ func newWebhookNotifierForEnv(rawURL string, allowPrivate bool) (*WebhookNotifie
 		return nil, nil
 	}
 	if err := netguard.ValidateWebhookURLForEnv(rawURL, allowPrivate); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("audit tamper webhook url: %w", err)
 	}
 	if _, err := url.Parse(rawURL); err != nil {
 		return nil, err
