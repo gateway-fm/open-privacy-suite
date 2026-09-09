@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/disclosure"
 	"privacy-proxy/internal/explorer"
@@ -146,7 +147,7 @@ func TestGrantVisibilityMatrix(t *testing.T) {
 			router.ServeHTTP(w, req)
 
 			require.Equal(t, http.StatusOK, w.Code)
-			var resp ResolveAddressResponse
+			var resp apimodels.ResolveAddressResponse
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 
 			assert.Equal(t, "full", resp.DisclosureLevel)
@@ -167,7 +168,7 @@ func TestGrantVisibilityMatrix(t *testing.T) {
 			router.ServeHTTP(w, req)
 
 			require.Equal(t, http.StatusOK, w.Code)
-			var resp GrantTransactionsResponse
+			var resp apimodels.GrantTransactionsResponse
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 			assert.Equal(t, "full", resp.DisclosureLevel)
 			// Full level shows real addresses
@@ -185,7 +186,7 @@ func TestGrantVisibilityMatrix(t *testing.T) {
 			router.ServeHTTP(w, req)
 
 			require.Equal(t, http.StatusOK, w.Code)
-			var resp GrantActivityLogsResponse
+			var resp apimodels.GrantActivityLogsResponse
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 			assert.GreaterOrEqual(t, resp.Total, 3,
 				"activity_logs scope should allow fetching logs")
@@ -211,7 +212,7 @@ func TestGrantVisibilityMatrix(t *testing.T) {
 			router.ServeHTTP(w, req)
 
 			require.Equal(t, http.StatusOK, w.Code)
-			var resp ResolveAddressResponse
+			var resp apimodels.ResolveAddressResponse
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 
 			assert.Equal(t, "redacted", resp.DisclosureLevel)
@@ -231,7 +232,7 @@ func TestGrantVisibilityMatrix(t *testing.T) {
 			router.ServeHTTP(w, req)
 
 			require.Equal(t, http.StatusOK, w.Code)
-			var resp GrantTransactionsResponse
+			var resp apimodels.GrantTransactionsResponse
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 			assert.Equal(t, "redacted", resp.DisclosureLevel)
 			// No tx seeding here — body is empty by chance, not by short-circuit.
@@ -250,7 +251,7 @@ func TestGrantVisibilityMatrix(t *testing.T) {
 			router.ServeHTTP(w, req)
 
 			require.Equal(t, http.StatusOK, w.Code)
-			var resp GrantActivityLogsResponse
+			var resp apimodels.GrantActivityLogsResponse
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 			assert.GreaterOrEqual(t, resp.Total, 2,
 				"full_disclosure scope should allow fetching activity logs")
@@ -280,7 +281,7 @@ func TestGrantVisibilityMatrix(t *testing.T) {
 			router.ServeHTTP(w, req)
 
 			require.Equal(t, http.StatusOK, w.Code)
-			var resp ResolveAddressResponse
+			var resp apimodels.ResolveAddressResponse
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 
 			assert.Equal(t, "full", resp.DisclosureLevel)
@@ -298,7 +299,7 @@ func TestGrantVisibilityMatrix(t *testing.T) {
 			router.ServeHTTP(w, req)
 
 			require.Equal(t, http.StatusOK, w.Code)
-			var resp GrantTransactionsResponse
+			var resp apimodels.GrantTransactionsResponse
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 
 			assert.Equal(t, "full", resp.DisclosureLevel)
@@ -322,7 +323,7 @@ func TestGrantVisibilityMatrix(t *testing.T) {
 			router.ServeHTTP(w, req)
 
 			require.Equal(t, http.StatusOK, w.Code)
-			var resp GrantActivityLogsResponse
+			var resp apimodels.GrantActivityLogsResponse
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 			assert.GreaterOrEqual(t, resp.Total, 2)
 		})
@@ -351,7 +352,7 @@ func TestGrantVisibilityMatrix(t *testing.T) {
 			router.ServeHTTP(w, req)
 
 			require.Equal(t, http.StatusOK, w.Code)
-			var resp ResolveAddressResponse
+			var resp apimodels.ResolveAddressResponse
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 
 			assert.Equal(t, "full", resp.DisclosureLevel)
@@ -367,7 +368,7 @@ func TestGrantVisibilityMatrix(t *testing.T) {
 			router.ServeHTTP(w, req)
 
 			require.Equal(t, http.StatusOK, w.Code)
-			var resp GrantTransactionsResponse
+			var resp apimodels.GrantTransactionsResponse
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 			assert.Equal(t, "full", resp.DisclosureLevel)
 			assert.NotEmpty(t, resp.Transactions)
@@ -407,7 +408,7 @@ func TestGrantVisibilityMatrix(t *testing.T) {
 			router.ServeHTTP(w, req)
 
 			require.Equal(t, http.StatusOK, w.Code)
-			var resp ResolveAddressResponse
+			var resp apimodels.ResolveAddressResponse
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 
 			assert.Equal(t, "pseudonymous", resp.DisclosureLevel)
@@ -428,7 +429,7 @@ func TestGrantVisibilityMatrix(t *testing.T) {
 			router.ServeHTTP(w, req)
 
 			require.Equal(t, http.StatusOK, w.Code)
-			var resp GrantTransactionsResponse
+			var resp apimodels.GrantTransactionsResponse
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 
 			assert.Equal(t, "pseudonymous", resp.DisclosureLevel)
@@ -488,7 +489,7 @@ func TestGrantVisibilityMatrix(t *testing.T) {
 
 			require.Equal(t, http.StatusOK, w.Code,
 				"resolve must succeed even if address has no explorer stats")
-			var resp ResolveAddressResponse
+			var resp apimodels.ResolveAddressResponse
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 			assert.Equal(t, "full", resp.DisclosureLevel)
 			require.NotNil(t, resp.RealAddress)
@@ -504,7 +505,7 @@ func TestGrantVisibilityMatrix(t *testing.T) {
 
 			require.Equal(t, http.StatusOK, w.Code,
 				"grant transactions for EOA with no history must return 200, not 500")
-			var resp GrantTransactionsResponse
+			var resp apimodels.GrantTransactionsResponse
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 			assert.Empty(t, resp.Transactions)
 			assert.Empty(t, resp.NextCursor, "exhausted feed omits next_cursor (RD-1149, token-only)")
@@ -578,7 +579,7 @@ func TestGrantVisibilityMatrix(t *testing.T) {
 		router.ServeHTTP(w, req)
 
 		require.Equal(t, http.StatusOK, w.Code)
-		var resp ResolveAddressResponse
+		var resp apimodels.ResolveAddressResponse
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 
 		assert.Equal(t, "full", resp.DisclosureLevel)

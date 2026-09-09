@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/rbac"
 )
@@ -61,22 +62,6 @@ func (s *Server) registerSharedInfraRoutes(api *gin.RouterGroup) {
 	api.PUT("/shared-infrastructure/:address", s.updateSharedInfrastructure)
 	api.DELETE("/shared-infrastructure/:address", s.deleteSharedInfrastructure)
 	api.POST("/shared-infrastructure/:address/refresh-codehash", s.refreshSharedInfraCodehash)
-}
-
-// sharedInfraInput is the request body for create and update. Address
-// on create comes from the body; on update it comes from the path and
-// the body field is ignored.
-type sharedInfraInput struct {
-	Address     string  `json:"address"`
-	Name        string  `json:"name" binding:"required"`
-	Description string  `json:"description"`
-	// Codehash is optional. Empty / omitted = no codehash pin
-	// (legacy behaviour: trust by address alone). When supplied it
-	// must be a 0x-prefixed lowercase 32-byte hex string. The
-	// recommended workflow is to omit on create and use the
-	// /refresh-codehash endpoint immediately after, which computes
-	// it server-side from the current bytecode.
-	Codehash    string  `json:"codehash"`
 }
 
 // validateSharedInfraInput checks the input shape before any DB
@@ -132,10 +117,10 @@ func isValidHash32(h string) bool {
 // @Description  Lists the global shared-infrastructure contracts the cross-org trace validator skips (public routers, factories, resolvers). Super-admin token only — the list reveals the operator's trust topology, so org admins cannot read it.
 // @Tags         Admin: shared infrastructure
 // @Produce      json
-// @Success      200 {object} sharedInfraListResponse
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "super-admin token required"
-// @Failure      500 {object} APIError
+// @Success      200 {object} apimodels.SharedInfraListResponse
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "super-admin token required"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/shared-infrastructure [get]
 func (s *Server) listSharedInfrastructure(c *gin.Context) {
@@ -163,11 +148,11 @@ func (s *Server) listSharedInfrastructure(c *gin.Context) {
 // @Produce      json
 // @Param        address path string true "Contract address (0x-prefixed hex)"
 // @Success      200 {object} rbac.SharedInfrastructure
-// @Failure      400 {object} APIError "invalid address"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "super-admin token required"
-// @Failure      404 {object} APIError "not found"
-// @Failure      500 {object} APIError
+// @Failure      400 {object} apimodels.APIError "invalid address"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "super-admin token required"
+// @Failure      404 {object} apimodels.APIError "not found"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/shared-infrastructure/{address} [get]
 func (s *Server) getSharedInfrastructure(c *gin.Context) {
@@ -199,20 +184,20 @@ func (s *Server) getSharedInfrastructure(c *gin.Context) {
 // @Tags         Admin: shared infrastructure
 // @Accept       json
 // @Produce      json
-// @Param        request body sharedInfraInput true "shared-infrastructure entry to create"
+// @Param        request body apimodels.SharedInfraInput true "shared-infrastructure entry to create"
 // @Success      201 {object} rbac.SharedInfrastructure
-// @Failure      400 {object} APIError "invalid body, invalid address, invalid codehash, or missing name"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "super-admin token required"
-// @Failure      409 {object} APIError "address already registered; use PUT to update"
-// @Failure      500 {object} APIError
+// @Failure      400 {object} apimodels.APIError "invalid body, invalid address, invalid codehash, or missing name"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "super-admin token required"
+// @Failure      409 {object} apimodels.APIError "address already registered; use PUT to update"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/shared-infrastructure [post]
 func (s *Server) createSharedInfrastructure(c *gin.Context) {
 	if !requireSuperAdmin(c) {
 		return
 	}
-	var input sharedInfraInput
+	var input apimodels.SharedInfraInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 		return
@@ -293,13 +278,13 @@ func (s *Server) createSharedInfrastructure(c *gin.Context) {
 // @Accept       json
 // @Produce      json
 // @Param        address path string true "Contract address (0x-prefixed hex)"
-// @Param        request body sharedInfraInput true "updated fields (address field ignored)"
+// @Param        request body apimodels.SharedInfraInput true "updated fields (address field ignored)"
 // @Success      200 {object} rbac.SharedInfrastructure
-// @Failure      400 {object} APIError "invalid address, invalid body, invalid codehash, or missing name"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "super-admin token required"
-// @Failure      404 {object} APIError "not found"
-// @Failure      500 {object} APIError
+// @Failure      400 {object} apimodels.APIError "invalid address, invalid body, invalid codehash, or missing name"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "super-admin token required"
+// @Failure      404 {object} apimodels.APIError "not found"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/shared-infrastructure/{address} [put]
 func (s *Server) updateSharedInfrastructure(c *gin.Context) {
@@ -312,7 +297,7 @@ func (s *Server) updateSharedInfrastructure(c *gin.Context) {
 		return
 	}
 
-	var input sharedInfraInput
+	var input apimodels.SharedInfraInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 		return
@@ -386,12 +371,12 @@ func (s *Server) updateSharedInfrastructure(c *gin.Context) {
 // @Tags         Admin: shared infrastructure
 // @Produce      json
 // @Param        address path string true "Contract address (0x-prefixed hex)"
-// @Success      200 {object} APIMessage "shared_infrastructure entry deleted"
-// @Failure      400 {object} APIError "invalid address"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "super-admin token required"
-// @Failure      404 {object} APIError "not found"
-// @Failure      500 {object} APIError
+// @Success      200 {object} apimodels.APIMessage "shared_infrastructure entry deleted"
+// @Failure      400 {object} apimodels.APIError "invalid address"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "super-admin token required"
+// @Failure      404 {object} apimodels.APIError "not found"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/shared-infrastructure/{address} [delete]
 func (s *Server) deleteSharedInfrastructure(c *gin.Context) {
@@ -458,13 +443,13 @@ func (s *Server) deleteSharedInfrastructure(c *gin.Context) {
 // @Produce      json
 // @Param        address path string true "Contract address (0x-prefixed hex)"
 // @Success      200 {object} rbac.SharedInfrastructure
-// @Failure      400 {object} APIError "invalid address"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "super-admin token required"
-// @Failure      404 {object} APIError "not found"
-// @Failure      502 {object} APIError "upstream node failed or returned an invalid bytecode hash"
-// @Failure      503 {object} APIError "runtime tracer not configured"
-// @Failure      500 {object} APIError
+// @Failure      400 {object} apimodels.APIError "invalid address"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "super-admin token required"
+// @Failure      404 {object} apimodels.APIError "not found"
+// @Failure      502 {object} apimodels.APIError "upstream node failed or returned an invalid bytecode hash"
+// @Failure      503 {object} apimodels.APIError "runtime tracer not configured"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/shared-infrastructure/{address}/refresh-codehash [post]
 func (s *Server) refreshSharedInfraCodehash(c *gin.Context) {

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/explorer"
 
 	"github.com/gin-gonic/gin"
@@ -144,7 +145,7 @@ func TestImpersonation_DisclosureCounterparty_NoAdminBleed_RD1079(t *testing.T) 
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 		require.Equal(t, http.StatusOK, w.Code, "transfers endpoint should return 200")
-		var resp AddressTransfersResponse
+		var resp apimodels.AddressTransfersResponse
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 		return resp.Transfers
 	}

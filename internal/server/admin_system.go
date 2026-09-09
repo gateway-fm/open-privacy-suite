@@ -7,17 +7,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/audit"
 	"privacy-proxy/internal/rbac"
 	"privacy-proxy/internal/version"
 )
-
-// systemVersionResponse is the GET /api/v1/admin/system/version shape.
-type systemVersionResponse struct {
-	Version   string `json:"version"`
-	Commit    string `json:"commit"`
-	BuildTime string `json:"build_time"`
-}
 
 // handleGetVersion returns the build identity (version / commit / build time)
 // of the running binary. Admin-gated via the /api/v1/admin/system group
@@ -35,13 +29,13 @@ type systemVersionResponse struct {
 // @Description  Build identity (version, commit, build time) of the running binary. Read-only; any admin token. Deliberately not exposed on /health or web3_clientVersion.
 // @Tags         Admin: system
 // @Produce      json
-// @Success      200 {object} systemVersionResponse
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "source address not on the private network"
+// @Success      200 {object} apimodels.SystemVersionResponse
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network"
 // @Security     AdminToken
 // @Router       /api/v1/admin/system/version [get]
 func (s *Server) handleGetVersion(c *gin.Context) {
-	c.JSON(http.StatusOK, systemVersionResponse{
+	c.JSON(http.StatusOK, apimodels.SystemVersionResponse{
 		Version:   version.Version,
 		Commit:    version.Commit,
 		BuildTime: version.BuildTime,
@@ -75,25 +69,8 @@ func (s *Server) handleGetVersion(c *gin.Context) {
 // no exploit value: tracing is the protective layer, enabling it does
 // not weaken anything else.
 
-// systemToggleRequest is the request body for the system on/off toggle POSTs
-// (eth_call tracing, intra-org grant scoping). Shared shape.
-type systemToggleRequest struct {
-	Enabled *bool  `json:"enabled" binding:"required"` // pointer so we distinguish "false" from "omitted"
-	Reason  string `json:"reason"`
-}
-
-// systemToggleResponse is the GET / POST response shape for a system toggle.
-type systemToggleResponse struct {
-	Enabled    bool   `json:"enabled"`
-	EnvDefault bool   `json:"env_default"`
-	Source     string `json:"source"` // "env" | "runtime_override"
-	ChangedAt  string `json:"changed_at,omitempty"`
-	ChangedBy  string `json:"changed_by,omitempty"`
-	Reason     string `json:"reason,omitempty"`
-}
-
-func snapshotToResponse(s runtimeToggleState) systemToggleResponse {
-	resp := systemToggleResponse{
+func snapshotToResponse(s runtimeToggleState) apimodels.SystemToggleResponse {
+	resp := apimodels.SystemToggleResponse{
 		Enabled:    s.Enabled,
 		EnvDefault: s.EnvDefault,
 		Source:     s.Source,
@@ -115,10 +92,10 @@ func snapshotToResponse(s runtimeToggleState) systemToggleResponse {
 // @Description  Current effective state of the eth_call cross-org tracing control, plus its env default and change metadata. Read-only; any admin the middleware admits.
 // @Tags         Admin: system
 // @Produce      json
-// @Success      200 {object} systemToggleResponse
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "source address not on the private network"
-// @Failure      503 {object} APIError "request processor not initialised"
+// @Success      200 {object} apimodels.SystemToggleResponse
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network"
+// @Failure      503 {object} apimodels.APIError "request processor not initialised"
 // @Security     AdminToken
 // @Router       /api/v1/admin/system/eth-call-tracing [get]
 func (s *Server) handleGetEthCallTracing(c *gin.Context) {
@@ -140,12 +117,12 @@ func (s *Server) handleGetEthCallTracing(c *gin.Context) {
 // @Tags         Admin: system
 // @Accept       json
 // @Produce      json
-// @Param        request body systemToggleRequest true "enabled flag and audit reason"
-// @Success      200 {object} systemToggleResponse
-// @Failure      400 {object} APIError "missing enabled flag, missing reason, or reason too long"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "not a super-admin token, or source address not on the private network"
-// @Failure      503 {object} APIError "request processor not initialised"
+// @Param        request body apimodels.SystemToggleRequest true "enabled flag and audit reason"
+// @Success      200 {object} apimodels.SystemToggleResponse
+// @Failure      400 {object} apimodels.APIError "missing enabled flag, missing reason, or reason too long"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "not a super-admin token, or source address not on the private network"
+// @Failure      503 {object} apimodels.APIError "request processor not initialised"
 // @Security     AdminToken
 // @Router       /api/v1/admin/system/eth-call-tracing [post]
 func (s *Server) handlePostEthCallTracing(c *gin.Context) {
@@ -163,7 +140,7 @@ func (s *Server) handlePostEthCallTracing(c *gin.Context) {
 		return
 	}
 
-	var req systemToggleRequest
+	var req apimodels.SystemToggleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		respondBadRequestAndLog(c, "invalid request body",
 			"admin_system: invalid eth-call-tracing toggle body", "err", err)
@@ -245,10 +222,10 @@ func (s *Server) handlePostEthCallTracing(c *gin.Context) {
 // @Description  Current effective state of the RD-1053 intra-org contract-grant scoping control, plus its env default and change metadata. Read-only; any admin the middleware admits.
 // @Tags         Admin: system
 // @Produce      json
-// @Success      200 {object} systemToggleResponse
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "source address not on the private network"
-// @Failure      503 {object} APIError "request processor not initialised"
+// @Success      200 {object} apimodels.SystemToggleResponse
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network"
+// @Failure      503 {object} apimodels.APIError "request processor not initialised"
 // @Security     AdminToken
 // @Router       /api/v1/admin/system/intra-org-grant-tracing [get]
 func (s *Server) handleGetIntraOrgGrantTracing(c *gin.Context) {
@@ -274,12 +251,12 @@ func (s *Server) handleGetIntraOrgGrantTracing(c *gin.Context) {
 // @Tags         Admin: system
 // @Accept       json
 // @Produce      json
-// @Param        request body systemToggleRequest true "enabled flag and audit reason"
-// @Success      200 {object} systemToggleResponse
-// @Failure      400 {object} APIError "missing enabled flag, missing reason, or reason too long"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "not a super-admin token, or source address not on the private network"
-// @Failure      503 {object} APIError "request processor not initialised"
+// @Param        request body apimodels.SystemToggleRequest true "enabled flag and audit reason"
+// @Success      200 {object} apimodels.SystemToggleResponse
+// @Failure      400 {object} apimodels.APIError "missing enabled flag, missing reason, or reason too long"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "not a super-admin token, or source address not on the private network"
+// @Failure      503 {object} apimodels.APIError "request processor not initialised"
 // @Security     AdminToken
 // @Router       /api/v1/admin/system/intra-org-grant-tracing [post]
 func (s *Server) handlePostIntraOrgGrantTracing(c *gin.Context) {
@@ -294,7 +271,7 @@ func (s *Server) handlePostIntraOrgGrantTracing(c *gin.Context) {
 		return
 	}
 
-	var req systemToggleRequest
+	var req apimodels.SystemToggleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		respondBadRequestAndLog(c, "invalid request body",
 			"admin_system: invalid intra-org-grant-tracing toggle body", "err", err)

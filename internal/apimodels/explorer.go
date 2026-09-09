@@ -1,4 +1,4 @@
-package server
+package apimodels
 
 // Spec-only response models for the explorer API (RD-1166).
 //

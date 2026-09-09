@@ -30,8 +30,10 @@ var nullableProperties = map[string][]string{
 	"privacy-proxy_internal_rbac.ContractGrant": {"functions"},
 	// Request models: an explicit null is how a client asks for "all
 	// functions" (create) or clears the rules back to "all" (update).
-	"internal_server.contractGrantCreateRequest": {"functions"},
-	"internal_server.contractGrantUpdateRequest": {"functions"},
+	// Keys carry the apimodels prefix since RD-1265 moved the transport
+	// models there; the schema name follows the declaring package.
+	"privacy-proxy_internal_apimodels.ContractGrantCreateRequest": {"functions"},
+	"privacy-proxy_internal_apimodels.ContractGrantUpdateRequest": {"functions"},
 }
 
 func main() {

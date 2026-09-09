@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/disclosure"
 	"privacy-proxy/internal/explorer"
@@ -91,7 +92,7 @@ func TestGrantVisibility(t *testing.T) {
 			router.ServeHTTP(w, req)
 
 			require.Equal(t, http.StatusOK, w.Code)
-			var resp GrantTransactionsResponse
+			var resp apimodels.GrantTransactionsResponse
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 
 			assert.Equal(t, "pseudonymous", resp.DisclosureLevel)
@@ -118,7 +119,7 @@ func TestGrantVisibility(t *testing.T) {
 			router.ServeHTTP(w, req)
 
 			require.Equal(t, http.StatusOK, w.Code)
-			var resp GrantTransactionsResponse
+			var resp apimodels.GrantTransactionsResponse
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 
 			assert.Equal(t, "disclosed", resp.AddressLabels[disclosedPseudonym],
@@ -138,7 +139,7 @@ func TestGrantVisibility(t *testing.T) {
 			router.ServeHTTP(w, req)
 
 			require.Equal(t, http.StatusOK, w.Code)
-			var resp GrantTransactionsResponse
+			var resp apimodels.GrantTransactionsResponse
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 
 			expectedExternalPseudo := testExternalPseudonym(externalAddr, pseudoGrantID)
@@ -174,7 +175,7 @@ func TestGrantVisibility(t *testing.T) {
 			router.ServeHTTP(w, req)
 
 			require.Equal(t, http.StatusOK, w.Code)
-			var resp GrantTransactionsResponse
+			var resp apimodels.GrantTransactionsResponse
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 
 			assert.Equal(t, "full", resp.DisclosureLevel)
@@ -203,7 +204,7 @@ func TestGrantVisibility(t *testing.T) {
 			router.ServeHTTP(w, req)
 
 			require.Equal(t, http.StatusOK, w.Code)
-			var resp GrantTransactionsResponse
+			var resp apimodels.GrantTransactionsResponse
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 
 			assert.Equal(t, "redacted", resp.DisclosureLevel)

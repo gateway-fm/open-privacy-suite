@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/config"
 	"privacy-proxy/internal/db"
@@ -248,7 +249,7 @@ func TestExplorerAPI_GetViewableAddresses_UnknownWallet(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	var resp ViewableAddressesResponse
+	var resp apimodels.ViewableAddressesResponse
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
 	assert.Equal(t, testUnknownWallet, resp.ViewerWallet)
@@ -281,7 +282,7 @@ func TestGetViewableAddresses_WalletParamIsNotAnIdentityOracle(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	var resp ViewableAddressesResponse
+	var resp apimodels.ViewableAddressesResponse
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
 
@@ -313,7 +314,7 @@ func TestExplorerAPI_GetViewableAddresses_ReturnsOwnAddresses(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	var resp ViewableAddressesResponse
+	var resp apimodels.ViewableAddressesResponse
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
 	assert.Equal(t, testViewerWallet, resp.ViewerWallet)
@@ -354,7 +355,7 @@ func TestExplorerAPI_GetViewableAddresses_ReturnsDisclosedAddresses(t *testing.T
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	var resp ViewableAddressesResponse
+	var resp apimodels.ViewableAddressesResponse
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
 	assert.Equal(t, testViewerDID, resp.ViewerDID)
@@ -389,7 +390,7 @@ func TestExplorerAPI_GetViewableAddresses_WalletEchoIsLowercased(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	var resp ViewableAddressesResponse
+	var resp apimodels.ViewableAddressesResponse
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
 	assert.Equal(t, expectedLower, resp.ViewerWallet) // Echo normalized to lowercase
@@ -582,7 +583,7 @@ func TestExplorerAPI_GetViewableAddresses_WithDID(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	var resp ViewableAddressesResponse
+	var resp apimodels.ViewableAddressesResponse
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
 	assert.Empty(t, resp.ViewerWallet) // No wallet provided
@@ -618,7 +619,7 @@ func TestExplorerAPI_GetViewableAddresses_JWTTakesPrecedence(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	var resp ViewableAddressesResponse
+	var resp apimodels.ViewableAddressesResponse
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
 	assert.Equal(t, testViewerWallet, resp.ViewerWallet) // Wallet is passed through
@@ -889,7 +890,7 @@ func TestGetDisclosedAddressesForViewer_FullDisclosure(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	var resp ViewableAddressesResponse
+	var resp apimodels.ViewableAddressesResponse
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
 
@@ -926,7 +927,7 @@ func TestGetDisclosedAddressesForViewer_PseudonymousDisclosure(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	var resp ViewableAddressesResponse
+	var resp apimodels.ViewableAddressesResponse
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
 
@@ -965,7 +966,7 @@ func TestGetDisclosedAddressesForViewer_RedactedDisclosure(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	var resp ViewableAddressesResponse
+	var resp apimodels.ViewableAddressesResponse
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
 
@@ -1026,7 +1027,7 @@ func TestResolveAddressID_Success(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	var resp ResolveAddressResponse
+	var resp apimodels.ResolveAddressResponse
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
 
@@ -1060,7 +1061,7 @@ func TestResolveAddressID_PseudonymousIncludesPseudonym(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	var resp ResolveAddressResponse
+	var resp apimodels.ResolveAddressResponse
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
 
@@ -1295,7 +1296,7 @@ func TestEdgeCase_NullAddressInGrant(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	var resp ViewableAddressesResponse
+	var resp apimodels.ViewableAddressesResponse
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
 
@@ -1333,7 +1334,7 @@ func TestEdgeCase_MultipleAddressesSameGrant(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	var resp ViewableAddressesResponse
+	var resp apimodels.ViewableAddressesResponse
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
 

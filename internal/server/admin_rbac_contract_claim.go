@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
@@ -25,12 +26,12 @@ import (
 // @Accept       json
 // @Produce      json
 // @Param        org_id path string true "organization ID"
-// @Param        request body contractClaimRequest true "claimed address and deployment tx hash"
-// @Success      201 {object} contractClaimResponse
-// @Failure      400 {object} APIError "invalid input, or opaque verification failure"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError
-// @Failure      500 {object} APIError
+// @Param        request body apimodels.ContractClaimRequest true "claimed address and deployment tx hash"
+// @Success      201 {object} apimodels.ContractClaimResponse
+// @Failure      400 {object} apimodels.APIError "invalid input, or opaque verification failure"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/contracts/claim [post]
 func (s *Server) claimUnregisteredContract(c *gin.Context) {
@@ -223,3 +224,8 @@ func (s *Server) fetchTransactionReceipt(txHash string) (map[string]any, error) 
 
 	return receipt, nil
 }
+
+// swaggo resolves an annotation's apimodels.Type through this file's import
+// list, but a reference from a comment is not Go usage — so without this the
+// import would be stripped and `make api-spec` would fail. See RD-1265.
+var _ = apimodels.APIError{}

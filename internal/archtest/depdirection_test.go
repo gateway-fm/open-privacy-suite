@@ -16,6 +16,7 @@ import (
 	// a forbidden import was added. With them, any change to a policed
 	// package (or its dependency tree) invalidates the cache and re-runs the
 	// gate.
+	_ "privacy-proxy/internal/apimodels"
 	_ "privacy-proxy/internal/audit"
 	_ "privacy-proxy/internal/config"
 	_ "privacy-proxy/internal/netguard"
@@ -61,6 +62,19 @@ func TestDependencyDirection(t *testing.T) {
 				"privacy-proxy/internal/rbac",
 				"privacy-proxy/internal/config",
 			},
+		},
+		{
+			// internal/apimodels holds the request/response types the
+			// published OpenAPI document is generated from (RD-1265). An edge
+			// back to internal/server would be an import cycle the moment a
+			// handler package imports apimodels, which is the whole point of
+			// the package. Only that one edge is forbidden: these types
+			// legitimately embed domain types (rbac.Contract,
+			// disclosure.Scope, db rows), and duplicating them behind a DTO
+			// mapping layer was explicitly rejected by the architecture
+			// review.
+			pkg:       "privacy-proxy/internal/apimodels",
+			forbidden: []string{"privacy-proxy/internal/server"},
 		},
 	}
 

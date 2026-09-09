@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"privacy-proxy/internal/apimodels"
 	privadoauth "privacy-proxy/internal/auth"
 	"privacy-proxy/internal/config"
 
@@ -109,7 +110,7 @@ func TestHandleAuthCallback_UnsupportedNetwork(t *testing.T) {
 	req1.Header.Set("Content-Type", "application/json")
 	w1 := httptest.NewRecorder()
 	router.ServeHTTP(w1, req1)
-	var authReqResp AuthRequestResponse
+	var authReqResp apimodels.AuthRequestResponse
 	require.NoError(t, json.Unmarshal(w1.Body.Bytes(), &authReqResp))
 
 	const secretRPC = "https://internal-rpc.example.invalid/v1/super-secret-key"
@@ -135,7 +136,7 @@ func TestHandleAuthCallback_UnsupportedNetwork(t *testing.T) {
 	assert.NotContains(t, body, "resolver not found")
 	assert.NotContains(t, body, "dial tcp")
 
-	var resp UnsupportedNetworkError
+	var resp apimodels.UnsupportedNetworkError
 	require.NoError(t, json.Unmarshal(w2.Body.Bytes(), &resp))
 	assert.Equal(t, "network_not_supported", resp.Error)
 	assert.Equal(t, "billions:main", resp.Network)
@@ -157,7 +158,7 @@ func TestHandleAuthCallback_GenericFailureStaysOpaque(t *testing.T) {
 	req1.Header.Set("Content-Type", "application/json")
 	w1 := httptest.NewRecorder()
 	router.ServeHTTP(w1, req1)
-	var authReqResp AuthRequestResponse
+	var authReqResp apimodels.AuthRequestResponse
 	require.NoError(t, json.Unmarshal(w1.Body.Bytes(), &authReqResp))
 
 	mockVerifier := srv.privadoVerifier.(*mockPrivadoVerifier)
@@ -231,7 +232,7 @@ func TestHandleAuthProviders_ReportsNetworks(t *testing.T) {
 			router.ServeHTTP(w, httptest.NewRequest("GET", "/api/v1/auth/providers", nil))
 			require.Equal(t, http.StatusOK, w.Code)
 
-			var resp ProvidersResponse
+			var resp apimodels.ProvidersResponse
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 			assert.Equal(t, tc.networks, resp.Networks)
 			assert.Contains(t, resp.Providers, "privado", "provider list must stay unchanged")
@@ -293,7 +294,7 @@ func TestHandleOAuthCallback_UnsupportedNetwork(t *testing.T) {
 	assert.NotContains(t, out, "resolver not found")
 	assert.NotContains(t, out, "dial tcp")
 
-	var resp UnsupportedNetworkError
+	var resp apimodels.UnsupportedNetworkError
 	require.NoError(t, json.Unmarshal(w2.Body.Bytes(), &resp))
 	assert.Equal(t, "network_not_supported", resp.Error)
 	assert.Equal(t, "billions:main", resp.Network)

@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/rbac"
 )
 
@@ -62,20 +63,6 @@ const DemoERC20InitCode = "0x608060405234801561000f575f80fd5b505f69d3c21bcecceda
 // DemoERC20ABI is the ABI for the DemoERC20 token contract.
 const DemoERC20ABI = `[{"type":"constructor","inputs":[],"stateMutability":"nonpayable"},{"type":"function","name":"allowance","inputs":[{"name":"","type":"address","internalType":"address"},{"name":"","type":"address","internalType":"address"}],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"approve","inputs":[{"name":"spender","type":"address","internalType":"address"},{"name":"amount","type":"uint256","internalType":"uint256"}],"outputs":[{"name":"","type":"bool","internalType":"bool"}],"stateMutability":"nonpayable"},{"type":"function","name":"balanceOf","inputs":[{"name":"","type":"address","internalType":"address"}],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"decimals","inputs":[],"outputs":[{"name":"","type":"uint8","internalType":"uint8"}],"stateMutability":"view"},{"type":"function","name":"name","inputs":[],"outputs":[{"name":"","type":"string","internalType":"string"}],"stateMutability":"view"},{"type":"function","name":"symbol","inputs":[],"outputs":[{"name":"","type":"string","internalType":"string"}],"stateMutability":"view"},{"type":"function","name":"totalSupply","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"transfer","inputs":[{"name":"to","type":"address","internalType":"address"},{"name":"amount","type":"uint256","internalType":"uint256"}],"outputs":[{"name":"","type":"bool","internalType":"bool"}],"stateMutability":"nonpayable"},{"type":"function","name":"transferFrom","inputs":[{"name":"from","type":"address","internalType":"address"},{"name":"to","type":"address","internalType":"address"},{"name":"amount","type":"uint256","internalType":"uint256"}],"outputs":[{"name":"","type":"bool","internalType":"bool"}],"stateMutability":"nonpayable"},{"type":"event","name":"Approval","inputs":[{"name":"owner","type":"address","indexed":true,"internalType":"address"},{"name":"spender","type":"address","indexed":true,"internalType":"address"},{"name":"value","type":"uint256","indexed":false,"internalType":"uint256"}],"anonymous":false},{"type":"event","name":"Transfer","inputs":[{"name":"from","type":"address","indexed":true,"internalType":"address"},{"name":"to","type":"address","indexed":true,"internalType":"address"},{"name":"value","type":"uint256","indexed":false,"internalType":"uint256"}],"anonymous":false}]`
 
-// DeployDemoERC20Request is the request body for deploying a DemoERC20 token.
-type DeployDemoERC20Request struct {
-	OrgID string `json:"org_id"` // optional - auto-register to this org
-	Name  string `json:"name"`   // optional - contract name, defaults to "DemoERC20"
-}
-
-// DeployDemoERC20Response is the response from deploying a DemoERC20 token.
-type DeployDemoERC20Response struct {
-	Address    string `json:"address"`
-	TxHash     string `json:"tx_hash"`
-	Registered bool   `json:"registered"`
-	Name       string `json:"name"`
-}
-
 // handleDeployDemoERC20 deploys a DemoERC20 token contract in dev mode.
 // Optionally registers it to an organization if org_id is provided.
 //
@@ -84,13 +71,13 @@ type DeployDemoERC20Response struct {
 // @Tags         Admin: ops
 // @Accept       json
 // @Produce      json
-// @Param        request body DeployDemoERC20Request false "optional org to register the contract to, and contract name"
-// @Success      200 {object} DeployDemoERC20Response
-// @Failure      400 {object} APIError "invalid request body"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "not available in production, or source address not on the private network"
-// @Failure      404 {object} APIError "organization not found"
-// @Failure      500 {object} APIError "deployment failed"
+// @Param        request body apimodels.DeployDemoERC20Request false "optional org to register the contract to, and contract name"
+// @Success      200 {object} apimodels.DeployDemoERC20Response
+// @Failure      400 {object} apimodels.APIError "invalid request body"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "not available in production, or source address not on the private network"
+// @Failure      404 {object} apimodels.APIError "organization not found"
+// @Failure      500 {object} apimodels.APIError "deployment failed"
 // @Security     AdminToken
 // @Router       /api/v1/admin/dev/deploy-demo-erc20 [post]
 func (s *Server) handleDeployDemoERC20(c *gin.Context) {
@@ -103,7 +90,7 @@ func (s *Server) handleDeployDemoERC20(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	// Optionally bind JSON body (request may have no body at all)
-	var req DeployDemoERC20Request
+	var req apimodels.DeployDemoERC20Request
 	if c.Request.ContentLength > 0 {
 		if err := c.ShouldBindJSON(&req); err != nil {
 			respondBadRequestAndLog(c, "invalid request body",
@@ -266,7 +253,7 @@ func (s *Server) handleDeployDemoERC20(c *gin.Context) {
 		}
 	}
 
-	c.JSON(http.StatusOK, DeployDemoERC20Response{
+	c.JSON(http.StatusOK, apimodels.DeployDemoERC20Response{
 		Address:    contractAddress,
 		TxHash:     txHash,
 		Registered: registered,

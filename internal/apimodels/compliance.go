@@ -1,4 +1,4 @@
-package server
+package apimodels
 
 // Spec-only response models for the admin compliance handlers (RD-1166).
 //

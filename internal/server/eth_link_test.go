@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/config"
 	"privacy-proxy/internal/db"
@@ -150,7 +151,7 @@ func TestHandleEthLinkChallenge_Success(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	var response ChallengeResponse
+	var response apimodels.ChallengeResponse
 	err := json.Unmarshal(w.Body.Bytes(), &response)
 	require.NoError(t, err)
 	assert.NotEmpty(t, response.Nonce)
@@ -192,12 +193,12 @@ func TestHandleEthLinkVerify_Success(t *testing.T) {
 	router.ServeHTTP(w1, req1)
 	require.Equal(t, http.StatusOK, w1.Code)
 
-	var challengeResp ChallengeResponse
+	var challengeResp apimodels.ChallengeResponse
 	err := json.Unmarshal(w1.Body.Bytes(), &challengeResp)
 	require.NoError(t, err)
 
 	// Step 2: Verify with mock signature (MockSignatures=true)
-	verifyReq := VerifyLinkRequest{
+	verifyReq := apimodels.VerifyLinkRequest{
 		Nonce:     challengeResp.Nonce,
 		Address:   "0x742d35Cc6634C0532925a3b844Bc9e7595f5bE5F",
 		Signature: "0x" + strings.Repeat("a", 130), // Mock signature
@@ -228,7 +229,7 @@ func TestHandleEthLinkVerify_InvalidNonce(t *testing.T) {
 	subject := "did:privado:test123"
 	token := createTestJWT(t, srv, subject)
 
-	verifyReq := VerifyLinkRequest{
+	verifyReq := apimodels.VerifyLinkRequest{
 		Nonce:     "invalid-nonce",
 		Address:   "0x742d35Cc6634C0532925a3b844Bc9e7595f5bE5F",
 		Signature: "0x" + strings.Repeat("a", 130),
@@ -263,11 +264,11 @@ func TestHandleEthLinkVerify_InvalidAddress(t *testing.T) {
 	router.ServeHTTP(w1, req1)
 	require.Equal(t, http.StatusOK, w1.Code)
 
-	var challengeResp ChallengeResponse
+	var challengeResp apimodels.ChallengeResponse
 	json.Unmarshal(w1.Body.Bytes(), &challengeResp)
 
 	// Verify with invalid address
-	verifyReq := VerifyLinkRequest{
+	verifyReq := apimodels.VerifyLinkRequest{
 		Nonce:     challengeResp.Nonce,
 		Address:   "invalid-address",
 		Signature: "0x" + strings.Repeat("a", 130),
@@ -326,10 +327,10 @@ func TestHandleGetEthAddresses_WithLinkedAddress(t *testing.T) {
 	w1 := httptest.NewRecorder()
 	router.ServeHTTP(w1, req1)
 
-	var challengeResp ChallengeResponse
+	var challengeResp apimodels.ChallengeResponse
 	json.Unmarshal(w1.Body.Bytes(), &challengeResp)
 
-	verifyReq := VerifyLinkRequest{
+	verifyReq := apimodels.VerifyLinkRequest{
 		Nonce:     challengeResp.Nonce,
 		Address:   testAddress,
 		Signature: "0x" + strings.Repeat("a", 130),
@@ -350,7 +351,7 @@ func TestHandleGetEthAddresses_WithLinkedAddress(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	var response map[string][]EthAddressResponse
+	var response map[string][]apimodels.EthAddressResponse
 	json.Unmarshal(w.Body.Bytes(), &response)
 	require.Len(t, response["addresses"], 1)
 	assert.Equal(t, "0x742d35cc6634c0532925a3b844bc9e7595f5be5f", response["addresses"][0].Address) // lowercased
@@ -377,10 +378,10 @@ func TestHandleDeleteEthAddress_Success(t *testing.T) {
 	w1 := httptest.NewRecorder()
 	router.ServeHTTP(w1, req1)
 
-	var challengeResp ChallengeResponse
+	var challengeResp apimodels.ChallengeResponse
 	json.Unmarshal(w1.Body.Bytes(), &challengeResp)
 
-	verifyReq := VerifyLinkRequest{
+	verifyReq := apimodels.VerifyLinkRequest{
 		Nonce:     challengeResp.Nonce,
 		Address:   testAddress,
 		Signature: "0x" + strings.Repeat("a", 130),
@@ -453,11 +454,11 @@ func TestHandleEthLinkVerify_WrongUser(t *testing.T) {
 	router.ServeHTTP(w1, req1)
 	require.Equal(t, http.StatusOK, w1.Code)
 
-	var challengeResp ChallengeResponse
+	var challengeResp apimodels.ChallengeResponse
 	json.Unmarshal(w1.Body.Bytes(), &challengeResp)
 
 	// User 2 tries to use User 1's challenge
-	verifyReq := VerifyLinkRequest{
+	verifyReq := apimodels.VerifyLinkRequest{
 		Nonce:     challengeResp.Nonce,
 		Address:   "0x742d35Cc6634C0532925a3b844Bc9e7595f5bE5F",
 		Signature: "0x" + strings.Repeat("a", 130),
@@ -496,10 +497,10 @@ func TestHandleDeleteEthAddress_OtherUsersAddress(t *testing.T) {
 	w1 := httptest.NewRecorder()
 	router.ServeHTTP(w1, req1)
 
-	var challengeResp ChallengeResponse
+	var challengeResp apimodels.ChallengeResponse
 	json.Unmarshal(w1.Body.Bytes(), &challengeResp)
 
-	verifyReq := VerifyLinkRequest{
+	verifyReq := apimodels.VerifyLinkRequest{
 		Nonce:     challengeResp.Nonce,
 		Address:   testAddress,
 		Signature: "0x" + strings.Repeat("a", 130),
@@ -641,11 +642,11 @@ func TestHandleEthLinkVerify_MultipleDIDs_HTTP(t *testing.T) {
 	router.ServeHTTP(w1, req1)
 	require.Equal(t, http.StatusOK, w1.Code)
 
-	var challenge1 ChallengeResponse
+	var challenge1 apimodels.ChallengeResponse
 	err := json.Unmarshal(w1.Body.Bytes(), &challenge1)
 	require.NoError(t, err)
 
-	verifyReq1 := VerifyLinkRequest{
+	verifyReq1 := apimodels.VerifyLinkRequest{
 		Nonce:     challenge1.Nonce,
 		Address:   testAddress,
 		Signature: "0x" + strings.Repeat("a", 130),
@@ -665,11 +666,11 @@ func TestHandleEthLinkVerify_MultipleDIDs_HTTP(t *testing.T) {
 	router.ServeHTTP(w3, req3)
 	require.Equal(t, http.StatusOK, w3.Code)
 
-	var challenge2 ChallengeResponse
+	var challenge2 apimodels.ChallengeResponse
 	err = json.Unmarshal(w3.Body.Bytes(), &challenge2)
 	require.NoError(t, err)
 
-	verifyReq2 := VerifyLinkRequest{
+	verifyReq2 := apimodels.VerifyLinkRequest{
 		Nonce:     challenge2.Nonce,
 		Address:   testAddress,
 		Signature: "0x" + strings.Repeat("b", 130),

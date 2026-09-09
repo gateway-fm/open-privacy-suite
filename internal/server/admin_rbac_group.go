@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/crypto"
 	"privacy-proxy/internal/db"
 	"privacy-proxy/internal/rbac"
@@ -107,10 +108,10 @@ const (
 // @Param        search query string false "Case-insensitive filter on group name/slug"
 // @Param        limit query int false "Max rows to return (default 50)"
 // @Param        offset query int false "Rows to skip for pagination (default 0)"
-// @Success      200 {object} groupListResponse
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "source address not on the private network, org outside the caller's scope, or operator token (tenant data not readable)"
-// @Failure      500 {object} APIError
+// @Success      200 {object} apimodels.GroupListResponse
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network, org outside the caller's scope, or operator token (tenant data not readable)"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/groups [get]
 func (s *Server) listGroups(c *gin.Context) {
@@ -155,13 +156,13 @@ func (s *Server) listGroups(c *gin.Context) {
 // @Accept       json
 // @Produce      json
 // @Param        org_id path string true "Organization ID (UUID)"
-// @Param        request body groupCreateRequest true "group to create"
+// @Param        request body apimodels.GroupCreateRequest true "group to create"
 // @Success      201 {object} rbac.Group
-// @Failure      400 {object} APIError "invalid body, slug format, or mutually-exclusive admin roles"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "source address not on the private network, org outside the caller's scope, tier-2 JWT minting an org-admin group, or operator token creating a regular group"
-// @Failure      409 {object} APIError "a group with this slug or name already exists in the organization"
-// @Failure      500 {object} APIError
+// @Failure      400 {object} apimodels.APIError "invalid body, slug format, or mutually-exclusive admin roles"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network, org outside the caller's scope, tier-2 JWT minting an org-admin group, or operator token creating a regular group"
+// @Failure      409 {object} apimodels.APIError "a group with this slug or name already exists in the organization"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/groups [post]
 func (s *Server) createGroup(c *gin.Context) {
@@ -321,9 +322,9 @@ func verifyGroupBelongsToPathOrg(c *gin.Context, group *rbac.Group) bool {
 // @Param        org_id path string true "Organization ID (UUID)"
 // @Param        group_id path string true "Group ID (UUID)"
 // @Success      200 {object} rbac.Group
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "source address not on the private network, group not in the path org (opaque), or operator token (tenant data not readable)"
-// @Failure      500 {object} APIError
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network, group not in the path org (opaque), or operator token (tenant data not readable)"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/groups/{group_id} [get]
 func (s *Server) getGroup(c *gin.Context) {
@@ -353,13 +354,13 @@ func (s *Server) getGroup(c *gin.Context) {
 // @Produce      json
 // @Param        org_id path string true "Organization ID (UUID)"
 // @Param        group_id path string true "Group ID (UUID)"
-// @Param        request body groupUpdateRequest true "fields to update (all optional)"
+// @Param        request body apimodels.GroupUpdateRequest true "fields to update (all optional)"
 // @Success      200 {object} rbac.Group
-// @Failure      400 {object} APIError "invalid body or mutually-exclusive admin roles"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "source address not on the private network, group not in the path org, system group, tier-2 JWT changing is_org_admin, or operator token editing a regular group"
-// @Failure      409 {object} APIError "a group with this slug or name already exists in the organization"
-// @Failure      500 {object} APIError
+// @Failure      400 {object} apimodels.APIError "invalid body or mutually-exclusive admin roles"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network, group not in the path org, system group, tier-2 JWT changing is_org_admin, or operator token editing a regular group"
+// @Failure      409 {object} apimodels.APIError "a group with this slug or name already exists in the organization"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/groups/{group_id} [put]
 func (s *Server) updateGroup(c *gin.Context) {
@@ -485,10 +486,10 @@ func (s *Server) updateGroup(c *gin.Context) {
 // @Produce      json
 // @Param        org_id path string true "Organization ID (UUID)"
 // @Param        group_id path string true "Group ID (UUID)"
-// @Success      200 {object} APIMessage "group deleted"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "source address not on the private network, group not in the path org, system group, tier-2 JWT deleting an org-admin group, or operator token deleting a regular group"
-// @Failure      500 {object} APIError
+// @Success      200 {object} apimodels.APIMessage "group deleted"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network, group not in the path org, system group, tier-2 JWT deleting an org-admin group, or operator token deleting a regular group"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/groups/{group_id} [delete]
 func (s *Server) deleteGroup(c *gin.Context) {
@@ -557,9 +558,9 @@ func (s *Server) deleteGroup(c *gin.Context) {
 // @Param        org_id path string true "Organization ID (UUID)"
 // @Param        group_id path string true "Group ID (UUID)"
 // @Success      200 {object} rbac.GroupAccess
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "source address not on the private network, group not in the path org, or operator token (tenant data not readable)"
-// @Failure      500 {object} APIError
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network, group not in the path org, or operator token (tenant data not readable)"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/groups/{group_id}/access [get]
 func (s *Server) getGroupAccess(c *gin.Context) {
@@ -616,12 +617,12 @@ func (s *Server) getGroupAccess(c *gin.Context) {
 // @Produce      json
 // @Param        org_id path string true "Organization ID (UUID)"
 // @Param        group_id path string true "Group ID (UUID)"
-// @Param        request body groupAccessRequest true "access settings"
+// @Param        request body apimodels.GroupAccessRequest true "access settings"
 // @Success      200 {object} rbac.GroupAccess
-// @Failure      400 {object} APIError "invalid body, method/claim mismatch, or org-admin claim/method invariant violated"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "source address not on the private network, group not in the path org, system-group access changed by non-super-admin, tier-2 JWT reshaping an org-admin group, or operator token reshaping a regular group"
-// @Failure      500 {object} APIError
+// @Failure      400 {object} apimodels.APIError "invalid body, method/claim mismatch, or org-admin claim/method invariant violated"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network, group not in the path org, system-group access changed by non-super-admin, tier-2 JWT reshaping an org-admin group, or operator token reshaping a regular group"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/groups/{group_id}/access [put]
 func (s *Server) setGroupAccess(c *gin.Context) {
@@ -847,12 +848,12 @@ func (s *Server) populateEffectiveClaims(ctx context.Context, group *rbac.Group,
 // @Accept       json
 // @Produce      json
 // @Param        org_id path string true "Organization ID (UUID)"
-// @Param        request body groupBatchDeleteRequest true "group IDs to preview"
-// @Success      200 {object} groupBatchDeletePreviewResponse
-// @Failure      400 {object} APIError "invalid body, empty group_ids, or more than 200 IDs"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "source address not on the private network, org outside the caller's scope, or a group not in the path org (opaque)"
-// @Failure      500 {object} APIError
+// @Param        request body apimodels.GroupBatchDeleteRequest true "group IDs to preview"
+// @Success      200 {object} apimodels.GroupBatchDeletePreviewResponse
+// @Failure      400 {object} apimodels.APIError "invalid body, empty group_ids, or more than 200 IDs"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network, org outside the caller's scope, or a group not in the path org (opaque)"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/groups/batch-delete-preview [post]
 func (s *Server) batchDeletePreview(c *gin.Context) {
@@ -963,12 +964,12 @@ func (s *Server) batchDeletePreview(c *gin.Context) {
 // @Accept       json
 // @Produce      json
 // @Param        org_id path string true "Organization ID (UUID)"
-// @Param        request body groupBatchDeleteRequest true "group IDs to delete"
-// @Success      200 {object} groupBatchDeleteResponse
-// @Failure      400 {object} APIError "invalid body, empty group_ids, more than 200 IDs, or one or more groups not in the organization"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "source address not on the private network, org outside the caller's scope, tier-2 JWT batch including an org-admin group, or operator token batch including a regular group"
-// @Failure      500 {object} APIError
+// @Param        request body apimodels.GroupBatchDeleteRequest true "group IDs to delete"
+// @Success      200 {object} apimodels.GroupBatchDeleteResponse
+// @Failure      400 {object} apimodels.APIError "invalid body, empty group_ids, more than 200 IDs, or one or more groups not in the organization"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network, org outside the caller's scope, tier-2 JWT batch including an org-admin group, or operator token batch including a regular group"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/groups/batch-delete [post]
 func (s *Server) batchDeleteGroups(c *gin.Context) {
@@ -1108,3 +1109,8 @@ func maskAPIKeyStr(key string) string {
 	}
 	return "****" + key[len(key)-4:]
 }
+
+// swaggo resolves an annotation's apimodels.Type through this file's import
+// list, but a reference from a comment is not Go usage — so without this the
+// import would be stripped and `make api-spec` would fail. See RD-1265.
+var _ = apimodels.APIError{}

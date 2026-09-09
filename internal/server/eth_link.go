@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/audit"
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/db"
@@ -126,36 +127,15 @@ type ChallengeRequest struct {
 	Address string `json:"address,omitempty"` // Optional: pre-specify the address to link
 }
 
-// ChallengeResponse is the response for a link challenge
-type ChallengeResponse struct {
-	Nonce   string `json:"nonce"`
-	Message string `json:"message"`
-}
-
-// VerifyLinkRequest is the request body for verifying a link
-type VerifyLinkRequest struct {
-	Nonce     string `json:"nonce" binding:"required"`
-	Address   string `json:"address" binding:"required"`
-	Signature string `json:"signature" binding:"required"`
-}
-
-// EthAddressResponse represents a linked ETH address in API responses
-type EthAddressResponse struct {
-	Address       string  `json:"address"`
-	VerifiedAt    string  `json:"verified_at"`
-	ENSName       *string `json:"ens_name,omitempty"`
-	ENSResolvedAt *string `json:"ens_resolved_at,omitempty"`
-}
-
 // handleEthLinkChallenge handles POST /eth/link/challenge - create a challenge to sign
 //
 // @Summary      Create an ETH address link challenge
 // @Description  Issues a one-time challenge message for the caller to sign with their Ethereum key, proving key ownership before the address is linked to the authenticated DID. The nonce is single-use and expires after a short TTL.
 // @Tags         ETH linking
 // @Produce      json
-// @Success      200 {object} ChallengeResponse
-// @Failure      401 {object} APIError "missing or invalid token"
-// @Failure      500 {object} APIError
+// @Success      200 {object} apimodels.ChallengeResponse
+// @Failure      401 {object} apimodels.APIError "missing or invalid token"
+// @Failure      500 {object} apimodels.APIError
 // @Security     BearerAuth
 // @Router       /api/v1/eth/link/challenge [post]
 func (s *Server) handleEthLinkChallenge(c *gin.Context) {
@@ -179,7 +159,7 @@ func (s *Server) handleEthLinkChallenge(c *gin.Context) {
 		return
 	}
 
-	respondOK(c, ChallengeResponse{
+	respondOK(c, apimodels.ChallengeResponse{
 		Nonce:   challenge.Nonce,
 		Message: challenge.Message,
 	})
@@ -192,12 +172,12 @@ func (s *Server) handleEthLinkChallenge(c *gin.Context) {
 // @Tags         ETH linking
 // @Accept       json
 // @Produce      json
-// @Param        request body VerifyLinkRequest true "signed challenge"
-// @Success      200 {object} EthLinkVerifyResponse
-// @Failure      400 {object} APIError "invalid body, nonce, address format, or signature"
-// @Failure      401 {object} APIError "missing or invalid token"
-// @Failure      403 {object} APIError "challenge belongs to another user, or the link was revoked by an administrator"
-// @Failure      500 {object} APIError
+// @Param        request body apimodels.VerifyLinkRequest true "signed challenge"
+// @Success      200 {object} apimodels.EthLinkVerifyResponse
+// @Failure      400 {object} apimodels.APIError "invalid body, nonce, address format, or signature"
+// @Failure      401 {object} apimodels.APIError "missing or invalid token"
+// @Failure      403 {object} apimodels.APIError "challenge belongs to another user, or the link was revoked by an administrator"
+// @Failure      500 {object} apimodels.APIError
 // @Security     BearerAuth
 // @Router       /api/v1/eth/link/verify [post]
 func (s *Server) handleEthLinkVerify(c *gin.Context) {
@@ -214,7 +194,7 @@ func (s *Server) handleEthLinkVerify(c *gin.Context) {
 		return
 	}
 
-	var req VerifyLinkRequest
+	var req apimodels.VerifyLinkRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		respondBadRequest(c, "invalid request body")
 		return
@@ -325,9 +305,9 @@ func (s *Server) handleEthLinkVerify(c *gin.Context) {
 // @Description  Lists the Ethereum addresses linked to the caller's DID, with verification time and any resolved ENS name.
 // @Tags         ETH linking
 // @Produce      json
-// @Success      200 {object} EthAddressListResponse
-// @Failure      401 {object} APIError "missing or invalid token"
-// @Failure      500 {object} APIError
+// @Success      200 {object} apimodels.EthAddressListResponse
+// @Failure      401 {object} apimodels.APIError "missing or invalid token"
+// @Failure      500 {object} apimodels.APIError
 // @Security     BearerAuth
 // @Router       /api/v1/eth/addresses [get]
 func (s *Server) handleGetEthAddresses(c *gin.Context) {
@@ -353,9 +333,9 @@ func (s *Server) handleGetEthAddresses(c *gin.Context) {
 	}
 
 	// Convert to response format
-	addresses := make([]EthAddressResponse, 0, len(links))
+	addresses := make([]apimodels.EthAddressResponse, 0, len(links))
 	for _, link := range links {
-		addresses = append(addresses, EthAddressResponse{
+		addresses = append(addresses, apimodels.EthAddressResponse{
 			Address:       link.EthAddress,
 			VerifiedAt:    link.VerifiedAt,
 			ENSName:       link.ENSName,
@@ -373,11 +353,11 @@ func (s *Server) handleGetEthAddresses(c *gin.Context) {
 // @Tags         ETH linking
 // @Produce      json
 // @Param        address path string true "ETH address (0x-prefixed hex)"
-// @Success      200 {object} APIMessage
-// @Failure      400 {object} APIError "address parameter required"
-// @Failure      401 {object} APIError "missing or invalid token"
-// @Failure      404 {object} APIError "address not linked to your account"
-// @Failure      500 {object} APIError
+// @Success      200 {object} apimodels.APIMessage
+// @Failure      400 {object} apimodels.APIError "address parameter required"
+// @Failure      401 {object} apimodels.APIError "missing or invalid token"
+// @Failure      404 {object} apimodels.APIError "address not linked to your account"
+// @Failure      500 {object} apimodels.APIError
 // @Security     BearerAuth
 // @Router       /api/v1/eth/addresses/{address} [delete]
 func (s *Server) handleDeleteEthAddress(c *gin.Context) {
@@ -427,12 +407,12 @@ func (s *Server) handleDeleteEthAddress(c *gin.Context) {
 // @Tags         ETH linking
 // @Produce      json
 // @Param        address path string true "ETH address (0x-prefixed hex)"
-// @Success      200 {object} EthLinkENSResponse
-// @Failure      400 {object} APIError "address parameter required"
-// @Failure      401 {object} APIError "missing or invalid token"
-// @Failure      404 {object} APIError "address not linked to your account"
-// @Failure      500 {object} APIError
-// @Failure      503 {object} APIError "ENS resolver not configured"
+// @Success      200 {object} apimodels.EthLinkENSResponse
+// @Failure      400 {object} apimodels.APIError "address parameter required"
+// @Failure      401 {object} apimodels.APIError "missing or invalid token"
+// @Failure      404 {object} apimodels.APIError "address not linked to your account"
+// @Failure      500 {object} apimodels.APIError
+// @Failure      503 {object} apimodels.APIError "ENS resolver not configured"
 // @Security     BearerAuth
 // @Router       /api/v1/eth/addresses/{address}/refresh-ens [post]
 func (s *Server) handleRefreshENS(c *gin.Context) {

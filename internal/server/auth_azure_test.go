@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/config"
 
@@ -92,10 +93,10 @@ func newMockOIDCDiscoveryServer(t *testing.T) *httptest.Server {
 
 	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
 		disc := map[string]interface{}{
-			"issuer":                 serverURL,
-			"authorization_endpoint": serverURL + "/authorize",
-			"token_endpoint":         serverURL + "/token",
-			"jwks_uri":               serverURL + "/jwks",
+			"issuer":                                serverURL,
+			"authorization_endpoint":                serverURL + "/authorize",
+			"token_endpoint":                        serverURL + "/token",
+			"jwks_uri":                              serverURL + "/jwks",
 			"response_types_supported":              []string{"code"},
 			"subject_types_supported":               []string{"public"},
 			"id_token_signing_alg_values_supported": []string{"RS256"},
@@ -166,7 +167,7 @@ func TestHandleAuthProviders(t *testing.T) {
 
 			assert.Equal(t, http.StatusOK, w.Code)
 
-			var resp ProvidersResponse
+			var resp apimodels.ProvidersResponse
 			err := json.Unmarshal(w.Body.Bytes(), &resp)
 			require.NoError(t, err)
 			assert.Equal(t, tc.expectedProviders, resp.Providers)
@@ -179,10 +180,10 @@ func TestHandleAzureAuthURL(t *testing.T) {
 	defer mockOIDC.Close()
 
 	tests := []struct {
-		name           string
+		name            string
 		azureConfigured bool
-		redirectURI    string
-		expectedStatus int
+		redirectURI     string
+		expectedStatus  int
 	}{
 		{
 			name:            "not configured returns 404",
@@ -226,7 +227,7 @@ func TestHandleAzureAuthURL(t *testing.T) {
 			assert.Equal(t, tc.expectedStatus, w.Code)
 
 			if tc.expectedStatus == http.StatusOK {
-				var resp AzureURLResponse
+				var resp apimodels.AzureURLResponse
 				err := json.Unmarshal(w.Body.Bytes(), &resp)
 				require.NoError(t, err)
 				assert.NotEmpty(t, resp.URL, "URL should not be empty")

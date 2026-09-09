@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"privacy-proxy/internal/apimodels"
 	authpkg "privacy-proxy/internal/auth"
 	"privacy-proxy/internal/server/middleware"
 	"privacy-proxy/internal/types"
@@ -250,11 +251,11 @@ func generateSecureCode() string {
 // @Produce      json
 // @Param        id path string true "OAuth session ID"
 // @Param        request body object false "optional {\"did\":\"did:...\"} to complete as a specific mock identity"
-// @Success      200 {object} oauthMockCompleteResponse
-// @Failure      403 {object} APIError "mock login not available"
-// @Failure      404 {object} APIError "session not found or expired"
-// @Failure      409 {object} APIError "session already completed"
-// @Failure      500 {object} APIError "failed to complete session"
+// @Success      200 {object} apimodels.OAuthMockCompleteResponse
+// @Failure      403 {object} apimodels.APIError "mock login not available"
+// @Failure      404 {object} apimodels.APIError "session not found or expired"
+// @Failure      409 {object} apimodels.APIError "session already completed"
+// @Failure      500 {object} apimodels.APIError "failed to complete session"
 // @Router       /oauth/session/{id}/mock-complete [post]
 func (s *Server) handleOAuthMockComplete(c *gin.Context) {
 	if s.config.IsProduction() || !s.config.AllowMockLogin {
@@ -334,12 +335,12 @@ func (s *Server) handleOAuthMockComplete(c *gin.Context) {
 // @Tags         OAuth SSO
 // @Produce      json
 // @Param        id path string true "OAuth session ID"
-// @Success      200 {object} OAuthSessionStatusResponse "completed, with redirect_url"
-// @Failure      401 {object} APIError "authentication required"
-// @Failure      403 {object} APIError "silent SSO not available for this session or client"
-// @Failure      404 {object} APIError "session not found or expired"
-// @Failure      409 {object} APIError "session already completed"
-// @Failure      500 {object} APIError "failed to complete session"
+// @Success      200 {object} apimodels.OAuthSessionStatusResponse "completed, with redirect_url"
+// @Failure      401 {object} apimodels.APIError "authentication required"
+// @Failure      403 {object} apimodels.APIError "silent SSO not available for this session or client"
+// @Failure      404 {object} apimodels.APIError "session not found or expired"
+// @Failure      409 {object} apimodels.APIError "session already completed"
+// @Failure      500 {object} apimodels.APIError "failed to complete session"
 // @Security     BearerAuth
 // @Router       /oauth/session/{id}/silent-complete [post]
 func (s *Server) handleOAuthSilentComplete(c *gin.Context) {
@@ -453,8 +454,8 @@ func (s *Server) recordOAuthSilentSSO(ctx context.Context, actorDID, clientID, r
 // @Tags         OAuth SSO
 // @Produce      json
 // @Param        id path string true "OAuth session ID"
-// @Success      200 {object} oauthSessionInfoResponse
-// @Failure      404 {object} APIError "OAuth session or its auth session not found"
+// @Success      200 {object} apimodels.OAuthSessionInfoResponse
+// @Failure      404 {object} apimodels.APIError "OAuth session or its auth session not found"
 // @Router       /oauth/session/{id}/info [get]
 func (s *Server) handleOAuthSessionInfo(c *gin.Context) {
 	oauthSessionID := c.Param("id")
@@ -485,29 +486,6 @@ type OAuthAuthorizeRequest struct {
 	ResponseType string `form:"response_type" binding:"required"`
 }
 
-// OAuthTokenRequest represents the request body for /oauth/token
-type OAuthTokenRequest struct {
-	GrantType    string `json:"grant_type" form:"grant_type" binding:"required"`
-	Code         string `json:"code" form:"code" binding:"required"`
-	RedirectURI  string `json:"redirect_uri" form:"redirect_uri" binding:"required"`
-	ClientID     string `json:"client_id" form:"client_id" binding:"required"`
-	ClientSecret string `json:"client_secret" form:"client_secret"` // RD-1006 client_secret_post; client_secret_basic also accepted via HTTP Basic
-}
-
-// OAuthTokenResponse represents the response from /oauth/token
-type OAuthTokenResponse struct {
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-	TokenType    string `json:"token_type"`
-	ExpiresIn    int    `json:"expires_in"`
-}
-
-// OAuthErrorResponse represents an OAuth error response
-type OAuthErrorResponse struct {
-	Error            string `json:"error"`
-	ErrorDescription string `json:"error_description,omitempty"`
-}
-
 // handleOAuthAuthorize handles GET /oauth/authorize - OAuth authorization endpoint
 // This initiates the OAuth flow by creating a pending session and returning the auth page
 //
@@ -519,16 +497,16 @@ type OAuthErrorResponse struct {
 // @Param        redirect_uri query string true "client redirect URI (must be allowlisted)"
 // @Param        state query string true "opaque CSRF state echoed back to the client"
 // @Param        response_type query string true "must be \"code\""
-// @Success      200 {object} oauthAuthorizeJSONResponse "non-browser clients: session IDs and auth request"
+// @Success      200 {object} apimodels.OAuthAuthorizeJSONResponse "non-browser clients: session IDs and auth request"
 // @Success      302 {string} string "browser clients: redirect to the login page"
-// @Failure      400 {object} OAuthErrorResponse "invalid_request or unsupported_response_type"
-// @Failure      500 {object} OAuthErrorResponse "server misconfiguration or failure creating the session"
-// @Failure      503 {object} OAuthErrorResponse "authentication or OAuth service at capacity"
+// @Failure      400 {object} apimodels.OAuthErrorResponse "invalid_request or unsupported_response_type"
+// @Failure      500 {object} apimodels.OAuthErrorResponse "server misconfiguration or failure creating the session"
+// @Failure      503 {object} apimodels.OAuthErrorResponse "authentication or OAuth service at capacity"
 // @Router       /oauth/authorize [get]
 func (s *Server) handleOAuthAuthorize(c *gin.Context) {
 	var req OAuthAuthorizeRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
-		c.JSON(http.StatusBadRequest, OAuthErrorResponse{
+		c.JSON(http.StatusBadRequest, apimodels.OAuthErrorResponse{
 			Error:            "invalid_request",
 			ErrorDescription: "missing required parameters: client_id, redirect_uri, state, response_type",
 		})
@@ -537,7 +515,7 @@ func (s *Server) handleOAuthAuthorize(c *gin.Context) {
 
 	// Validate response_type
 	if req.ResponseType != "code" {
-		c.JSON(http.StatusBadRequest, OAuthErrorResponse{
+		c.JSON(http.StatusBadRequest, apimodels.OAuthErrorResponse{
 			Error:            "unsupported_response_type",
 			ErrorDescription: "only response_type=code is supported",
 		})
@@ -546,7 +524,7 @@ func (s *Server) handleOAuthAuthorize(c *gin.Context) {
 
 	// Validate redirect_uri
 	if !s.isValidRedirectURI(req.RedirectURI) {
-		c.JSON(http.StatusBadRequest, OAuthErrorResponse{
+		c.JSON(http.StatusBadRequest, apimodels.OAuthErrorResponse{
 			Error:            "invalid_request",
 			ErrorDescription: "redirect_uri is not allowed",
 		})
@@ -556,7 +534,7 @@ func (s *Server) handleOAuthAuthorize(c *gin.Context) {
 	// Create the underlying auth session (Privado ID flow)
 	authSessionID := s.sessionStore.CreateSession(nil)
 	if authSessionID == "" {
-		c.JSON(http.StatusServiceUnavailable, OAuthErrorResponse{
+		c.JSON(http.StatusServiceUnavailable, apimodels.OAuthErrorResponse{
 			Error:            "server_error",
 			ErrorDescription: "authentication service at capacity, please try again later",
 		})
@@ -574,7 +552,7 @@ func (s *Server) handleOAuthAuthorize(c *gin.Context) {
 	oauthSessionID := s.oauthSessionStore.CreateSession(req.ClientID, req.RedirectURI, req.State, authSessionID, initiatorDIDStr)
 	if oauthSessionID == "" {
 		s.sessionStore.DeleteSession(authSessionID)
-		c.JSON(http.StatusServiceUnavailable, OAuthErrorResponse{
+		c.JSON(http.StatusServiceUnavailable, apimodels.OAuthErrorResponse{
 			Error:            "server_error",
 			ErrorDescription: "OAuth service at capacity, please try again later",
 		})
@@ -593,7 +571,7 @@ func (s *Server) handleOAuthAuthorize(c *gin.Context) {
 		if s.config.IsProduction() {
 			s.sessionStore.DeleteSession(authSessionID)
 			s.oauthSessionStore.DeleteSession(oauthSessionID)
-			c.JSON(http.StatusInternalServerError, OAuthErrorResponse{
+			c.JSON(http.StatusInternalServerError, apimodels.OAuthErrorResponse{
 				Error:            "server_error",
 				ErrorDescription: "VERIFIER_ID not configured",
 			})
@@ -609,7 +587,7 @@ func (s *Server) handleOAuthAuthorize(c *gin.Context) {
 		if err != nil {
 			s.sessionStore.DeleteSession(authSessionID)
 			s.oauthSessionStore.DeleteSession(oauthSessionID)
-			c.JSON(http.StatusInternalServerError, OAuthErrorResponse{
+			c.JSON(http.StatusInternalServerError, apimodels.OAuthErrorResponse{
 				Error:            "server_error",
 				ErrorDescription: "failed to create mock auth request: " + err.Error(),
 			})
@@ -636,7 +614,7 @@ func (s *Server) handleOAuthAuthorize(c *gin.Context) {
 		if err != nil {
 			s.sessionStore.DeleteSession(authSessionID)
 			s.oauthSessionStore.DeleteSession(oauthSessionID)
-			c.JSON(http.StatusInternalServerError, OAuthErrorResponse{
+			c.JSON(http.StatusInternalServerError, apimodels.OAuthErrorResponse{
 				Error:            "server_error",
 				ErrorDescription: "failed to create authorization request",
 			})
@@ -648,7 +626,7 @@ func (s *Server) handleOAuthAuthorize(c *gin.Context) {
 	if err := s.sessionStore.UpdateSession(authSessionID, authReq); err != nil {
 		s.sessionStore.DeleteSession(authSessionID)
 		s.oauthSessionStore.DeleteSession(oauthSessionID)
-		c.JSON(http.StatusInternalServerError, OAuthErrorResponse{
+		c.JSON(http.StatusInternalServerError, apimodels.OAuthErrorResponse{
 			Error:            "server_error",
 			ErrorDescription: "failed to store authorization request",
 		})
@@ -664,7 +642,7 @@ func (s *Server) handleOAuthAuthorize(c *gin.Context) {
 		// FRONTEND_URL. FRONTEND_URL must be configured — the inline-HTML
 		// fallback was removed so we have a single login UI to audit.
 		if s.config.FrontendURL == "" {
-			c.JSON(http.StatusInternalServerError, OAuthErrorResponse{
+			c.JSON(http.StatusInternalServerError, apimodels.OAuthErrorResponse{
 				Error:            "server_error",
 				ErrorDescription: "FRONTEND_URL is not configured on the OAuth server",
 			})
@@ -697,11 +675,11 @@ func (s *Server) handleOAuthAuthorize(c *gin.Context) {
 // @Param        session query string true "auth session ID"
 // @Param        oauth_session query string true "OAuth session ID (must be linked to the auth session)"
 // @Param        request body object true "JWZ token, as {\"token\":\"<jwz>\"} or the raw token string"
-// @Success      200 {object} oauthCallbackResponse
-// @Failure      400 {object} APIError "missing session parameters, unreadable body, or missing/invalid JWZ token"
-// @Failure      401 {object} APIError "session not found/expired, session mismatch, or verification failed"
-// @Failure      403 {object} HumanityVerificationError "ProofOfHumanity verification required, or account banned"
-// @Failure      500 {object} APIError "failed to generate authorization code or build redirect"
+// @Success      200 {object} apimodels.OAuthCallbackResponse
+// @Failure      400 {object} apimodels.APIError "missing session parameters, unreadable body, or missing/invalid JWZ token"
+// @Failure      401 {object} apimodels.APIError "session not found/expired, session mismatch, or verification failed"
+// @Failure      403 {object} apimodels.HumanityVerificationError "ProofOfHumanity verification required, or account banned"
+// @Failure      500 {object} apimodels.APIError "failed to generate authorization code or build redirect"
 // @Router       /oauth/callback [post]
 func (s *Server) handleOAuthCallback(c *gin.Context) {
 	// Get session IDs from query parameters
@@ -832,20 +810,20 @@ func (s *Server) handleOAuthCallback(c *gin.Context) {
 // @Accept       json
 // @Accept       x-www-form-urlencoded
 // @Produce      json
-// @Param        request body OAuthTokenRequest true "authorization-code grant parameters"
-// @Success      200 {object} OAuthTokenResponse
-// @Failure      400 {object} OAuthErrorResponse "invalid_request, unsupported_grant_type, or invalid_grant"
-// @Failure      401 {object} OAuthErrorResponse "invalid_client — client authentication failed"
-// @Failure      500 {object} OAuthErrorResponse "server_error — failed to issue or persist tokens"
+// @Param        request body apimodels.OAuthTokenRequest true "authorization-code grant parameters"
+// @Success      200 {object} apimodels.OAuthTokenResponse
+// @Failure      400 {object} apimodels.OAuthErrorResponse "invalid_request, unsupported_grant_type, or invalid_grant"
+// @Failure      401 {object} apimodels.OAuthErrorResponse "invalid_client — client authentication failed"
+// @Failure      500 {object} apimodels.OAuthErrorResponse "server_error — failed to issue or persist tokens"
 // @Router       /oauth/token [post]
 func (s *Server) handleOAuthToken(c *gin.Context) {
-	var req OAuthTokenRequest
+	var req apimodels.OAuthTokenRequest
 
 	// Support both JSON and form-encoded requests (OAuth spec allows both)
 	contentType := c.GetHeader("Content-Type")
 	if strings.Contains(contentType, "application/json") {
 		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, OAuthErrorResponse{
+			c.JSON(http.StatusBadRequest, apimodels.OAuthErrorResponse{
 				Error:            "invalid_request",
 				ErrorDescription: "invalid request body",
 			})
@@ -853,7 +831,7 @@ func (s *Server) handleOAuthToken(c *gin.Context) {
 		}
 	} else {
 		if err := c.ShouldBind(&req); err != nil {
-			c.JSON(http.StatusBadRequest, OAuthErrorResponse{
+			c.JSON(http.StatusBadRequest, apimodels.OAuthErrorResponse{
 				Error:            "invalid_request",
 				ErrorDescription: "invalid request body",
 			})
@@ -863,7 +841,7 @@ func (s *Server) handleOAuthToken(c *gin.Context) {
 
 	// Validate grant_type
 	if req.GrantType != "authorization_code" {
-		c.JSON(http.StatusBadRequest, OAuthErrorResponse{
+		c.JSON(http.StatusBadRequest, apimodels.OAuthErrorResponse{
 			Error:            "unsupported_grant_type",
 			ErrorDescription: "only grant_type=authorization_code is supported",
 		})
@@ -873,7 +851,7 @@ func (s *Server) handleOAuthToken(c *gin.Context) {
 	// Look up session by code
 	session := s.oauthSessionStore.GetSessionByCode(req.Code)
 	if session == nil {
-		c.JSON(http.StatusBadRequest, OAuthErrorResponse{
+		c.JSON(http.StatusBadRequest, apimodels.OAuthErrorResponse{
 			Error:            "invalid_grant",
 			ErrorDescription: "authorization code not found or expired",
 		})
@@ -882,7 +860,7 @@ func (s *Server) handleOAuthToken(c *gin.Context) {
 
 	// Validate client_id matches
 	if session.ClientID != req.ClientID {
-		c.JSON(http.StatusBadRequest, OAuthErrorResponse{
+		c.JSON(http.StatusBadRequest, apimodels.OAuthErrorResponse{
 			Error:            "invalid_grant",
 			ErrorDescription: "client_id does not match",
 		})
@@ -905,7 +883,7 @@ func (s *Server) handleOAuthToken(c *gin.Context) {
 				"client_id", req.ClientID,
 				"remote_ip", c.ClientIP())
 			c.Header("WWW-Authenticate", `Basic realm="oauth_token"`)
-			c.JSON(http.StatusUnauthorized, OAuthErrorResponse{
+			c.JSON(http.StatusUnauthorized, apimodels.OAuthErrorResponse{
 				Error:            "invalid_client",
 				ErrorDescription: "client authentication failed",
 			})
@@ -915,7 +893,7 @@ func (s *Server) handleOAuthToken(c *gin.Context) {
 
 	// Validate redirect_uri matches
 	if session.RedirectURI != req.RedirectURI {
-		c.JSON(http.StatusBadRequest, OAuthErrorResponse{
+		c.JSON(http.StatusBadRequest, apimodels.OAuthErrorResponse{
 			Error:            "invalid_grant",
 			ErrorDescription: "redirect_uri does not match",
 		})
@@ -924,7 +902,7 @@ func (s *Server) handleOAuthToken(c *gin.Context) {
 
 	// Check if code has expired
 	if time.Now().After(session.CodeExpires) {
-		c.JSON(http.StatusBadRequest, OAuthErrorResponse{
+		c.JSON(http.StatusBadRequest, apimodels.OAuthErrorResponse{
 			Error:            "invalid_grant",
 			ErrorDescription: "authorization code has expired",
 		})
@@ -933,7 +911,7 @@ func (s *Server) handleOAuthToken(c *gin.Context) {
 
 	// Mark code as used (single-use)
 	if !s.oauthSessionStore.MarkCodeUsed(req.Code) {
-		c.JSON(http.StatusBadRequest, OAuthErrorResponse{
+		c.JSON(http.StatusBadRequest, apimodels.OAuthErrorResponse{
 			Error:            "invalid_grant",
 			ErrorDescription: "authorization code has already been used",
 		})
@@ -943,7 +921,7 @@ func (s *Server) handleOAuthToken(c *gin.Context) {
 	// Issue access token (same JWT format as regular auth)
 	accessToken, err := s.jwtService.IssueAccessToken(session.UserDID, session.KYC)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, OAuthErrorResponse{
+		c.JSON(http.StatusInternalServerError, apimodels.OAuthErrorResponse{
 			Error:            "server_error",
 			ErrorDescription: "failed to issue access token",
 		})
@@ -956,7 +934,7 @@ func (s *Server) handleOAuthToken(c *gin.Context) {
 	// TTL window — banned users are rejected at refresh time.
 	refreshToken, err := s.jwtService.IssueRefreshToken(session.UserDID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, OAuthErrorResponse{
+		c.JSON(http.StatusInternalServerError, apimodels.OAuthErrorResponse{
 			Error:            "server_error",
 			ErrorDescription: "failed to issue refresh token",
 		})
@@ -965,7 +943,7 @@ func (s *Server) handleOAuthToken(c *gin.Context) {
 
 	tokenHash := authpkg.HashToken(refreshToken)
 	if err := s.db.SaveRefreshToken(c.Request.Context(), tokenHash, session.UserDID, time.Now().Add(RefreshTokenTTL)); err != nil {
-		c.JSON(http.StatusInternalServerError, OAuthErrorResponse{
+		c.JSON(http.StatusInternalServerError, apimodels.OAuthErrorResponse{
 			Error:            "server_error",
 			ErrorDescription: "failed to save refresh token",
 		})
@@ -973,18 +951,12 @@ func (s *Server) handleOAuthToken(c *gin.Context) {
 	}
 
 	// Return token response
-	c.JSON(http.StatusOK, OAuthTokenResponse{
+	c.JSON(http.StatusOK, apimodels.OAuthTokenResponse{
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
 		TokenType:    "Bearer",
 		ExpiresIn:    int(AccessTokenTTL.Seconds()),
 	})
-}
-
-// OAuthSessionStatusResponse represents the response for OAuth session status polling
-type OAuthSessionStatusResponse struct {
-	Completed   bool   `json:"completed"`
-	RedirectURL string `json:"redirect_url,omitempty"`
 }
 
 // handleOAuthSessionStatus handles GET /oauth/session/:id/status - poll for OAuth session completion
@@ -995,10 +967,10 @@ type OAuthSessionStatusResponse struct {
 // @Tags         OAuth SSO
 // @Produce      json
 // @Param        id path string true "OAuth session ID"
-// @Success      200 {object} OAuthSessionStatusResponse
-// @Failure      400 {object} APIError "session ID required"
-// @Failure      404 {object} APIError "session not found or expired"
-// @Failure      500 {object} APIError "invalid redirect URI"
+// @Success      200 {object} apimodels.OAuthSessionStatusResponse
+// @Failure      400 {object} apimodels.APIError "session ID required"
+// @Failure      404 {object} apimodels.APIError "session not found or expired"
+// @Failure      500 {object} apimodels.APIError "invalid redirect URI"
 // @Router       /oauth/session/{id}/status [get]
 func (s *Server) handleOAuthSessionStatus(c *gin.Context) {
 	oauthSessionID := c.Param("id")
@@ -1015,7 +987,7 @@ func (s *Server) handleOAuthSessionStatus(c *gin.Context) {
 
 	// Check if code has been generated (means auth completed)
 	if oauthSession.Code == "" {
-		c.JSON(http.StatusOK, OAuthSessionStatusResponse{Completed: false})
+		c.JSON(http.StatusOK, apimodels.OAuthSessionStatusResponse{Completed: false})
 		return
 	}
 
@@ -1031,7 +1003,7 @@ func (s *Server) handleOAuthSessionStatus(c *gin.Context) {
 	q.Set("state", oauthSession.State)
 	redirectURL.RawQuery = q.Encode()
 
-	c.JSON(http.StatusOK, OAuthSessionStatusResponse{
+	c.JSON(http.StatusOK, apimodels.OAuthSessionStatusResponse{
 		Completed:   true,
 		RedirectURL: redirectURL.String(),
 	})

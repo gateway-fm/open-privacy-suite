@@ -9,8 +9,8 @@ import (
 )
 
 // RD-1262 — the /status methods block must not alias the live rbac method
-// registries. Pre-fix, StatusResponse carried rbac.ExtraNamespaces (the
-// package-global map) by reference and ExtraWildcardInfo.Deny aliased the
+// registries. Pre-fix, apimodels.StatusResponse carried rbac.ExtraNamespaces (the
+// package-global map) by reference and apimodels.ExtraWildcardInfo.Deny aliased the
 // registry's deny slice, so a consumer mutating the response (or the JSON
 // encoder iterating concurrently with a hypothetical writer) touched global
 // RBAC state.

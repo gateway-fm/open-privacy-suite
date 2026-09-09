@@ -4,6 +4,7 @@ package server
 
 import (
 	"net/http"
+	"privacy-proxy/internal/apimodels"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -25,9 +26,9 @@ type TestIdentity struct {
 // @Description  Available only in non-production builds with mock login enabled. Returns the pre-configured test users (DIDs with the did:test: prefix), with their linked ETH addresses and org names, to populate the dev identity picker.
 // @Tags         Auth
 // @Produce      json
-// @Success      200 {object} testIdentitiesResponse
-// @Failure      403 {object} APIError "not available"
-// @Failure      500 {object} APIError "failed to list users"
+// @Success      200 {object} apimodels.TestIdentitiesResponse
+// @Failure      403 {object} apimodels.APIError "not available"
+// @Failure      500 {object} apimodels.APIError "failed to list users"
 // @Router       /api/v1/dev/test-identities [get]
 func (s *Server) handleGetTestIdentities(c *gin.Context) {
 	if s.config.IsProduction() || !s.config.AllowMockLogin {
@@ -94,3 +95,8 @@ func (s *Server) handleGetTestIdentities(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"identities": identities})
 }
+
+// swaggo resolves an annotation's apimodels.Type through this file's import
+// list, but a reference from a comment is not Go usage — so without this the
+// import would be stripped and `make api-spec` would fail. See RD-1265.
+var _ = apimodels.APIError{}

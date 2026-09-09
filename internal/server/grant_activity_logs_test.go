@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/db"
 
@@ -110,7 +111,7 @@ func TestGrantActivityLogs_HolderCanFetch(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	var resp GrantActivityLogsResponse
+	var resp apimodels.GrantActivityLogsResponse
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
 	assert.Equal(t, 5, resp.Total)
@@ -144,7 +145,7 @@ func TestGrantActivityLogs_FullDisclosureScopeAllowed(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	var resp GrantActivityLogsResponse
+	var resp apimodels.GrantActivityLogsResponse
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
 	assert.Equal(t, 3, resp.Total)
@@ -278,7 +279,7 @@ func TestGrantActivityLogs_Pagination(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	var resp1 GrantActivityLogsResponse
+	var resp1 apimodels.GrantActivityLogsResponse
 	err := json.Unmarshal(w.Body.Bytes(), &resp1)
 	require.NoError(t, err)
 	assert.Equal(t, 10, resp1.Total)
@@ -294,7 +295,7 @@ func TestGrantActivityLogs_Pagination(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w2.Code)
 
-	var resp2 GrantActivityLogsResponse
+	var resp2 apimodels.GrantActivityLogsResponse
 	err = json.Unmarshal(w2.Body.Bytes(), &resp2)
 	require.NoError(t, err)
 	assert.Equal(t, 10, resp2.Total)
@@ -359,7 +360,7 @@ func TestGrantActivityLogs_LogsWithinGrantTimeBoundsOnly(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	var resp GrantActivityLogsResponse
+	var resp apimodels.GrantActivityLogsResponse
 	err = json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
 

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/compliance"
 	"privacy-proxy/internal/config"
@@ -214,13 +215,13 @@ func TestHandleTestRequest_ComplianceCheck(t *testing.T) {
 		name           string
 		setup          func(t *testing.T)
 		teardown       func(t *testing.T)
-		body           TestRequestInput
+		body           apimodels.TestRequestInput
 		expectedStatus int
 		bodyContains   string
 	}{
 		{
 			name: "eth_sendTransaction below threshold is allowed",
-			body: TestRequestInput{
+			body: apimodels.TestRequestInput{
 				Method: "eth_sendTransaction",
 				OrgID:  seed.orgID,
 				Params: []interface{}{
@@ -235,7 +236,7 @@ func TestHandleTestRequest_ComplianceCheck(t *testing.T) {
 		},
 		{
 			name: "eth_sendTransaction above threshold denied without travel rule record",
-			body: TestRequestInput{
+			body: apimodels.TestRequestInput{
 				Method: "eth_sendTransaction",
 				OrgID:  seed.orgID,
 				Params: []interface{}{
@@ -263,7 +264,7 @@ func TestHandleTestRequest_ComplianceCheck(t *testing.T) {
 					uuid.New().String(), seed.orgID, seed.userID, toAddr, time.Now().Add(24*time.Hour))
 				require.NoError(t, err)
 			},
-			body: TestRequestInput{
+			body: apimodels.TestRequestInput{
 				Method: "eth_sendTransaction",
 				OrgID:  seed.orgID,
 				Params: []interface{}{
@@ -278,7 +279,7 @@ func TestHandleTestRequest_ComplianceCheck(t *testing.T) {
 		},
 		{
 			name: "eth_blockNumber bypasses compliance",
-			body: TestRequestInput{
+			body: apimodels.TestRequestInput{
 				Method: "eth_blockNumber",
 				OrgID:  seed.orgID,
 				Params: []interface{}{},
@@ -301,7 +302,7 @@ func TestHandleTestRequest_ComplianceCheck(t *testing.T) {
 				ctx := context.Background()
 				ts.db.Conn().ExecContext(ctx, "DELETE FROM sanctioned_addresses")
 			},
-			body: TestRequestInput{
+			body: apimodels.TestRequestInput{
 				Method: "eth_sendTransaction",
 				OrgID:  seed.orgID,
 				Params: []interface{}{
@@ -325,7 +326,7 @@ func TestHandleTestRequest_ComplianceCheck(t *testing.T) {
 				t.Helper()
 				ts.complianceChecker = compliance.NewChecker(ts.db, 24*time.Hour, 15*time.Minute)
 			},
-			body: TestRequestInput{
+			body: apimodels.TestRequestInput{
 				Method: "eth_sendTransaction",
 				OrgID:  seed.orgID,
 				Params: []interface{}{
@@ -368,11 +369,10 @@ func TestHandleTestRequest_ComplianceCheck(t *testing.T) {
 	}
 }
 
-
 func TestUpdateComplianceConfig_UnknownPricePolicy(t *testing.T) {
 	ts := setupTestServerForCompliance(t)
 	seed := seedComplianceTestData(t, ts.db)
-	
+
 	ctx := context.Background()
 	orgID := seed.orgID
 

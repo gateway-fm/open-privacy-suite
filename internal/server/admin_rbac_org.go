@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/rbac"
 )
 
@@ -73,10 +74,10 @@ func parsePaginationParams(c *gin.Context, defaultLimit int) (limit, offset int)
 // @Param        limit query int false "Max rows to return (default 50)"
 // @Param        offset query int false "Rows to skip for pagination (default 0)"
 // @Param        include_system query bool false "Include seeded is_system orgs (default false)"
-// @Success      200 {object} orgListResponse
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "source address not on the private network"
-// @Failure      500 {object} APIError
+// @Success      200 {object} apimodels.OrgListResponse
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs [get]
 func (s *Server) listOrganizations(c *gin.Context) {
@@ -148,13 +149,13 @@ func (s *Server) listOrganizations(c *gin.Context) {
 // @Tags         Admin: RBAC
 // @Accept       json
 // @Produce      json
-// @Param        request body orgCreateRequest true "organization to create"
+// @Param        request body apimodels.OrgCreateRequest true "organization to create"
 // @Success      201 {object} rbac.Organization
-// @Failure      400 {object} APIError "invalid body or slug format"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "source address not on the private network, or caller is a tier-2 org-admin JWT (only super-admin/operator may create orgs)"
-// @Failure      409 {object} APIError "an organization with this slug already exists"
-// @Failure      500 {object} APIError
+// @Failure      400 {object} apimodels.APIError "invalid body or slug format"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network, or caller is a tier-2 org-admin JWT (only super-admin/operator may create orgs)"
+// @Failure      409 {object} apimodels.APIError "an organization with this slug already exists"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs [post]
 func (s *Server) createOrganization(c *gin.Context) {
@@ -228,10 +229,10 @@ func (s *Server) createOrganization(c *gin.Context) {
 // @Produce      json
 // @Param        org_id path string true "Organization ID (UUID)"
 // @Success      200 {object} rbac.Organization
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "source address not on the private network, or org outside the caller's scope"
-// @Failure      404 {object} APIError "organization not found"
-// @Failure      500 {object} APIError
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network, or org outside the caller's scope"
+// @Failure      404 {object} apimodels.APIError "organization not found"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id} [get]
 func (s *Server) getOrganization(c *gin.Context) {
@@ -257,14 +258,14 @@ func (s *Server) getOrganization(c *gin.Context) {
 // @Accept       json
 // @Produce      json
 // @Param        org_id path string true "Organization ID (UUID)"
-// @Param        request body orgUpdateRequest true "fields to update (all optional)"
+// @Param        request body apimodels.OrgUpdateRequest true "fields to update (all optional)"
 // @Success      200 {object} rbac.Organization
-// @Failure      400 {object} APIError "invalid body or slug format"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "source address not on the private network, org outside the caller's scope, or the org is a system org"
-// @Failure      404 {object} APIError "organization not found"
-// @Failure      409 {object} APIError "an organization with this slug already exists"
-// @Failure      500 {object} APIError
+// @Failure      400 {object} apimodels.APIError "invalid body or slug format"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network, org outside the caller's scope, or the org is a system org"
+// @Failure      404 {object} apimodels.APIError "organization not found"
+// @Failure      409 {object} apimodels.APIError "an organization with this slug already exists"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id} [put]
 func (s *Server) updateOrganization(c *gin.Context) {
@@ -340,12 +341,12 @@ func (s *Server) updateOrganization(c *gin.Context) {
 // @Tags         Admin: RBAC
 // @Produce      json
 // @Param        org_id path string true "Organization ID (UUID)"
-// @Success      200 {object} APIMessage "organization deleted"
-// @Failure      400 {object} APIError "cannot delete the default organization"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "source address not on the private network, caller is a tier-2 org-admin JWT, or the org is a system org"
-// @Failure      404 {object} APIError "organization not found"
-// @Failure      500 {object} APIError
+// @Success      200 {object} apimodels.APIMessage "organization deleted"
+// @Failure      400 {object} apimodels.APIError "cannot delete the default organization"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network, caller is a tier-2 org-admin JWT, or the org is a system org"
+// @Failure      404 {object} apimodels.APIError "organization not found"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id} [delete]
 func (s *Server) deleteOrganization(c *gin.Context) {
@@ -400,3 +401,8 @@ func (s *Server) deleteOrganization(c *gin.Context) {
 
 	respondDeleted(c, "organization")
 }
+
+// swaggo resolves an annotation's apimodels.Type through this file's import
+// list, but a reference from a comment is not Go usage — so without this the
+// import would be stripped and `make api-spec` would fail. See RD-1265.
+var _ = apimodels.APIError{}

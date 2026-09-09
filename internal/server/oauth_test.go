@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/config"
 	"privacy-proxy/internal/db"
@@ -201,7 +202,7 @@ func TestOAuth_AuthorizeEndpoint(t *testing.T) {
 			assert.Equal(t, tt.expectedStatus, w.Code)
 
 			if tt.expectedError != "" {
-				var errResp OAuthErrorResponse
+				var errResp apimodels.OAuthErrorResponse
 				err := json.Unmarshal(w.Body.Bytes(), &errResp)
 				require.NoError(t, err)
 				assert.Equal(t, tt.expectedError, errResp.Error)
@@ -231,10 +232,10 @@ func TestOAuth_TokenEndpoint(t *testing.T) {
 	tests := []struct {
 		name           string
 		setupSession   func() string // returns the authorization code
-		requestBody    func(code string) OAuthTokenRequest
+		requestBody    func(code string) apimodels.OAuthTokenRequest
 		expectedStatus int
 		expectedError  string
-		checkResponse  func(t *testing.T, resp OAuthTokenResponse)
+		checkResponse  func(t *testing.T, resp apimodels.OAuthTokenResponse)
 	}{
 		{
 			name: "valid code exchange returns JWT",
@@ -246,8 +247,8 @@ func TestOAuth_TokenEndpoint(t *testing.T) {
 				require.NoError(t, err)
 				return code
 			},
-			requestBody: func(code string) OAuthTokenRequest {
-				return OAuthTokenRequest{
+			requestBody: func(code string) apimodels.OAuthTokenRequest {
+				return apimodels.OAuthTokenRequest{
 					GrantType:   "authorization_code",
 					Code:        code,
 					RedirectURI: "http://localhost:3000/callback",
@@ -255,7 +256,7 @@ func TestOAuth_TokenEndpoint(t *testing.T) {
 				}
 			},
 			expectedStatus: http.StatusOK,
-			checkResponse: func(t *testing.T, resp OAuthTokenResponse) {
+			checkResponse: func(t *testing.T, resp apimodels.OAuthTokenResponse) {
 				assert.NotEmpty(t, resp.AccessToken)
 				assert.Equal(t, "Bearer", resp.TokenType)
 				assert.Greater(t, resp.ExpiresIn, 0)
@@ -272,8 +273,8 @@ func TestOAuth_TokenEndpoint(t *testing.T) {
 			setupSession: func() string {
 				return "invalid-code"
 			},
-			requestBody: func(code string) OAuthTokenRequest {
-				return OAuthTokenRequest{
+			requestBody: func(code string) apimodels.OAuthTokenRequest {
+				return apimodels.OAuthTokenRequest{
 					GrantType:   "authorization_code",
 					Code:        code,
 					RedirectURI: "http://localhost:3000/callback",
@@ -291,8 +292,8 @@ func TestOAuth_TokenEndpoint(t *testing.T) {
 				srv.oauthSessionStore.SetCode(oauthSessionID, code, "did:privado:test123", true)
 				return code
 			},
-			requestBody: func(code string) OAuthTokenRequest {
-				return OAuthTokenRequest{
+			requestBody: func(code string) apimodels.OAuthTokenRequest {
+				return apimodels.OAuthTokenRequest{
 					GrantType:   "password",
 					Code:        code,
 					RedirectURI: "http://localhost:3000/callback",
@@ -310,8 +311,8 @@ func TestOAuth_TokenEndpoint(t *testing.T) {
 				srv.oauthSessionStore.SetCode(oauthSessionID, code, "did:privado:test123", true)
 				return code
 			},
-			requestBody: func(code string) OAuthTokenRequest {
-				return OAuthTokenRequest{
+			requestBody: func(code string) apimodels.OAuthTokenRequest {
+				return apimodels.OAuthTokenRequest{
 					GrantType:   "authorization_code",
 					Code:        code,
 					RedirectURI: "http://malicious-site.com/callback",
@@ -329,8 +330,8 @@ func TestOAuth_TokenEndpoint(t *testing.T) {
 				srv.oauthSessionStore.SetCode(oauthSessionID, code, "did:privado:test123", true)
 				return code
 			},
-			requestBody: func(code string) OAuthTokenRequest {
-				return OAuthTokenRequest{
+			requestBody: func(code string) apimodels.OAuthTokenRequest {
+				return apimodels.OAuthTokenRequest{
 					GrantType:   "authorization_code",
 					Code:        code,
 					RedirectURI: "http://localhost:3000/callback",
@@ -359,14 +360,14 @@ func TestOAuth_TokenEndpoint(t *testing.T) {
 			assert.Equal(t, tt.expectedStatus, w.Code)
 
 			if tt.expectedError != "" {
-				var errResp OAuthErrorResponse
+				var errResp apimodels.OAuthErrorResponse
 				err := json.Unmarshal(w.Body.Bytes(), &errResp)
 				require.NoError(t, err)
 				assert.Equal(t, tt.expectedError, errResp.Error)
 			}
 
 			if tt.checkResponse != nil && tt.expectedStatus == http.StatusOK {
-				var resp OAuthTokenResponse
+				var resp apimodels.OAuthTokenResponse
 				err := json.Unmarshal(w.Body.Bytes(), &resp)
 				require.NoError(t, err)
 				tt.checkResponse(t, resp)
@@ -408,7 +409,7 @@ func TestOAuth_TokenEndpoint_FormEncoded(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	var resp OAuthTokenResponse
+	var resp apimodels.OAuthTokenResponse
 	err = json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
 	assert.NotEmpty(t, resp.AccessToken)
@@ -434,7 +435,7 @@ func TestOAuth_CodeReplayProtection(t *testing.T) {
 	router := gin.New()
 	router.POST("/oauth/token", srv.handleOAuthToken)
 
-	tokenRequest := OAuthTokenRequest{
+	tokenRequest := apimodels.OAuthTokenRequest{
 		GrantType:   "authorization_code",
 		Code:        code,
 		RedirectURI: "http://localhost:3000/callback",
@@ -450,7 +451,7 @@ func TestOAuth_CodeReplayProtection(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w1.Code)
 
-	var resp OAuthTokenResponse
+	var resp apimodels.OAuthTokenResponse
 	err = json.Unmarshal(w1.Body.Bytes(), &resp)
 	require.NoError(t, err)
 	assert.NotEmpty(t, resp.AccessToken)
@@ -463,7 +464,7 @@ func TestOAuth_CodeReplayProtection(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, w2.Code)
 
-	var errResp OAuthErrorResponse
+	var errResp apimodels.OAuthErrorResponse
 	err = json.Unmarshal(w2.Body.Bytes(), &errResp)
 	require.NoError(t, err)
 	assert.Equal(t, "invalid_grant", errResp.Error)
@@ -677,7 +678,7 @@ func TestOAuth_SessionStatus(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, w.Code)
 
-		var resp OAuthSessionStatusResponse
+		var resp apimodels.OAuthSessionStatusResponse
 		err := json.Unmarshal(w.Body.Bytes(), &resp)
 		require.NoError(t, err)
 		assert.False(t, resp.Completed)
@@ -698,7 +699,7 @@ func TestOAuth_SessionStatus(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, w.Code)
 
-		var resp OAuthSessionStatusResponse
+		var resp apimodels.OAuthSessionStatusResponse
 		err = json.Unmarshal(w.Body.Bytes(), &resp)
 		require.NoError(t, err)
 		assert.True(t, resp.Completed)
@@ -741,7 +742,7 @@ func TestOAuth_SessionExpiry(t *testing.T) {
 	router := gin.New()
 	router.POST("/oauth/token", srv.handleOAuthToken)
 
-	tokenRequest := OAuthTokenRequest{
+	tokenRequest := apimodels.OAuthTokenRequest{
 		GrantType:   "authorization_code",
 		Code:        code,
 		RedirectURI: "http://localhost:3000/callback",
@@ -756,7 +757,7 @@ func TestOAuth_SessionExpiry(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 
-	var errResp OAuthErrorResponse
+	var errResp apimodels.OAuthErrorResponse
 	err = json.Unmarshal(w.Body.Bytes(), &errResp)
 	require.NoError(t, err)
 	assert.Equal(t, "invalid_grant", errResp.Error)
@@ -786,7 +787,7 @@ func TestOAuth_CodeExpiry(t *testing.T) {
 	router := gin.New()
 	router.POST("/oauth/token", srv.handleOAuthToken)
 
-	tokenRequest := OAuthTokenRequest{
+	tokenRequest := apimodels.OAuthTokenRequest{
 		GrantType:   "authorization_code",
 		Code:        code,
 		RedirectURI: "http://localhost:3000/callback",
@@ -801,7 +802,7 @@ func TestOAuth_CodeExpiry(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 
-	var errResp OAuthErrorResponse
+	var errResp apimodels.OAuthErrorResponse
 	err = json.Unmarshal(w.Body.Bytes(), &errResp)
 	require.NoError(t, err)
 	assert.Equal(t, "invalid_grant", errResp.Error)
@@ -846,7 +847,7 @@ func TestOAuth_StateParameterPreserved(t *testing.T) {
 
 			assert.Equal(t, http.StatusOK, w.Code)
 
-			var resp OAuthSessionStatusResponse
+			var resp apimodels.OAuthSessionStatusResponse
 			err = json.Unmarshal(w.Body.Bytes(), &resp)
 			require.NoError(t, err)
 
@@ -877,7 +878,7 @@ func TestOAuth_ConcurrentCodeExchange(t *testing.T) {
 	router := gin.New()
 	router.POST("/oauth/token", srv.handleOAuthToken)
 
-	tokenRequest := OAuthTokenRequest{
+	tokenRequest := apimodels.OAuthTokenRequest{
 		GrantType:   "authorization_code",
 		Code:        code,
 		RedirectURI: "http://localhost:3000/callback",
@@ -991,7 +992,7 @@ func TestOAuth_FullFlow(t *testing.T) {
 	assert.Equal(t, state, callbackRedirectURL.Query().Get("state"))
 
 	// Step 3: Exchange authorization code for tokens
-	tokenRequest := OAuthTokenRequest{
+	tokenRequest := apimodels.OAuthTokenRequest{
 		GrantType:   "authorization_code",
 		Code:        authCode,
 		RedirectURI: redirectURI,
@@ -1006,7 +1007,7 @@ func TestOAuth_FullFlow(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w3.Code)
 
-	var tokenResp OAuthTokenResponse
+	var tokenResp apimodels.OAuthTokenResponse
 	err = json.Unmarshal(w3.Body.Bytes(), &tokenResp)
 	require.NoError(t, err)
 
@@ -1434,7 +1435,7 @@ func TestOAuth_TokenExchange_ReturnsRefreshToken(t *testing.T) {
 	require.NotEmpty(t, session.Code)
 
 	// Step 4: Exchange the code for tokens via POST /oauth/token
-	tokenRequest := OAuthTokenRequest{
+	tokenRequest := apimodels.OAuthTokenRequest{
 		GrantType:   "authorization_code",
 		Code:        session.Code,
 		RedirectURI: redirectURI,
@@ -1449,7 +1450,7 @@ func TestOAuth_TokenExchange_ReturnsRefreshToken(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, tokenW.Code)
 
-	var tokenResp OAuthTokenResponse
+	var tokenResp apimodels.OAuthTokenResponse
 	err = json.Unmarshal(tokenW.Body.Bytes(), &tokenResp)
 	require.NoError(t, err)
 
@@ -1465,7 +1466,7 @@ func TestOAuth_TokenExchange_ReturnsRefreshToken(t *testing.T) {
 	assert.Contains(t, claims.Subject, "did:privado:mock_")
 
 	// Step 6: Use the refresh token to get new tokens via POST /api/v1/refresh
-	refreshReqBody, _ := json.Marshal(RefreshRequest{
+	refreshReqBody, _ := json.Marshal(apimodels.RefreshRequest{
 		RefreshToken: tokenResp.RefreshToken,
 	})
 
@@ -1476,7 +1477,7 @@ func TestOAuth_TokenExchange_ReturnsRefreshToken(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, refreshW.Code)
 
-	var refreshResp AuthResponse
+	var refreshResp apimodels.AuthResponse
 	err = json.Unmarshal(refreshW.Body.Bytes(), &refreshResp)
 	require.NoError(t, err)
 
@@ -1496,7 +1497,7 @@ func TestOAuth_TokenExchange_ReturnsRefreshToken(t *testing.T) {
 	assert.Equal(t, claims.Subject, newClaims.Subject, "subject should be preserved across refresh")
 
 	// Step 8: Verify the old refresh token no longer works (it was revoked during rotation)
-	oldRefreshReqBody, _ := json.Marshal(RefreshRequest{
+	oldRefreshReqBody, _ := json.Marshal(apimodels.RefreshRequest{
 		RefreshToken: tokenResp.RefreshToken,
 	})
 
@@ -1543,7 +1544,7 @@ func TestOAuth_TokenEndpoint_FirstPartyClientAuth(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 
-	type tweakReq func(req *http.Request, body *OAuthTokenRequest)
+	type tweakReq func(req *http.Request, body *apimodels.OAuthTokenRequest)
 
 	tests := []struct {
 		name           string
@@ -1555,14 +1556,14 @@ func TestOAuth_TokenEndpoint_FirstPartyClientAuth(t *testing.T) {
 	}{
 		{
 			name: "first-party + correct HTTP Basic → 200",
-			tweak: func(req *http.Request, _ *OAuthTokenRequest) {
+			tweak: func(req *http.Request, _ *apimodels.OAuthTokenRequest) {
 				req.SetBasicAuth(clientID, clientSecret)
 			},
 			expectedStatus: http.StatusOK,
 		},
 		{
 			name: "first-party + wrong HTTP Basic → 401 invalid_client",
-			tweak: func(req *http.Request, _ *OAuthTokenRequest) {
+			tweak: func(req *http.Request, _ *apimodels.OAuthTokenRequest) {
 				req.SetBasicAuth(clientID, "wrong-secret")
 			},
 			expectedStatus: http.StatusUnauthorized,
@@ -1570,14 +1571,14 @@ func TestOAuth_TokenEndpoint_FirstPartyClientAuth(t *testing.T) {
 		},
 		{
 			name: "first-party + correct client_secret_post → 200",
-			tweak: func(_ *http.Request, body *OAuthTokenRequest) {
+			tweak: func(_ *http.Request, body *apimodels.OAuthTokenRequest) {
 				body.ClientSecret = clientSecret
 			},
 			expectedStatus: http.StatusOK,
 		},
 		{
 			name: "first-party + wrong client_secret_post → 401 invalid_client",
-			tweak: func(_ *http.Request, body *OAuthTokenRequest) {
+			tweak: func(_ *http.Request, body *apimodels.OAuthTokenRequest) {
 				body.ClientSecret = "wrong-secret"
 			},
 			expectedStatus: http.StatusUnauthorized,
@@ -1585,14 +1586,14 @@ func TestOAuth_TokenEndpoint_FirstPartyClientAuth(t *testing.T) {
 		},
 		{
 			name:           "first-party + no secret at all → 401 invalid_client",
-			tweak:          func(_ *http.Request, _ *OAuthTokenRequest) {}, // omit secret
+			tweak:          func(_ *http.Request, _ *apimodels.OAuthTokenRequest) {}, // omit secret
 			expectedStatus: http.StatusUnauthorized,
 			expectedError:  "invalid_client",
 		},
 		{
 			name:      "non-first-party client bypasses RD-1006 (empty allowlist)",
 			allowlist: map[string]string{}, // override: allowlist empty for this case
-			tweak:     func(_ *http.Request, _ *OAuthTokenRequest) {},
+			tweak:     func(_ *http.Request, _ *apimodels.OAuthTokenRequest) {},
 			// pre-RD-1006 behaviour: token endpoint accepts the code without
 			// client authentication when the client is not on the allowlist.
 			expectedStatus: http.StatusOK,
@@ -1609,7 +1610,7 @@ func TestOAuth_TokenEndpoint_FirstPartyClientAuth(t *testing.T) {
 			}
 
 			code := seedCode(fmt.Sprintf("auth-sess-fpc-%d", i))
-			body := OAuthTokenRequest{
+			body := apimodels.OAuthTokenRequest{
 				GrantType:   "authorization_code",
 				Code:        code,
 				RedirectURI: redirectURI,
@@ -1641,11 +1642,11 @@ func TestOAuth_TokenEndpoint_FirstPartyClientAuth(t *testing.T) {
 
 			require.Equal(t, tt.expectedStatus, w.Code, "body=%s", w.Body.String())
 			if tt.expectedError != "" {
-				var errResp OAuthErrorResponse
+				var errResp apimodels.OAuthErrorResponse
 				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &errResp))
 				assert.Equal(t, tt.expectedError, errResp.Error)
 			} else if tt.expectedStatus == http.StatusOK {
-				var ok OAuthTokenResponse
+				var ok apimodels.OAuthTokenResponse
 				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &ok))
 				assert.NotEmpty(t, ok.AccessToken)
 			}

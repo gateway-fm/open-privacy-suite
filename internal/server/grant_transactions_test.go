@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/disclosure"
 	"privacy-proxy/internal/explorer"
@@ -71,7 +72,7 @@ func TestGrantTransactions_FullDisclosure(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code)
 
-	var resp GrantTransactionsResponse
+	var resp apimodels.GrantTransactionsResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 
 	assert.Equal(t, "full", resp.DisclosureLevel)
@@ -131,7 +132,7 @@ func TestGrantTransactions_PseudonymousDisclosure(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code)
 
-	var resp GrantTransactionsResponse
+	var resp apimodels.GrantTransactionsResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 
 	assert.Equal(t, "pseudonymous", resp.DisclosureLevel)
@@ -194,7 +195,7 @@ func TestGrantTransactions_PseudonymousDirection_Self(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code)
 
-	var resp GrantTransactionsResponse
+	var resp apimodels.GrantTransactionsResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 
 	require.Len(t, resp.Transactions, 1)
@@ -230,7 +231,7 @@ func TestGrantTransactions_RedactedDisclosure(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code)
 
-	var resp GrantTransactionsResponse
+	var resp apimodels.GrantTransactionsResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 
 	assert.Equal(t, "redacted", resp.DisclosureLevel)
@@ -369,7 +370,7 @@ func TestGrantTransactions_Pagination(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code)
 
-	var resp GrantTransactionsResponse
+	var resp apimodels.GrantTransactionsResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 
 	assert.Len(t, resp.Transactions, 2, "should return exactly limit transactions")
@@ -402,7 +403,7 @@ func TestGrantTransactions_CursorWalk(t *testing.T) {
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, req)
 			require.Equal(t, http.StatusOK, w.Code)
-			var resp GrantTransactionsResponse
+			var resp apimodels.GrantTransactionsResponse
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 			for _, tx := range resp.Transactions {
 				require.NotNil(t, tx.TxHash, "full disclosure must expose tx_hash")
@@ -513,7 +514,7 @@ func TestResolveAddressID_PseudonymousDoesNotLeakRealAddress(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code)
 
-	var resp ResolveAddressResponse
+	var resp apimodels.ResolveAddressResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 
 	// SECURITY: real_address must NOT be present for pseudonymous grants
@@ -553,7 +554,7 @@ func TestResolveAddressID_FullReturnsRealAddress(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code)
 
-	var resp ResolveAddressResponse
+	var resp apimodels.ResolveAddressResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 
 	require.NotNil(t, resp.RealAddress, "full disclosure should include real address")

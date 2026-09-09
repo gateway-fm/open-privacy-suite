@@ -3,27 +3,12 @@ package server
 import (
 	"log/slog"
 	"net/http"
+	"privacy-proxy/internal/apimodels"
 	"regexp"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 )
-
-// UnsupportedNetworkError is returned when a wallet's proof cannot be verified
-// because this deployment has no state resolver registered for the iden3
-// network its DID is anchored on — i.e. the network is not configured here.
-//
-// It is deliberately distinguishable from a generic verification failure: an
-// operator reading a user's screenshot can tell "your deployment is missing a
-// config value" from "this proof is bad" without pod logs. Naming the network
-// discloses nothing — it is the wallet's own network, already known to the
-// caller. What must never appear is the raw library error or the RPC endpoint
-// the resolver would have dialled (RD-934 / RD-1178).
-type UnsupportedNetworkError struct {
-	Error   string `json:"error"   example:"network_not_supported"`
-	Message string `json:"message" example:"This deployment does not support the wallet's identity network."`
-	Network string `json:"network" example:"billions:main"`
-}
 
 // errUnsupportedNetworkCode is the stable machine-readable code clients match on.
 const errUnsupportedNetworkCode = "network_not_supported"
@@ -97,7 +82,7 @@ const (
 func (s *Server) respondVerificationError(c *gin.Context, logPrefix string, err error) verificationErrorClass {
 	msg := err.Error()
 	if strings.Contains(msg, "humanity") || strings.Contains(msg, "ProofOfHumanity") {
-		c.JSON(http.StatusForbidden, HumanityVerificationError{
+		c.JSON(http.StatusForbidden, apimodels.HumanityVerificationError{
 			Error:     "humanity_verification_required",
 			Message:   "Please complete ProofOfHumanity verification at Billions",
 			VerifyURL: "https://app.billions.network",
@@ -111,7 +96,7 @@ func (s *Server) respondVerificationError(c *gin.Context, logPrefix string, err 
 			"configured_networks", s.registeredNetworks(),
 			"ip", c.ClientIP(),
 			"err", err)
-		c.JSON(http.StatusUnauthorized, UnsupportedNetworkError{
+		c.JSON(http.StatusUnauthorized, apimodels.UnsupportedNetworkError{
 			Error:   errUnsupportedNetworkCode,
 			Message: "This deployment does not support the wallet's identity network.",
 			Network: network,

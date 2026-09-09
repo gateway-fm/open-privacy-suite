@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/db"
 	"privacy-proxy/internal/rbac"
 
@@ -28,10 +29,10 @@ import (
 // @Description  Lists the Azure AD tenants permitted to authenticate, with their default org/group and auto-provision settings. Super-admin token only — the entries reveal the cluster's SSO topology, so org admins cannot read them.
 // @Tags         Admin: shared infrastructure
 // @Produce      json
-// @Success      200 {object} azureTenantListResponse
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "super-admin token required"
-// @Failure      500 {object} APIError
+// @Success      200 {object} apimodels.AzureTenantListResponse
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "super-admin token required"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/azure-tenants [get]
 func (s *Server) listAzureTenants(c *gin.Context) {
@@ -54,13 +55,13 @@ func (s *Server) listAzureTenants(c *gin.Context) {
 // @Tags         Admin: shared infrastructure
 // @Accept       json
 // @Produce      json
-// @Param        request body azureTenantCreateRequest true "tenant to allowlist"
+// @Param        request body apimodels.AzureTenantCreateRequest true "tenant to allowlist"
 // @Success      201 {object} db.AllowedAzureTenant
-// @Failure      400 {object} APIError "invalid body, tenant_id not a UUID, or default group invalid / admin-tier"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "super-admin token required"
-// @Failure      409 {object} APIError "a tenant with this tenant_id already exists"
-// @Failure      500 {object} APIError
+// @Failure      400 {object} apimodels.APIError "invalid body, tenant_id not a UUID, or default group invalid / admin-tier"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "super-admin token required"
+// @Failure      409 {object} apimodels.APIError "a tenant with this tenant_id already exists"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/azure-tenants [post]
 func (s *Server) createAzureTenant(c *gin.Context) {
@@ -156,10 +157,10 @@ func (s *Server) createAzureTenant(c *gin.Context) {
 // @Produce      json
 // @Param        id path string true "Azure tenant allowlist entry ID"
 // @Success      200 {object} db.AllowedAzureTenant
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "super-admin token required"
-// @Failure      404 {object} APIError "azure tenant not found"
-// @Failure      500 {object} APIError
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "super-admin token required"
+// @Failure      404 {object} apimodels.APIError "azure tenant not found"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/azure-tenants/{id} [get]
 func (s *Server) getAzureTenant(c *gin.Context) {
@@ -188,14 +189,14 @@ func (s *Server) getAzureTenant(c *gin.Context) {
 // @Accept       json
 // @Produce      json
 // @Param        id path string true "Azure tenant allowlist entry ID"
-// @Param        request body azureTenantUpdateRequest true "fields to update"
+// @Param        request body apimodels.AzureTenantUpdateRequest true "fields to update"
 // @Success      200 {object} db.AllowedAzureTenant
-// @Failure      400 {object} APIError "invalid body, tenant_id not a UUID, or default group invalid / admin-tier"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "super-admin token required"
-// @Failure      404 {object} APIError "azure tenant not found"
-// @Failure      409 {object} APIError "a tenant with this tenant_id already exists"
-// @Failure      500 {object} APIError
+// @Failure      400 {object} apimodels.APIError "invalid body, tenant_id not a UUID, or default group invalid / admin-tier"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "super-admin token required"
+// @Failure      404 {object} apimodels.APIError "azure tenant not found"
+// @Failure      409 {object} apimodels.APIError "a tenant with this tenant_id already exists"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/azure-tenants/{id} [put]
 func (s *Server) updateAzureTenant(c *gin.Context) {
@@ -320,11 +321,11 @@ func (s *Server) updateAzureTenant(c *gin.Context) {
 // @Tags         Admin: shared infrastructure
 // @Produce      json
 // @Param        id path string true "Azure tenant allowlist entry ID"
-// @Success      200 {object} APIMessage "azure tenant deleted"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "super-admin token required"
-// @Failure      404 {object} APIError "azure tenant not found"
-// @Failure      500 {object} APIError
+// @Success      200 {object} apimodels.APIMessage "azure tenant deleted"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "super-admin token required"
+// @Failure      404 {object} apimodels.APIError "azure tenant not found"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/azure-tenants/{id} [delete]
 func (s *Server) deleteAzureTenant(c *gin.Context) {
@@ -384,3 +385,8 @@ func (s *Server) deleteAzureTenant(c *gin.Context) {
 
 	respondDeleted(c, "azure tenant")
 }
+
+// swaggo resolves an annotation's apimodels.Type through this file's import
+// list, but a reference from a comment is not Go usage — so without this the
+// import would be stripped and `make api-spec` would fail. See RD-1265.
+var _ = apimodels.APIError{}

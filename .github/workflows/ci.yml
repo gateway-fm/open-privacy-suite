@@ -122,6 +122,12 @@ jobs:
         # Aikido: this job never pushes, so the checkout token is not needed.
         with:
           persist-credentials: false
+          # The schema-name gate in internal/server/apispec reads the baseline as
+          # committed on the base branch, so it needs origin/main in the local
+          # history; the default shallow checkout has neither the ref nor the
+          # common ancestor. The gate fails loudly rather than skipping when the
+          # ref is missing, so dropping this would turn the Go Tests job red.
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0

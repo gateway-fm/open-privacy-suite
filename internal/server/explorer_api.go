@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
+	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/explorer"
 	"privacy-proxy/internal/proxy"
@@ -22,32 +22,6 @@ import (
 )
 
 // Explorer API Response Types
-
-// OwnAddress represents an address owned by the viewer
-type OwnAddress struct {
-	Address string  `json:"address"`
-	ENSName *string `json:"ens_name,omitempty"`
-}
-
-// DisclosedAddress represents an address disclosed to the viewer via a grant
-// SECURITY: For non-full disclosures, Address contains the pseudonym or placeholder, NOT the real address
-type DisclosedAddress struct {
-	Address         string     `json:"address"`    // Pseudonym for pseudonymous, "[PRIVATE]" for redacted, real for full
-	AddressID       string     `json:"address_id"` // Opaque identifier for routing (hash of real address)
-	OwnerDID        string     `json:"owner_did"`
-	DisclosureLevel string     `json:"disclosure_level"`
-	GrantID         string     `json:"grant_id"`
-	ExpiresAt       *time.Time `json:"expires_at,omitempty"`
-	ENSName         *string    `json:"ens_name,omitempty"` // Only included for full disclosure
-}
-
-// ViewableAddressesResponse is the response for GET /api/v1/explorer/viewable-addresses
-type ViewableAddressesResponse struct {
-	ViewerWallet       string             `json:"viewer_wallet"`
-	ViewerDID          string             `json:"viewer_did,omitempty"`
-	OwnAddresses       []OwnAddress       `json:"own_addresses"`
-	DisclosedAddresses []DisclosedAddress `json:"disclosed_addresses"`
-}
 
 // Type aliases for explorer visibility types — the canonical definitions live in
 // the explorer package. API handlers and the RedactionEngine share the same types.
@@ -76,58 +50,6 @@ const (
 // bounded enough to keep the join scan-safe on chains with millions of
 // historical transfers. Tune via empirical query plans rather than guesswork.
 const transferParticipantUnionLimit = 10000
-
-// ResolveAddressResponse is returned when resolving an address_id.
-// SECURITY: RealAddress is only populated for "full" disclosure level.
-type ResolveAddressResponse struct {
-	RealAddress     *string  `json:"real_address,omitempty"`
-	DisclosureLevel string   `json:"disclosure_level"`
-	GrantID         string   `json:"grant_id"`
-	Pseudonym       string   `json:"pseudonym,omitempty"`     // For pseudonymous, the display name to use
-	ScopeMethods    []string `json:"scope_methods,omitempty"` // Methods from grant scope (e.g. "transaction_history", "activity_logs")
-}
-
-// GrantTransactionsResponse is the response for GET /api/v1/explorer/grant/:grant_id/:address_id/transactions
-type GrantTransactionsResponse struct {
-	Transactions    []GrantTransaction `json:"transactions"`
-	DisclosureLevel string             `json:"disclosure_level"`
-	AddressLabels   map[string]string  `json:"address_labels"`
-	// NextCursor is the opaque continuation to pass back as ?cursor= (RD-1149).
-	// Its presence is the sole "more pages" signal: a client keeps paging while
-	// next_cursor is present and stops when it is omitted (feed exhausted). It is
-	// deliberately the only pagination field — there is no has_more, which would
-	// only ever be `next_cursor != ""` and could drift from it.
-	NextCursor string `json:"next_cursor,omitempty"`
-}
-
-// AddressTransactionsResponse wraps a page of an address's transactions with the
-// opaque pagination cursor (RD-1149). NextCursor follows the same token-only
-// contract as GrantTransactionsResponse: present ⇒ more pages, omitted ⇒ done.
-type AddressTransactionsResponse struct {
-	Transactions []explorer.Transaction `json:"transactions"`
-	NextCursor   string                 `json:"next_cursor,omitempty"`
-}
-
-// AddressTransfersResponse wraps a page of an address's token transfers with the
-// opaque pagination cursor (RD-1149). Same token-only contract as above.
-type AddressTransfersResponse struct {
-	Transfers  []explorer.TokenTransfer `json:"transfers"`
-	NextCursor string                   `json:"next_cursor,omitempty"`
-}
-
-// GrantTransaction represents a transaction in the context of a disclosure grant.
-// For pseudonymous grants, addresses are replaced with pseudonyms and financial data is hidden.
-type GrantTransaction struct {
-	TxHash         *string `json:"tx_hash,omitempty"` // only for full disclosure
-	BlockNumber    uint64  `json:"block_number"`
-	BlockTimestamp uint64  `json:"block_timestamp,omitempty"`
-	Direction      string  `json:"direction"` // "in", "out", "self"
-	From           string  `json:"from"`
-	To             string  `json:"to,omitempty"`
-	Value          string  `json:"value"`
-	GasUsed        uint64  `json:"gas_used"`
-	Status         int     `json:"status"`
-}
 
 // registerExplorerRoutes registers the explorer API endpoints
 // These endpoints are designed to be called by the explorer backend (internal).
@@ -531,7 +453,7 @@ func (s *Server) isViewerAdmin(ctx context.Context, viewerDID string) bool {
 // @Description  Returns the chain ID for the explorer backend. Private network only (serves the explorer backend); not reachable through the public ingress.
 // @Tags         Explorer
 // @Produce      json
-// @Success      200 {object} ExplorerChainIDResponse
+// @Success      200 {object} apimodels.ExplorerChainIDResponse
 // @Router       /api/v1/explorer/chain-id [get]
 func (s *Server) getExplorerChainID(c *gin.Context) {
 	// Approximation: return 1 or get from proxy if needed
@@ -545,8 +467,8 @@ func (s *Server) getExplorerChainID(c *gin.Context) {
 // @Tags         Explorer
 // @Produce      json
 // @Success      200 {object} explorer.ChainStats
-// @Failure      500 {object} APIError "lookup failed"
-// @Failure      503 {object} APIError "explorer store not configured"
+// @Failure      500 {object} apimodels.APIError "lookup failed"
+// @Failure      503 {object} apimodels.APIError "explorer store not configured"
 // @Router       /api/v1/explorer/stats [get]
 func (s *Server) getExplorerStats(c *gin.Context) {
 	if s.explorerStore == nil {
@@ -602,8 +524,8 @@ func clampExplorerOffset(offset int) int {
 // @Param        limit query int false "Max blocks to return" default(25)
 // @Param        before query int false "Return blocks strictly older than this block number (pagination cursor)"
 // @Success      200 {array} explorer.Block
-// @Failure      500 {object} APIError "lookup failed"
-// @Failure      503 {object} APIError "explorer store not configured"
+// @Failure      500 {object} apimodels.APIError "lookup failed"
+// @Failure      503 {object} apimodels.APIError "explorer store not configured"
 // @Router       /api/v1/explorer/blocks [get]
 func (s *Server) getExplorerBlocks(c *gin.Context) {
 	if s.explorerStore == nil {
@@ -640,10 +562,10 @@ func (s *Server) getExplorerBlocks(c *gin.Context) {
 // @Produce      json
 // @Param        number path int true "Block number"
 // @Success      200 {object} explorer.Block
-// @Failure      400 {object} APIError "invalid block number"
-// @Failure      404 {object} APIError "block not found"
-// @Failure      500 {object} APIError "lookup failed"
-// @Failure      503 {object} APIError "explorer store not configured"
+// @Failure      400 {object} apimodels.APIError "invalid block number"
+// @Failure      404 {object} apimodels.APIError "block not found"
+// @Failure      500 {object} apimodels.APIError "lookup failed"
+// @Failure      503 {object} apimodels.APIError "explorer store not configured"
 // @Router       /api/v1/explorer/blocks/{number} [get]
 func (s *Server) getExplorerBlock(c *gin.Context) {
 	if s.explorerStore == nil {
@@ -688,9 +610,9 @@ func (s *Server) getExplorerBlock(c *gin.Context) {
 // @Produce      json
 // @Param        hash path string true "Block hash (0x-prefixed)"
 // @Success      200 {object} explorer.Block
-// @Failure      404 {object} APIError "block not found"
-// @Failure      500 {object} APIError "lookup failed"
-// @Failure      503 {object} APIError "explorer store not configured"
+// @Failure      404 {object} apimodels.APIError "block not found"
+// @Failure      500 {object} apimodels.APIError "lookup failed"
+// @Failure      503 {object} apimodels.APIError "explorer store not configured"
 // @Router       /api/v1/explorer/blocks/hash/{hash} [get]
 func (s *Server) getExplorerBlockByHash(c *gin.Context) {
 	if s.explorerStore == nil {
@@ -922,8 +844,8 @@ func (s *Server) buildVisibilityFilter(ctx context.Context, viewerDID string) *e
 // @Param        before query int false "Return rows strictly older than this block number (pagination cursor)"
 // @Param        with_categories query bool false "Include transaction category tags" default(false)
 // @Success      200 {array} explorer.Transaction
-// @Failure      500 {object} APIError "lookup or redaction failed"
-// @Failure      503 {object} APIError "explorer store not configured"
+// @Failure      500 {object} apimodels.APIError "lookup or redaction failed"
+// @Failure      503 {object} apimodels.APIError "explorer store not configured"
 // @Router       /api/v1/explorer/transactions [get]
 func (s *Server) getExplorerTransactions(c *gin.Context) {
 	if s.explorerStore == nil {
@@ -986,9 +908,9 @@ func (s *Server) getExplorerTransactions(c *gin.Context) {
 // @Param        hash path string true "Transaction hash (0x-prefixed)"
 // @Param        with_categories query bool false "Include transaction category tags" default(false)
 // @Success      200 {object} explorer.Transaction
-// @Failure      404 {object} APIError "transaction not found (also returned when the transaction is fully hidden from the viewer)"
-// @Failure      500 {object} APIError "lookup or redaction failed"
-// @Failure      503 {object} APIError "explorer store not configured"
+// @Failure      404 {object} apimodels.APIError "transaction not found (also returned when the transaction is fully hidden from the viewer)"
+// @Failure      500 {object} apimodels.APIError "lookup or redaction failed"
+// @Failure      503 {object} apimodels.APIError "explorer store not configured"
 // @Router       /api/v1/explorer/transactions/{hash} [get]
 func (s *Server) getExplorerTransaction(c *gin.Context) {
 	if s.explorerStore == nil {
@@ -1309,9 +1231,9 @@ func visibleCountOrZero(count int, err error, surface, address string) int {
 // @Produce      json
 // @Param        address path string true "Account address (0x-prefixed hex)"
 // @Success      200 {object} explorer.AddressStats
-// @Failure      404 {object} APIError "address not found (also returned when the address is hidden from the viewer)"
-// @Failure      500 {object} APIError "lookup failed"
-// @Failure      503 {object} APIError "explorer store not configured"
+// @Failure      404 {object} apimodels.APIError "address not found (also returned when the address is hidden from the viewer)"
+// @Failure      500 {object} apimodels.APIError "lookup failed"
+// @Failure      503 {object} apimodels.APIError "explorer store not configured"
 // @Router       /api/v1/explorer/addresses/{address}/stats [get]
 func (s *Server) getExplorerAddressStats(c *gin.Context) {
 	if s.explorerStore == nil {
@@ -1373,11 +1295,11 @@ func (s *Server) getExplorerAddressStats(c *gin.Context) {
 // @Param        limit query int false "Max rows to return" default(25)
 // @Param        cursor query string false "Opaque continuation cursor from the previous response's next_cursor (RD-1149); takes precedence over before"
 // @Param        before query int false "Legacy: return rows strictly older than this block number (may skip rows of the boundary block — prefer cursor)"
-// @Success      200 {object} AddressTransactionsResponse
-// @Failure      400 {object} APIError "malformed pagination cursor"
-// @Failure      404 {object} APIError "address not found (also returned when the address is hidden from the viewer)"
-// @Failure      500 {object} APIError "lookup or redaction failed"
-// @Failure      503 {object} APIError "explorer store not configured"
+// @Success      200 {object} apimodels.AddressTransactionsResponse
+// @Failure      400 {object} apimodels.APIError "malformed pagination cursor"
+// @Failure      404 {object} apimodels.APIError "address not found (also returned when the address is hidden from the viewer)"
+// @Failure      500 {object} apimodels.APIError "lookup or redaction failed"
+// @Failure      503 {object} apimodels.APIError "explorer store not configured"
 // @Router       /api/v1/explorer/addresses/{address}/transactions [get]
 func (s *Server) getExplorerAddressTransactions(c *gin.Context) {
 	if s.explorerStore == nil {
@@ -1429,7 +1351,7 @@ func (s *Server) getExplorerAddressTransactions(c *gin.Context) {
 	// RD-1149: the opaque continuation is returned in the response body
 	// (next_cursor), omitted when the feed is exhausted. Its presence is the
 	// only "more pages" signal — no X-Next-Cursor header, no has_more.
-	c.JSON(http.StatusOK, AddressTransactionsResponse{
+	c.JSON(http.StatusOK, apimodels.AddressTransactionsResponse{
 		Transactions: redactedTxs,
 		NextCursor:   nextCursor,
 	})
@@ -1442,8 +1364,8 @@ func (s *Server) getExplorerAddressTransactions(c *gin.Context) {
 // @Tags         Explorer
 // @Produce      json
 // @Success      200 {object} explorer.SyncStatus
-// @Failure      500 {object} APIError "lookup failed"
-// @Failure      503 {object} APIError "explorer store not configured"
+// @Failure      500 {object} apimodels.APIError "lookup failed"
+// @Failure      503 {object} apimodels.APIError "explorer store not configured"
 // @Router       /api/v1/explorer/sync/status [get]
 func (s *Server) getExplorerSyncStatus(c *gin.Context) {
 	if s.explorerStore == nil {
@@ -1467,7 +1389,7 @@ func (s *Server) getExplorerSyncStatus(c *gin.Context) {
 // @Tags         Explorer
 // @Produce      json
 // @Param        number path int true "Block number"
-// @Failure      500 {object} APIError "manual indexing through proxy not yet implemented"
+// @Failure      500 {object} apimodels.APIError "manual indexing through proxy not yet implemented"
 // @Router       /api/v1/explorer/index/block/{number} [post]
 func (s *Server) indexExplorerBlock(c *gin.Context) {
 	// Proxy to indexer or return not implemented for now
@@ -1484,9 +1406,9 @@ func (s *Server) indexExplorerBlock(c *gin.Context) {
 // @Produce      json
 // @Param        number path int true "Block number"
 // @Success      200 {array} explorer.Transaction
-// @Failure      400 {object} APIError "invalid block number"
-// @Failure      500 {object} APIError "lookup or redaction failed"
-// @Failure      503 {object} APIError "explorer store not configured"
+// @Failure      400 {object} apimodels.APIError "invalid block number"
+// @Failure      500 {object} apimodels.APIError "lookup or redaction failed"
+// @Failure      503 {object} apimodels.APIError "explorer store not configured"
 // @Router       /api/v1/explorer/blocks/{number}/transactions [get]
 func (s *Server) getExplorerBlockTransactions(c *gin.Context) {
 	if s.explorerStore == nil {
@@ -1532,9 +1454,9 @@ func (s *Server) getExplorerBlockTransactions(c *gin.Context) {
 // @Produce      json
 // @Param        number path int true "Block number"
 // @Success      200 {array} explorer.InternalTransaction
-// @Failure      400 {object} APIError "invalid block number"
-// @Failure      500 {object} APIError "lookup or redaction failed"
-// @Failure      503 {object} APIError "explorer store not configured"
+// @Failure      400 {object} apimodels.APIError "invalid block number"
+// @Failure      500 {object} apimodels.APIError "lookup or redaction failed"
+// @Failure      503 {object} apimodels.APIError "explorer store not configured"
 // @Router       /api/v1/explorer/blocks/{number}/internal [get]
 func (s *Server) getExplorerBlockInternalTxs(c *gin.Context) {
 	if s.explorerStore == nil {
@@ -1578,9 +1500,9 @@ func (s *Server) getExplorerBlockInternalTxs(c *gin.Context) {
 // @Description  Returns the highest indexed block number. Private network only (serves the explorer backend); not reachable through the public ingress.
 // @Tags         Explorer
 // @Produce      json
-// @Success      200 {object} ExplorerBlockNumberResponse
-// @Failure      500 {object} APIError "lookup failed"
-// @Failure      503 {object} APIError "explorer store not configured"
+// @Success      200 {object} apimodels.ExplorerBlockNumberResponse
+// @Failure      500 {object} apimodels.APIError "lookup failed"
+// @Failure      503 {object} apimodels.APIError "explorer store not configured"
 // @Router       /api/v1/explorer/blocks/latest/number [get]
 func (s *Server) getExplorerLatestBlockNumber(c *gin.Context) {
 	if s.explorerStore == nil {
@@ -1608,9 +1530,9 @@ func (s *Server) getExplorerLatestBlockNumber(c *gin.Context) {
 // @Param        page query int false "1-based page number" default(1)
 // @Param        pageSize query int false "Rows per page (1-100)" default(25)
 // @Param        with_categories query bool false "Include transaction category tags" default(false)
-// @Success      200 {object} ExplorerListResponse{data=[]explorer.Transaction}
-// @Failure      500 {object} APIError "lookup or redaction failed"
-// @Failure      503 {object} APIError "explorer store not configured"
+// @Success      200 {object} apimodels.ExplorerListResponse{data=[]explorer.Transaction}
+// @Failure      500 {object} apimodels.APIError "lookup or redaction failed"
+// @Failure      503 {object} apimodels.APIError "explorer store not configured"
 // @Router       /api/v1/explorer/transactions/paginated [get]
 func (s *Server) getExplorerTransactionsPaginated(c *gin.Context) {
 	if s.explorerStore == nil {
@@ -1684,8 +1606,8 @@ func (s *Server) getExplorerTransactionsPaginated(c *gin.Context) {
 // @Produce      json
 // @Param        hash path string true "Transaction hash (0x-prefixed)"
 // @Success      200 {array} explorer.InternalTransaction
-// @Failure      500 {object} APIError "lookup or redaction failed"
-// @Failure      503 {object} APIError "explorer store not configured"
+// @Failure      500 {object} apimodels.APIError "lookup or redaction failed"
+// @Failure      503 {object} apimodels.APIError "explorer store not configured"
 // @Router       /api/v1/explorer/transactions/{hash}/internal [get]
 func (s *Server) getExplorerTransactionInternal(c *gin.Context) {
 	if s.explorerStore == nil {
@@ -1741,8 +1663,8 @@ func (s *Server) getExplorerTransactionInternal(c *gin.Context) {
 // @Produce      json
 // @Param        hash path string true "Transaction hash (0x-prefixed)"
 // @Success      200 {array} explorer.TokenTransfer
-// @Failure      500 {object} APIError "lookup or redaction failed"
-// @Failure      503 {object} APIError "explorer store not configured"
+// @Failure      500 {object} apimodels.APIError "lookup or redaction failed"
+// @Failure      503 {object} apimodels.APIError "explorer store not configured"
 // @Router       /api/v1/explorer/transactions/{hash}/transfers [get]
 func (s *Server) getExplorerTransactionTransfers(c *gin.Context) {
 	if s.explorerStore == nil {
@@ -1784,8 +1706,8 @@ func (s *Server) getExplorerTransactionTransfers(c *gin.Context) {
 // @Produce      json
 // @Param        hash path string true "Transaction hash (0x-prefixed)"
 // @Success      200 {array} explorer.Log
-// @Failure      500 {object} APIError "lookup or redaction failed"
-// @Failure      503 {object} APIError "explorer store not configured"
+// @Failure      500 {object} apimodels.APIError "lookup or redaction failed"
+// @Failure      503 {object} apimodels.APIError "explorer store not configured"
 // @Router       /api/v1/explorer/transactions/{hash}/logs [get]
 func (s *Server) getExplorerTransactionLogs(c *gin.Context) {
 	if s.explorerStore == nil {
@@ -1836,7 +1758,7 @@ func (s *Server) getExplorerTransactionLogs(c *gin.Context) {
 // @Tags         Explorer
 // @Produce      json
 // @Param        hash path string true "Transaction hash (0x-prefixed)"
-// @Failure      404 {object} APIError "OP deposit not found (not an OP Stack chain)"
+// @Failure      404 {object} apimodels.APIError "OP deposit not found (not an OP Stack chain)"
 // @Router       /api/v1/explorer/transactions/{hash}/op-deposit [get]
 func (s *Server) getExplorerTransactionOPDeposit(c *gin.Context) {
 	// This is not an OP Stack chain — always return 404
@@ -1853,9 +1775,9 @@ func (s *Server) getExplorerTransactionOPDeposit(c *gin.Context) {
 // @Produce      json
 // @Param        address path string true "Account address (0x-prefixed hex)"
 // @Success      200 {string} string "hex-quantity balance in wei" example(0x0)
-// @Failure      404 {object} APIError "address not found (also returned when the address is hidden from the viewer)"
-// @Failure      500 {object} APIError "upstream RPC or parse failure"
-// @Failure      503 {object} APIError "explorer store not configured"
+// @Failure      404 {object} apimodels.APIError "address not found (also returned when the address is hidden from the viewer)"
+// @Failure      500 {object} apimodels.APIError "upstream RPC or parse failure"
+// @Failure      503 {object} apimodels.APIError "explorer store not configured"
 // @Router       /api/v1/explorer/addresses/{address}/balance [get]
 func (s *Server) getExplorerAddressBalance(c *gin.Context) {
 	if s.explorerStore == nil {
@@ -1905,9 +1827,9 @@ func (s *Server) getExplorerAddressBalance(c *gin.Context) {
 // @Produce      json
 // @Param        address path string true "Account address (0x-prefixed hex)"
 // @Success      200 {string} string "base64-encoded JSON string of the hex bytecode"
-// @Failure      404 {object} APIError "address not found (also returned when the address is hidden from the viewer)"
-// @Failure      500 {object} APIError "upstream RPC or parse failure"
-// @Failure      503 {object} APIError "explorer store not configured"
+// @Failure      404 {object} apimodels.APIError "address not found (also returned when the address is hidden from the viewer)"
+// @Failure      500 {object} apimodels.APIError "upstream RPC or parse failure"
+// @Failure      503 {object} apimodels.APIError "explorer store not configured"
 // @Router       /api/v1/explorer/addresses/{address}/code [get]
 func (s *Server) getExplorerAddressCode(c *gin.Context) {
 	if s.explorerStore == nil {
@@ -1958,9 +1880,9 @@ func (s *Server) getExplorerAddressCode(c *gin.Context) {
 // @Produce      json
 // @Param        address path string true "Account address (0x-prefixed hex)"
 // @Success      200 {array} explorer.Balance
-// @Failure      404 {object} APIError "address not found (also returned when the address is hidden from the viewer)"
-// @Failure      500 {object} APIError "lookup or visibility check failed"
-// @Failure      503 {object} APIError "explorer store not configured"
+// @Failure      404 {object} apimodels.APIError "address not found (also returned when the address is hidden from the viewer)"
+// @Failure      500 {object} apimodels.APIError "lookup or visibility check failed"
+// @Failure      503 {object} apimodels.APIError "explorer store not configured"
 // @Router       /api/v1/explorer/addresses/{address}/balances [get]
 func (s *Server) getExplorerAddressTokenBalances(c *gin.Context) {
 	if s.explorerStore == nil {
@@ -2029,11 +1951,11 @@ func (s *Server) getExplorerAddressTokenBalances(c *gin.Context) {
 // @Param        limit query int false "Max rows to return" default(25)
 // @Param        cursor query string false "Opaque continuation cursor from the previous response's next_cursor (RD-1149); takes precedence over before"
 // @Param        before query int false "Legacy: return rows strictly older than this block number (may skip rows of the boundary block — prefer cursor)"
-// @Success      200 {object} AddressTransfersResponse
-// @Failure      400 {object} APIError "malformed pagination cursor"
-// @Failure      404 {object} APIError "address not found (also returned when the address is hidden from the viewer)"
-// @Failure      500 {object} APIError "lookup or redaction failed"
-// @Failure      503 {object} APIError "explorer store not configured"
+// @Success      200 {object} apimodels.AddressTransfersResponse
+// @Failure      400 {object} apimodels.APIError "malformed pagination cursor"
+// @Failure      404 {object} apimodels.APIError "address not found (also returned when the address is hidden from the viewer)"
+// @Failure      500 {object} apimodels.APIError "lookup or redaction failed"
+// @Failure      503 {object} apimodels.APIError "explorer store not configured"
 // @Router       /api/v1/explorer/addresses/{address}/transfers [get]
 func (s *Server) getExplorerAddressTransfers(c *gin.Context) {
 	if s.explorerStore == nil {
@@ -2087,7 +2009,7 @@ func (s *Server) getExplorerAddressTransfers(c *gin.Context) {
 	// RD-1149: continuation returned in the body (next_cursor), omitted when the
 	// feed is exhausted. Its presence is the only "more pages" signal — no
 	// X-Next-Cursor header, no has_more.
-	c.JSON(http.StatusOK, AddressTransfersResponse{
+	c.JSON(http.StatusOK, apimodels.AddressTransfersResponse{
 		Transfers:  redacted,
 		NextCursor: nextCursor,
 	})
@@ -2102,10 +2024,10 @@ func (s *Server) getExplorerAddressTransfers(c *gin.Context) {
 // @Param        address path string true "Account address (0x-prefixed hex)"
 // @Param        limit query int false "Max rows to return" default(25)
 // @Param        offset query int false "Rows to skip (pagination)" default(0)
-// @Success      200 {object} ExplorerListResponse{data=[]explorer.InternalTransaction}
-// @Failure      404 {object} APIError "address not found (also returned when the address is hidden from the viewer)"
-// @Failure      500 {object} APIError "lookup or redaction failed"
-// @Failure      503 {object} APIError "explorer store not configured"
+// @Success      200 {object} apimodels.ExplorerListResponse{data=[]explorer.InternalTransaction}
+// @Failure      404 {object} apimodels.APIError "address not found (also returned when the address is hidden from the viewer)"
+// @Failure      500 {object} apimodels.APIError "lookup or redaction failed"
+// @Failure      503 {object} apimodels.APIError "explorer store not configured"
 // @Router       /api/v1/explorer/addresses/{address}/internal [get]
 func (s *Server) getExplorerAddressInternal(c *gin.Context) {
 	if s.explorerStore == nil {
@@ -2161,10 +2083,10 @@ func (s *Server) getExplorerAddressInternal(c *gin.Context) {
 // @Param        address path string true "Account address (0x-prefixed hex)"
 // @Param        limit query int false "Max rows to return" default(25)
 // @Param        offset query int false "Rows to skip (pagination)" default(0)
-// @Success      200 {object} ExplorerListResponse{data=[]explorer.Log}
-// @Failure      404 {object} APIError "address not found (also returned when the address is hidden from the viewer)"
-// @Failure      500 {object} APIError "lookup or redaction failed"
-// @Failure      503 {object} APIError "explorer store not configured"
+// @Success      200 {object} apimodels.ExplorerListResponse{data=[]explorer.Log}
+// @Failure      404 {object} apimodels.APIError "address not found (also returned when the address is hidden from the viewer)"
+// @Failure      500 {object} apimodels.APIError "lookup or redaction failed"
+// @Failure      503 {object} apimodels.APIError "explorer store not configured"
 // @Router       /api/v1/explorer/addresses/{address}/logs [get]
 func (s *Server) getExplorerAddressLogs(c *gin.Context) {
 	if s.explorerStore == nil {
@@ -2217,9 +2139,9 @@ func (s *Server) getExplorerAddressLogs(c *gin.Context) {
 // @Produce      json
 // @Param        address path string true "Contract address (0x-prefixed hex)"
 // @Success      200 {object} explorer.Contract
-// @Failure      404 {object} APIError "address or contract not found (also returned when the address is hidden from the viewer)"
-// @Failure      500 {object} APIError "lookup failed"
-// @Failure      503 {object} APIError "explorer store not configured"
+// @Failure      404 {object} apimodels.APIError "address or contract not found (also returned when the address is hidden from the viewer)"
+// @Failure      500 {object} apimodels.APIError "lookup failed"
+// @Failure      503 {object} apimodels.APIError "explorer store not configured"
 // @Router       /api/v1/explorer/addresses/{address}/contract [get]
 func (s *Server) getExplorerAddressContract(c *gin.Context) {
 	if s.explorerStore == nil {
@@ -2266,10 +2188,10 @@ func (s *Server) getExplorerAddressContract(c *gin.Context) {
 // @Tags         Explorer
 // @Produce      json
 // @Param        address path string true "Account address (0x-prefixed hex)"
-// @Success      200 {object} ExplorerIsContractResponse
-// @Failure      404 {object} APIError "address not found (also returned when the address is hidden from the viewer)"
-// @Failure      500 {object} APIError "lookup failed"
-// @Failure      503 {object} APIError "explorer store not configured"
+// @Success      200 {object} apimodels.ExplorerIsContractResponse
+// @Failure      404 {object} apimodels.APIError "address not found (also returned when the address is hidden from the viewer)"
+// @Failure      500 {object} apimodels.APIError "lookup failed"
+// @Failure      503 {object} apimodels.APIError "explorer store not configured"
 // @Router       /api/v1/explorer/addresses/{address}/is-contract [get]
 func (s *Server) getExplorerAddressIsContract(c *gin.Context) {
 	if s.explorerStore == nil {
@@ -2303,11 +2225,11 @@ func (s *Server) getExplorerAddressIsContract(c *gin.Context) {
 // @Produce      json
 // @Param        address path string true "Contract address (0x-prefixed hex)"
 // @Param        request body object true "Raw contract ABI JSON (array of ABI entries)"
-// @Success      200 {object} ExplorerABIUpdateResponse
-// @Failure      400 {object} APIError "invalid request body"
-// @Failure      404 {object} APIError "address not found (also returned when the viewer lacks full visibility)"
-// @Failure      500 {object} APIError "failed to set contract ABI"
-// @Failure      503 {object} APIError "explorer store not configured"
+// @Success      200 {object} apimodels.ExplorerABIUpdateResponse
+// @Failure      400 {object} apimodels.APIError "invalid request body"
+// @Failure      404 {object} apimodels.APIError "address not found (also returned when the viewer lacks full visibility)"
+// @Failure      500 {object} apimodels.APIError "failed to set contract ABI"
+// @Failure      503 {object} apimodels.APIError "explorer store not configured"
 // @Router       /api/v1/explorer/addresses/{address}/abi [post]
 func (s *Server) updateExplorerAddressABI(c *gin.Context) {
 	if s.explorerStore == nil {
@@ -2356,8 +2278,8 @@ func (s *Server) updateExplorerAddressABI(c *gin.Context) {
 // @Param        to query int false "End block (inclusive)"
 // @Param        limit query int false "Max rows to return (1-1000)" default(100)
 // @Success      200 {array} explorer.Log
-// @Failure      500 {object} APIError "lookup or redaction failed"
-// @Failure      503 {object} APIError "explorer store not configured"
+// @Failure      500 {object} apimodels.APIError "lookup or redaction failed"
+// @Failure      503 {object} apimodels.APIError "explorer store not configured"
 // @Router       /api/v1/explorer/logs [get]
 func (s *Server) getExplorerLogs(c *gin.Context) {
 	if s.explorerStore == nil {
@@ -2428,9 +2350,9 @@ func (s *Server) getExplorerLogs(c *gin.Context) {
 // @Param        limit query int false "Max rows to return (1-100)" default(25)
 // @Param        offset query int false "Rows to skip (pagination)" default(0)
 // @Param        type query string false "Filter by token type (e.g. ERC20, ERC721)"
-// @Success      200 {object} ExplorerListResponse{data=[]explorer.Token}
-// @Failure      500 {object} APIError "lookup or visibility check failed"
-// @Failure      503 {object} APIError "explorer store not configured"
+// @Success      200 {object} apimodels.ExplorerListResponse{data=[]explorer.Token}
+// @Failure      500 {object} apimodels.APIError "lookup or visibility check failed"
+// @Failure      503 {object} apimodels.APIError "explorer store not configured"
 // @Router       /api/v1/explorer/tokens [get]
 func (s *Server) getExplorerTokens(c *gin.Context) {
 	if s.explorerStore == nil {
@@ -2543,9 +2465,9 @@ func (s *Server) getExplorerTokens(c *gin.Context) {
 // @Produce      json
 // @Param        address path string true "Token contract address (0x-prefixed hex)"
 // @Success      200 {object} explorer.Token
-// @Failure      404 {object} APIError "token not found (also returned when the token is hidden or redacted from the viewer)"
-// @Failure      500 {object} APIError "lookup failed"
-// @Failure      503 {object} APIError "explorer store not configured"
+// @Failure      404 {object} apimodels.APIError "token not found (also returned when the token is hidden or redacted from the viewer)"
+// @Failure      500 {object} apimodels.APIError "lookup failed"
+// @Failure      503 {object} apimodels.APIError "explorer store not configured"
 // @Router       /api/v1/explorer/tokens/{address} [get]
 func (s *Server) getExplorerToken(c *gin.Context) {
 	if s.explorerStore == nil {
@@ -2621,10 +2543,10 @@ func (s *Server) getExplorerToken(c *gin.Context) {
 // @Param        address path string true "Token contract address (0x-prefixed hex)"
 // @Param        limit query int false "Max rows to return (1-100)" default(25)
 // @Param        offset query int false "Rows to skip (pagination)" default(0)
-// @Success      200 {object} ExplorerListResponse{data=[]explorer.TokenHolder}
-// @Failure      404 {object} APIError "token not found (also returned when the token is hidden or redacted from the viewer)"
-// @Failure      500 {object} APIError "lookup or redaction failed"
-// @Failure      503 {object} APIError "explorer store not configured"
+// @Success      200 {object} apimodels.ExplorerListResponse{data=[]explorer.TokenHolder}
+// @Failure      404 {object} apimodels.APIError "token not found (also returned when the token is hidden or redacted from the viewer)"
+// @Failure      500 {object} apimodels.APIError "lookup or redaction failed"
+// @Failure      503 {object} apimodels.APIError "explorer store not configured"
 // @Router       /api/v1/explorer/tokens/{address}/holders [get]
 func (s *Server) getExplorerTokenHolders(c *gin.Context) {
 	if s.explorerStore == nil {
@@ -2684,10 +2606,10 @@ func (s *Server) getExplorerTokenHolders(c *gin.Context) {
 // @Param        address path string true "Token contract address (0x-prefixed hex)"
 // @Param        limit query int false "Max rows to return (1-100)" default(25)
 // @Param        offset query int false "Rows to skip (pagination)" default(0)
-// @Success      200 {object} ExplorerListResponse{data=[]explorer.TokenTransfer}
-// @Failure      404 {object} APIError "token not found (also returned when the token is hidden or redacted from the viewer)"
-// @Failure      500 {object} APIError "lookup or redaction failed"
-// @Failure      503 {object} APIError "explorer store not configured"
+// @Success      200 {object} apimodels.ExplorerListResponse{data=[]explorer.TokenTransfer}
+// @Failure      404 {object} apimodels.APIError "token not found (also returned when the token is hidden or redacted from the viewer)"
+// @Failure      500 {object} apimodels.APIError "lookup or redaction failed"
+// @Failure      503 {object} apimodels.APIError "explorer store not configured"
 // @Router       /api/v1/explorer/tokens/{address}/transfers [get]
 func (s *Server) getExplorerTokenTransfers(c *gin.Context) {
 	if s.explorerStore == nil {
@@ -2750,9 +2672,9 @@ func (s *Server) getExplorerTokenTransfers(c *gin.Context) {
 // @Produce      json
 // @Param        limit query int false "Max rows to return (1-100)" default(25)
 // @Param        offset query int false "Rows to skip (pagination)" default(0)
-// @Success      200 {object} ExplorerListResponse{data=[]explorer.TokenTransfer}
-// @Failure      500 {object} APIError "lookup or redaction failed"
-// @Failure      503 {object} APIError "explorer store not configured"
+// @Success      200 {object} apimodels.ExplorerListResponse{data=[]explorer.TokenTransfer}
+// @Failure      500 {object} apimodels.APIError "lookup or redaction failed"
+// @Failure      503 {object} apimodels.APIError "explorer store not configured"
 // @Router       /api/v1/explorer/transfers [get]
 func (s *Server) getExplorerAllTransfers(c *gin.Context) {
 	if s.explorerStore == nil {
@@ -2806,9 +2728,9 @@ func (s *Server) getExplorerAllTransfers(c *gin.Context) {
 // @Produce      json
 // @Param        page query int false "1-based page number" default(1)
 // @Param        pageSize query int false "Rows per page (1-100)" default(25)
-// @Success      200 {object} ExplorerListResponse{data=[]explorer.AddressStats}
-// @Failure      500 {object} APIError "lookup or visibility check failed"
-// @Failure      503 {object} APIError "explorer store not configured"
+// @Success      200 {object} apimodels.ExplorerListResponse{data=[]explorer.AddressStats}
+// @Failure      500 {object} apimodels.APIError "lookup or visibility check failed"
+// @Failure      503 {object} apimodels.APIError "explorer store not configured"
 // @Router       /api/v1/explorer/accounts [get]
 func (s *Server) getExplorerAccounts(c *gin.Context) {
 	if s.explorerStore == nil {
@@ -2914,8 +2836,8 @@ func (s *Server) getExplorerAccounts(c *gin.Context) {
 // @Param        q query string false "Search query (empty returns no suggestions)"
 // @Param        limit query int false "Max suggestions to return (1-50)" default(10)
 // @Success      200 {array} explorer.SearchSuggestion
-// @Failure      500 {object} APIError "search or visibility check failed"
-// @Failure      503 {object} APIError "explorer store not configured"
+// @Failure      500 {object} apimodels.APIError "search or visibility check failed"
+// @Failure      503 {object} apimodels.APIError "explorer store not configured"
 // @Router       /api/v1/explorer/search/suggestions [get]
 func (s *Server) getExplorerSearchSuggestions(c *gin.Context) {
 	if s.explorerStore == nil {
@@ -3000,8 +2922,8 @@ func (s *Server) getExplorerSearchSuggestions(c *gin.Context) {
 // @Param        interval query int false "Bucket size in minutes" default(60)
 // @Param        limit query int false "Max buckets to return (1-100)" default(30)
 // @Success      200 {array} explorer.TxHistoryPoint
-// @Failure      500 {object} APIError "lookup failed"
-// @Failure      503 {object} APIError "explorer store not configured"
+// @Failure      500 {object} apimodels.APIError "lookup failed"
+// @Failure      503 {object} apimodels.APIError "explorer store not configured"
 // @Router       /api/v1/explorer/stats/tx-history [get]
 func (s *Server) getExplorerTransactionHistory(c *gin.Context) {
 	if s.explorerStore == nil {
@@ -3046,8 +2968,8 @@ func (s *Server) getExplorerTransactionHistory(c *gin.Context) {
 // @Tags         Explorer
 // @Produce      json
 // @Success      200 {object} explorer.IndexerProgress
-// @Failure      500 {object} APIError "lookup failed"
-// @Failure      503 {object} APIError "explorer store not configured"
+// @Failure      500 {object} apimodels.APIError "lookup failed"
+// @Failure      503 {object} apimodels.APIError "explorer store not configured"
 // @Router       /api/v1/explorer/sync/indexer-progress [get]
 func (s *Server) getExplorerIndexerProgress(c *gin.Context) {
 	if s.explorerStore == nil {
@@ -3075,7 +2997,7 @@ func (s *Server) getExplorerIndexerProgress(c *gin.Context) {
 // @Description  Returns indexer catch-up progress. Private network only (serves the explorer backend); not reachable through the public ingress. The proxy has no indexer of its own, so this always reports a static "not running" state.
 // @Tags         Explorer
 // @Produce      json
-// @Success      200 {object} ExplorerCatchupProgressResponse
+// @Success      200 {object} apimodels.ExplorerCatchupProgressResponse
 // @Router       /api/v1/explorer/sync/catchup [get]
 func (s *Server) getExplorerCatchupProgress(c *gin.Context) {
 	// The proxy has no indexer of its own — return static "not running" response

@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/disclosure"
 	"privacy-proxy/internal/rbac"
@@ -200,12 +201,12 @@ func (s *Server) disclosureUserMiddleware() gin.HandlerFunc {
 // @Tags         Admin: disclosure
 // @Accept       json
 // @Produce      json
-// @Param        request body CreateDisclosureRequestBody true "disclosure request (target_user_id and reason required)"
+// @Param        request body apimodels.CreateDisclosureRequestBody true "disclosure request (target_user_id and reason required)"
 // @Success      201 {object} disclosure.Request
-// @Failure      400 {object} APIError "invalid body, or org_id required (ambiguous multi-org caller)"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "source address not on the private network, or org_id / target_user_id outside the caller's scope"
-// @Failure      500 {object} APIError
+// @Failure      400 {object} apimodels.APIError "invalid body, or org_id required (ambiguous multi-org caller)"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network, or org_id / target_user_id outside the caller's scope"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/disclosure/requests [post]
 func (s *Server) createDisclosureRequest(c *gin.Context) {
@@ -312,10 +313,10 @@ func (s *Server) createDisclosureRequest(c *gin.Context) {
 // @Param        limit query int false "Maximum number of results"
 // @Param        offset query int false "Number of results to skip"
 // @Success      200 {object} disclosure.DisclosureListResult
-// @Failure      400 {object} APIError "org_id required (ambiguous multi-org caller)"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "source address not on the private network, or org_id outside the caller's scope"
-// @Failure      500 {object} APIError
+// @Failure      400 {object} apimodels.APIError "org_id required (ambiguous multi-org caller)"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network, or org_id outside the caller's scope"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/disclosure/requests [get]
 func (s *Server) listDisclosureRequests(c *gin.Context) {
@@ -421,10 +422,10 @@ func (s *Server) listDisclosureRequests(c *gin.Context) {
 // @Param        limit query int false "Maximum number of results"
 // @Param        offset query int false "Number of results to skip"
 // @Success      200 {object} disclosure.GrantListResult
-// @Failure      400 {object} APIError "org_id required (ambiguous multi-org caller)"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "source address not on the private network, or org_id outside the caller's scope"
-// @Failure      500 {object} APIError
+// @Failure      400 {object} apimodels.APIError "org_id required (ambiguous multi-org caller)"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network, or org_id outside the caller's scope"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/disclosure/grants [get]
 func (s *Server) listDisclosureGrants(c *gin.Context) {
@@ -514,11 +515,11 @@ func (s *Server) listDisclosureGrants(c *gin.Context) {
 // @Tags         Admin: disclosure
 // @Produce      json
 // @Param        request_id path string true "Disclosure request ID"
-// @Success      200 {object} DisclosureStatusResponse "status: deleted"
-// @Failure      400 {object} APIError "request is not pending"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "source address not on the private network, or request not found / outside the caller's scope"
-// @Failure      500 {object} APIError
+// @Success      200 {object} apimodels.DisclosureStatusResponse "status: deleted"
+// @Failure      400 {object} apimodels.APIError "request is not pending"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network, or request not found / outside the caller's scope"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/disclosure/requests/{request_id} [delete]
 func (s *Server) deleteDisclosureRequest(c *gin.Context) {
@@ -574,11 +575,11 @@ func (s *Server) deleteDisclosureRequest(c *gin.Context) {
 // @Accept       json
 // @Produce      json
 // @Param        grant_id path string true "Disclosure grant ID"
-// @Param        request body DisclosureReasonBody false "optional revocation reason"
-// @Success      200 {object} DisclosureStatusResponse "status: revoked"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "source address not on the private network, or grant not found / outside the caller's scope"
-// @Failure      500 {object} APIError
+// @Param        request body apimodels.DisclosureReasonBody false "optional revocation reason"
+// @Success      200 {object} apimodels.DisclosureStatusResponse "status: revoked"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network, or grant not found / outside the caller's scope"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/disclosure/grants/{grant_id}/revoke [post]
 func (s *Server) adminRevokeDisclosureGrant(c *gin.Context) {
@@ -635,9 +636,9 @@ func (s *Server) adminRevokeDisclosureGrant(c *gin.Context) {
 // @Produce      json
 // @Param        request_id path string true "Disclosure request ID"
 // @Success      200 {object} disclosure.RequestWithDetails
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "source address not on the private network, or request not found / outside the caller's scope"
-// @Failure      500 {object} APIError
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network, or request not found / outside the caller's scope"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/disclosure/requests/{request_id} [get]
 func (s *Server) getDisclosureRequest(c *gin.Context) {
@@ -673,11 +674,11 @@ func (s *Server) getDisclosureRequest(c *gin.Context) {
 // @Produce      json
 // @Param        requester_did query string true "DID of the viewer whose access is being checked"
 // @Param        target_user_did query string true "DID of the user whose data would be viewed"
-// @Success      200 {object} DisclosureCheckAccessResponse
-// @Failure      400 {object} APIError "requester_did and target_user_did are required"
-// @Failure      401 {object} APIError "missing or invalid admin token"
-// @Failure      403 {object} APIError "source address not on the private network"
-// @Failure      500 {object} APIError
+// @Success      200 {object} apimodels.DisclosureCheckAccessResponse
+// @Failure      400 {object} apimodels.APIError "requester_did and target_user_did are required"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/disclosure/check-access [get]
 func (s *Server) checkDisclosureAccess(c *gin.Context) {
@@ -736,8 +737,8 @@ func (s *Server) checkDisclosureAccess(c *gin.Context) {
 // @Tags         Disclosure (user)
 // @Produce      json
 // @Success      200 {array} disclosure.RequestWithDetails
-// @Failure      401 {object} APIError "missing or invalid token, or no matching user"
-// @Failure      500 {object} APIError
+// @Failure      401 {object} apimodels.APIError "missing or invalid token, or no matching user"
+// @Failure      500 {object} apimodels.APIError
 // @Security     BearerAuth
 // @Router       /api/v1/me/disclosure/requests [get]
 func (s *Server) getMyDisclosureRequests(c *gin.Context) {
@@ -760,8 +761,8 @@ func (s *Server) getMyDisclosureRequests(c *gin.Context) {
 // @Tags         Disclosure (user)
 // @Produce      json
 // @Success      200 {array} disclosure.RequestWithDetails
-// @Failure      401 {object} APIError "missing or invalid token, or no matching user"
-// @Failure      500 {object} APIError
+// @Failure      401 {object} apimodels.APIError "missing or invalid token, or no matching user"
+// @Failure      500 {object} apimodels.APIError
 // @Security     BearerAuth
 // @Router       /api/v1/me/disclosure/requests/all [get]
 func (s *Server) getAllMyDisclosureRequests(c *gin.Context) {
@@ -785,13 +786,13 @@ func (s *Server) getAllMyDisclosureRequests(c *gin.Context) {
 // @Accept       json
 // @Produce      json
 // @Param        request_id path string true "Disclosure request ID"
-// @Param        request body ApproveDisclosureRequestBody false "optional scope narrowing, grant duration, and reason"
-// @Success      200 {object} DisclosureApproveResponse
-// @Failure      400 {object} APIError "request cannot be approved (e.g. not pending or expired)"
-// @Failure      401 {object} APIError "missing or invalid token, or no matching user"
-// @Failure      403 {object} APIError "request does not target the caller's data"
-// @Failure      404 {object} APIError "request not found"
-// @Failure      500 {object} APIError
+// @Param        request body apimodels.ApproveDisclosureRequestBody false "optional scope narrowing, grant duration, and reason"
+// @Success      200 {object} apimodels.DisclosureApproveResponse
+// @Failure      400 {object} apimodels.APIError "request cannot be approved (e.g. not pending or expired)"
+// @Failure      401 {object} apimodels.APIError "missing or invalid token, or no matching user"
+// @Failure      403 {object} apimodels.APIError "request does not target the caller's data"
+// @Failure      404 {object} apimodels.APIError "request not found"
+// @Failure      500 {object} apimodels.APIError
 // @Security     BearerAuth
 // @Router       /api/v1/me/disclosure/requests/{request_id}/approve [post]
 func (s *Server) approveDisclosureRequest(c *gin.Context) {
@@ -857,13 +858,13 @@ func (s *Server) approveDisclosureRequest(c *gin.Context) {
 // @Accept       json
 // @Produce      json
 // @Param        request_id path string true "Disclosure request ID"
-// @Param        request body DisclosureReasonBody false "optional rejection reason"
-// @Success      200 {object} DisclosureStatusResponse "status: rejected"
-// @Failure      400 {object} APIError "request cannot be rejected (e.g. not pending)"
-// @Failure      401 {object} APIError "missing or invalid token, or no matching user"
-// @Failure      403 {object} APIError "request does not target the caller's data"
-// @Failure      404 {object} APIError "request not found"
-// @Failure      500 {object} APIError
+// @Param        request body apimodels.DisclosureReasonBody false "optional rejection reason"
+// @Success      200 {object} apimodels.DisclosureStatusResponse "status: rejected"
+// @Failure      400 {object} apimodels.APIError "request cannot be rejected (e.g. not pending)"
+// @Failure      401 {object} apimodels.APIError "missing or invalid token, or no matching user"
+// @Failure      403 {object} apimodels.APIError "request does not target the caller's data"
+// @Failure      404 {object} apimodels.APIError "request not found"
+// @Failure      500 {object} apimodels.APIError
 // @Security     BearerAuth
 // @Router       /api/v1/me/disclosure/requests/{request_id}/reject [post]
 func (s *Server) rejectDisclosureRequest(c *gin.Context) {
@@ -910,13 +911,13 @@ func (s *Server) rejectDisclosureRequest(c *gin.Context) {
 // @Accept       json
 // @Produce      json
 // @Param        request_id path string true "Disclosure request ID"
-// @Param        request body DisclosureReasonBody false "optional revocation reason"
-// @Success      200 {object} DisclosureStatusResponse "status: revoked"
-// @Failure      400 {object} APIError "request cannot be revoked (e.g. not currently approved)"
-// @Failure      401 {object} APIError "missing or invalid token, or no matching user"
-// @Failure      403 {object} APIError "request does not target the caller's data"
-// @Failure      404 {object} APIError "request not found"
-// @Failure      500 {object} APIError
+// @Param        request body apimodels.DisclosureReasonBody false "optional revocation reason"
+// @Success      200 {object} apimodels.DisclosureStatusResponse "status: revoked"
+// @Failure      400 {object} apimodels.APIError "request cannot be revoked (e.g. not currently approved)"
+// @Failure      401 {object} apimodels.APIError "missing or invalid token, or no matching user"
+// @Failure      403 {object} apimodels.APIError "request does not target the caller's data"
+// @Failure      404 {object} apimodels.APIError "request not found"
+// @Failure      500 {object} apimodels.APIError
 // @Security     BearerAuth
 // @Router       /api/v1/me/disclosure/requests/{request_id}/revoke [post]
 func (s *Server) revokeDisclosureRequest(c *gin.Context) {
@@ -962,8 +963,8 @@ func (s *Server) revokeDisclosureRequest(c *gin.Context) {
 // @Tags         Disclosure (user)
 // @Produce      json
 // @Success      200 {array} disclosure.GrantWithRequest
-// @Failure      401 {object} APIError "missing or invalid token, or no matching user"
-// @Failure      500 {object} APIError
+// @Failure      401 {object} apimodels.APIError "missing or invalid token, or no matching user"
+// @Failure      500 {object} apimodels.APIError
 // @Security     BearerAuth
 // @Router       /api/v1/me/disclosure/grants [get]
 func (s *Server) getMyActiveGrants(c *gin.Context) {
@@ -986,8 +987,8 @@ func (s *Server) getMyActiveGrants(c *gin.Context) {
 // @Tags         Disclosure (user)
 // @Produce      json
 // @Success      200 {array} disclosure.GrantWithRequest
-// @Failure      401 {object} APIError "missing or invalid token, or no matching user"
-// @Failure      500 {object} APIError
+// @Failure      401 {object} apimodels.APIError "missing or invalid token, or no matching user"
+// @Failure      500 {object} apimodels.APIError
 // @Security     BearerAuth
 // @Router       /api/v1/me/disclosure/grants/all [get]
 func (s *Server) getAllMyGrants(c *gin.Context) {
@@ -1031,9 +1032,9 @@ func (s *Server) validateDisclosureToken(c *gin.Context) (*disclosure.GrantWithR
 // @Param        limit query int false "Max rows to return (1-1000)" default(100)
 // @Param        offset query int false "Rows to skip (pagination)" default(0)
 // @Success      200 {array} disclosure.ActivityLogEntry
-// @Failure      401 {object} APIError "missing or invalid admin token, or invalid/absent disclosure token"
-// @Failure      403 {object} APIError "source address not on the private network, or token does not match the grant"
-// @Failure      500 {object} APIError
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token, or invalid/absent disclosure token"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network, or token does not match the grant"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/disclosure/grants/{grant_id}/logs [get]
 func (s *Server) getDisclosureLogs(c *gin.Context) {
@@ -1090,9 +1091,9 @@ func (s *Server) getDisclosureLogs(c *gin.Context) {
 // @Param        X-Disclosure-Token header string false "Grant access token (or pass as the token query parameter)"
 // @Param        token query string false "Grant access token (alternative to the X-Disclosure-Token header)"
 // @Success      200 {object} disclosure.ActivitySummary
-// @Failure      401 {object} APIError "missing or invalid admin token, or invalid/absent disclosure token"
-// @Failure      403 {object} APIError "source address not on the private network, or token does not match the grant"
-// @Failure      500 {object} APIError
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token, or invalid/absent disclosure token"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network, or token does not match the grant"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/disclosure/grants/{grant_id}/summary [get]
 func (s *Server) getDisclosureSummary(c *gin.Context) {
@@ -1137,10 +1138,10 @@ func (s *Server) getDisclosureSummary(c *gin.Context) {
 // @Param        X-Disclosure-Token header string false "Grant access token (or pass as the token query parameter)"
 // @Param        token query string false "Grant access token (alternative to the X-Disclosure-Token header)"
 // @Success      200 {object} disclosure.Report
-// @Failure      400 {object} APIError "invalid report type"
-// @Failure      401 {object} APIError "missing or invalid admin token, or invalid/absent disclosure token"
-// @Failure      403 {object} APIError "source address not on the private network, or token does not match the grant"
-// @Failure      500 {object} APIError
+// @Failure      400 {object} apimodels.APIError "invalid report type"
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token, or invalid/absent disclosure token"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network, or token does not match the grant"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/disclosure/grants/{grant_id}/report/{report_type} [get]
 func (s *Server) getDisclosureReport(c *gin.Context) {
@@ -1196,9 +1197,9 @@ func (s *Server) getDisclosureReport(c *gin.Context) {
 // @Param        limit query int false "Max rows to return (1-1000)" default(100)
 // @Param        offset query int false "Rows to skip (pagination)" default(0)
 // @Success      200 {array} disclosure.Event
-// @Failure      401 {object} APIError "missing or invalid admin token, or invalid/absent disclosure token"
-// @Failure      403 {object} APIError "source address not on the private network, or token does not match the grant"
-// @Failure      500 {object} APIError
+// @Failure      401 {object} apimodels.APIError "missing or invalid admin token, or invalid/absent disclosure token"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network, or token does not match the grant"
+// @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/disclosure/grants/{grant_id}/events [get]
 func (s *Server) getDisclosureEvents(c *gin.Context) {
@@ -1238,3 +1239,8 @@ func (s *Server) getDisclosureEvents(c *gin.Context) {
 
 	c.JSON(http.StatusOK, events)
 }
+
+// swaggo resolves an annotation's apimodels.Type through this file's import
+// list, but a reference from a comment is not Go usage — so without this the
+// import would be stripped and `make api-spec` would fail. See RD-1265.
+var _ = apimodels.APIError{}

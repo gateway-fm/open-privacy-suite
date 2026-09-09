@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/disclosure"
 	"privacy-proxy/internal/explorer"
 
@@ -28,9 +29,9 @@ import (
 // @Tags         Explorer
 // @Produce      json
 // @Param        wallet query string false "Viewer wallet address (0x-prefixed hex), echoed back for display only. The viewer identity is resolved solely from the JWT — a wallet value never resolves a DID (RD-1164 #7)." example(0x0000000000000000000000000000000000000001)
-// @Success      200 {object} ViewableAddressesResponse
-// @Failure      400 {object} APIError "neither a wallet nor JWT authentication was supplied"
-// @Failure      500 {object} APIError "lookup failed"
+// @Success      200 {object} apimodels.ViewableAddressesResponse
+// @Failure      400 {object} apimodels.APIError "neither a wallet nor JWT authentication was supplied"
+// @Failure      500 {object} apimodels.APIError "lookup failed"
 // @Router       /api/v1/explorer/viewable-addresses [get]
 func (s *Server) getViewableAddresses(c *gin.Context) {
 	wallet := c.Query("wallet")
@@ -50,10 +51,10 @@ func (s *Server) getViewableAddresses(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
-	response := ViewableAddressesResponse{
+	response := apimodels.ViewableAddressesResponse{
 		ViewerWallet:       wallet,
-		OwnAddresses:       []OwnAddress{},
-		DisclosedAddresses: []DisclosedAddress{},
+		OwnAddresses:       []apimodels.OwnAddress{},
+		DisclosedAddresses: []apimodels.DisclosedAddress{},
 	}
 
 	// RD-1164 #7: identity is resolved ONLY from the validated JWT
@@ -81,7 +82,7 @@ func (s *Server) getViewableAddresses(c *gin.Context) {
 	}
 
 	for _, link := range ownLinks {
-		response.OwnAddresses = append(response.OwnAddresses, OwnAddress{
+		response.OwnAddresses = append(response.OwnAddresses, apimodels.OwnAddress{
 			Address: link.EthAddress,
 			ENSName: link.ENSName,
 		})
@@ -102,7 +103,7 @@ func (s *Server) getViewableAddresses(c *gin.Context) {
 }
 
 // getDisclosedAddressesForViewer returns all addresses disclosed to a viewer via grants
-func (s *Server) getDisclosedAddressesForViewer(ctx context.Context, viewerDID string) ([]DisclosedAddress, error) {
+func (s *Server) getDisclosedAddressesForViewer(ctx context.Context, viewerDID string) ([]apimodels.DisclosedAddress, error) {
 	// Query for all active grants where the viewer is the requester
 	query := `SELECT g.id, g.scope, g.expires_at, r.requester_did, u.external_id as target_did
 		FROM disclosure_grants g
@@ -121,7 +122,7 @@ func (s *Server) getDisclosedAddressesForViewer(ctx context.Context, viewerDID s
 	// Preserve the API contract: an authenticated viewer with no grants gets
 	// an empty JSON array, never null. The explorer frontend and acceptance
 	// suite rely on this distinction for exact disclosure counters.
-	result := make([]DisclosedAddress, 0)
+	result := make([]apimodels.DisclosedAddress, 0)
 
 	for rows.Next() {
 		var grantID string
@@ -152,7 +153,7 @@ func (s *Server) getDisclosedAddressesForViewer(ctx context.Context, viewerDID s
 			// Generate opaque address ID for routing (hash-based)
 			addressID := explorer.GenerateAddressID(addr.EthAddress, grantID)
 
-			disclosed := DisclosedAddress{
+			disclosed := apimodels.DisclosedAddress{
 				AddressID:       addressID,
 				OwnerDID:        targetDID,
 				DisclosureLevel: disclosureLevel,
@@ -195,12 +196,12 @@ func (s *Server) getDisclosedAddressesForViewer(ctx context.Context, viewerDID s
 // @Produce      json
 // @Param        grant_id path string true "Disclosure grant ID"
 // @Param        address_id path string true "Opaque address identifier from viewable-addresses"
-// @Success      200 {object} ResolveAddressResponse
-// @Failure      400 {object} APIError "grant_id and address_id are required"
-// @Failure      401 {object} APIError "authentication required"
-// @Failure      403 {object} APIError "grant has been revoked or has expired"
-// @Failure      404 {object} APIError "grant or address not found for this grant"
-// @Failure      500 {object} APIError "lookup failed"
+// @Success      200 {object} apimodels.ResolveAddressResponse
+// @Failure      400 {object} apimodels.APIError "grant_id and address_id are required"
+// @Failure      401 {object} apimodels.APIError "authentication required"
+// @Failure      403 {object} apimodels.APIError "grant has been revoked or has expired"
+// @Failure      404 {object} apimodels.APIError "grant or address not found for this grant"
+// @Failure      500 {object} apimodels.APIError "lookup failed"
 // @Router       /api/v1/explorer/grant/{grant_id}/resolve/{address_id} [get]
 func (s *Server) resolveAddressID(c *gin.Context) {
 	grantID := c.Param("grant_id")
@@ -281,7 +282,7 @@ func (s *Server) resolveAddressID(c *gin.Context) {
 		disclosureLevel = string(grant.Scope.DisclosureLevel)
 	}
 
-	response := ResolveAddressResponse{
+	response := apimodels.ResolveAddressResponse{
 		DisclosureLevel: disclosureLevel,
 		GrantID:         grantID,
 		ScopeMethods:    grant.Scope.Methods,
@@ -435,12 +436,12 @@ func (s *Server) collectGrantScopeTxs(ctx context.Context, address string, scope
 // @Param        limit query int false "Max rows to return (1-100). At the scan bounds a page may come back short — even empty — with a next_cursor to continue from (present ⇒ more pages)" default(25)
 // @Param        cursor query string false "Opaque continuation cursor from the previous response's next_cursor (RD-1149); takes precedence over before"
 // @Param        before query int false "Legacy: return rows strictly older than this block number (may skip rows of the boundary block — prefer cursor)"
-// @Success      200 {object} GrantTransactionsResponse
-// @Failure      400 {object} APIError "grant_id and address_id are required, or the pagination cursor is malformed"
-// @Failure      401 {object} APIError "authentication required"
-// @Failure      403 {object} APIError "grant has been revoked or has expired"
-// @Failure      404 {object} APIError "grant or address not found for this grant"
-// @Failure      500 {object} APIError "explorer store not configured or lookup failed"
+// @Success      200 {object} apimodels.GrantTransactionsResponse
+// @Failure      400 {object} apimodels.APIError "grant_id and address_id are required, or the pagination cursor is malformed"
+// @Failure      401 {object} apimodels.APIError "authentication required"
+// @Failure      403 {object} apimodels.APIError "grant has been revoked or has expired"
+// @Failure      404 {object} apimodels.APIError "grant or address not found for this grant"
+// @Failure      500 {object} apimodels.APIError "explorer store not configured or lookup failed"
 // @Router       /api/v1/explorer/grant/{grant_id}/{address_id}/transactions [get]
 func (s *Server) getGrantTransactions(c *gin.Context) {
 	if s.explorerStore == nil {
@@ -572,9 +573,9 @@ func (s *Server) getGrantTransactions(c *gin.Context) {
 		}
 	}
 
-	var grantTxs []GrantTransaction
+	var grantTxs []apimodels.GrantTransaction
 	for _, tx := range txs {
-		gt := GrantTransaction{
+		gt := apimodels.GrantTransaction{
 			BlockNumber:    tx.BlockNumber,
 			BlockTimestamp: tx.BlockTimestamp,
 			GasUsed:        tx.GasUsed,
@@ -658,31 +659,15 @@ func (s *Server) getGrantTransactions(c *gin.Context) {
 
 	// Ensure non-nil slices in JSON
 	if grantTxs == nil {
-		grantTxs = []GrantTransaction{}
+		grantTxs = []apimodels.GrantTransaction{}
 	}
 
-	c.JSON(http.StatusOK, GrantTransactionsResponse{
+	c.JSON(http.StatusOK, apimodels.GrantTransactionsResponse{
 		Transactions:    grantTxs,
 		DisclosureLevel: disclosureLevel,
 		AddressLabels:   labels,
 		NextCursor:      resumeCursor,
 	})
-}
-
-// GrantActivityLogsResponse is the response for GET /api/v1/explorer/grant/:grant_id/activity
-type GrantActivityLogsResponse struct {
-	Logs   []GrantActivityLogEntry `json:"logs"`
-	Total  int                     `json:"total"`
-	Limit  int                     `json:"limit"`
-	Offset int                     `json:"offset"`
-}
-
-// GrantActivityLogEntry is a stripped-down log entry safe for grant holders.
-// SECURITY: Does NOT include request_params, ip_address, correlation_id, or entry_hash.
-type GrantActivityLogEntry struct {
-	Method     string `json:"method"`
-	StatusCode int    `json:"status_code"`
-	Timestamp  string `json:"timestamp"` // RFC 3339
 }
 
 // getGrantActivityLogs returns activity logs scoped to a disclosure grant.
@@ -703,12 +688,12 @@ type GrantActivityLogEntry struct {
 // @Param        grant_id path string true "Disclosure grant ID"
 // @Param        limit query int false "Max rows to return (1-100)" default(25)
 // @Param        offset query int false "Rows to skip (pagination)" default(0)
-// @Success      200 {object} GrantActivityLogsResponse
-// @Failure      400 {object} APIError "grant_id is required"
-// @Failure      401 {object} APIError "authentication required"
-// @Failure      403 {object} APIError "grant scope does not include activity_logs"
-// @Failure      404 {object} APIError "grant not found (also returned for a grant that is not yours or has expired)"
-// @Failure      500 {object} APIError "lookup failed"
+// @Success      200 {object} apimodels.GrantActivityLogsResponse
+// @Failure      400 {object} apimodels.APIError "grant_id is required"
+// @Failure      401 {object} apimodels.APIError "authentication required"
+// @Failure      403 {object} apimodels.APIError "grant scope does not include activity_logs"
+// @Failure      404 {object} apimodels.APIError "grant not found (also returned for a grant that is not yours or has expired)"
+// @Failure      500 {object} apimodels.APIError "lookup failed"
 // @Router       /api/v1/explorer/grant/{grant_id}/activity [get]
 func (s *Server) getGrantActivityLogs(c *gin.Context) {
 	grantID := c.Param("grant_id")
@@ -785,16 +770,16 @@ func (s *Server) getGrantActivityLogs(c *gin.Context) {
 	}
 
 	// 8. Build stripped response
-	entries := make([]GrantActivityLogEntry, 0, len(logs))
+	entries := make([]apimodels.GrantActivityLogEntry, 0, len(logs))
 	for _, log := range logs {
-		entries = append(entries, GrantActivityLogEntry{
+		entries = append(entries, apimodels.GrantActivityLogEntry{
 			Method:     log.Method,
 			StatusCode: log.StatusCode,
 			Timestamp:  log.CreatedAt.Format(time.RFC3339),
 		})
 	}
 
-	c.JSON(http.StatusOK, GrantActivityLogsResponse{
+	c.JSON(http.StatusOK, apimodels.GrantActivityLogsResponse{
 		Logs:   entries,
 		Total:  total,
 		Limit:  limit,
