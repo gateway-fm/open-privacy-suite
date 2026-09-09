@@ -109,16 +109,29 @@ func (s *waiterGateStore) SetCachedPermissionsAtGeneration(ctx context.Context, 
 
 // TestAccessController_DoesNotCacheDiscardedPublicationForWaiter covers the
 // singleflight waiter path: a second caller that never ran the compute itself
-// receives another goroutine's result and must inherit the same verdict.
+// must not end up installing a discarded publication in the upper cache.
+//
+// RD-1276 changed *how* that is achieved. It used to be that the waiter
+// inherited the computing goroutine's non-publishable verdict, which kept the
+// upper cache clean but served the waiter's own read from a permission set the
+// resolver had already determined was pre-mutation. The waiter now recomputes
+// instead, so the compute count is 2 here by design — one for the goroutine
+// that hit the invalidation window, one for the waiter that refused to inherit
+// its result. The security assertion below is unchanged: nothing stale reaches
+// ctrl.cache either way.
 func TestAccessController_DoesNotCacheDiscardedPublicationForWaiter(t *testing.T) {
 	ws := newWaiterGateStore(NewMockStore())
 	seedFlatOrg(ws.MockStore, "user-1", "org-1", 3, 1, false)
 	ctrl := NewAccessController(ws, time.Minute)
 
-	first := make(chan error, 1)
+	type res struct {
+		perms *EffectivePermissions
+		err   error
+	}
+	first := make(chan res, 1)
 	go func() {
-		_, err := resolveVia(t, ctrl, "user-1", "org-1")
-		first <- err
+		p, err := resolveVia(t, ctrl, "user-1", "org-1")
+		first <- res{p, err}
 	}()
 
 	// Caller 1 is inside the compute. Invalidate so its publication will be
@@ -132,10 +145,10 @@ func TestAccessController_DoesNotCacheDiscardedPublicationForWaiter(t *testing.T
 	<-ws.pubStarted
 	beforeSecond := ws.getCached.Load()
 
-	second := make(chan error, 1)
+	second := make(chan res, 1)
 	go func() {
-		_, err := resolveVia(t, ctrl, "user-1", "org-1")
-		second <- err
+		p, err := resolveVia(t, ctrl, "user-1", "org-1")
+		second <- res{p, err}
 	}()
 
 	// Wait until caller 2 has consulted the store's cache — the last step
@@ -147,18 +160,29 @@ func TestAccessController_DoesNotCacheDiscardedPublicationForWaiter(t *testing.T
 
 	close(ws.pubRelease)
 
-	if err := <-first; err != nil {
-		t.Fatalf("first resolve: unexpected error %v", err)
+	r1 := <-first
+	r2 := <-second
+	if r1.err != nil {
+		t.Fatalf("first resolve: unexpected error %v", r1.err)
 	}
-	if err := <-second; err != nil {
-		t.Fatalf("second (waiter) resolve: unexpected error %v", err)
+	if r2.err != nil {
+		t.Fatalf("second (waiter) resolve: unexpected error %v", r2.err)
 	}
 
-	if computes, _, _ := ws.counters(); computes != 1 {
-		t.Fatalf("computes = %d, want 1 (the second caller must have been a singleflight waiter)", computes)
+	// The waiter was a genuine waiter — it parked on caller 1's in-flight
+	// entry — and then declined the discarded result and ran its own compute.
+	if computes, _, _ := ws.counters(); computes != 2 {
+		t.Fatalf("computes = %d, want 2 (one for the caller that hit the invalidation window, one for the waiter that refused to inherit its discarded result)", computes)
 	}
-	if cached := ctrl.cache.Get("user-1", "org-1"); cached != nil {
-		t.Error("the singleflight waiter installed the stale permissions in the in-memory cache")
+	if r2.perms.ID == r1.perms.ID {
+		t.Error("the waiter was served the very computation the resolver had refused to publish")
+	}
+
+	// The discarded computation must not be in the in-memory cache. An entry
+	// from the waiter's own post-invalidation compute is expected and correct:
+	// those permissions are current and were published successfully.
+	if cached := ctrl.cache.Get("user-1", "org-1"); cached != nil && cached.ID == r1.perms.ID {
+		t.Error("the discarded publication was installed in the in-memory cache; a revoked grant stays usable for the full TTL")
 	}
 }
 

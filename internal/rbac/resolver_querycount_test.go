@@ -43,7 +43,7 @@ func (c *countingStore) computeQueries() int {
 	defer c.mu.Unlock()
 	total := 0
 	for name, n := range c.calls {
-		if name == "GetCachedPermissions" || name == "SetCachedPermissions" {
+		if name == "GetCachedPermissions" || name == "SetCachedPermissionsAtGeneration" {
 			continue
 		}
 		total += n
@@ -91,9 +91,14 @@ func (c *countingStore) GetCachedPermissions(ctx context.Context, userID, orgID 
 	return c.MockStore.GetCachedPermissions(ctx, userID, orgID)
 }
 
-func (c *countingStore) SetCachedPermissions(ctx context.Context, perms *EffectivePermissions) error {
-	c.bump("SetCachedPermissions")
-	return c.MockStore.SetCachedPermissions(ctx, perms)
+// SetCachedPermissionsAtGeneration is the publication path (RD-1267), so it is
+// the one the counter has to intercept. Overriding the unguarded
+// SetCachedPermissions instead would count nothing: the resolver never calls
+// it, so every publication would slip past the counter and computeQueries
+// would be excluding a name that is never recorded.
+func (c *countingStore) SetCachedPermissionsAtGeneration(ctx context.Context, perms *EffectivePermissions, generation int64) (bool, error) {
+	c.bump("SetCachedPermissionsAtGeneration")
+	return c.MockStore.SetCachedPermissionsAtGeneration(ctx, perms, generation)
 }
 
 // seedFlatOrg populates the mock with one org, one user and n groups; each

@@ -110,8 +110,20 @@ type Store interface {
 	DeleteExpiredMemberships(ctx context.Context) (int64, error)
 
 	// Effective Permissions Cache operations
+	//
+	// CacheGenerationStore is embedded, not optional: publication must always
+	// go through the generation guard, so a Store that cannot report a
+	// generation is a compile error rather than a silent fall back to an
+	// unconditional publish (RD-1276).
+	//
+	// There is deliberately no unguarded SetCachedPermissions here. The
+	// guarded publication is the only way to write the shared cache through
+	// this interface, so an unconditional publish is not reachable from a
+	// Store — including from a future implementation that never saw RD-1267.
+	// *db.DB still has the concrete method, which is how tests seed a
+	// synthetic cache row directly.
+	CacheGenerationStore
 	GetCachedPermissions(ctx context.Context, userID, orgID string) (*EffectivePermissions, error)
-	SetCachedPermissions(ctx context.Context, perms *EffectivePermissions) error
 	InvalidateCacheForUser(ctx context.Context, userID string) error
 	InvalidateCacheForOrg(ctx context.Context, orgID string) error
 	InvalidateCacheForGroup(ctx context.Context, groupID string) error

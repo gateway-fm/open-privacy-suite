@@ -154,12 +154,17 @@ func TestResolvePermissions_SingleflightErrorFanout(t *testing.T) {
 }
 
 // cacheWriteGateStore wraps blockingStore and additionally gates the FIRST
-// SetCachedPermissions call: it signals writeStarted, records whether the
-// resolver still holds the in-flight entry at that moment, and blocks until
-// writeRelease. Later writes pass straight through. Used to pin the ordering
-// invariant: the cache write must complete BEFORE the in-flight entry is
-// removed, otherwise a caller arriving between removal and write completion
-// sees cache-miss + no entry and recomputes (audit finding on RD-1263).
+// publication: it signals writeStarted, records whether the resolver still
+// holds the in-flight entry at that moment, and blocks until writeRelease.
+// Later writes pass straight through. Used to pin the ordering invariant: the
+// cache write must complete BEFORE the in-flight entry is removed, otherwise a
+// caller arriving between removal and write completion sees cache-miss + no
+// entry and recomputes (audit finding on RD-1263).
+//
+// The gate is on SetCachedPermissionsAtGeneration because that is the
+// publication path: the generation guard is mandatory on Store, so every
+// publish goes through it (RD-1276). It used to gate SetCachedPermissions,
+// which the resolver no longer calls.
 type cacheWriteGateStore struct {
 	*blockingStore
 	resolver *Resolver // set after NewResolver; read only inside Set
@@ -178,7 +183,7 @@ func newCacheWriteGateStore(bs *blockingStore) *cacheWriteGateStore {
 	}
 }
 
-func (s *cacheWriteGateStore) SetCachedPermissions(ctx context.Context, perms *EffectivePermissions) error {
+func (s *cacheWriteGateStore) SetCachedPermissionsAtGeneration(ctx context.Context, perms *EffectivePermissions, generation int64) (bool, error) {
 	gated := false
 	s.writeOnce.Do(func() {
 		gated = true
@@ -190,7 +195,7 @@ func (s *cacheWriteGateStore) SetCachedPermissions(ctx context.Context, perms *E
 	if gated {
 		<-s.writeRelease
 	}
-	return s.blockingStore.SetCachedPermissions(ctx, perms)
+	return s.blockingStore.SetCachedPermissionsAtGeneration(ctx, perms, generation)
 }
 
 // TestResolvePermissions_NoRecomputeDuringCacheWrite pins the close of the

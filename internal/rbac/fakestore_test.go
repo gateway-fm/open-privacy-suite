@@ -198,10 +198,22 @@ func (fakeStore) GetCachedPermissions(context.Context, string, string) (*Effecti
 	return nil, nil
 }
 func (fakeStore) SetCachedPermissions(context.Context, *EffectivePermissions) error { return nil }
-func (fakeStore) InvalidateCacheForUser(context.Context, string) error              { return nil }
-func (fakeStore) InvalidateCacheForOrg(context.Context, string) error               { return nil }
-func (fakeStore) InvalidateCacheForGroup(context.Context, string) error             { return nil }
-func (fakeStore) CleanupExpiredCache(context.Context) (int64, error)                { return 0, nil }
+
+// CacheGeneration and SetCachedPermissionsAtGeneration are mandatory on Store
+// (RD-1276), so the shared fake must provide them. The default is
+// fail-CLOSED: a generation of 0 with a publication that always reports "not
+// published" means a double that has not opted into caching never has a
+// permission set persisted, and the resolver reports the result as
+// non-cacheable. A double that wants working caching overrides these — see
+// MockStore, which keeps a real generation counter.
+func (fakeStore) CacheGeneration(context.Context) (int64, error) { return 0, nil }
+func (fakeStore) SetCachedPermissionsAtGeneration(context.Context, *EffectivePermissions, int64) (bool, error) {
+	return false, nil
+}
+func (fakeStore) InvalidateCacheForUser(context.Context, string) error  { return nil }
+func (fakeStore) InvalidateCacheForOrg(context.Context, string) error   { return nil }
+func (fakeStore) InvalidateCacheForGroup(context.Context, string) error { return nil }
+func (fakeStore) CleanupExpiredCache(context.Context) (int64, error)    { return 0, nil }
 
 func (fakeStore) CreateAuditLog(context.Context, *AuditLogEntry) error { return nil }
 func (fakeStore) ListAuditLogs(context.Context, string, *string, int, int) ([]*AuditLogEntry, error) {

@@ -23,7 +23,11 @@ type MockStore struct {
 	// store is thread-safe; the mock must be too for -race tests).
 	cacheMu           sync.RWMutex
 	cachedPermissions map[string]*EffectivePermissions
-	groupsByOrg       map[string][]*MembershipWithDetails
+	// cacheGeneration mirrors the production generation counter: every
+	// invalidation bumps it, and a publication is refused if it moved since
+	// the compute began (RD-1267/RD-1276).
+	cacheGeneration int64
+	groupsByOrg     map[string][]*MembershipWithDetails
 }
 
 func NewMockStore() *MockStore {
@@ -36,6 +40,7 @@ func NewMockStore() *MockStore {
 		users:             make(map[string]*User),
 		memberships:       make(map[string]*UserMembership),
 		cachedPermissions: make(map[string]*EffectivePermissions),
+		cacheGeneration:   1,
 		groupsByOrg:       make(map[string][]*MembershipWithDetails),
 	}
 }
@@ -132,9 +137,32 @@ func (m *MockStore) SetCachedPermissions(ctx context.Context, perms *EffectivePe
 	return nil
 }
 
+// CacheGeneration / SetCachedPermissionsAtGeneration give MockStore a faithful
+// generation-guarded publication (RD-1276), rather than inheriting
+// fakeStore's fail-closed "never publish" default. Modelling it properly
+// keeps the caching behaviour every other test in this package relies on, and
+// mirrors production: the counter is bumped by the same call that invalidates.
+func (m *MockStore) CacheGeneration(ctx context.Context) (int64, error) {
+	m.cacheMu.RLock()
+	defer m.cacheMu.RUnlock()
+	return m.cacheGeneration, nil
+}
+
+func (m *MockStore) SetCachedPermissionsAtGeneration(ctx context.Context, perms *EffectivePermissions, generation int64) (bool, error) {
+	key := perms.UserID + ":" + perms.OrgID
+	m.cacheMu.Lock()
+	defer m.cacheMu.Unlock()
+	if m.cacheGeneration != generation {
+		return false, nil
+	}
+	m.cachedPermissions[key] = perms
+	return true, nil
+}
+
 func (m *MockStore) InvalidateCacheForUser(ctx context.Context, userID string) error {
 	m.cacheMu.Lock()
 	defer m.cacheMu.Unlock()
+	m.cacheGeneration++
 	for key := range m.cachedPermissions {
 		if len(key) > len(userID) && key[:len(userID)] == userID {
 			delete(m.cachedPermissions, key)
@@ -146,6 +174,7 @@ func (m *MockStore) InvalidateCacheForUser(ctx context.Context, userID string) e
 func (m *MockStore) InvalidateCacheForOrg(ctx context.Context, orgID string) error {
 	m.cacheMu.Lock()
 	defer m.cacheMu.Unlock()
+	m.cacheGeneration++
 	for key := range m.cachedPermissions {
 		if len(key) > len(orgID) && key[len(key)-len(orgID):] == orgID {
 			delete(m.cachedPermissions, key)
@@ -158,6 +187,7 @@ func (m *MockStore) InvalidateCacheForGroup(ctx context.Context, groupID string)
 	// Clear all cache for simplicity in tests
 	m.cacheMu.Lock()
 	defer m.cacheMu.Unlock()
+	m.cacheGeneration++
 	m.cachedPermissions = make(map[string]*EffectivePermissions)
 	return nil
 }

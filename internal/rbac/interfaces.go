@@ -22,9 +22,10 @@ type PermissionCache interface {
 // Verify that the concrete type implements the interface.
 var _ PermissionCache = (*Cache)(nil)
 
-// CacheGenerationStore is an optional capability on Store: a store that can
-// report a monotonic cache generation, and publish a computed permission set
-// only if that generation has not moved since the compute began (RD-1267).
+// CacheGenerationStore is the generation-guarded publication capability, and
+// it is a MANDATORY part of Store (embedded there): a store reports a
+// monotonic cache generation, and publishes a computed permission set only if
+// that generation has not moved since the compute began (RD-1267).
 //
 // Why the counter cannot live in this process: the permission cache is a
 // shared SQL table, and invalidation is a DELETE issued from inside the
@@ -41,10 +42,15 @@ var _ PermissionCache = (*Cache)(nil)
 // not an error, just a recompute on the next request. The failure direction is
 // always discard-and-recompute, never serve-stale.
 //
-// A Store that does not implement this interface keeps the previous
-// unconditional publish, so test doubles need not implement it. *db.DB does
-// implement it and internal/db asserts so at compile time, which is what stops
-// the production path from silently losing the guard.
+// It is embedded in Store rather than type-asserted at runtime (RD-1276). It
+// was originally optional so that test doubles need not implement it, and the
+// resolver fell back to an unconditional publish when the assertion failed —
+// which is precisely the fail-open behaviour this guard exists to remove, and
+// it would have been inherited silently by any second Store implementation
+// (a Redis-backed cache being the motivating case). Making it mandatory turns
+// "no guard" into a compile error; the cost that justified optionality
+// disappeared when the three hand-written test doubles were consolidated into
+// one shared fake (RD-1264).
 type CacheGenerationStore interface {
 	CacheGeneration(ctx context.Context) (int64, error)
 	SetCachedPermissionsAtGeneration(ctx context.Context, perms *EffectivePermissions, generation int64) (bool, error)
