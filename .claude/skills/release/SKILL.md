@@ -64,6 +64,25 @@ Then, in this exact section order (keep the `##` headers verbatim — the CI lin
 - `gatewayfm/privacy-proxy-frontend:<version>`
 (version = the tag without the leading `v`, e.g. `0.13.0-rc.1`)
 
+## Compatible versions
+The suite is deployed as three components, so name the sibling versions this
+release was validated against — an operator upgrading the proxy has no other
+published basis for choosing them. State the versions actually exercised
+together (the RC lineage counts: a GA promoted from `rc.N` inherits whatever
+`rc.N` was validated with), never a guess.
+
+| Component | Version | Images |
+|---|---|---|
+| Open Privacy Suite | `vX.Y.Z` | `gatewayfm/privacy-proxy-backend:X.Y.Z`, `gatewayfm/privacy-proxy-frontend:X.Y.Z` |
+| ops-explorer | `vA.B.C` | `gatewayfm/block-explorer-api:A.B.C`, `gatewayfm/block-explorer-api-privacy:A.B.C`, `gatewayfm/block-explorer-public-api:A.B.C`, `gatewayfm/block-explorer-frontend:A.B.C` |
+| ops-indexer | `vD.E.F` | `ghcr.io/gateway-fm/chain-indexer:D.E.F`, `gatewayfm/chain-indexer:D.E.F` |
+
+Close with "Other combinations are untested." Where a component genuinely was
+not exercised, say so in its row rather than omitting the row. Write every
+image as its full published repository name — an operator copies these
+verbatim, so `-frontend:A.B.C` or a bare `privacy-proxy-frontend:X.Y.Z` names
+something they cannot pull.
+
 ## Verify after deploy
 - 2–4 concrete checks: an endpoint that should now behave a certain way, a migration row/column present, a specific log line or metric. Precise enough for infra to run without asking.
 
@@ -83,7 +102,7 @@ Rules: no section longer than it needs to be; omit the optional empty section (D
 
 ## 5. Enforcement — this skill is guidance; the CI lint is the gate
 
-The format is enforced independently of this skill by **`.github/workflows/release-notes-lint.yml`**, which pipes the release body into **`scripts/lint-release-notes.sh`** on `release: published`/`edited` and fails the check when a required section is missing (`## Highlights`, `## ⚠️ Action required on upgrade`, `## Incompatibilities / breaking`, `## Docker images`, `## Verify after deploy`, and a `Full changelog:` line — every §3 section except the optional `## Deprecations`). Headers are matched as whole lines, so keep the headers in §3 verbatim; a release authored **without** this skill still passes as long as it keeps them. Check a draft locally before publishing: `scripts/lint-release-notes.sh <notes-file>`.
+The format is enforced independently of this skill by **`.github/workflows/release-notes-lint.yml`**, which pipes the release body into **`scripts/lint-release-notes.sh`** on `release: published`/`edited` and fails the check when a required section is missing (`## Highlights`, `## ⚠️ Action required on upgrade`, `## Incompatibilities / breaking`, `## Docker images`, `## Compatible versions`, `## Verify after deploy`, and a `Full changelog:` line — every §3 section except the optional `## Deprecations`). Headers are matched as whole lines, so keep the headers in §3 verbatim; a release authored **without** this skill still passes as long as it keeps them. Check a draft locally before publishing: `scripts/lint-release-notes.sh <notes-file>`.
 
 ## Notes
 

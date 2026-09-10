@@ -101,7 +101,7 @@ The dev script (`scripts/privacy-dev-up.sh`) auto-generates these into `.env.pri
 | `CORS_ALLOWED_ORIGINS` | `(empty)` | Comma-separated list of extra browser origins to allow. The origin derived from `BASE_URL` is always allowed. |
 | `PROXY_VERSION` | `latest` | Registry tag for `gatewayfm/privacy-proxy-{backend,frontend}`. Pin to a release tag in production (e.g. `v0.7.0`). |
 | `EXPLORER_VERSION` | `latest` | Registry tag for the block-explorer images. The privacy compose pulls the `-privacy`-suffixed API image only — the standalone image is for non-privacy deployments. |
-| `INDEXER_VERSION` | `latest` (prod), `0.3.0` (dev) | Registry tag for chain-indexer. Note: the dockerhub tag has no `v` prefix; verify with `docker manifest inspect` before changing. |
+| `INDEXER_VERSION` | `latest` (prod), `0.4.0` (quickstart) | Registry tag for chain-indexer. Note: the dockerhub tag has no `v` prefix; verify with `docker manifest inspect` before changing. |
 | `BLOCK_EXPLORER_PATH` / `CHAIN_INDEXER_PATH` | `../block-explorer` / `../chain-indexer` | Sibling-clone paths. Consumed by the **dev** compose only. |
 | `ENABLE_OP_DEPOSITS` | `false` | Toggle OP-Stack indexing in chain-indexer. |
 

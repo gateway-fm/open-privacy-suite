@@ -503,7 +503,7 @@ The prod manifest (`docker-compose.privacy.yml`) pulls the proxy-backend image r
 
 | Env var | Default | Purpose |
 |---------|---------|---------|
-| `INDEXER_VERSION` | `0.3.0` (dev) / `latest` (prod) | Tag pulled from `gatewayfm/chain-indexer` (dev, dockerhub) or `ghcr.io/gateway-fm/chain-indexer` (prod). Verify any new pin with `docker manifest inspect` before changing — the dev default has no `v` prefix because the dockerhub tag doesn't carry one. |
+| `INDEXER_VERSION` | `0.4.0` (quickstart) / `latest` (prod) | Tag pulled from `gatewayfm/chain-indexer` (dev, dockerhub) or `ghcr.io/gateway-fm/chain-indexer` (prod). Verify any new pin with `docker manifest inspect` before changing — the dev default has no `v` prefix because the dockerhub tag doesn't carry one. |
 | `BLOCK_EXPLORER_PATH` | `../block-explorer` | Sibling-clone location for the block-explorer source (dev only — both api and frontend build from this path). |
 | `CHAIN_INDEXER_PATH` | `../chain-indexer` | Sibling-clone location for chain-indexer (only used when overriding the published image with a local build via `docker-compose.override.yml`). |
 
