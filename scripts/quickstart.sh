@@ -118,8 +118,11 @@ fi
 PROFILE_ARGS=()
 if [[ "$WITH_EXPLORER" -eq 1 ]]; then
   echo "$(bold '==>') Checking chain-indexer image (explorer data source)…"
+  # This fallback tag must match docker-compose.quickstart.yml's INDEXER_VERSION
+  # default. If they drift, a cached image satisfies this check while the
+  # subsequent `docker compose up` requests a tag that was never pulled.
   if docker compose "${COMPOSE_ARGS[@]}" --profile explorer pull chain-indexer >/dev/null 2>&1 \
-     || docker image inspect "gatewayfm/chain-indexer:${INDEXER_VERSION:-0.3.0}" >/dev/null 2>&1; then
+     || docker image inspect "gatewayfm/chain-indexer:${INDEXER_VERSION:-0.4.0}" >/dev/null 2>&1; then
     PROFILE_ARGS=(--profile explorer)
     echo "    $(green 'chain-indexer available — explorer API will be live.')"
   else

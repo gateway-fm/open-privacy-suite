@@ -73,12 +73,15 @@ together (the RC lineage counts: a GA promoted from `rc.N` inherits whatever
 
 | Component | Version | Images |
 |---|---|---|
-| Open Privacy Suite | `vX.Y.Z` | `gatewayfm/privacy-proxy-backend:X.Y.Z`, `privacy-proxy-frontend:X.Y.Z` |
-| ops-explorer | `vA.B.C` | `gatewayfm/block-explorer-api:A.B.C`, `-api-privacy:A.B.C`, `-public-api:A.B.C`, `-frontend:A.B.C` |
+| Open Privacy Suite | `vX.Y.Z` | `gatewayfm/privacy-proxy-backend:X.Y.Z`, `gatewayfm/privacy-proxy-frontend:X.Y.Z` |
+| ops-explorer | `vA.B.C` | `gatewayfm/block-explorer-api:A.B.C`, `gatewayfm/block-explorer-api-privacy:A.B.C`, `gatewayfm/block-explorer-public-api:A.B.C`, `gatewayfm/block-explorer-frontend:A.B.C` |
 | ops-indexer | `vD.E.F` | `ghcr.io/gateway-fm/chain-indexer:D.E.F`, `gatewayfm/chain-indexer:D.E.F` |
 
 Close with "Other combinations are untested." Where a component genuinely was
-not exercised, say so in its row rather than omitting the row.
+not exercised, say so in its row rather than omitting the row. Write every
+image as its full published repository name — an operator copies these
+verbatim, so `-frontend:A.B.C` or a bare `privacy-proxy-frontend:X.Y.Z` names
+something they cannot pull.
 
 ## Verify after deploy
 - 2–4 concrete checks: an endpoint that should now behave a certain way, a migration row/column present, a specific log line or metric. Precise enough for infra to run without asking.
