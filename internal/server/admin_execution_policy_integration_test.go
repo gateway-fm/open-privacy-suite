@@ -541,3 +541,43 @@ func TestExecutionPolicy_CrossOrgIsolation(t *testing.T) {
 			"a revision must not be mutable through another organisation's path")
 	}
 }
+
+// TestExecutionPolicy_ActivationRechecksTheCurrentCatalog proves a draft cannot
+// be put in force after the contracts it describes have changed underneath it.
+func TestExecutionPolicy_ActivationRechecksTheCurrentCatalog(t *testing.T) {
+	s := setupTestServerForExecutionPolicy(t)
+	ctx := context.Background()
+
+	rec := s.do(t, http.MethodPost, s.base()+"/revisions", map[string]any{
+		"policy": s.epPolicy(t, "100"), "base_revision": 0,
+	})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	var draft struct {
+		ID string `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &draft))
+
+	// Replace the ABI the draft's rules were written against. The stored rule
+	// still pins the old digest, so it no longer describes this contract.
+	contract, err := s.db.GetContractByAddress(ctx, s.orgID, s.vault)
+	require.NoError(t, err)
+	require.NotNil(t, contract)
+	newABI := `[{"type":"function","name":"transfer","inputs":[{"name":"to","type":"address"}],"outputs":[],"stateMutability":"nonpayable"}]`
+	require.NoError(t, s.db.UpdateContractABI(ctx, contract.ID, newABI))
+
+	rec = s.do(t, http.MethodPost, s.base()+"/revisions/"+draft.ID+"/activate", nil)
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	require.Contains(t, strings.ToLower(rec.Body.String()), "no longer validates")
+
+	// And simulating it says the same thing rather than answering from a policy
+	// that no longer matches the contracts.
+	rec = s.do(t, http.MethodPost, s.base()+"/revisions/"+draft.ID+"/simulate", map[string]any{
+		"groups": []string{s.group},
+		"frames": []map[string]any{{
+			"call_type":       "call",
+			"storage_address": s.vault,
+			"calldata":        epSelTransfer + strings.Repeat("0", 128),
+		}},
+	})
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+}

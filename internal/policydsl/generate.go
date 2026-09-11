@@ -302,9 +302,29 @@ func solidityBytes4(sel [4]byte) string {
 // decimalLiteral renders a bound as a plain decimal literal.
 func decimalLiteral(n *big.Int) string { return n.String() }
 
-// solidityComment strips anything that could end a comment or start a new line,
-// so an operator-chosen name cannot break out of the comment it appears in.
+// solidityComment renders an operator-chosen name safely inside a comment.
+//
+// It keeps only characters that cannot end a comment or start a line, rather
+// than removing dangerous sequences: a replacer that deleted "*/" would turn
+// "**//" into "*/", because removing the inner pair leaves the outer characters
+// adjacent. The reachable input is a function signature from a registered ABI,
+// which is operator-influenced, so this has to hold for adversarial text.
 func solidityComment(s string) string {
-	replacer := strings.NewReplacer("\n", " ", "\r", " ", "*/", "", "/*", "", "//", "")
-	return replacer.Replace(s)
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch {
+		case r == '*' || r == '/' || r == '\\':
+			// The three characters that can open or close a comment.
+			b.WriteByte(' ')
+		case r == '\n' || r == '\r' || r == '\u2028' || r == '\u2029':
+			// Anything that could end the line and escape a // comment.
+			b.WriteByte(' ')
+		case r < 0x20 || r == 0x7f:
+			b.WriteByte(' ')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }

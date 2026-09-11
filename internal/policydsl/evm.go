@@ -1,8 +1,11 @@
 package policydsl
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"math/big"
+	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
@@ -45,6 +48,17 @@ type EVMEvaluator struct {
 func NewEVMEvaluator(a *Artifact) (*EVMEvaluator, error) {
 	if a == nil || len(a.RuntimeBytecode) == 0 {
 		return nil, fmt.Errorf("policydsl: no compiled policy to execute")
+	}
+
+	// The digest is what an approval refers to, so it has to be checked against
+	// the bytes rather than carried alongside them. An artifact loaded from
+	// storage whose code no longer hashes to its recorded digest is not the
+	// artifact that was approved, and running it would answer as though it were.
+	if a.RuntimeDigest != "" {
+		sum := sha256.Sum256(a.RuntimeBytecode)
+		if got := hex.EncodeToString(sum[:]); !strings.EqualFold(got, a.RuntimeDigest) {
+			return nil, fmt.Errorf("policydsl: the stored policy bytecode does not match its recorded digest; it is not the artifact that was approved")
+		}
 	}
 
 	memdb := rawdb.NewMemoryDatabase()

@@ -90,6 +90,17 @@ func TestOperatorTokenDeniedOnTenantAndFleetEndpoints_RD1173(t *testing.T) {
 		// These MUST return 403 under this exact harness; if they don't, the
 		// test methodology (403=guarded, non-403=escalation) is invalid and
 		// every finding above is suspect. They prove the harness discriminates.
+		// RD-1287 execution policies. All seven carry denyOperatorOrgScoped;
+		// listed here so a route added later without the gate is caught by this
+		// test rather than by nobody.
+		{"CONTROL execution-policy context", "GET", "/api/v1/admin/orgs/" + org + "/execution-policy/context", "", "CONTROL"},
+		{"CONTROL execution-policy list revisions", "GET", "/api/v1/admin/orgs/" + org + "/execution-policy/revisions", "", "CONTROL"},
+		{"CONTROL execution-policy get revision", "GET", "/api/v1/admin/orgs/" + org + "/execution-policy/revisions/rev-123", "", "CONTROL"},
+		{"CONTROL execution-policy submit", "POST", "/api/v1/admin/orgs/" + org + "/execution-policy/revisions", `{"policy":{},"base_revision":0}`, "CONTROL"},
+		{"CONTROL execution-policy activate", "POST", "/api/v1/admin/orgs/" + org + "/execution-policy/revisions/rev-123/activate", "", "CONTROL"},
+		{"CONTROL execution-policy withdraw", "POST", "/api/v1/admin/orgs/" + org + "/execution-policy/revisions/rev-123/withdraw", "", "CONTROL"},
+		{"CONTROL execution-policy simulate", "POST", "/api/v1/admin/orgs/" + org + "/execution-policy/revisions/rev-123/simulate", `{"groups":[],"frames":[]}`, "CONTROL"},
+
 		{"CONTROL createContract (denyOperatorOrgScoped)", "POST", "/api/v1/admin/orgs/" + org + "/contracts", `{"address":"0x0000000000000000000000000000000000000003","name":"c"}`, "CONTROL"},
 		{"CONTROL listContracts (denyOperatorTenantRead)", "GET", "/api/v1/admin/orgs/" + org + "/contracts", "", "CONTROL"},
 		{"CONTROL listSessions (requireSuperAdmin)", "GET", "/api/v1/admin/sessions", "", "CONTROL"},

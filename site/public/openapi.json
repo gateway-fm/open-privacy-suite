@@ -1444,7 +1444,7 @@
                         "type": "string"
                     },
                     "policy_digest": {
-                        "description": "PolicyDigest identifies the approved document.",
+                        "description": "PolicyDigest identifies the approved document by its meaning, not by its\nbytes: it is taken over the normalised policy, so two documents that\ndiffer only in whitespace or key order share one digest. Hashing the\n`source` field directly will not reproduce it.",
                         "type": "string"
                     },
                     "revision": {
@@ -1483,7 +1483,7 @@
                         "type": "string"
                     },
                     "policy_digest": {
-                        "description": "PolicyDigest identifies the approved document.",
+                        "description": "PolicyDigest identifies the approved document by its meaning, not by its\nbytes: it is taken over the normalised policy, so two documents that\ndiffer only in whitespace or key order share one digest. Hashing the\n`source` field directly will not reproduce it.",
                         "type": "string"
                     },
                     "revision": {

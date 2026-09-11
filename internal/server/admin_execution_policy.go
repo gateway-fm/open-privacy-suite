@@ -57,10 +57,12 @@ func (s *Server) buildCatalog(ctx context.Context, orgID string) (policydsl.Cata
 		return cat, err
 	}
 	for _, g := range groups {
-		// Administrator groups are a trust root, not ordinary policy. A document
+		// Administrator groups are a trust root, not ordinary policy: a document
 		// that could name one could restrict, or appear to restrict, the very
-		// authority that approves it.
-		if g.IsOrgAdmin || g.IsOrgReadonlyAdmin {
+		// authority that approves it. System groups are reserved to super-admin
+		// for the same reason, so a tenant admin may not write rules about them
+		// either. This is the same predicate the group-management handlers use.
+		if g.IsOrgAdmin || g.IsOrgReadonlyAdmin || g.IsSystem {
 			continue
 		}
 		cat.Groups[g.ID] = struct{}{}
@@ -200,11 +202,38 @@ func (s *Server) submitExecutionPolicy(c *gin.Context) {
 		return
 	}
 
+	// A policy is a hand-written document, not a data feed. Bounding it here
+	// matters because everything downstream is expensive: the document is held
+	// in memory, expanded into source, written to disk and handed to a compiler.
+	// The legacy /api/admin mount carries no body limit of its own.
+	if len(input.Policy) > maxExecutionPolicyBytes {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": fmt.Sprintf("policy document is %d bytes; the limit is %d", len(input.Policy), maxExecutionPolicyBytes),
+		})
+		return
+	}
+
 	policy, err := policydsl.Parse(input.Policy)
 	if err != nil {
 		// Validation messages name the field at fault and nothing else, so they
 		// are safe to return: an administrator of this org supplied the text.
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Check the base revision before compiling. A submission written against a
+	// superseded revision is going to be refused either way, and compiling first
+	// would let a stale client burn a compile per retry.
+	latest, err := s.db.LatestExecutionPolicyRevisionNumber(ctx, orgID)
+	if err != nil {
+		respondInternalErrorAndLog(c, "failed to read policy revisions",
+			"admin_execution_policy: LatestExecutionPolicyRevisionNumber failed (submit)", "org_id", orgID, "err", err)
+		return
+	}
+	if input.BaseRevision != latest {
+		c.JSON(http.StatusConflict, gin.H{
+			"error": fmt.Sprintf("policy base revision is stale: written against revision %d, current is %d", input.BaseRevision, latest),
+		})
 		return
 	}
 
@@ -356,6 +385,26 @@ func (s *Server) activateExecutionPolicyRevision(c *gin.Context) {
 	orgID := c.Param("org_id")
 	revisionID := c.Param("revision_id")
 	ctx := c.Request.Context()
+
+	// Re-check the draft against the organisation as it is now, not as it was
+	// when the draft was submitted. A contract's ABI can be replaced in between,
+	// and activating a policy whose rules no longer describe the contracts they
+	// name would put an artifact in force that nobody has reviewed against the
+	// current state.
+	candidate, err := s.db.GetExecutionPolicyRevision(ctx, orgID, revisionID)
+	if err != nil {
+		respondInternalErrorAndLog(c, "failed to read the policy revision",
+			"admin_execution_policy: GetExecutionPolicyRevision failed (activate)", "org_id", orgID, "err", err)
+		return
+	}
+	if candidate == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "policy revision not found"})
+		return
+	}
+	if err := s.revalidateStoredPolicy(ctx, orgID, candidate); err != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		return
+	}
 
 	previous, err := s.db.GetActiveExecutionPolicy(ctx, orgID)
 	if err != nil {
@@ -512,6 +561,11 @@ func (s *Server) simulateExecutionPolicy(c *gin.Context) {
 		return
 	}
 
+	if err := checkSimulationSize(input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
 	simCtx, frames, err := buildSimulationInputs(orgID, input)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -597,4 +651,64 @@ func buildSimulationInputs(orgID string, input apimodels.ExecutionPolicySimulate
 	}
 
 	return ctx, frames, nil
+}
+
+// revalidateStoredPolicy re-checks a stored document against the organisation
+// as it stands now.
+//
+// A revision is validated when it is submitted, but the organisation can change
+// afterwards: a contract's ABI can be replaced, or a group deleted. Checking
+// again before the document is relied on keeps a policy from being activated,
+// or a simulation from being believed, when its rules no longer describe the
+// contracts they name.
+func (s *Server) revalidateStoredPolicy(ctx context.Context, orgID string, rev *db.ExecutionPolicyRevision) error {
+	policy, err := policydsl.Parse([]byte(rev.Source))
+	if err != nil {
+		return fmt.Errorf("the stored policy document is no longer readable: %w", err)
+	}
+
+	cat, err := s.buildCatalog(ctx, orgID)
+	if err != nil {
+		return fmt.Errorf("could not read the organization's current contracts and groups")
+	}
+
+	if _, err := policydsl.Validate(policy, cat); err != nil {
+		return fmt.Errorf("the policy no longer validates against this organization's current contracts and groups: %w", err)
+	}
+	return nil
+}
+
+// Limits on what one request may ask the policy machinery to do.
+//
+// These are not tuning knobs. Submitting compiles a contract, and simulating
+// runs an EVM per frame with a gas budget that does not observe the request's
+// context, so without a bound a single request can hold a core for as long as
+// it takes to exhaust that gas. A policy is a hand-written document and a
+// simulated execution is a hand-written scenario; both are small in every
+// legitimate use.
+const (
+	maxExecutionPolicyBytes = 256 * 1024
+	maxSimulationFrames     = 64
+	maxSimulationAddresses  = 64
+	maxSimulationGroups     = 64
+	maxSimulationCalldata   = 64 * 1024
+)
+
+// checkSimulationSize bounds a described execution before any of it is run.
+func checkSimulationSize(input apimodels.ExecutionPolicySimulateRequest) error {
+	if len(input.Frames) > maxSimulationFrames {
+		return fmt.Errorf("an execution may describe at most %d frames", maxSimulationFrames)
+	}
+	if len(input.LinkedAddresses) > maxSimulationAddresses {
+		return fmt.Errorf("at most %d linked addresses may be supplied", maxSimulationAddresses)
+	}
+	if len(input.Groups) > maxSimulationGroups {
+		return fmt.Errorf("at most %d groups may be supplied", maxSimulationGroups)
+	}
+	for i, f := range input.Frames {
+		if len(f.Calldata) > maxSimulationCalldata {
+			return fmt.Errorf("frame %d: calldata is longer than the %d-character limit", i, maxSimulationCalldata)
+		}
+	}
+	return nil
 }

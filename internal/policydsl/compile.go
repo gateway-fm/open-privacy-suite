@@ -218,6 +218,12 @@ func (c *Compiler) Build(ctx context.Context, v *Validated) (*Artifact, error) {
 //
 // It identifies the document a reviewer approved, so that an artifact, an
 // approval and a stored revision can all be shown to be about the same policy.
+//
+// It is taken over the normalised model rather than the submitted bytes, so two
+// documents differing only in whitespace or key order share a digest and
+// therefore compile to the same artifact. The consequence worth stating: this
+// is not sha256 of the stored source text, and an operator checking the two
+// against each other will find they differ.
 func CanonicalDigest(p *Policy) (string, error) {
 	encoded, err := json.Marshal(p)
 	if err != nil {

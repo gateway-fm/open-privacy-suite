@@ -19,7 +19,10 @@ type ExecutionPolicyRevision struct {
 	// organisation is active, and only an active one decides anything.
 	Status string `json:"status" example:"active"`
 
-	// PolicyDigest identifies the approved document.
+	// PolicyDigest identifies the approved document by its meaning, not by its
+	// bytes: it is taken over the normalised policy, so two documents that
+	// differ only in whitespace or key order share one digest. Hashing the
+	// `source` field directly will not reproduce it.
 	PolicyDigest string `json:"policy_digest"`
 	// SolidityDigest identifies the generated contract source.
 	SolidityDigest string `json:"solidity_digest"`
