@@ -134,6 +134,26 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
 
+      # RD-1287: the execution-policy tests compile a real policy contract and
+      # check that it decides the same way the Go evaluator does. They fail
+      # rather than skip without a compiler, because an equivalence test that
+      # quietly skipped would report success while proving nothing.
+      #
+      # The version is exact and the download is checksummed: a policy is
+      # approved as specific bytecode, so a different compiler is not a
+      # substitute for this one.
+      - name: Install the pinned Solidity compiler
+        env:
+          SOLC_VERSION: 0.8.35
+          SOLC_SHA256: fa8ac9a32d301ad023a36ee5a29f8e291fe3200c60244e43c142539e82a617f4
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /usr/local/bin/solc \
+            "https://github.com/ethereum/solidity/releases/download/v${SOLC_VERSION}/solc-static-linux"
+          echo "${SOLC_SHA256}  /usr/local/bin/solc" | sha256sum -c -
+          chmod +x /usr/local/bin/solc
+          solc --version | grep -q "Version: ${SOLC_VERSION}+"
+
       - name: Run unit tests with coverage
         env:
           TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/privacy_proxy_test?sslmode=disable
