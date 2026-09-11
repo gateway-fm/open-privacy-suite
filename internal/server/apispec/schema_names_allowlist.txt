@@ -12,3 +12,9 @@
 # history rather than here, because it predates this gate: the baseline was
 # seeded from the post-move document in the same commit that introduced both,
 # so there is no earlier baseline for the append-only rule to compare against.
+
+big.Int  # RD-1287: renamed to math_big.Int. A generated-name artifact, not a shape change.
+         # The only reference is protocol.ZeroKnowledgeProofRequest.extendedID, whose JSON is
+         # unchanged. swag names a schema after the package path it resolves the type through,
+         # and internal/policydsl (which uses math/big) entering the parse graph made it
+         # resolve the fully qualified name instead of the short one.

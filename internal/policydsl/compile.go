@@ -235,3 +235,12 @@ func asExitError(err error, target **exec.ExitError) bool {
 	}
 	return ok
 }
+
+// ABIDigest is the lowercase hex sha256 of a registered ABI's exact text.
+//
+// A rule pins this so that replacing a contract's ABI is detected rather than
+// silently changing what the rule's selector and argument positions mean.
+func ABIDigest(abiText string) string {
+	sum := sha256.Sum256([]byte(abiText))
+	return hex.EncodeToString(sum[:])
+}

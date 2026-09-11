@@ -55,6 +55,18 @@ func (s *Server) registerRBACRoutes(api *gin.RouterGroup) {
 	api.PUT("/orgs/:org_id/contracts/:address/grants/:group_id", s.updateContractGrant)
 	api.DELETE("/orgs/:org_id/contracts/:address/grants/:group_id", s.deleteContractGrant)
 
+	// Execution policies (RD-1287). A policy restricts what a group may
+	// execute; it never grants anything. Submitting compiles and stores a
+	// draft that enforces nothing, and a separate activation puts it in
+	// force, so a person reviews the exact artifact before it decides.
+	api.GET("/orgs/:org_id/execution-policy/context", s.getExecutionPolicyContext)
+	api.GET("/orgs/:org_id/execution-policy/revisions", s.listExecutionPolicyRevisions)
+	api.POST("/orgs/:org_id/execution-policy/revisions", s.submitExecutionPolicy)
+	api.GET("/orgs/:org_id/execution-policy/revisions/:revision_id", s.getExecutionPolicyRevision)
+	api.POST("/orgs/:org_id/execution-policy/revisions/:revision_id/activate", s.activateExecutionPolicyRevision)
+	api.POST("/orgs/:org_id/execution-policy/revisions/:revision_id/withdraw", s.withdrawExecutionPolicyRevision)
+	api.POST("/orgs/:org_id/execution-policy/revisions/:revision_id/simulate", s.simulateExecutionPolicy)
+
 	// Contract lookup (cross-org)
 	api.GET("/contracts/by-address/:address", s.lookupContractByAddress)
 

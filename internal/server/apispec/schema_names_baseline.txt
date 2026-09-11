@@ -2,10 +2,10 @@
 # Guarded by schema_names_test.go: a name disappearing from the
 # document is a client-visible rename and must be allowlisted.
 # Refresh from the regenerated spec when a rename is intentional.
-big.Int
 data
 iden3comm.AttachData
 iden3comm.Attachment
+math_big.Int
 privacy-proxy_internal_apimodels.APIError
 privacy-proxy_internal_apimodels.APIMessage
 privacy-proxy_internal_apimodels.AddressTransactionsResponse
@@ -76,6 +76,15 @@ privacy-proxy_internal_apimodels.EthAddressListResponse
 privacy-proxy_internal_apimodels.EthAddressResponse
 privacy-proxy_internal_apimodels.EthLinkENSResponse
 privacy-proxy_internal_apimodels.EthLinkVerifyResponse
+privacy-proxy_internal_apimodels.ExecutionPolicyCompiler
+privacy-proxy_internal_apimodels.ExecutionPolicyContext
+privacy-proxy_internal_apimodels.ExecutionPolicyContract
+privacy-proxy_internal_apimodels.ExecutionPolicyRevision
+privacy-proxy_internal_apimodels.ExecutionPolicyRevisionDetail
+privacy-proxy_internal_apimodels.ExecutionPolicySimulateFrame
+privacy-proxy_internal_apimodels.ExecutionPolicySimulateRequest
+privacy-proxy_internal_apimodels.ExecutionPolicySimulateResponse
+privacy-proxy_internal_apimodels.ExecutionPolicySubmitRequest
 privacy-proxy_internal_apimodels.ExplorerABIUpdateResponse
 privacy-proxy_internal_apimodels.ExplorerBlockNumberResponse
 privacy-proxy_internal_apimodels.ExplorerCatchupProgressResponse

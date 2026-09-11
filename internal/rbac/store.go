@@ -190,6 +190,11 @@ const (
 	// elevated view of user↔user transactions (ORG_ADMIN_VIEW_USER_TXS).
 	ResourceTypeExplorerUserTxs = "explorer_user_txs"
 
+	// ResourceTypeExecutionPolicy is the audit resource for versioned contract
+	// execution policies: submitting a candidate, putting one in force, and
+	// withdrawing a draft (RD-1287).
+	ResourceTypeExecutionPolicy = "execution_policy"
+
 	// Compliance / disclosure / SSO surfaces — audit-log every mutation
 	// for ISO 27001 A.5.25 / A.8.16 evidence (see security audit M2).
 	ResourceTypeCompliance        = "compliance"

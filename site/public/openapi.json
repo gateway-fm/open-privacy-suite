@@ -1,9 +1,6 @@
 {
     "components": {
         "schemas": {
-            "big.Int": {
-                "type": "object"
-            },
             "data": {
                 "properties": {
                     "data": {
@@ -39,6 +36,9 @@
                         "type": "string"
                     }
                 },
+                "type": "object"
+            },
+            "math_big.Int": {
                 "type": "object"
             },
             "privacy-proxy_internal_apimodels.APIError": {
@@ -1343,6 +1343,282 @@
                     "message": {
                         "example": "address linked successfully",
                         "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "privacy-proxy_internal_apimodels.ExecutionPolicyCompiler": {
+                "description": "Compiler is the exact build the artifact was produced with.",
+                "properties": {
+                    "evm_version": {
+                        "description": "EVMVersion is the target the artifact was built for.",
+                        "example": "shanghai",
+                        "type": "string"
+                    },
+                    "optimizer_runs": {
+                        "description": "OptimizerRuns is the optimiser setting used.",
+                        "example": 200,
+                        "type": "integer"
+                    },
+                    "version": {
+                        "description": "Version is the exact compiler, which is pinned rather than ranged.",
+                        "example": "0.8.35+commit.47b9dedd",
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "privacy-proxy_internal_apimodels.ExecutionPolicyContext": {
+                "properties": {
+                    "active": {
+                        "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.ExecutionPolicyRevision"
+                    },
+                    "api_version": {
+                        "type": "string"
+                    },
+                    "base_revision": {
+                        "description": "BaseRevision is the revision a candidate must declare. A submission\nwritten against a stale base is refused rather than merged.",
+                        "example": 3,
+                        "type": "integer"
+                    },
+                    "contracts": {
+                        "description": "Contracts are the organisation's registered contracts.",
+                        "items": {
+                            "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.ExecutionPolicyContract"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
+                    },
+                    "groups": {
+                        "description": "Groups are the regular groups a policy may bind. Administrator groups are\nomitted: they are a trust root, not ordinary policy.",
+                        "items": {
+                            "type": "string"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
+                    },
+                    "kind": {
+                        "type": "string"
+                    },
+                    "nested_calls": {
+                        "type": "string"
+                    },
+                    "org_id": {
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "privacy-proxy_internal_apimodels.ExecutionPolicyContract": {
+                "properties": {
+                    "abi_digest": {
+                        "description": "ABIDigest is what a rule on this contract must pin.",
+                        "type": "string"
+                    },
+                    "address": {
+                        "type": "string"
+                    },
+                    "has_abi": {
+                        "description": "HasABI is false when no ABI is registered. Such a contract cannot carry a\nrule, because nothing says what its selectors and arguments mean.",
+                        "type": "boolean"
+                    },
+                    "name": {
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "privacy-proxy_internal_apimodels.ExecutionPolicyRevision": {
+                "description": "Active is the policy currently in force, if any.",
+                "properties": {
+                    "activated_at": {
+                        "type": "string"
+                    },
+                    "compiler": {
+                        "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.ExecutionPolicyCompiler"
+                    },
+                    "created_at": {
+                        "type": "string"
+                    },
+                    "id": {
+                        "type": "string"
+                    },
+                    "policy_digest": {
+                        "description": "PolicyDigest identifies the approved document.",
+                        "type": "string"
+                    },
+                    "revision": {
+                        "description": "Revision is the monotonic number within the organisation.",
+                        "example": 3,
+                        "type": "integer"
+                    },
+                    "runtime_digest": {
+                        "description": "RuntimeDigest identifies the compiled bytecode that is enforced.",
+                        "type": "string"
+                    },
+                    "solidity_digest": {
+                        "description": "SolidityDigest identifies the generated contract source.",
+                        "type": "string"
+                    },
+                    "status": {
+                        "description": "Status is draft, active, superseded or withdrawn. Only one revision per\norganisation is active, and only an active one decides anything.",
+                        "example": "active",
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "privacy-proxy_internal_apimodels.ExecutionPolicyRevisionDetail": {
+                "properties": {
+                    "activated_at": {
+                        "type": "string"
+                    },
+                    "compiler": {
+                        "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.ExecutionPolicyCompiler"
+                    },
+                    "created_at": {
+                        "type": "string"
+                    },
+                    "id": {
+                        "type": "string"
+                    },
+                    "policy_digest": {
+                        "description": "PolicyDigest identifies the approved document.",
+                        "type": "string"
+                    },
+                    "revision": {
+                        "description": "Revision is the monotonic number within the organisation.",
+                        "example": 3,
+                        "type": "integer"
+                    },
+                    "runtime_bytecode": {
+                        "description": "RuntimeBytecode is the compiled code, 0x-prefixed hex.",
+                        "type": "string"
+                    },
+                    "runtime_digest": {
+                        "description": "RuntimeDigest identifies the compiled bytecode that is enforced.",
+                        "type": "string"
+                    },
+                    "solidity_digest": {
+                        "description": "SolidityDigest identifies the generated contract source.",
+                        "type": "string"
+                    },
+                    "solidity_source": {
+                        "description": "SoliditySource is the contract generated from it.",
+                        "type": "string"
+                    },
+                    "source": {
+                        "description": "Source is the candidate exactly as submitted.",
+                        "type": "string"
+                    },
+                    "status": {
+                        "description": "Status is draft, active, superseded or withdrawn. Only one revision per\norganisation is active, and only an active one decides anything.",
+                        "example": "active",
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "privacy-proxy_internal_apimodels.ExecutionPolicySimulateFrame": {
+                "properties": {
+                    "call_type": {
+                        "description": "CallType is call, staticcall, delegatecall or callcode.",
+                        "example": "call",
+                        "type": "string"
+                    },
+                    "calldata": {
+                        "description": "Calldata is the frame's input, 0x-prefixed hex including the selector.",
+                        "type": "string"
+                    },
+                    "code_address": {
+                        "description": "CodeAddress is the account whose code runs. It differs from the storage\naddress only for delegatecall and callcode, and defaults to it.",
+                        "type": "string"
+                    },
+                    "storage_address": {
+                        "description": "StorageAddress is the account whose storage the frame may modify.",
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "privacy-proxy_internal_apimodels.ExecutionPolicySimulateRequest": {
+                "properties": {
+                    "frames": {
+                        "description": "Frames are the call frames the execution would produce, outermost first.",
+                        "items": {
+                            "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.ExecutionPolicySimulateFrame"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
+                    },
+                    "groups": {
+                        "description": "Groups the hypothetical principal belongs to.",
+                        "items": {
+                            "type": "string"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
+                    },
+                    "linked_addresses": {
+                        "description": "LinkedAddresses are the accounts linked to the hypothetical principal.",
+                        "items": {
+                            "type": "string"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
+                    },
+                    "signer": {
+                        "description": "Signer is the account that would have signed the transaction. Leaving it\nempty models an execution with no recovered signer, which no rule\nrequiring the signer can satisfy.",
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "privacy-proxy_internal_apimodels.ExecutionPolicySimulateResponse": {
+                "properties": {
+                    "agreed": {
+                        "description": "Agreed reports whether the reference evaluator and the compiled artifact\nreached the same decision. False would mean the reviewed policy and the\nenforced policy are not the same thing.",
+                        "type": "boolean"
+                    },
+                    "allowed": {
+                        "description": "Allowed is the decision. Every frame must be permitted for it to be true.",
+                        "type": "boolean"
+                    },
+                    "code": {
+                        "description": "Code categorises a denial and is safe to show a denied caller.",
+                        "example": "argument_constraint",
+                        "type": "string"
+                    },
+                    "compiled_allowed": {
+                        "description": "CompiledAllowed is the decision reached by running the compiled contract\non the same inputs.",
+                        "type": "boolean"
+                    },
+                    "compiled_code": {
+                        "description": "CompiledCode is that run's denial category.",
+                        "type": "string"
+                    },
+                    "reason": {
+                        "description": "Reason explains a denial for an operator. It quotes policy bounds and\naddresses, so it belongs in operator tooling, not in a caller's response.",
+                        "type": "string"
+                    },
+                    "runtime_digest": {
+                        "description": "RuntimeDigest identifies the bytecode that produced CompiledAllowed.",
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "privacy-proxy_internal_apimodels.ExecutionPolicySubmitRequest": {
+                "properties": {
+                    "base_revision": {
+                        "description": "BaseRevision is the revision the candidate was written against. Zero means\nthe organisation has no policy yet.",
+                        "example": 3,
+                        "type": "integer"
+                    },
+                    "policy": {
+                        "additionalProperties": {},
+                        "description": "Policy is the candidate document.",
+                        "type": "object"
                     }
                 },
                 "type": "object"
@@ -4806,7 +5082,7 @@
                         "type": "string"
                     },
                     "extendedID": {
-                        "$ref": "#/components/schemas/big.Int"
+                        "$ref": "#/components/schemas/math_big.Int"
                     },
                     "id": {
                         "type": "integer"
@@ -10985,6 +11261,642 @@
                 "summary": "Dry-run an RPC call as a user",
                 "tags": [
                     "Admin: RBAC"
+                ]
+            }
+        },
+        "/api/v1/admin/orgs/{org_id}/execution-policy/context": {
+            "get": {
+                "description": "Returns the revision a candidate must be written against, the groups and ABI-bearing contracts it may refer to, and the policy currently in force. Administrator groups and contracts without a registered ABI are omitted, because a rule cannot name either. Scoped to {org_id}; the restricted operator token is rejected.",
+                "parameters": [
+                    {
+                        "description": "Organization ID",
+                        "in": "path",
+                        "name": "org_id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.ExecutionPolicyContext"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "missing or invalid admin token"
+                    },
+                    "403": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "operator token cannot manage per-org policy, or caller is out of org scope"
+                    },
+                    "500": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "Internal Server Error"
+                    }
+                },
+                "security": [
+                    {
+                        "AdminToken": []
+                    }
+                ],
+                "summary": "Read the execution-policy editing context",
+                "tags": [
+                    "Admin: Execution policy"
+                ]
+            }
+        },
+        "/api/v1/admin/orgs/{org_id}/execution-policy/revisions": {
+            "get": {
+                "description": "Returns the organisation's policy revisions, newest first, with the digests of each. Scoped to {org_id}; the restricted operator token is rejected.",
+                "parameters": [
+                    {
+                        "description": "Organization ID",
+                        "in": "path",
+                        "name": "org_id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "items": {
+                                        "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.ExecutionPolicyRevision"
+                                    },
+                                    "type": "array"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "missing or invalid admin token"
+                    },
+                    "403": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "operator token cannot manage per-org policy, or caller is out of org scope"
+                    },
+                    "500": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "Internal Server Error"
+                    }
+                },
+                "security": [
+                    {
+                        "AdminToken": []
+                    }
+                ],
+                "summary": "List execution-policy revisions",
+                "tags": [
+                    "Admin: Execution policy"
+                ]
+            },
+            "post": {
+                "description": "Validates a candidate against the organisation's groups and registered ABIs, generates and compiles the policy contract, and stores the result as a draft. A draft enforces nothing until it is activated. The submission must declare the current base revision; a stale base is refused rather than merged, so two administrators cannot silently overwrite each other. Scoped to {org_id}; the restricted operator token is rejected.",
+                "parameters": [
+                    {
+                        "description": "Organization ID",
+                        "in": "path",
+                        "name": "org_id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "oneOf": [
+                                    {
+                                        "type": "object"
+                                    },
+                                    {
+                                        "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.ExecutionPolicySubmitRequest",
+                                        "description": "Candidate policy and the revision it was written against",
+                                        "summary": "request"
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "description": "Candidate policy and the revision it was written against",
+                    "required": true
+                },
+                "responses": {
+                    "201": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.ExecutionPolicyRevisionDetail"
+                                }
+                            }
+                        },
+                        "description": "Created"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "the candidate is malformed or names something that does not exist"
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "missing or invalid admin token"
+                    },
+                    "403": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "operator token cannot manage per-org policy, or caller is out of org scope"
+                    },
+                    "409": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "the candidate was written against a superseded revision"
+                    },
+                    "500": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "Internal Server Error"
+                    },
+                    "503": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "the policy compiler is unavailable"
+                    }
+                },
+                "security": [
+                    {
+                        "AdminToken": []
+                    }
+                ],
+                "summary": "Submit an execution-policy candidate",
+                "tags": [
+                    "Admin: Execution policy"
+                ]
+            }
+        },
+        "/api/v1/admin/orgs/{org_id}/execution-policy/revisions/{revision_id}": {
+            "get": {
+                "description": "Returns the submitted document, the Solidity generated from it, the compiled runtime bytecode and every digest, so a reviewer can check the artifact before approving it. Scoped to {org_id}; the restricted operator token is rejected.",
+                "parameters": [
+                    {
+                        "description": "Organization ID",
+                        "in": "path",
+                        "name": "org_id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Revision ID",
+                        "in": "path",
+                        "name": "revision_id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.ExecutionPolicyRevisionDetail"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "missing or invalid admin token"
+                    },
+                    "403": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "operator token cannot manage per-org policy, or caller is out of org scope"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "no such revision in this organization"
+                    },
+                    "500": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "Internal Server Error"
+                    }
+                },
+                "security": [
+                    {
+                        "AdminToken": []
+                    }
+                ],
+                "summary": "Read one execution-policy revision",
+                "tags": [
+                    "Admin: Execution policy"
+                ]
+            }
+        },
+        "/api/v1/admin/orgs/{org_id}/execution-policy/revisions/{revision_id}/activate": {
+            "post": {
+                "description": "Puts a draft in force and retires whatever was active before it, in one transaction. Only a draft can be activated. The approving administrator is recorded against the revision and in the audit log. Scoped to {org_id}; the restricted operator token is rejected.",
+                "parameters": [
+                    {
+                        "description": "Organization ID",
+                        "in": "path",
+                        "name": "org_id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Revision ID",
+                        "in": "path",
+                        "name": "revision_id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.ExecutionPolicyRevision"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "missing or invalid admin token"
+                    },
+                    "403": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "operator token cannot manage per-org policy, or caller is out of org scope"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "no such revision in this organization"
+                    },
+                    "409": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "the revision is not a draft"
+                    },
+                    "500": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "Internal Server Error"
+                    }
+                },
+                "security": [
+                    {
+                        "AdminToken": []
+                    }
+                ],
+                "summary": "Activate an execution-policy revision",
+                "tags": [
+                    "Admin: Execution policy"
+                ]
+            }
+        },
+        "/api/v1/admin/orgs/{org_id}/execution-policy/revisions/{revision_id}/simulate": {
+            "post": {
+                "description": "Evaluates a hypothetical execution against a stored revision and returns the decision. The candidate is evaluated twice, once by the reference evaluator and once by running the compiled contract, and the response reports whether the two agreed. Simulation mutates nothing and can be run against a draft, which is the point: it is how a reviewer checks what a policy would do before putting it in force. Scoped to {org_id}; the restricted operator token is rejected.",
+                "parameters": [
+                    {
+                        "description": "Organization ID",
+                        "in": "path",
+                        "name": "org_id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Revision ID",
+                        "in": "path",
+                        "name": "revision_id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "oneOf": [
+                                    {
+                                        "type": "object"
+                                    },
+                                    {
+                                        "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.ExecutionPolicySimulateRequest",
+                                        "description": "The execution to test",
+                                        "summary": "request"
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "description": "The execution to test",
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.ExecutionPolicySimulateResponse"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "the described execution is malformed"
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "missing or invalid admin token"
+                    },
+                    "403": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "operator token cannot manage per-org policy, or caller is out of org scope"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "no such revision in this organization"
+                    },
+                    "500": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "Internal Server Error"
+                    }
+                },
+                "security": [
+                    {
+                        "AdminToken": []
+                    }
+                ],
+                "summary": "Simulate an execution against a policy revision",
+                "tags": [
+                    "Admin: Execution policy"
+                ]
+            }
+        },
+        "/api/v1/admin/orgs/{org_id}/execution-policy/revisions/{revision_id}/withdraw": {
+            "post": {
+                "description": "Abandons a draft that was never activated. An active or superseded revision is part of the record of what was enforced and cannot be withdrawn. Scoped to {org_id}; the restricted operator token is rejected.",
+                "parameters": [
+                    {
+                        "description": "Organization ID",
+                        "in": "path",
+                        "name": "org_id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Revision ID",
+                        "in": "path",
+                        "name": "revision_id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.ExecutionPolicyRevision"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "missing or invalid admin token"
+                    },
+                    "403": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "operator token cannot manage per-org policy, or caller is out of org scope"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "no such draft in this organization"
+                    },
+                    "500": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "Internal Server Error"
+                    }
+                },
+                "security": [
+                    {
+                        "AdminToken": []
+                    }
+                ],
+                "summary": "Withdraw an execution-policy draft",
+                "tags": [
+                    "Admin: Execution policy"
                 ]
             }
         },

@@ -27,6 +27,7 @@ import (
 	"privacy-proxy/internal/explorer/indexerclient"
 	"privacy-proxy/internal/metrics"
 	"privacy-proxy/internal/nodehttp"
+	"privacy-proxy/internal/policydsl"
 	"privacy-proxy/internal/pricing"
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
@@ -94,8 +95,12 @@ type Server struct {
 	// equals DATABASE_URL (co-located dev/tests, where the pool is reused).
 	//
 	// RD-1256: role-scoped type — migrations + retention pruning only.
-	auditAdminDB         *db.AuditAdminDB
-	rbacAccessCtrl       *rbac.AccessController
+	auditAdminDB   *db.AuditAdminDB
+	rbacAccessCtrl *rbac.AccessController
+
+	// policyCompiler builds execution-policy artifacts (RD-1287). It shells out
+	// to a pinned solc when a policy is submitted, never while serving a request.
+	policyCompiler       *policydsl.Compiler
 	proxy                *proxy.Proxy
 	privadoVerifier      PrivadoVerifier
 	jwtService           *auth.JWTService
@@ -666,6 +671,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		auditDB:            auditDB,
 		auditAdminDB:       auditAdminDB,
 		rbacAccessCtrl:     rbacAccessCtrl,
+		policyCompiler:     policydsl.NewCompiler(),
 		proxy:              proxySvc,
 		privadoVerifier:    privadoVerifier,
 		jwtService:         jwtService,
