@@ -1,0 +1,259 @@
+import { Callout } from "@/components/mdx/callout";
+import { ApiEndpoint } from "@/components/mdx/api-endpoint";
+
+export const metadata = {
+  title: "Execution Policies",
+  description:
+    "Versioned, reviewable rules restricting which contract calls a group may execute.",
+};
+
+# Execution Policies
+
+## Overview
+
+An execution policy narrows what the members of a group are allowed to execute, down to
+the individual function and its arguments. Where a contract grant says "this group may call
+`transfer`", an execution policy can say "and only to your own address, and only up to 100".
+
+A policy is written as a document, compiled into a contract, reviewed, and then activated.
+Nothing it says takes effect until an administrator activates it.
+
+<Callout type="warning">
+  A policy only ever **restricts**. It cannot grant access to anything, and it cannot assert
+  that someone is a member of a group, owns a contract, or has passed a compliance check.
+  Those facts come from the rest of the system at the moment a call is evaluated. Removing a
+  policy widens access back to whatever the group's grants already allowed; it never narrows.
+</Callout>
+
+---
+
+## Why the two-step lifecycle
+
+Submitting a policy and putting it in force are separate actions on purpose.
+
+| Step | What happens | What it enforces |
+| --- | --- | --- |
+| Submit | The document is validated, a policy contract is generated and compiled, and the result is stored as a **draft** | Nothing |
+| Simulate | You describe a call and see whether the draft would allow it | Nothing |
+| Activate | The draft becomes **active** and the previous policy becomes **superseded** | Everything the document says |
+
+The gap between the first two steps and the third is where review happens. A draft can be
+inspected and simulated as much as you like before anyone commits to it.
+
+Exactly one revision per organization is active at a time. Activating a new one retires the
+previous one in the same operation, so there is never a moment with two policies or none.
+
+---
+
+## Writing a policy
+
+A policy document names groups, and for each group lists the calls its members may make.
+
+```json
+{
+  "apiVersion": "privacy.gateway.fm/v1alpha1",
+  "kind": "ContractExecutionPolicy",
+  "org": "<your organization id>",
+  "nestedCalls": "requireOwnRule",
+  "bindings": [
+    {
+      "group": "<group id>",
+      "allow": [
+        {
+          "storageAddress": "0x1f98431c8ad98523631ae4a59f267346ea31f984",
+          "selector": "0xa9059cbb",
+          "abiDigest": "<the contract's abi digest>",
+          "args": [
+            { "index": 0, "addressEquals": { "source": "signer" } },
+            { "index": 1, "uintAtMost": "100" }
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+That rule permits `transfer(address,uint256)` on one contract, only when the recipient is the
+account that signed the transaction and the amount is at most 100.
+
+### Fields
+
+| Field | Meaning |
+| --- | --- |
+| `org` | The organization this policy governs. It must match the one you are configuring. |
+| `nestedCalls` | Currently only `requireOwnRule`. See [nested calls](#nested-calls-and-delegatecall). |
+| `bindings[].group` | A regular group. Administrator groups cannot be named. |
+| `allow[].storageAddress` | The contract being called. It must be registered and have an ABI. |
+| `allow[].codeAddress` | Only for `delegatecall` and `callcode`. See below. |
+| `allow[].selector` | The exact four-byte function selector, such as `0xa9059cbb`. |
+| `allow[].abiDigest` | The digest of the contract's registered ABI, from the context endpoint. |
+| `allow[].callTypes` | Which kinds of call are permitted. Defaults to `call` and `staticcall`. |
+| `allow[].args` | Conditions on the decoded arguments. All of them must hold. |
+
+### Argument conditions
+
+Each entry names an argument by position and applies exactly one condition.
+
+| Condition | Applies to | Meaning |
+| --- | --- | --- |
+| `addressEquals: {source: "signer"}` | an `address` argument | Must equal the account that signed the transaction. |
+| `addressEquals: {source: "principal.linked"}` | an `address` argument | Must be one of the addresses linked to the authenticated user. |
+| `addressEquals: {source: "literal", value: "0x…"}` | an `address` argument | Must equal a fixed address. |
+| `uintAtMost: "100"` | an unsigned integer argument | Must be at most this value. Write it as decimal digits. |
+
+An empty `allow` list is a valid policy. It means that group may execute nothing, which is
+often the right starting point.
+
+<Callout type="info">
+  Rules name **selectors**, not function names. A contract can have two functions called
+  `transfer` with different parameters, and a name alone would not say which one a rule meant.
+  The editing context lists each contract's ABI digest; the selector you need comes from the
+  ABI itself.
+</Callout>
+
+---
+
+## What a policy cannot express
+
+These are limits of the current version, not preferences. Knowing them matters, because each
+one looks like something a policy covers until you test it.
+
+- **Native value is not covered.** A rule permitting a payable function permits it for any
+  amount of ether. Bound the value elsewhere.
+- **There are no running totals.** A rule can limit a single call's argument, but not a sum
+  across calls or a number of calls per day.
+- **Conditions apply to whole arguments only**, and only to addresses and unsigned integers.
+  Strings, arrays and structs cannot carry a condition, though a function that takes them can
+  still be permitted or denied as a whole.
+
+---
+
+## Nested calls and delegatecall
+
+Every call frame an execution produces must be permitted on its own. If contract A calls
+contract B, reaching B through A does not borrow A's permission: B needs a rule too. This
+holds at any depth, and it holds for calls that reverted or whose failure an outer contract
+caught.
+
+`delegatecall` and `callcode` are different, because the code that runs and the storage it
+writes belong to two different accounts. A rule covering them must say both:
+
+```json
+{
+  "storageAddress": "<the proxy>",
+  "codeAddress": "<the implementation>",
+  "callTypes": ["delegatecall"],
+  "selector": "0xa9059cbb",
+  "abiDigest": "<the implementation's abi digest>"
+}
+```
+
+The `abiDigest` here is the **implementation's**, not the proxy's, because the implementation's
+code is what decides what the selector and the arguments mean. Both accounts must be registered
+contracts.
+
+Neither call type is ever permitted by omission. A rule that does not name them does not allow
+them.
+
+---
+
+## Reviewing before activating
+
+Submitting returns the document you sent, the contract generated from it, and three digests:
+one for the document, one for the generated source, and one for the compiled bytecode. The
+bytecode digest identifies exactly what will decide calls once the policy is active.
+
+Use simulate to check a policy before trusting it. You describe a call and get back the
+decision, along with the reason it was denied. The same call is evaluated twice, once by the
+suite and once by running the compiled contract, and the response says whether the two agreed.
+
+<Callout type="warning">
+  If a simulation ever reports that the two did not agree, stop and report it. It means the
+  policy you reviewed and the policy that would be enforced are not the same thing. Do not
+  activate that revision.
+</Callout>
+
+---
+
+## When a contract's ABI changes
+
+A rule pins the digest of the ABI it was written against. Replacing that ABI does not silently
+change what the rule means; instead the policy stops validating, and you will see that when you
+next submit or simulate. Rewrite the affected rules against the new ABI and submit a new
+revision.
+
+---
+
+## Changing a policy
+
+Submissions state the revision they were written against. If someone else activated a policy in
+the meantime, your submission is refused rather than merged, and you rebase your changes onto
+the current revision and submit again. Two administrators cannot overwrite each other by
+accident.
+
+Revisions are kept. A draft you decide against can be withdrawn, but an activated revision stays
+in the history as a record of what was enforced and when, along with who approved it.
+
+---
+
+## Configuration
+
+Compiling a policy requires the Solidity compiler on the machine running the suite.
+
+| Setting | Value |
+| --- | --- |
+| Compiler | `solc` 0.8.35 exactly |
+| `POLICY_SOLC` | Optional. Path to the compiler, if it is not on `PATH`. |
+
+The version is pinned rather than ranged. A policy is approved as specific bytecode, and a
+different compiler produces different bytecode from the same document. If the compiler is
+missing or is a different version, submitting a policy fails and says so; policies already
+active continue to work.
+
+Compilation happens when a policy is submitted, never while a request is being served.
+
+---
+
+## Endpoints
+
+<ApiEndpoint method="GET" path="/api/v1/admin/orgs/{org_id}/execution-policy/context" />
+
+What an editor needs before writing: the revision to write against, the groups and
+ABI-bearing contracts a policy may name, and the policy currently in force.
+
+<ApiEndpoint method="POST" path="/api/v1/admin/orgs/{org_id}/execution-policy/revisions" />
+
+Validate and compile a candidate and store it as a draft. Returns the generated contract and
+its digests. Rejects a document that names something that does not exist, and rejects a
+submission written against a superseded revision.
+
+<ApiEndpoint method="GET" path="/api/v1/admin/orgs/{org_id}/execution-policy/revisions" />
+
+The organization's revisions, newest first.
+
+<ApiEndpoint method="GET" path="/api/v1/admin/orgs/{org_id}/execution-policy/revisions/{revision_id}" />
+
+One revision in full, including the submitted document and the generated contract.
+
+<ApiEndpoint method="POST" path="/api/v1/admin/orgs/{org_id}/execution-policy/revisions/{revision_id}/simulate" />
+
+Evaluate a described call against a revision. Changes nothing, and works on a draft.
+
+<ApiEndpoint method="POST" path="/api/v1/admin/orgs/{org_id}/execution-policy/revisions/{revision_id}/activate" />
+
+Put a draft in force and retire the previous policy.
+
+<ApiEndpoint method="POST" path="/api/v1/admin/orgs/{org_id}/execution-policy/revisions/{revision_id}/withdraw" />
+
+Abandon a draft that was never activated.
+
+All of these are scoped to one organization and require an organization administrator. The
+restricted operator token cannot manage policies.
+
+---
+
+## Related
+
+- [RBAC](/docs/rbac) — groups, grants and claims, which a policy narrows rather than replaces
+- [Security](/docs/security) — how access decisions are made and audited

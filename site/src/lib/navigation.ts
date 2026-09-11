@@ -29,6 +29,7 @@ export const navigation: NavGroup[] = [
     title: "Features",
     items: [
       { title: "RBAC", href: "/docs/rbac" },
+      { title: "Execution Policies", href: "/docs/execution-policies" },
       { title: "Security", href: "/docs/security" },
       {
         title: "Response Filtering",
