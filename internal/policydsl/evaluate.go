@@ -1,13 +1,12 @@
 package policydsl
 
 import (
-	"bytes"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"math/big"
 	"slices"
 
-	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 )
 
@@ -171,18 +170,27 @@ func (v *Validated) matchFrame(ctx Context, f Frame) (DenialCode, error) {
 		callTypeName(f.CallType), hex.EncodeToString(selector[:]), f.StorageAddress.Hex(), f.CodeAddress.Hex())
 }
 
-// checkArgs decodes the frame's arguments once and applies every constraint.
+// checkArgs applies every constraint to the frame's calldata.
+//
+// Arguments are read as head slots, which is the same view a policy contract
+// has. Nothing is decoded out of line, so a constraint can only ever be placed
+// on a statically sized argument, which validation already enforces.
 func (r *compiledRule) checkArgs(ctx Context, calldata []byte) (DenialCode, error) {
-	values, err := decodeCanonical(r.method, calldata)
-	if err != nil {
-		return DenialMalformedCalldata, err
+	if len(calldata) < r.headLen() {
+		return DenialMalformedCalldata, fmt.Errorf("calldata for %s is %d bytes, too short for its %d arguments", r.sig, len(calldata), r.headSlots)
+	}
+	// Every argument of a fully static signature sits in the head, so anything
+	// past it is calldata a callee reading raw input would still see.
+	if r.exactLen && len(calldata) != r.headLen() {
+		return DenialMalformedCalldata, fmt.Errorf("calldata for %s is %d bytes, but its arguments occupy exactly %d", r.sig, len(calldata), r.headLen())
 	}
 
 	for _, a := range r.args {
-		if a.index >= len(values) {
-			return DenialMalformedCalldata, fmt.Errorf("could not decode argument %d of %s: only %d values present", a.index, r.method.Sig, len(values))
-		}
-		if err := a.check(ctx, values[a.index]); err != nil {
+		slot := calldata[4+32*a.index : 36+32*a.index]
+		if err := a.check(ctx, slot); err != nil {
+			if errors.Is(err, errMalformedArgument) {
+				return DenialMalformedCalldata, err
+			}
 			return DenialArgumentConstraint, err
 		}
 	}
@@ -190,49 +198,32 @@ func (r *compiledRule) checkArgs(ctx Context, calldata []byte) (DenialCode, erro
 	return "", nil
 }
 
-// decodeCanonical decodes a frame's arguments and insists the encoding is the
-// canonical one for those values.
-//
-// Unpack alone ignores anything past the arguments it needs, so calldata can
-// carry extra bytes that a callee reading raw input still sees. Re-encoding the
-// decoded values and requiring the result to equal the input rejects both those
-// trailing bytes and any non-canonical encoding that decodes to the same values.
-func decodeCanonical(method abi.Method, calldata []byte) ([]any, error) {
-	args := calldata[4:]
+// errMalformedArgument marks a slot that does not hold a well-formed value of
+// the argument's declared type, as opposed to a value that is merely out of
+// bounds. Both deny; they are separated so the denial is categorised honestly.
+var errMalformedArgument = errors.New("malformed argument")
 
-	values, err := method.Inputs.Unpack(args)
-	if err != nil {
-		return nil, fmt.Errorf("could not decode arguments of %s: %w", method.Sig, err)
-	}
+// check applies one prepared constraint to one 32-byte head slot.
+func (a compiledArg) check(ctx Context, slot []byte) error {
+	word := new(big.Int).SetBytes(slot)
 
-	reencoded, err := method.Inputs.Pack(values...)
-	if err != nil {
-		return nil, fmt.Errorf("could not re-encode arguments of %s to check the calldata: %w", method.Sig, err)
-	}
-	if !bytes.Equal(reencoded, args) {
-		return nil, fmt.Errorf("calldata for %s is not the canonical encoding of its arguments: %d argument bytes supplied, %d needed", method.Sig, len(args), len(reencoded))
-	}
-
-	return values, nil
-}
-
-// check applies one prepared constraint to one decoded value.
-func (a compiledArg) check(ctx Context, value any) error {
 	switch a.kind {
 	case argAddress:
-		got, ok := value.(common.Address)
-		if !ok {
-			return fmt.Errorf("argument %d did not decode as an address", a.index)
+		// An address occupies the low 20 bytes. A slot with anything above them
+		// is not a canonically encoded address, whatever it would truncate to.
+		for _, b := range slot[:12] {
+			if b != 0 {
+				return fmt.Errorf("%w: argument %d is not a canonically encoded address", errMalformedArgument, a.index)
+			}
 		}
-		return a.checkAddress(ctx, got)
+		return a.checkAddress(ctx, common.BytesToAddress(slot))
 
 	case argUint:
-		got, ok := toUint(value)
-		if !ok {
-			return fmt.Errorf("argument %d did not decode as an unsigned integer", a.index)
+		if a.bits < 256 && word.BitLen() > a.bits {
+			return fmt.Errorf("%w: argument %d does not fit its declared uint%d", errMalformedArgument, a.index, a.bits)
 		}
-		if got.Cmp(a.max) > 0 {
-			return fmt.Errorf("argument %d is %s, above the permitted maximum of %s", a.index, got, a.max)
+		if word.Cmp(a.max) > 0 {
+			return fmt.Errorf("argument %d is %s, above the permitted maximum of %s", a.index, word, a.max)
 		}
 		return nil
 
@@ -271,28 +262,6 @@ func (a compiledArg) checkAddress(ctx Context, got common.Address) error {
 
 	default:
 		return fmt.Errorf("argument %d carries an unsupported address source", a.index)
-	}
-}
-
-// toUint normalises the Go types go-ethereum produces for the various uint
-// widths into one comparable value.
-func toUint(value any) (*big.Int, bool) {
-	switch n := value.(type) {
-	case *big.Int:
-		if n == nil || n.Sign() < 0 {
-			return nil, false
-		}
-		return n, true
-	case uint64:
-		return new(big.Int).SetUint64(n), true
-	case uint32:
-		return new(big.Int).SetUint64(uint64(n)), true
-	case uint16:
-		return new(big.Int).SetUint64(uint64(n)), true
-	case uint8:
-		return new(big.Int).SetUint64(uint64(n)), true
-	default:
-		return nil, false
 	}
 }
 

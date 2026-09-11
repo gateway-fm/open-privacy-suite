@@ -399,7 +399,7 @@ func TestEvaluate(t *testing.T) {
 			frames:   []Frame{vaultCall(transferCalldata(t, signerAddr, big.NewInt(1))[:20])},
 			want:     false,
 			wantCode: DenialMalformedCalldata,
-			wantWhy:  "decode",
+			wantWhy:  "too short",
 		},
 		{
 			name:  "calldata carries bytes beyond its declared arguments",
@@ -410,7 +410,7 @@ func TestEvaluate(t *testing.T) {
 			frames:   []Frame{vaultCall(append(transferCalldata(t, strangerAddr, big.NewInt(1)), make([]byte, 32)...))},
 			want:     false,
 			wantCode: DenialMalformedCalldata,
-			wantWhy:  "canonical",
+			wantWhy:  "occupy exactly",
 		},
 		{
 			name:     "unknown call type on the frame",

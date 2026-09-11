@@ -45,16 +45,52 @@ const (
 type compiledArg struct {
 	index   int
 	kind    argKind
+	bits    int // declared width for a uint argument
 	source  AddressSource
 	literal common.Address
 	max     *big.Int
 }
 
 // compiledRule is one frame rule with its decoder and call types prepared.
+//
+// Arguments are read as head slots rather than fully ABI-decoded. Every
+// top-level argument occupies exactly one 32-byte head slot, so a statically
+// typed argument can be read at a fixed offset whatever its neighbours are. That
+// is also all a Solidity policy contract can afford to do, and reading the same
+// bytes the same way is what lets the two implementations be proven equivalent
+// rather than merely tested side by side.
 type compiledRule struct {
-	method    abi.Method
+	sig       string
+	headSlots int  // one per top-level argument
+	exactLen  bool // true when every argument is statically sized
 	callTypes map[CallType]struct{}
 	args      []compiledArg
+}
+
+// headLen is the calldata length this rule's arguments occupy, including the
+// four selector bytes.
+func (r *compiledRule) headLen() int { return 4 + 32*r.headSlots }
+
+// isDynamicType reports whether an ABI type is encoded out of line.
+//
+// go-ethereum keeps its own copy of this unexported, and the answer decides
+// whether a calldata length can be pinned exactly, so it is spelled out here.
+func isDynamicType(t abi.Type) bool {
+	switch t.T {
+	case abi.StringTy, abi.BytesTy, abi.SliceTy:
+		return true
+	case abi.TupleTy:
+		for _, elem := range t.TupleElems {
+			if isDynamicType(*elem) {
+				return true
+			}
+		}
+		return false
+	case abi.ArrayTy:
+		return isDynamicType(*t.Elem)
+	default:
+		return false
+	}
 }
 
 // frameKey identifies the frame shape a rule applies to.
@@ -247,12 +283,22 @@ func compileRule(r FrameRule, cat Catalog, parsedABIs map[string]map[string]abi.
 		return zero, nil, err
 	}
 
+	exact := true
+	for _, in := range method.Inputs {
+		if isDynamicType(in.Type) {
+			exact = false
+			break
+		}
+	}
+
 	return frameKey{
 			storage:  common.HexToAddress(storageKey),
 			code:     common.HexToAddress(codeKey),
 			selector: selector,
 		}, &compiledRule{
-			method:    method,
+			sig:       method.Sig,
+			headSlots: len(method.Inputs),
+			exactLen:  exact,
 			callTypes: callTypes,
 			args:      args,
 		}, nil
@@ -407,7 +453,7 @@ func compileArgs(args []ArgConstraint, method abi.Method) ([]compiledArg, error)
 			if max.Cmp(ceiling) >= 0 {
 				return nil, fmt.Errorf("argument %d: uintAtMost %s is not below the maximum of %s, so the bound could never reject a value", a.Index, max, input.Type)
 			}
-			out = append(out, compiledArg{index: a.Index, kind: argUint, max: max})
+			out = append(out, compiledArg{index: a.Index, kind: argUint, bits: input.Type.Size, max: max})
 		}
 	}
 
