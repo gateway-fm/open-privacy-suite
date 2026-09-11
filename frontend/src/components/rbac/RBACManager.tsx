@@ -14,6 +14,7 @@ import {
   Building2,
   Users,
   Shield,
+  ShieldCheck,
   FolderTree,
   FileCode2,
   Loader2,
@@ -25,7 +26,7 @@ import {
 import { rbacApi } from '@/api/rbac';
 import type { Organization } from '@/types/rbac';
 
-type RBACTab = 'organizations' | 'groups' | 'users' | 'contracts' | 'azure-tenants';
+type RBACTab = 'organizations' | 'groups' | 'users' | 'contracts' | 'execution-policy' | 'azure-tenants';
 
 // Context for sharing organization selection across sub-tabs
 interface OrgContextType {
@@ -83,6 +84,7 @@ export default function RBACManager() {
   const getActiveTab = (): RBACTab => {
     const path = location.pathname;
     if (path.includes('/azure-tenants')) return 'azure-tenants';
+    if (path.includes('/execution-policy')) return 'execution-policy';
     if (path.includes('/groups')) return 'groups';
     if (path.includes('/users')) return 'users';
     if (path.includes('/contracts')) return 'contracts';
@@ -175,7 +177,7 @@ export default function RBACManager() {
 
   const handleTabChange = (value: string) => {
     const tab = value as RBACTab;
-    const orgTabs: RBACTab[] = ['groups', 'users', 'contracts'];
+    const orgTabs: RBACTab[] = ['groups', 'users', 'contracts', 'execution-policy'];
     const needsOrg = orgTabs.includes(tab);
 
     const path = `/admin/rbac/${tab === 'organizations' ? 'organizations' : tab}`;
@@ -187,10 +189,10 @@ export default function RBACManager() {
   };
 
   // Tabs that show org selector (users shows it but doesn't block without one)
-  const orgRequiredTabs: RBACTab[] = ['groups', 'users', 'contracts'];
+  const orgRequiredTabs: RBACTab[] = ['groups', 'users', 'contracts', 'execution-policy'];
   const requiresOrg = orgRequiredTabs.includes(activeTab);
   // Tabs that are completely blocked without org selection
-  const orgBlockedTabs: RBACTab[] = ['groups', 'contracts'];
+  const orgBlockedTabs: RBACTab[] = ['groups', 'contracts', 'execution-policy'];
   const blockedWithoutOrg = orgBlockedTabs.includes(activeTab) && !selectedOrg;
 
   // Single-org admin: lock the dropdown. After RD-916/917 a tier-2 admin
@@ -371,6 +373,10 @@ export default function RBACManager() {
               <TabsTrigger value="contracts" className="gap-2" data-testid="tab-contracts">
                 <FileCode2 className="w-4 h-4" />
                 <span>Contracts</span>
+              </TabsTrigger>
+              <TabsTrigger value="execution-policy" className="gap-2" data-testid="tab-execution-policy">
+                <ShieldCheck className="w-4 h-4" />
+                <span>Execution Policy</span>
               </TabsTrigger>
               <TabsTrigger value="azure-tenants" className="gap-2" data-testid="tab-azure-tenants">
                 <Shield className="w-4 h-4" />
