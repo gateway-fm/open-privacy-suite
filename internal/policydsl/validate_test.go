@@ -1,47 +1,9 @@
 package policydsl
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"strings"
 	"testing"
 )
-
-// vaultABI is the fixture ABI used across the validation tests. It deliberately
-// contains an overloaded name so that selector-only addressing is exercised.
-const vaultABI = `[
-  {"type":"function","name":"transfer","inputs":[{"name":"to","type":"address"},{"name":"amount","type":"uint256"}],"outputs":[{"name":"","type":"bool"}],"stateMutability":"nonpayable"},
-  {"type":"function","name":"balanceOf","inputs":[{"name":"owner","type":"address"}],"outputs":[{"name":"","type":"uint256"}],"stateMutability":"view"},
-  {"type":"function","name":"note","inputs":[{"name":"memo","type":"string"}],"outputs":[],"stateMutability":"nonpayable"}
-]`
-
-const (
-	selTransfer  = "0xa9059cbb" // transfer(address,uint256)
-	selBalanceOf = "0x70a08231" // balanceOf(address)
-	selNote      = "0x1b352c43" // note(string)
-
-	vaultAddr = "0x1f98431c8ad98523631ae4a59f267346ea31f984"
-	relayAddr = "0x2222222222222222222222222222222222222222"
-	groupID   = "grp_traders"
-	orgID     = "org_acme"
-)
-
-func abiDigest(t *testing.T, abiText string) string {
-	t.Helper()
-	sum := sha256.Sum256([]byte(abiText))
-	return hex.EncodeToString(sum[:])
-}
-
-func testCatalog(t *testing.T) Catalog {
-	t.Helper()
-	return Catalog{
-		Org:    orgID,
-		Groups: map[string]struct{}{groupID: {}},
-		Contracts: map[string]ContractInfo{
-			vaultAddr: {ABI: vaultABI},
-		},
-	}
-}
 
 // basePolicy returns a minimal valid policy that individual tests then break in
 // exactly one way, so each failure is attributable to a single change.
@@ -87,6 +49,56 @@ func TestValidate_AcceptsEmptyAllowListAsDenyAll(t *testing.T) {
 	}
 }
 
+// TestValidate_AcceptsDelegateCallAgainstTheCodeAccountABI pins the rule that a
+// delegatecall is described by the implementation's ABI, not the proxy's.
+func TestValidate_AcceptsDelegateCallAgainstTheCodeAccountABI(t *testing.T) {
+	p := basePolicy(t)
+	p.Bindings[0].Allow[0] = FrameRule{
+		StorageAddress: vaultAddr,
+		CodeAddress:    libraryAddr.Hex(),
+		Selector:       selTransfer,
+		ABIDigest:      abiDigest(t, libraryABI),
+		CallTypes:      []CallType{CallTypeDelegateCall},
+	}
+
+	if _, err := Validate(p, testCatalog(t)); err != nil {
+		t.Fatalf("delegatecall rule pinned to the code account's ABI was rejected: %v", err)
+	}
+}
+
+// TestValidate_AcceptsDifferentSelectorsOfAnOverloadedName shows that two rules
+// on the same contract are distinct when their selectors differ, which is what
+// makes selector addressing necessary.
+func TestValidate_AcceptsDifferentSelectorsOfAnOverloadedName(t *testing.T) {
+	p := basePolicy(t)
+	p.Bindings[0].Allow = []FrameRule{
+		{StorageAddress: vaultAddr, Selector: selTransfer, ABIDigest: abiDigest(t, vaultABI)},
+		{StorageAddress: vaultAddr, Selector: selTransferMemo, ABIDigest: abiDigest(t, vaultABI)},
+	}
+
+	if _, err := Validate(p, testCatalog(t)); err != nil {
+		t.Fatalf("two overloads of one name should be two distinct rules, got: %v", err)
+	}
+}
+
+// TestValidate_AcceptsMixedCaseAddresses guards against a formatting difference
+// being reported as an authorization failure.
+func TestValidate_AcceptsMixedCaseAddresses(t *testing.T) {
+	for _, form := range []string{
+		strings.ToUpper("0x" + vaultAddr[2:]),
+		strings.TrimPrefix(vaultAddr, "0x"),
+	} {
+		t.Run(form, func(t *testing.T) {
+			p := basePolicy(t)
+			p.Bindings[0].Allow[0].StorageAddress = form
+
+			if _, err := Validate(p, testCatalog(t)); err != nil {
+				t.Fatalf("address written as %q names a registered contract but was rejected: %v", form, err)
+			}
+		})
+	}
+}
+
 func TestValidate_Rejects(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -129,8 +141,18 @@ func TestValidate_Rejects(t *testing.T) {
 			wantErr: "group",
 		},
 		{
+			name:    "empty group name",
+			mutate:  func(p *Policy) { p.Bindings[0].Group = "" },
+			wantErr: "group",
+		},
+		{
 			name:    "contract not registered in org",
 			mutate:  func(p *Policy) { p.Bindings[0].Allow[0].StorageAddress = relayAddr },
+			wantErr: "storageAddress",
+		},
+		{
+			name:    "storage address is malformed",
+			mutate:  func(p *Policy) { p.Bindings[0].Allow[0].StorageAddress = "0x1234" },
 			wantErr: "storageAddress",
 		},
 		{
@@ -141,6 +163,11 @@ func TestValidate_Rejects(t *testing.T) {
 		{
 			name:    "selector wrong length",
 			mutate:  func(p *Policy) { p.Bindings[0].Allow[0].Selector = "0xa9059c" },
+			wantErr: "selector",
+		},
+		{
+			name:    "selector right length but not hex",
+			mutate:  func(p *Policy) { p.Bindings[0].Allow[0].Selector = "0xzzzzzzzz" },
 			wantErr: "selector",
 		},
 		{
@@ -166,9 +193,65 @@ func TestValidate_Rejects(t *testing.T) {
 			wantErr: "codeAddress",
 		},
 		{
+			name: "delegatecall into an unregistered code account",
+			mutate: func(p *Policy) {
+				// Without the implementation's ABI there is nothing that says what
+				// the selector and arguments mean once its code is running.
+				p.Bindings[0].Allow[0].CodeAddress = relayAddr
+				p.Bindings[0].Allow[0].CallTypes = []CallType{CallTypeDelegateCall}
+			},
+			wantErr: "codeAddress",
+		},
+		{
+			name: "delegatecall digest pinned to the storage account's ABI",
+			mutate: func(p *Policy) {
+				p.Bindings[0].Allow[0].CodeAddress = libraryAddr.Hex()
+				p.Bindings[0].Allow[0].CallTypes = []CallType{CallTypeDelegateCall}
+				// vaultABI is the proxy's, not the implementation's.
+				p.Bindings[0].Allow[0].ABIDigest = abiDigest(t, vaultABI)
+			},
+			wantErr: "abiDigest",
+		},
+		{
+			name: "delegatecall selector absent from the code account's ABI",
+			mutate: func(p *Policy) {
+				p.Bindings[0].Allow[0].CodeAddress = libraryAddr.Hex()
+				p.Bindings[0].Allow[0].CallTypes = []CallType{CallTypeDelegateCall}
+				p.Bindings[0].Allow[0].ABIDigest = abiDigest(t, libraryABI)
+				p.Bindings[0].Allow[0].Selector = selNote // vault has it, the library does not
+			},
+			wantErr: "selector",
+		},
+		{
+			name: "code address is malformed",
+			mutate: func(p *Policy) {
+				p.Bindings[0].Allow[0].CodeAddress = "0xnothex"
+				p.Bindings[0].Allow[0].CallTypes = []CallType{CallTypeDelegateCall}
+			},
+			wantErr: "codeAddress",
+		},
+		{
 			name: "unsupported call type",
 			mutate: func(p *Policy) {
 				p.Bindings[0].Allow[0].CallTypes = []CallType{"create2"}
+			},
+			wantErr: "callTypes",
+		},
+		{
+			name: "call type listed twice",
+			mutate: func(p *Policy) {
+				p.Bindings[0].Allow[0].CallTypes = []CallType{CallTypeCall, CallTypeCall}
+			},
+			wantErr: "callTypes",
+		},
+		{
+			name: "call mixed with delegatecall on a separate code account",
+			mutate: func(p *Policy) {
+				// The call entry could never match, because code and storage are
+				// the same account for a plain call.
+				p.Bindings[0].Allow[0].CodeAddress = libraryAddr.Hex()
+				p.Bindings[0].Allow[0].ABIDigest = abiDigest(t, libraryABI)
+				p.Bindings[0].Allow[0].CallTypes = []CallType{CallTypeCall, CallTypeDelegateCall}
 			},
 			wantErr: "callTypes",
 		},
@@ -241,9 +324,27 @@ func TestValidate_Rejects(t *testing.T) {
 			wantErr: "uintAtMost",
 		},
 		{
+			name: "uint bound carries a sign",
+			mutate: func(p *Policy) {
+				max := "+100"
+				p.Bindings[0].Allow[0].Args = []ArgConstraint{{Index: 1, UintAtMost: &max}}
+			},
+			wantErr: "uintAtMost",
+		},
+		{
 			name: "uint bound is negative",
 			mutate: func(p *Policy) {
 				max := "-1"
+				p.Bindings[0].Allow[0].Args = []ArgConstraint{{Index: 1, UintAtMost: &max}}
+			},
+			wantErr: "uintAtMost",
+		},
+		{
+			name: "uint bound cannot reject anything",
+			mutate: func(p *Policy) {
+				// 2^256-1 is the largest a uint256 can hold, so a bound there is a
+				// no-op dressed as a limit.
+				max := "115792089237316195423570985008687907853269984665640564039457584007913129639935"
 				p.Bindings[0].Allow[0].Args = []ArgConstraint{{Index: 1, UintAtMost: &max}}
 			},
 			wantErr: "uintAtMost",
@@ -309,9 +410,28 @@ func TestValidate_Rejects(t *testing.T) {
 			wantErr: "codeAddress",
 		},
 		{
+			name: "code address set with no call types",
+			mutate: func(p *Policy) {
+				p.Bindings[0].Allow[0].CodeAddress = libraryAddr.Hex()
+			},
+			wantErr: "codeAddress",
+		},
+		{
 			name:    "duplicate group binding",
 			mutate:  func(p *Policy) { p.Bindings = append(p.Bindings, p.Bindings[0]) },
 			wantErr: "group",
+		},
+		{
+			name: "two rules covering the same contract, code account and selector",
+			mutate: func(p *Policy) {
+				max := "100"
+				bounded := p.Bindings[0].Allow[0]
+				bounded.Args = []ArgConstraint{{Index: 1, UintAtMost: &max}}
+				// The unbounded rule would win under either-or, silently voiding
+				// the bound the reviewer can see right above it.
+				p.Bindings[0].Allow = []FrameRule{bounded, p.Bindings[0].Allow[0]}
+			},
+			wantErr: "already covered",
 		},
 	}
 
@@ -331,5 +451,55 @@ func TestValidate_Rejects(t *testing.T) {
 				t.Errorf("error %q does not mention %q; operators need to know which field is wrong", err, tc.wantErr)
 			}
 		})
+	}
+}
+
+func TestValidate_RejectsNilPolicy(t *testing.T) {
+	v, err := Validate(nil, testCatalog(t))
+	if err == nil {
+		t.Fatal("a nil policy was accepted")
+	}
+	if v != nil {
+		t.Error("Validate returned a result alongside an error")
+	}
+}
+
+func TestValidate_RejectsUnparseableRegisteredABI(t *testing.T) {
+	cat := testCatalog(t)
+	cat.Contracts[vaultAddr] = ContractInfo{ABI: "{not an abi"}
+
+	p := basePolicy(t)
+	p.Bindings[0].Allow[0].ABIDigest = abiDigest(t, "{not an abi")
+
+	if _, err := Validate(p, cat); err == nil {
+		t.Fatal("a contract whose registered ABI does not parse was accepted")
+	}
+}
+
+// TestValidate_OwnsItsOwnCopyOfTheDocument checks that editing the caller's
+// policy after validation cannot change what is enforced or what is displayed.
+func TestValidate_OwnsItsOwnCopyOfTheDocument(t *testing.T) {
+	p := basePolicy(t)
+
+	v, err := Validate(p, testCatalog(t))
+	if err != nil {
+		t.Fatalf("valid policy rejected: %v", err)
+	}
+
+	p.Bindings[0].Group = "grp_tampered"
+	p.Bindings[0].Allow[0].Selector = "0xdeadbeef"
+
+	got := v.Policy()
+	if got.Bindings[0].Group != groupID {
+		t.Errorf("group became %q after the caller edited its own document", got.Bindings[0].Group)
+	}
+	if got.Bindings[0].Allow[0].Selector != selTransfer {
+		t.Errorf("selector became %q after the caller edited its own document", got.Bindings[0].Allow[0].Selector)
+	}
+
+	// The returned document must itself be a copy, not a handle on the internals.
+	got.Bindings[0].Group = "grp_tampered_again"
+	if again := v.Policy(); again.Bindings[0].Group != groupID {
+		t.Errorf("group became %q after a caller edited a returned document", again.Bindings[0].Group)
 	}
 }

@@ -79,8 +79,11 @@ type Validated struct {
 	byGroup map[string]map[frameKey][]*compiledRule
 }
 
-// Policy returns the document this was built from.
-func (v *Validated) Policy() *Policy { return v.policy }
+// Policy returns a copy of the document this was built from.
+//
+// It is a copy so that a display, export or audit path cannot edit the document
+// out from under the compiled rules that are actually enforced.
+func (v *Validated) Policy() *Policy { return v.policy.clone() }
 
 // knownCallTypes is the closed set of frame kinds a rule may name.
 var knownCallTypes = map[CallType]struct{}{
@@ -119,8 +122,10 @@ func Validate(p *Policy, cat Catalog) (*Validated, error) {
 		return nil, fmt.Errorf("policy: unsupported nestedCalls %q, this build accepts only %q", p.NestedCalls, NestedCallsRequireOwnRule)
 	}
 
+	// Own a copy, so the compiled rules cannot be contradicted by a later edit to
+	// the caller's document.
 	v := &Validated{
-		policy:  p,
+		policy:  p.clone(),
 		byGroup: make(map[string]map[frameKey][]*compiledRule, len(p.Bindings)),
 	}
 
@@ -145,6 +150,13 @@ func Validate(p *Policy, cat Catalog) (*Validated, error) {
 			if err != nil {
 				return nil, fmt.Errorf("policy: binding %d (group %q), rule %d: %w", bi, b.Group, ri, err)
 			}
+			// Two rules on the same contract, code account and selector would be
+			// combined with OR, so the looser one decides and the tighter one is
+			// dead text a reviewer cannot distinguish from an enforced bound.
+			if _, dup := index[key]; dup {
+				return nil, fmt.Errorf("policy: binding %d (group %q), rule %d: selector %s on %s is already covered by an earlier rule; combine them, because two rules would be read as either-or and the looser one would decide",
+					bi, b.Group, ri, r.Selector, r.StorageAddress)
+			}
 			index[key] = append(index[key], rule)
 		}
 		v.byGroup[b.Group] = index
@@ -160,9 +172,8 @@ func compileRule(r FrameRule, cat Catalog, parsedABIs map[string]map[string]abi.
 	if !common.IsHexAddress(r.StorageAddress) {
 		return zero, nil, fmt.Errorf("storageAddress %q is not a valid address", r.StorageAddress)
 	}
-	storageKey := strings.ToLower(r.StorageAddress)
-	contract, ok := cat.Contracts[storageKey]
-	if !ok {
+	storageKey := catalogKey(r.StorageAddress)
+	if _, ok := cat.Contracts[storageKey]; !ok {
 		return zero, nil, fmt.Errorf("storageAddress %s is not a contract registered to this organisation", r.StorageAddress)
 	}
 
@@ -171,12 +182,33 @@ func compileRule(r FrameRule, cat Catalog, parsedABIs map[string]map[string]abi.
 		return zero, nil, err
 	}
 
-	codeAddr := common.HexToAddress(storageKey)
+	// The ABI that matters is the one belonging to the account whose code runs.
+	// For a normal call that is the contract itself. Under delegatecall it is the
+	// implementation, not the proxy whose storage is being written, so resolving
+	// the selector and argument types against the storage account would describe
+	// the wrong function and bound the wrong bytes.
+	codeKey := storageKey
 	if r.CodeAddress != "" {
 		if !common.IsHexAddress(r.CodeAddress) {
 			return zero, nil, fmt.Errorf("codeAddress %q is not a valid address", r.CodeAddress)
 		}
-		codeAddr = common.HexToAddress(strings.ToLower(r.CodeAddress))
+		codeKey = catalogKey(r.CodeAddress)
+	}
+
+	code, ok := cat.Contracts[codeKey]
+	if !ok {
+		return zero, nil, fmt.Errorf("codeAddress %s is not a contract registered to this organisation; its ABI is what decides what the selector and arguments mean, so it must be registered before a rule can name it", r.CodeAddress)
+	}
+
+	// A rule naming a separate code account may only permit the frame kinds where
+	// the two accounts actually differ. Leaving call in the list would look like a
+	// permission but could never match anything.
+	if codeKey != storageKey {
+		for _, ct := range []CallType{CallTypeCall, CallTypeStaticCall} {
+			if _, ok := callTypes[ct]; ok {
+				return zero, nil, fmt.Errorf("callTypes includes %q while codeAddress differs from storageAddress; code and storage are the same account for that frame kind, so the entry could never match", ct)
+			}
+		}
 	}
 
 	selector, err := parseSelector(r.Selector)
@@ -187,27 +219,27 @@ func compileRule(r FrameRule, cat Catalog, parsedABIs map[string]map[string]abi.
 	if r.ABIDigest == "" {
 		return zero, nil, fmt.Errorf("abiDigest is required so that a later ABI change is detected rather than silently reinterpreting argument positions")
 	}
-	sum := sha256.Sum256([]byte(contract.ABI))
+	sum := sha256.Sum256([]byte(code.ABI))
 	if !strings.EqualFold(r.ABIDigest, hex.EncodeToString(sum[:])) {
-		return zero, nil, fmt.Errorf("abiDigest does not match the ABI registered for %s; re-derive the policy against the current ABI", r.StorageAddress)
+		return zero, nil, fmt.Errorf("abiDigest does not match the ABI registered for the executing code at %s; re-derive the policy against the current ABI", displayAddress(r.CodeAddress, r.StorageAddress))
 	}
 
-	methods, ok := parsedABIs[storageKey]
+	methods, ok := parsedABIs[codeKey]
 	if !ok {
-		parsed, perr := abi.JSON(strings.NewReader(contract.ABI))
+		parsed, perr := abi.JSON(strings.NewReader(code.ABI))
 		if perr != nil {
-			return zero, nil, fmt.Errorf("the ABI registered for %s does not parse: %w", r.StorageAddress, perr)
+			return zero, nil, fmt.Errorf("the ABI registered for %s does not parse: %w", displayAddress(r.CodeAddress, r.StorageAddress), perr)
 		}
 		methods = make(map[string]abi.Method, len(parsed.Methods))
 		for _, m := range parsed.Methods {
 			methods["0x"+hex.EncodeToString(m.ID)] = m
 		}
-		parsedABIs[storageKey] = methods
+		parsedABIs[codeKey] = methods
 	}
 
 	method, ok := methods["0x"+hex.EncodeToString(selector[:])]
 	if !ok {
-		return zero, nil, fmt.Errorf("selector %s does not appear in the ABI registered for %s", r.Selector, r.StorageAddress)
+		return zero, nil, fmt.Errorf("selector %s does not appear in the ABI registered for %s", r.Selector, displayAddress(r.CodeAddress, r.StorageAddress))
 	}
 
 	args, err := compileArgs(r.Args, method)
@@ -217,7 +249,7 @@ func compileRule(r FrameRule, cat Catalog, parsedABIs map[string]map[string]abi.
 
 	return frameKey{
 			storage:  common.HexToAddress(storageKey),
-			code:     codeAddr,
+			code:     common.HexToAddress(codeKey),
 			selector: selector,
 		}, &compiledRule{
 			method:    method,
@@ -233,7 +265,13 @@ func resolveCallTypes(r FrameRule) (map[CallType]struct{}, error) {
 		if r.CodeAddress != "" {
 			return nil, fmt.Errorf("codeAddress is set but callTypes is empty; code and storage differ only for delegatecall or callcode, so name the call type explicitly")
 		}
-		return defaultCallTypes, nil
+		// Copied rather than shared, so that a rule can never reach the map every
+		// other default-typed rule in the process is using.
+		out := make(map[CallType]struct{}, len(defaultCallTypes))
+		for ct := range defaultCallTypes {
+			out[ct] = struct{}{}
+		}
+		return out, nil
 	}
 
 	set := make(map[CallType]struct{}, len(r.CallTypes))
@@ -259,6 +297,41 @@ func resolveCallTypes(r FrameRule) (map[CallType]struct{}, error) {
 	}
 
 	return set, nil
+}
+
+// catalogKey normalises an address to the form Catalog is keyed by.
+//
+// Addresses reach us checksummed, lowercase, or bare, and all three name the
+// same account. Normalising through the address type rather than the string
+// keeps a formatting difference from being reported as an authorization failure.
+func catalogKey(addr string) string {
+	return strings.ToLower(common.HexToAddress(addr).Hex())
+}
+
+// displayAddress names the account an ABI error is about, falling back to the
+// storage address when a rule did not set a separate code address.
+func displayAddress(code, storage string) string {
+	if code != "" {
+		return code
+	}
+	return storage
+}
+
+// isPlainDecimal reports whether s is decimal digits and nothing else.
+//
+// big.Int accepts a leading sign and underscores, so a bound written as "+100"
+// would parse. Requiring plain digits keeps the reviewed text and the enforced
+// value the same string.
+func isPlainDecimal(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // parseSelector accepts exactly a 0x-prefixed four-byte selector.
@@ -320,12 +393,19 @@ func compileArgs(args []ArgConstraint, method abi.Method) ([]compiledArg, error)
 			if input.Type.T != abi.UintTy {
 				return nil, fmt.Errorf("argument %d of %s has type %s, so it cannot carry a uintAtMost constraint", a.Index, method.Sig, input.Type)
 			}
+			if !isPlainDecimal(*a.UintAtMost) {
+				return nil, fmt.Errorf("argument %d: uintAtMost %q is not a plain decimal integer; write large amounts as decimal digits with no sign or prefix", a.Index, *a.UintAtMost)
+			}
 			max, ok := new(big.Int).SetString(*a.UintAtMost, 10)
 			if !ok {
 				return nil, fmt.Errorf("argument %d: uintAtMost %q is not a decimal integer; write large amounts as a decimal string", a.Index, *a.UintAtMost)
 			}
-			if max.Sign() < 0 {
-				return nil, fmt.Errorf("argument %d: uintAtMost %q is negative, which no unsigned value can satisfy", a.Index, *a.UintAtMost)
+			// A bound at or above the argument's own ceiling can never reject
+			// anything, which is the silent no-op the schema otherwise rejects.
+			ceiling := new(big.Int).Lsh(big.NewInt(1), uint(input.Type.Size))
+			ceiling.Sub(ceiling, big.NewInt(1))
+			if max.Cmp(ceiling) >= 0 {
+				return nil, fmt.Errorf("argument %d: uintAtMost %s is not below the maximum of %s, so the bound could never reject a value", a.Index, max, input.Type)
 			}
 			out = append(out, compiledArg{index: a.Index, kind: argUint, max: max})
 		}

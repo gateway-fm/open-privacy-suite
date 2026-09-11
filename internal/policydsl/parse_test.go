@@ -54,6 +54,35 @@ func TestParse_Rejects(t *testing.T) {
 			wantErr: "trailing",
 		},
 		{
+			name: "trailing text that is not json",
+			// Rejecting only a second valid document would let unreviewed text
+			// ride along in the same file.
+			doc:     `{"apiVersion":"x"} ### appended after review ###`,
+			wantErr: "trailing",
+		},
+		{
+			name:    "trailing binary noise",
+			doc:     "{\"apiVersion\":\"x\"}\x00\x01\x02",
+			wantErr: "trailing",
+		},
+		{
+			name:    "trailing partial document",
+			doc:     `{"apiVersion":"x"}{"b":`,
+			wantErr: "trailing",
+		},
+		{
+			name: "argument constraint without an explicit index",
+			// Zero is a meaningful position, so an omitted index would quietly
+			// bound the first argument and leave the intended one unbounded.
+			doc:     `{"bindings":[{"group":"g","allow":[{"selector":"0x11223344","args":[{"addressEquals":{"source":"signer"}}]}]}]}`,
+			wantErr: "index is required",
+		},
+		{
+			name:    "argument constraint with an unknown field",
+			doc:     `{"bindings":[{"group":"g","allow":[{"selector":"0x11223344","args":[{"index":0,"mustBe":"self"}]}]}]}`,
+			wantErr: "argument constraint",
+		},
+		{
 			name:    "not an object",
 			doc:     `["a"]`,
 			wantErr: "malformed",

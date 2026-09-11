@@ -9,12 +9,23 @@
 // The schema is deliberately closed. Unknown fields, unsupported rule kinds and
 // ambiguous references are rejected at validation time so that a policy either
 // has exactly one meaning or does not load at all. Every failure path denies.
+//
+// Known limits of this first grammar, which constrain what a policy can promise:
+//
+//   - Native value is not modelled. A rule permitting a payable function permits
+//     it for any amount of ether. Bounding value needs a field of its own.
+//   - Cumulative limits are not supported. A rule can bound one call's argument
+//     but not a total across calls, which would need durable counters and a
+//     rollback story tied to execution.
+//   - Frame completeness is the caller's responsibility. The evaluator denies an
+//     empty frame list, but cannot tell a complete trace from a truncated one.
 package policydsl
 
 import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 )
 
 // APIVersion is the only schema version this build accepts.
@@ -135,6 +146,10 @@ type FrameRule struct {
 // meanings; both are rejected.
 type ArgConstraint struct {
 	// Index is the zero-based position of the argument in the function's inputs.
+	//
+	// A document must state it explicitly. Because zero is a meaningful position,
+	// an omitted index would quietly constrain the first argument and leave the
+	// one the author meant unbounded.
 	Index int `json:"index"`
 
 	// AddressEquals constrains an address argument.
@@ -154,10 +169,81 @@ type AddressMatch struct {
 	Value string `json:"value,omitempty"`
 }
 
+// clone returns a deep copy of the document.
+//
+// Validation and evaluation must not be affected by anything the caller does to
+// its own copy afterwards, and a document handed out for display or audit must
+// not be able to drift from the rules that were actually compiled.
+func (p *Policy) clone() *Policy {
+	if p == nil {
+		return nil
+	}
+
+	out := *p
+	out.Bindings = make([]Binding, len(p.Bindings))
+
+	for i, b := range p.Bindings {
+		nb := b
+		nb.Allow = make([]FrameRule, len(b.Allow))
+
+		for j, r := range b.Allow {
+			nr := r
+			nr.CallTypes = append([]CallType(nil), r.CallTypes...)
+			nr.Args = make([]ArgConstraint, len(r.Args))
+
+			for k, a := range r.Args {
+				na := a
+				if a.AddressEquals != nil {
+					m := *a.AddressEquals
+					na.AddressEquals = &m
+				}
+				if a.UintAtMost != nil {
+					s := *a.UintAtMost
+					na.UintAtMost = &s
+				}
+				nr.Args[k] = na
+			}
+
+			nb.Allow[j] = nr
+		}
+
+		out.Bindings[i] = nb
+	}
+
+	return &out
+}
+
+// UnmarshalJSON decodes an argument constraint, requiring an explicit index.
+//
+// A custom unmarshaller is needed because the outer decoder's strictness does
+// not reach a type that decodes itself, so unknown fields are rejected here too.
+func (a *ArgConstraint) UnmarshalJSON(data []byte) error {
+	var present map[string]json.RawMessage
+	if err := json.Unmarshal(data, &present); err != nil {
+		return fmt.Errorf("argument constraint: %w", err)
+	}
+	if _, ok := present["index"]; !ok {
+		return fmt.Errorf("argument constraint: index is required; omitting it would silently constrain argument 0")
+	}
+
+	// The alias sheds the method set, so decoding it does not recurse.
+	type alias ArgConstraint
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+
+	var decoded alias
+	if err := dec.Decode(&decoded); err != nil {
+		return fmt.Errorf("argument constraint: %w", err)
+	}
+
+	*a = ArgConstraint(decoded)
+	return nil
+}
+
 // Parse decodes a policy document into the canonical model.
 //
 // Decoding is strict: unknown fields are an error rather than being ignored, and
-// trailing content after the document is rejected. Parse performs no semantic
+// anything at all after the document is rejected. Parse performs no semantic
 // validation; call Validate for that.
 func Parse(data []byte) (*Policy, error) {
 	dec := json.NewDecoder(bytes.NewReader(data))
@@ -168,10 +254,13 @@ func Parse(data []byte) (*Policy, error) {
 		return nil, fmt.Errorf("policy: malformed document: %w", err)
 	}
 
-	// A second successful decode means the input held more than one document.
-	// Accepting the first and discarding the rest would approve unreviewed text.
-	var trailing json.RawMessage
-	if err := dec.Decode(&trailing); err == nil {
+	// Anything after the document, valid JSON or not, means the input was not the
+	// single artifact a reviewer approved. More() reports remaining non-whitespace
+	// content, so unparseable trailing bytes are caught as well as a second value.
+	if dec.More() {
+		return nil, fmt.Errorf("policy: unexpected trailing content after document")
+	}
+	if _, err := dec.Token(); err != io.EOF {
 		return nil, fmt.Errorf("policy: unexpected trailing content after document")
 	}
 

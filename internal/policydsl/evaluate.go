@@ -1,11 +1,13 @@
 package policydsl
 
 import (
+	"bytes"
 	"encoding/hex"
 	"fmt"
 	"math/big"
 	"slices"
 
+	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 )
 
@@ -37,23 +39,57 @@ type Frame struct {
 // None of these may be asserted by a policy document. They come from OPS at
 // evaluation time, which is what stops a policy from granting itself authority.
 type Context struct {
+	// Org is the organisation the principal is acting in. It must match the
+	// policy's own org: group identifiers are only meaningful within one
+	// organisation, so evaluating a principal against another org's policy could
+	// otherwise match on a colliding identifier.
+	Org string
+
 	// Groups are the principal's current group memberships in the organisation.
 	Groups []string
 
-	// Signer is the account that signed the submitted transaction.
+	// Signer is the account that signed the submitted transaction. A zero value
+	// means the signer is not known, which is never treated as an address a rule
+	// can match.
 	Signer common.Address
 
 	// LinkedAddresses are the accounts linked to the authenticated principal.
 	LinkedAddresses []common.Address
 }
 
+// DenialCode is a stable, client-safe category for a denial.
+//
+// It carries no policy content, so it is the part of a Decision that may be
+// shown to the caller who was denied.
+type DenialCode string
+
+const (
+	// DenialNoMatchingRule means nothing in the policy permitted a frame.
+	DenialNoMatchingRule DenialCode = "no_matching_rule"
+	// DenialArgumentConstraint means a frame's arguments were out of bounds.
+	DenialArgumentConstraint DenialCode = "argument_constraint"
+	// DenialMalformedCalldata means a frame's calldata could not be decoded as
+	// the function its selector names.
+	DenialMalformedCalldata DenialCode = "malformed_calldata"
+	// DenialNoFrames means the execution carried no observed frames.
+	DenialNoFrames DenialCode = "no_frames_observed"
+	// DenialInvalidContext means the supplied runtime facts cannot support a
+	// decision, for example a principal from a different organisation.
+	DenialInvalidContext DenialCode = "invalid_context"
+)
+
 // Decision is the result of evaluating an execution against a policy.
 type Decision struct {
 	// Allowed is true only when every frame matched a rule.
 	Allowed bool
 
-	// Reason explains a denial in operator-readable terms. It is never empty for
-	// a denial, and names the first frame that failed rather than the last.
+	// Code categorises a denial. It is safe to return to the denied caller.
+	Code DenialCode
+
+	// Reason explains a denial in operator-readable terms, naming the first frame
+	// that failed. It quotes bounds and addresses from the policy, so it belongs
+	// in operator tooling and audit records and must not be returned to the
+	// caller who was denied. Send Code instead.
 	Reason string
 }
 
@@ -65,18 +101,21 @@ type Decision struct {
 // way, including undecodable calldata.
 func (v *Validated) Evaluate(ctx Context, frames []Frame) Decision {
 	if v == nil {
-		return deny("no policy is loaded")
+		return deny(DenialInvalidContext, "no policy is loaded")
+	}
+	if ctx.Org == "" || ctx.Org != v.policy.Org {
+		return deny(DenialInvalidContext, fmt.Sprintf("the principal is acting in organisation %q, but this policy governs %q", ctx.Org, v.policy.Org))
 	}
 	if len(frames) == 0 {
 		// An execution with nothing observed is far more likely to be a
 		// collection failure than a legitimate no-op, and denying is the only
 		// safe reading of it.
-		return deny("no frames were observed for this execution")
+		return deny(DenialNoFrames, "no frames were observed for this execution")
 	}
 
 	for i, f := range frames {
-		if err := v.matchFrame(ctx, f); err != nil {
-			return deny(fmt.Sprintf("frame %d: %v", i, err))
+		if code, err := v.matchFrame(ctx, f); err != nil {
+			return deny(code, fmt.Sprintf("frame %d: %v", i, err))
 		}
 	}
 
@@ -84,9 +123,9 @@ func (v *Validated) Evaluate(ctx Context, frames []Frame) Decision {
 }
 
 // matchFrame reports why a frame is not permitted, or nil when it is.
-func (v *Validated) matchFrame(ctx Context, f Frame) error {
+func (v *Validated) matchFrame(ctx Context, f Frame) (DenialCode, error) {
 	if len(f.Calldata) < 4 {
-		return fmt.Errorf("calldata is %d bytes, too short to carry a function selector", len(f.Calldata))
+		return DenialMalformedCalldata, fmt.Errorf("calldata is %d bytes, too short to carry a function selector", len(f.Calldata))
 	}
 
 	var selector [4]byte
@@ -98,10 +137,11 @@ func (v *Validated) matchFrame(ctx Context, f Frame) error {
 		selector: selector,
 	}
 
-	// argErr keeps the most specific explanation seen. A frame whose selector and
-	// contract are permitted but whose arguments are out of bounds should say so,
-	// rather than reporting the same "no rule" as an entirely unknown call.
-	var argErr error
+	// firstErr keeps the most specific explanation seen. A frame whose selector
+	// and contract are permitted but whose arguments are out of bounds should say
+	// so, rather than reporting the same "no rule" as an entirely unknown call.
+	var firstErr error
+	firstCode := DenialNoMatchingRule
 
 	for _, group := range ctx.Groups {
 		index, ok := v.byGroup[group]
@@ -112,45 +152,68 @@ func (v *Validated) matchFrame(ctx Context, f Frame) error {
 			if _, ok := rule.callTypes[f.CallType]; !ok {
 				continue
 			}
-			if err := rule.checkArgs(ctx, f.Calldata); err != nil {
-				if argErr == nil {
-					argErr = err
+			code, err := rule.checkArgs(ctx, f.Calldata)
+			if err != nil {
+				if firstErr == nil {
+					firstErr, firstCode = err, code
 				}
 				continue
 			}
-			return nil
+			return "", nil
 		}
 	}
 
-	if argErr != nil {
-		return argErr
+	if firstErr != nil {
+		return firstCode, firstErr
 	}
 
-	return fmt.Errorf("no rule permits %s of selector 0x%s on %s (code %s)",
+	return DenialNoMatchingRule, fmt.Errorf("no rule permits %s of selector 0x%s on %s (code %s)",
 		callTypeName(f.CallType), hex.EncodeToString(selector[:]), f.StorageAddress.Hex(), f.CodeAddress.Hex())
 }
 
 // checkArgs decodes the frame's arguments once and applies every constraint.
-func (r *compiledRule) checkArgs(ctx Context, calldata []byte) error {
-	if len(r.args) == 0 {
-		return nil
-	}
-
-	values, err := r.method.Inputs.Unpack(calldata[4:])
+func (r *compiledRule) checkArgs(ctx Context, calldata []byte) (DenialCode, error) {
+	values, err := decodeCanonical(r.method, calldata)
 	if err != nil {
-		return fmt.Errorf("could not decode arguments of %s: %w", r.method.Sig, err)
+		return DenialMalformedCalldata, err
 	}
 
 	for _, a := range r.args {
 		if a.index >= len(values) {
-			return fmt.Errorf("could not decode argument %d of %s: only %d values present", a.index, r.method.Sig, len(values))
+			return DenialMalformedCalldata, fmt.Errorf("could not decode argument %d of %s: only %d values present", a.index, r.method.Sig, len(values))
 		}
 		if err := a.check(ctx, values[a.index]); err != nil {
-			return err
+			return DenialArgumentConstraint, err
 		}
 	}
 
-	return nil
+	return "", nil
+}
+
+// decodeCanonical decodes a frame's arguments and insists the encoding is the
+// canonical one for those values.
+//
+// Unpack alone ignores anything past the arguments it needs, so calldata can
+// carry extra bytes that a callee reading raw input still sees. Re-encoding the
+// decoded values and requiring the result to equal the input rejects both those
+// trailing bytes and any non-canonical encoding that decodes to the same values.
+func decodeCanonical(method abi.Method, calldata []byte) ([]any, error) {
+	args := calldata[4:]
+
+	values, err := method.Inputs.Unpack(args)
+	if err != nil {
+		return nil, fmt.Errorf("could not decode arguments of %s: %w", method.Sig, err)
+	}
+
+	reencoded, err := method.Inputs.Pack(values...)
+	if err != nil {
+		return nil, fmt.Errorf("could not re-encode arguments of %s to check the calldata: %w", method.Sig, err)
+	}
+	if !bytes.Equal(reencoded, args) {
+		return nil, fmt.Errorf("calldata for %s is not the canonical encoding of its arguments: %d argument bytes supplied, %d needed", method.Sig, len(args), len(reencoded))
+	}
+
+	return values, nil
 }
 
 // check applies one prepared constraint to one decoded value.
@@ -184,6 +247,11 @@ func (a compiledArg) check(ctx Context, value any) error {
 func (a compiledArg) checkAddress(ctx Context, got common.Address) error {
 	switch a.source {
 	case AddressSourceSigner:
+		// The zero address is what an unset field looks like, so a caller that
+		// failed to recover a signer must not satisfy a rule requiring one.
+		if ctx.Signer == (common.Address{}) {
+			return fmt.Errorf("argument %d must equal the transaction signer, but no signer was supplied for this execution", a.index)
+		}
 		if got != ctx.Signer {
 			return fmt.Errorf("argument %d is %s, but the rule requires the transaction signer %s", a.index, got.Hex(), ctx.Signer.Hex())
 		}
@@ -237,7 +305,7 @@ func callTypeName(ct CallType) string {
 	return string(ct)
 }
 
-// deny builds a denial carrying its explanation.
-func deny(reason string) Decision {
-	return Decision{Allowed: false, Reason: reason}
+// deny builds a denial carrying its category and its explanation.
+func deny(code DenialCode, reason string) Decision {
+	return Decision{Allowed: false, Code: code, Reason: reason}
 }
