@@ -9,20 +9,31 @@ export const metadata = {
 
 # Execution Policies
 
+<Callout type="warning">
+  **Not yet enforced.** This release provides the authoring, review and approval path only.
+  Policies are validated, compiled, stored and activated, but **no request is currently checked
+  against them**: an active policy does not block, narrow or alter any call. Treat it as a way
+  to prepare and review rules, not as a control that is in force. Do not record it as an
+  operating control in an audit or compliance context, and do not rely on it in place of
+  contract grants or method allowlists, which remain the mechanisms that actually decide access.
+</Callout>
+
 ## Overview
 
-An execution policy narrows what the members of a group are allowed to execute, down to
-the individual function and its arguments. Where a contract grant says "this group may call
+An execution policy describes what the members of a group should be allowed to execute, down
+to the individual function and its arguments. Where a contract grant says "this group may call
 `transfer`", an execution policy can say "and only to your own address, and only up to 100".
 
 A policy is written as a document, compiled into a contract, reviewed, and then activated.
-Nothing it says takes effect until an administrator activates it.
+The enforcement point that consults an active policy is separate work and is not part of this
+release, which is why the rules above are described as intent rather than as effect.
 
-<Callout type="warning">
-  A policy only ever **restricts**. It cannot grant access to anything, and it cannot assert
-  that someone is a member of a group, owns a contract, or has passed a compliance check.
-  Those facts come from the rest of the system at the moment a call is evaluated. Removing a
-  policy widens access back to whatever the group's grants already allowed; it never narrows.
+<Callout type="info">
+  By design a policy can only ever **restrict**. It cannot grant access to anything, and it
+  cannot assert that someone is a member of a group, owns a contract, or has passed a
+  compliance check. Those facts come from the rest of the system at the moment a call is
+  evaluated. Once enforcement exists, removing a policy will widen access back to whatever the
+  group's grants already allowed; it will never narrow it.
 </Callout>
 
 ---
@@ -31,14 +42,17 @@ Nothing it says takes effect until an administrator activates it.
 
 Submitting a policy and putting it in force are separate actions on purpose.
 
-| Step | What happens | What it enforces |
+| Step | What happens | Effect on live traffic |
 | --- | --- | --- |
-| Submit | The document is validated, a policy contract is generated and compiled, and the result is stored as a **draft** | Nothing |
-| Simulate | You describe a call and see whether the draft would allow it | Nothing |
-| Activate | The draft becomes **active** and the previous policy becomes **superseded** | Everything the document says |
+| Submit | The document is validated, a policy contract is generated and compiled, and the result is stored as a **draft** | None |
+| Simulate | You describe a call and see whether the policy would allow it | None |
+| Activate | The draft becomes **active** and the previous policy becomes **superseded** | None in this release, see the note at the top of this page |
 
 The gap between the first two steps and the third is where review happens. A draft can be
 inspected and simulated as much as you like before anyone commits to it.
+
+Activation is what a future enforcement point will read. Recording who approved which artifact,
+and when, is the reason the step exists now rather than later.
 
 Exactly one revision per organization is active at a time. Activating a new one retires the
 previous one in the same operation, so there is never a moment with two policies or none.
@@ -168,6 +182,12 @@ Use simulate to check a policy before trusting it. You describe a call and get b
 decision, along with the reason it was denied. The same call is evaluated twice, once by the
 suite and once by running the compiled contract, and the response says whether the two agreed.
 
+<Callout type="info">
+  The policy digest covers the document's **meaning**, not its exact bytes. Two documents that
+  differ only in whitespace or key order share a digest and produce the same contract. Hashing
+  the stored source text will not reproduce the digest, by design.
+</Callout>
+
 <Callout type="warning">
   If a simulation ever reports that the two did not agree, stop and report it. It means the
   policy you reviewed and the policy that would be enforced are not the same thing. Do not
@@ -212,6 +232,13 @@ missing or is a different version, submitting a policy fails and says so; polici
 active continue to work.
 
 Compilation happens when a policy is submitted, never while a request is being served.
+
+<Callout type="warning">
+  The published container image includes the compiler on **x86-64 only**. Upstream does not
+  publish a static build for 64-bit ARM, so an ARM image starts normally but returns a 503
+  when a policy is submitted. On ARM, either provide a compiler and point `POLICY_SOLC` at it,
+  or run the image built for x86-64.
+</Callout>
 
 ---
 
