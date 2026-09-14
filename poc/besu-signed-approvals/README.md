@@ -114,12 +114,12 @@ is fixed by the opcode flag.
 
 ## Cost
 
-From `demo.py bench` (128 transactions per block, 16 concurrent clients, medians of three measured
-samples, everything on one M2 Max): OPS submissions **775/s without the gate, 657/s with it**; OPS
-request median 17.5 ms → 21.1 ms (the `ops_prepareApproval` round trip plus signing and queueing);
-the plugin's own work per transaction inside the selector, **22 µs**. This is what one laptop gives
-16 clients, not a capacity limit, and it is not a producer benchmark — see [DEMO.md](DEMO.md) for
-what each number does and does not cover.
+Gasstorm's Adaptive test through the real dashboard, 60 s of ETH transfers on one M2 Max running
+everything: **773 tx/s peak with the gate, 806 without** (40,198 vs 43,622 confirmed, zero failures
+either way) — about 8 % of the machine's throughput. Per request, OPS costs 17.5 ms without the gate
+and 21.1 ms with it; the plugin's own work inside the block producer is 7–22 µs per transaction.
+[DEMO.md](DEMO.md) has the screenshots, the constant-rate table and what each number does and does
+not cover.
 
 ## What is deliberately not here
 
@@ -131,12 +131,11 @@ what each number does and does not cover.
   producer is not rejected. Same limit as the Reth PoC; a consensus rule needs a Besu change, not a plugin.
 - **Timeout eviction happens at the next block-building round**, not on an independent timer — Besu
   exposes no plugin API to remove a pool transaction. Unselectable in the meantime.
-- **The throughput ceiling is unknown, and per-request latency is what limits these runs.** Gasstorm
-  drives the stack to ~10 000 transactions in 32 s with the gate on, indistinguishable from the gate
-  off, stalling near 400–500/s because the generator's ten accounts each submit in nonce order at
-  ~14–18 ms per request. The gate is ~3.4 ms of that; the rest is OPS's own work against this node —
-  and the same OPS code is about twice as fast per request against Reth, which is the open question
-  ([DEMO.md](DEMO.md)).
+- **Throughput, measured with Gasstorm Adaptive on this laptop: 773 tx/s peak with the gate, 806
+  without** — 40,198 confirmed transactions in 60 s, nothing failed, every confirmation checked
+  against a receipt. That is the ceiling of one machine running the generator, OPS, PostgreSQL,
+  Redis and Besu together, not of the design. Screenshots and per-run evidence in
+  [DEMO.md](DEMO.md).
 - **Single-producer assumptions**: approvals are released on `HEAD_ADVANCED`/`CHAIN_REORG`; a reorg that
   returns transactions to the pool leaves them waiting for a new approval, which OPS does not re-send.
   Every producer must run the plugin; a plugin that calls `BlockTransactionSelectionService.commit()`
@@ -197,7 +196,8 @@ client over the Engine API. Plugin options:
 OPS: `OPS_APPROVAL_NODE=besu`, `OPS_APPROVAL_TARGET=host:port` (the plugin's listen address),
 `OPS_APPROVAL_SEED_FILE` as before; the node's `--rpc-http-api` must include `OPS`.
 
-Demo and benchmarks: [demo.py](demo.py), sustained load [gasstorm.py](gasstorm.py) (see [DEMO.md](DEMO.md)).
+Demo and benchmarks: [demo.py](demo.py), headless load [gasstorm.py](gasstorm.py), the dashboard
+session [gasstorm_ui.py](gasstorm_ui.py) + [run_ui_case.sh](run_ui_case.sh) (see [DEMO.md](DEMO.md)).
 
 Code map: [gate](src/main/java/ops/approvals/ApprovalSelector.java) ·
 [tracer](src/main/java/ops/approvals/ApprovalTracer.java) ·
