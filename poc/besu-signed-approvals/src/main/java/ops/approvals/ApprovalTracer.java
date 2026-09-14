@@ -3,17 +3,24 @@ package ops.approvals;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import org.apache.tuweni.bytes.Bytes;
+import org.apache.tuweni.units.bigints.UInt256;
 import org.hyperledger.besu.datatypes.Address;
 import org.hyperledger.besu.datatypes.Hash;
 import org.hyperledger.besu.datatypes.Log;
 import org.hyperledger.besu.datatypes.Transaction;
+import org.hyperledger.besu.datatypes.Wei;
 import org.hyperledger.besu.evm.Code;
+import org.hyperledger.besu.evm.account.Account;
 import org.hyperledger.besu.evm.frame.MessageFrame;
+import org.hyperledger.besu.evm.internal.Words;
 import org.hyperledger.besu.evm.operation.Operation;
+import org.hyperledger.besu.evm.worldstate.WorldUpdater;
 import org.hyperledger.besu.evm.worldstate.WorldView;
 import org.hyperledger.besu.plugin.services.tracer.BlockAwareOperationTracer;
 
@@ -30,11 +37,20 @@ public final class ApprovalTracer implements BlockAwareOperationTracer {
       List<CallRecord> records,
       Optional<String> lifecycle,
       Optional<String> error,
-      boolean complete) {}
+      boolean complete,
+      StateSnapshot state) {}
+
+  // EIP-161 has been active on every fork this plugin supports; EIP-8246 (Amsterdam) has not, so a
+  // settled self-destruct still deletes the account. Both are asserted by the lifecycle scenarios.
+  private static final boolean CLEAR_EMPTY_ACCOUNTS = true;
+  private static final boolean SELFDESTRUCT_BALANCE_PRESERVED = false;
 
   private final List<CallRecord> records = new ArrayList<>();
   private final Deque<Integer> openRecords = new ArrayDeque<>();
   private final Deque<MessageFrame> openFrames = new ArrayDeque<>();
+  private final Deque<List<int[]>> childLogRanges = new ArrayDeque<>();
+  private StateSnapshot snapshot = new StateSnapshot();
+  private WorldUpdater applicationState;
   private Hash txHash;
   private String lifecycle;
   private String error;
@@ -46,7 +62,8 @@ public final class ApprovalTracer implements BlockAwareOperationTracer {
         List.copyOf(records),
         Optional.ofNullable(lifecycle),
         Optional.ofNullable(error),
-        ended && openFrames.isEmpty());
+        ended && openFrames.isEmpty(),
+        snapshot);
   }
 
   List<CallRecord> records() {
@@ -57,6 +74,9 @@ public final class ApprovalTracer implements BlockAwareOperationTracer {
     records.clear();
     openRecords.clear();
     openFrames.clear();
+    childLogRanges.clear();
+    snapshot = new StateSnapshot();
+    applicationState = null;
     txHash = null;
     lifecycle = null;
     error = null;
@@ -101,6 +121,14 @@ public final class ApprovalTracer implements BlockAwareOperationTracer {
     }
     final Address from = parent == null ? frame.getSenderAddress() : parent.getRecipientAddress();
     final Code code = frame.getCode();
+    // The value has not moved yet and a created account does not exist yet, so these reads are the
+    // pre-transaction state for any account the execution reaches.
+    touch(frame, from);
+    touch(frame, frame.getRecipientAddress());
+    touch(frame, frame.getContractAddress());
+    if (frame.getType() == MessageFrame.Type.CONTRACT_CREATION) {
+      snapshot.created(frame.getContractAddress());
+    }
     record(
         new CallRecord(
             openRecords.isEmpty() ? CallRecord.ROOT_PARENT : openRecords.peek(),
@@ -111,16 +139,90 @@ public final class ApprovalTracer implements BlockAwareOperationTracer {
             code == null ? Hash.EMPTY : code.getCodeHash(),
             frame.getValue(),
             false,
-            Bytes.wrap(frame.getInputData().toArray())));
+            // geth reports a creation frame's init code as its input; Besu keeps it in the frame's
+            // code and leaves the input data empty.
+            frame.getType() == MessageFrame.Type.CONTRACT_CREATION && code != null
+                ? Bytes.wrap(code.getBytes().toArray())
+                : Bytes.wrap(frame.getInputData().toArray())));
     openRecords.push(records.size() - 1);
     openFrames.push(frame);
+    childLogRanges.push(new ArrayList<>());
+  }
+
+  /** Records an account's pre-transaction state, reading through the frame's own updater. */
+  private void touch(final MessageFrame frame, final Address address) {
+    if (address == null) {
+      return;
+    }
+    final WorldUpdater updater = frame.getWorldUpdater();
+    snapshot.before(
+        address,
+        () -> {
+          final Account account = updater.get(address);
+          return account == null
+              ? StateSnapshot.AccountState.ABSENT
+              : new StateSnapshot.AccountState(
+                  account.getBalance(), account.getNonce(), account.getCode());
+        });
   }
 
   @Override
   public void tracePreExecution(final MessageFrame frame) {
-    // Cheapest possible per-opcode hook: lifecycle opcodes are flagged before they run, so a
-    // SELFDESTRUCT that EIP-6780 turns into a bare balance sweep, or a CREATE that fails before a
-    // frame exists, is still a lifecycle event. Everything else is a single int compare.
+    lifecycleOpcode(frame);
+    if (error != null || openFrames.isEmpty()) {
+      return;
+    }
+    final Operation op = frame.getCurrentOperation();
+    if (op == null) {
+      return;
+    }
+    final WorldUpdater updater = frame.getWorldUpdater();
+    switch (op.getOpcode()) {
+      case 0x54, 0x55 -> { // SLOAD / SSTORE: the storage context is the frame's recipient
+        final Address owner = frame.getRecipientAddress();
+        final UInt256 key = UInt256.fromBytes(frame.getStackItem(0));
+        touch(frame, owner);
+        snapshot.beforeSlot(
+            owner,
+            key,
+            () -> {
+              final Account account = updater.get(owner);
+              return account == null ? UInt256.ZERO : account.getStorageValue(key);
+            });
+      }
+      case 0x31, 0x3b, 0x3c, 0x3f -> // BALANCE / EXTCODESIZE / EXTCODECOPY / EXTCODEHASH
+          touch(frame, Words.toAddress(frame.getStackItem(0)));
+      case 0xff -> { // SELFDESTRUCT: the beneficiary is only on the stack, and there is no frame
+        final Address beneficiary = Words.toAddress(frame.getStackItem(0));
+        final Address destroyed = frame.getRecipientAddress();
+        touch(frame, beneficiary);
+        touch(frame, destroyed);
+        final Account account = updater.get(destroyed);
+        // geth's callTracer reports the sweep as a child entry; Besu creates no frame for it.
+        record(
+            new CallRecord(
+                openRecords.isEmpty() ? CallRecord.ROOT_PARENT : openRecords.peek(),
+                CallRecord.SELFDESTRUCT,
+                destroyed,
+                beneficiary,
+                destroyed,
+                Hash.EMPTY,
+                account == null ? Wei.ZERO : account.getBalance(),
+                false,
+                Bytes.EMPTY));
+      }
+      case 0xa0, 0xa1, 0xa2, 0xa3, 0xa4 -> touch(frame, frame.getRecipientAddress());
+      default -> {
+        // no state to record
+      }
+    }
+  }
+
+  /**
+   * Lifecycle opcodes are flagged before they run, so a SELFDESTRUCT that EIP-6780 turns into a bare
+   * balance sweep, or a CREATE that fails before a frame exists, is still a lifecycle event.
+   */
+  private void lifecycleOpcode(final MessageFrame frame) {
     if (lifecycle != null) {
       return;
     }
@@ -131,7 +233,9 @@ public final class ApprovalTracer implements BlockAwareOperationTracer {
     switch (op.getOpcode()) {
       case 0xF0, 0xF5 -> lifecycle = "contract creation";
       case 0xFF -> lifecycle = "selfdestruct";
-      default -> {}
+      default -> {
+        // not a lifecycle operation
+      }
     }
   }
 
@@ -145,10 +249,76 @@ public final class ApprovalTracer implements BlockAwareOperationTracer {
       return;
     }
     openFrames.pop();
+    final List<int[]> ranges = childLogRanges.pop();
     final int index = openRecords.pop();
-    if (frame.getState() == MessageFrame.State.COMPLETED_FAILED) {
-      records.set(index, records.get(index).withFailed(true));
+    final CallRecord seen = records.get(index);
+    final boolean failed = frame.getState() == MessageFrame.State.COMPLETED_FAILED;
+    records.set(
+        index,
+        new CallRecord(
+            seen.parent(),
+            seen.kind(),
+            seen.from(),
+            seen.to(),
+            seen.storage(),
+            seen.codeHash(),
+            seen.value(),
+            failed,
+            seen.input(),
+            Bytes.wrap(frame.getOutputData().toArray()),
+            // A reverted frame's logs are discarded with its state changes, as geth reports them.
+            failed ? List.of() : ownLogs(frame, ranges)));
+    final MessageFrame parent = openFrames.peek();
+    if (parent == null) {
+      // Everything the application did is visible here and nothing Besu does afterwards — the gas
+      // refund, the fee recipient's credit, self-destruct settlement — has happened yet.
+      applicationState = frame.getWorldUpdater();
+      snapshot.readAfter(
+          address -> {
+            final Account account = applicationState.get(address);
+            return account == null
+                ? StateSnapshot.AccountState.ABSENT
+                : new StateSnapshot.AccountState(
+                    account.getBalance(), account.getNonce(), account.getCode());
+          },
+          (address, key) -> {
+            final Account account = applicationState.get(address);
+            return account == null ? UInt256.ZERO : account.getStorageValue(key);
+          });
+    } else if (!failed) {
+      // Besu copies a child's logs into its parent only when the child succeeds, so the parent's
+      // list is its own logs with each successful child's subtree spliced in where it completed.
+      childLogRanges.peek().add(new int[] {parent.getLogs().size(), frame.getLogs().size()});
     }
+  }
+
+  /** The logs this frame emitted itself, with the subtrees of its children removed. */
+  private static List<Map<String, Object>> ownLogs(
+      final MessageFrame frame, final List<int[]> childRanges) {
+    final List<Log> all = frame.getLogs();
+    if (all.isEmpty()) {
+      return List.of();
+    }
+    final boolean[] fromChild = new boolean[all.size()];
+    for (final int[] range : childRanges) {
+      for (int i = range[0]; i < range[0] + range[1] && i < fromChild.length; i++) {
+        fromChild[i] = true;
+      }
+    }
+    final List<Map<String, Object>> out = new ArrayList<>();
+    for (int i = 0; i < all.size(); i++) {
+      if (fromChild[i]) {
+        continue;
+      }
+      final Log log = all.get(i);
+      final Map<String, Object> entry = new LinkedHashMap<>();
+      entry.put("address", log.getLogger().getBytes().toHexString());
+      entry.put(
+          "topics", log.getTopics().stream().map(t -> (Object) t.getBytes().toHexString()).toList());
+      entry.put("data", log.getData().toHexString());
+      out.add(entry);
+    }
+    return out;
   }
 
   @Override
@@ -167,11 +337,21 @@ public final class ApprovalTracer implements BlockAwareOperationTracer {
     if (!openFrames.isEmpty() && error == null) {
       error = "frames left open";
     }
+    // Besu settles self-destructs and clears emptied accounts after this callback; the snapshot
+    // applies the same two rules so it describes the state that will be committed.
+    snapshot.settle(selfDestructs, SELFDESTRUCT_BALANCE_PRESERVED, CLEAR_EMPTY_ACCOUNTS);
+    snapshot.overflow().ifPresent(reason -> error = error == null ? reason : error);
+    if (lifecycle != null && records.stream().noneMatch(r -> r.kind() >= CallRecord.CREATE)) {
+      // A lifecycle operation that produced no frame (a CREATE refused for depth or balance) cannot
+      // be described by either fingerprint: neither side could agree on what was approved.
+      error = error == null ? "lifecycle operation without an observable frame" : error;
+    }
     ended = true;
   }
 
   /** Test seam: the transaction-level end hook without a live EVM. */
   void markEnded() {
+    snapshot.settle(Set.of(), SELFDESTRUCT_BALANCE_PRESERVED, CLEAR_EMPTY_ACCOUNTS);
     ended = true;
   }
 

@@ -16,6 +16,14 @@ import (
 	"privacy-proxy/internal/nodeapproval"
 )
 
+func keys(m map[string]bool) []string {
+	out := []string{}
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}
+
 func main() {
 	if len(os.Args) != 2 {
 		panic("usage: client <node-rpc-url>")
@@ -73,7 +81,14 @@ func main() {
 			}
 			p.Approval.Principal = crypto.Keccak256Hash([]byte(q.Principal))
 			// Delivery signs batches; the harness re-signs through the batch path, so no per-item signature.
-			emit(p)
+			// The creation sets drive OPS's contract registration, so the harness asserts them.
+			emit(map[string]any{
+				"Approval":           p.Approval,
+				"Trace":              p.Trace,
+				"surviving":          keys(p.SurvivingCreations),
+				"fresh":              keys(p.FreshCreations),
+				"plainValueTransfer": p.PlainValueTransfer,
+			})
 		}
 	}
 }

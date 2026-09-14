@@ -18,6 +18,8 @@ final class CallTreeJson {
       node.put("from", r.from().getBytes().toHexString());
       node.put("to", r.to().getBytes().toHexString());
       node.put("input", r.input().toHexString());
+      node.put("output", r.output().toHexString());
+      node.put("logs", r.logs());
       node.put("value", r.value().toShortHexString());
       if (r.failed()) {
         node.put("error", "execution failed");

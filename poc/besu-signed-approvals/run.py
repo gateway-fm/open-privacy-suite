@@ -18,6 +18,7 @@ class Client:
 
     def __init__(self, node, connect=True):
         self.node = node
+        self.last = None
         self.process = subprocess.Popen([str(h.CLIENT), node.rpc_url], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                         text=True, env=dict(os.environ, OPS_APPROVAL_NODE="besu"))
         self.socket = socket.create_connection(("127.0.0.1", node.approval_port)) if connect else None
@@ -30,6 +31,7 @@ class Client:
     def prepare(self, tx, principal="did:fixture:org-a"):
         result = self._ask({"raw": tx["raw"], "principal": principal})
         assert "error" not in result, result
+        self.last = result
         return result["Approval"]
 
     def try_prepare(self, tx):
@@ -243,39 +245,104 @@ def shared_counter():
         record("eight_counter_increments_approved_against_one_state_all_included")
 
 
-def deployment_refused():
-    with node("deployment", wait_ms=1500) as n, contextlib.closing(Client(n)) as c:
-        tx = n.raw(h.ALICE, None, "0x600160005500")  # init code: SSTORE(0,1); STOP
-        result = c.try_prepare(tx)
-        assert "error" in result and "unsupported" in result["error"], result
+def deployment_included():
+    """A plain deployment: refused before strict mode existed, now approved and included."""
+    with node("deployment") as n, contextlib.closing(Client(n)) as c:
+        tx = n.raw(h.ALICE, None, h.CREATION_CODE["Vault"])  # a real contract deployment
+        approval = c.approve(tx)
+        created = h.command(["cast", "compute-address", h.ALICE, "--nonce", str(tx["nonce"])]).split()[-1]
         n.submit(tx)
-        time.sleep(1.7)
-        n.make_block([])
-        for _ in range(40):
-            if not n.in_pool(tx["hash"]):
-                break
-            time.sleep(0.25)
-        assert not n.in_pool(tx["hash"])
-        record("deployment_refused_at_preflight_and_dropped_by_producer", error=result["error"])
+        n.make_block([tx])
+        receipt = n.receipt(tx["hash"])
+        assert receipt["status"] == "0x1", receipt
+        assert receipt["contractAddress"].lower() == created.lower(), (receipt, created)
+        assert n.rpc("eth_getCode", created, "latest") != "0x", "deployed code must persist"
+        assert "hash_mode" not in approval, approval  # strict is mode 0, omitted from the JSON
+        # OPS registers the contract from the same snapshot the approval binds.
+        assert [a.lower() for a in c.last["surviving"]] == [created.lower()], c.last
+        assert [a.lower() for a in c.last["fresh"]] == [created.lower()], c.last
+        record("deployment_approved_and_included", created=created.lower())
 
 
-def lifecycle_refused():
-    with node("lifecycle", wait_ms=1500) as n, contextlib.closing(Client(n)) as c:
-        create = n.raw(h.ALICE, h.LIFE_FACTORY, "create(uint256,address)", 7, h.ADMIN)
-        result = c.try_prepare(create)
-        assert "error" in result and "contract creation" in result["error"], result
+def snapshot_matches_the_node_state():
+    """What the plugin reports as state must be what the node holds afterwards."""
+    with node("snapshot-check") as n, contextlib.closing(Client(n)) as c:
+        tx = n.raw(h.ALICE, h.LIFE_FACTORY, "create(uint256,address)", 7, h.VAULT_A)
+        plugin = n.rpc("ops_prepareApproval", tx["raw"])
+        assert plugin["hashMode"] == 0, plugin
+        c.approve(tx)
+        n.submit(tx)
+        n.make_block([tx])
+        assert n.receipt(tx["hash"])["status"] == "0x1"
+        checked = 0
+        for address, account in plugin["diff"]["post"].items():
+            if "code" in account:
+                assert n.rpc("eth_getCode", address, "latest") == account["code"], address
+                checked += 1
+            if "nonce" in account:
+                assert int(n.rpc("eth_getTransactionCount", address, "latest"), 16) == int(account["nonce"], 16), address
+                checked += 1
+            for slot, value in account.get("storage", {}).items():
+                live = n.rpc("eth_getStorageAt", address, slot, "latest")
+                assert int(live, 16) == int(value, 16), (address, slot, live, value)
+                checked += 1
+            if "balance" in account and address.lower() != h.ALICE.lower():
+                # The sender's balance also carries the gas fee, which the snapshot excludes.
+                assert int(n.rpc("eth_getBalance", address, "latest"), 16) == int(account["balance"], 16), address
+                checked += 1
+        assert checked >= 3, plugin["diff"]
+        record("plugin_state_snapshot_matches_the_mined_state", checked=checked)
+
+
+def runtime_lifecycle_included():
+    """Runtime CREATE/CREATE2 and SELFDESTRUCT inside a call, with their denial controls."""
+    with node("lifecycle") as n, contextlib.closing(Client(n)) as c:
+        create = n.raw(h.ALICE, h.LIFE_FACTORY, "create(uint256,address)", 7, h.VAULT_A)
+        c.approve(create)
+        n.submit(create)
+        n.make_block([create])
+        assert n.receipt(create["hash"])["status"] == "0x1"
+        assert n.storage(h.VAULT_A) == 7, "the constructor's nested call must have run"
+
+        create2 = n.raw(h.ALICE, h.LIFE_FACTORY, "create2(bytes32,uint256)", "0x" + "11" * 32, 9)
+        c.approve(create2)
+        n.submit(create2)
+        n.make_block([create2])
+        assert n.receipt(create2["hash"])["status"] == "0x1"
+
+        before = n.balance(h.ADMIN)
         destroy = n.raw(h.ALICE, h.DESTRUCTIBLE, "destroy(address)", h.ADMIN)
-        result = c.try_prepare(destroy)
-        assert "error" in result and "selfdestruct" in result["error"], result
+        c.approve(destroy)
         n.submit(destroy)
-        time.sleep(1.7)
-        n.make_block([])
-        for _ in range(40):
-            if not n.in_pool(destroy["hash"]):
-                break
-            time.sleep(0.25)
-        assert not n.in_pool(destroy["hash"]) and n.balance(h.DESTRUCTIBLE) == 1000
-        record("runtime_create_and_selfdestruct_refused_at_preflight_and_dropped")
+        n.make_block([destroy])
+        assert n.receipt(destroy["hash"])["status"] == "0x1"
+        assert n.balance(h.DESTRUCTIBLE) == 0 and n.balance(h.ADMIN) > before, "balance must be swept"
+        record("runtime_create_create2_and_selfdestruct_included")
+
+
+def strict_mode_binds_state():
+    """Strict approvals are state-exact: a concurrent write to a slot the deployment touched denies."""
+    with node("strict-state") as n, contextlib.closing(Client(n)) as c:
+        # Positive control: the same transaction, alone in the block, is included.
+        create = n.raw(h.ALICE, h.LIFE_FACTORY, "create(uint256,address)", 7, h.VAULT_A)
+        c.approve(create)
+        n.submit(create)
+        n.make_block([create])
+        assert n.receipt(create["hash"])["status"] == "0x1"
+
+        # Now approve one, then let a higher-fee transaction change the factory's counter first.
+        again = n.raw(h.ALICE, h.LIFE_FACTORY, "create(uint256,address)", 7, h.VAULT_A)
+        c.approve(again)
+        bump = n.raw(h.ADMIN, h.LIFE_FACTORY, "create(uint256,address)", 3, h.VAULT_A, fee=3_000_000_000)
+        c.approve(bump)
+        alice_nonce = n.nonce(h.ALICE)
+        n.submit(bump)
+        n.submit(again)
+        n.make_block([bump], denied=again)
+        assert n.receipt(again["hash"]) is None and n.nonce(h.ALICE) == alice_nonce
+        denial = [d for d in n.decisions() if f"deny tx={again['hash']}" in d][-1]
+        assert "MISMATCH" in denial, denial
+        record("strict_approval_denied_when_touched_state_changed", denial=denial[:140])
 
 
 def state_change_turns_call_into_lifecycle():
@@ -288,7 +355,7 @@ def state_change_turns_call_into_lifecycle():
         n.submit(call)
         n.make_block([flip], denied=call)  # flip lands first: maybeCreate now runs CREATE
         denial = [d for d in n.decisions() if f"deny tx={call['hash']}" in d][-1]
-        assert "contract creation" in denial, denial
+        assert "execution requires 0" in denial, denial  # calls approval, strict execution
         assert n.receipt(call["hash"]) is None
         record("approved_call_that_gains_a_create_is_denied_by_the_producer", denial=denial[:160])
 
@@ -466,8 +533,9 @@ def precompile_and_value_paths():
 
 SCENARIOS = {f.__name__: f for f in (
     approval_first, transaction_first, no_approval_timeout, same_block_target_change, caught_inner_failure,
-    delegatecall_path, wrong_fingerprint, bad_deliveries, shared_counter, deployment_refused,
-    lifecycle_refused, state_change_turns_call_into_lifecycle, resubmission_after_mismatch,
+    delegatecall_path, wrong_fingerprint, bad_deliveries, shared_counter, deployment_included,
+    runtime_lifecycle_included, snapshot_matches_the_node_state, strict_mode_binds_state, state_change_turns_call_into_lifecycle,
+    resubmission_after_mismatch,
     restart_loses_approvals, coexists_with_lineth_plugins, fail_closed_startup,
     precompile_and_value_paths)}
 
