@@ -61,6 +61,9 @@ def command(args, **kwargs):
     return subprocess.check_output(args, cwd=HERE, text=True, **kwargs).strip()
 
 
+CREATION_CODE = {}
+
+
 def osaka_genesis():
     """Our fixtures on an Osaka chain: Lineth's ZK line-counting tracer supports no earlier fork.
 
@@ -99,6 +102,8 @@ def prepare():
         "--combined-json", "abi,bin,bin-runtime", "contracts/Applications.sol",
     ]))
     (EVIDENCE / "contracts.json").write_text(json.dumps(compiled, indent=2) + "\n")
+    global CREATION_CODE
+    CREATION_CODE = {name.split(":")[-1]: "0x" + obj["bin"] for name, obj in compiled["contracts"].items()}
     codes = {name.split(":")[-1]: "0x" + obj["bin-runtime"] for name, obj in compiled["contracts"].items()}
     alloc = {addr: {"balance": hex(10**24)} for addr in (ADMIN, ALICE)}
     for addr, name in [(ROUTER, "Router"), (RELAY, "Relay"), (VAULT_A, "Vault"), (VAULT_B, "Vault"),

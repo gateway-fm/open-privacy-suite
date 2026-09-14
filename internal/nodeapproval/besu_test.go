@@ -151,7 +151,7 @@ func TestPrepareBesuFailsClosedOnDisagreementOrLifecycle(t *testing.T) {
 	cases := map[string]refusal{
 		"fingerprint disagreement": {prepared(object{"fingerprint": common.HexToHash("0x01").Hex()}), "disagrees"},
 		"other transaction":        {prepared(object{"txHash": common.HexToHash("0x02").Hex()}), "does not describe"},
-		"strict mode":              {prepared(object{"hashMode": 0}), "does not describe"},
+		"mode downgrade":           {prepared(object{"hashMode": 0}), "mode does not match"},
 		"wrong chain":              {prepared(object{"chainId": "0x1"}), "does not describe"},
 		"missing code hash":        {prepared(object{"codeHashes": map[string]string{}}), "missing executed code"},
 		"malformed code hash":      {prepared(object{"codeHashes": map[string]string{"0x1111111111111111111111111111111111111111": "0x12"}}), "malformed"},
@@ -167,7 +167,8 @@ func TestPrepareBesuFailsClosedOnDisagreementOrLifecycle(t *testing.T) {
 	}
 	child["type"] = "CREATE"
 	lifecycle["calls"] = append([]any{child}, calls["calls"].([]any)[1:]...)
-	cases["lifecycle"] = refusal{prepared(object{"calls": lifecycle}), errCallLifecycle.Error()}
+	// A lifecycle execution is valid, but only in strict mode: claiming calls mode is a downgrade.
+	cases["lifecycle labelled as calls"] = refusal{prepared(object{"calls": lifecycle}), "mode does not match"}
 	// The plugin must have simulated the signed transaction itself: root frame ≠ signed envelope.
 	for field, value := range map[string]any{"from": "0x" + strings.Repeat("99", 20), "to": "0x" + strings.Repeat("98", 20), "input": "0x00", "value": "0x1", "type": "STATICCALL"} {
 		other := object{}
@@ -245,11 +246,78 @@ func TestPrepareBesuMarksPlainValueTransfers(t *testing.T) {
 	}
 }
 
-func TestBesuModeRefusesStrictHashModeAtStartup(t *testing.T) {
+func TestBesuModeRefusesAPinnedHashMode(t *testing.T) {
 	t.Setenv("OPS_APPROVAL_NODE", "besu")
 	t.Setenv("OPS_APPROVAL_HASH_MODE", "strict")
 	if _, err := NewPreflight("http://127.0.0.1:1"); err == nil {
-		t.Fatal("besu + strict must fail at construction, not per request")
+		t.Fatal("besu mode derives the hash mode; pinning it must fail at construction")
+	}
+}
+
+func TestPrepareBesuUsesStrictModeForDeployments(t *testing.T) {
+	t.Setenv("OPS_APPROVAL_NODE", "besu")
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	from := crypto.PubkeyToAddress(key.PublicKey)
+	const nonce = 3
+	tx, err := types.SignTx(types.NewContractCreation(nonce, big.NewInt(0), 200000, big.NewInt(1), []byte{0x60, 0x00}), types.NewEIP155Signer(big.NewInt(31337)), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawBytes, _ := tx.MarshalBinary()
+	raw := hexutil.Encode(rawBytes)
+	deployed := strings.ToLower(crypto.CreateAddress(from, nonce).Hex())
+	calls := object{"type": "CREATE", "from": strings.ToLower(from.Hex()), "to": deployed, "input": "0x6000", "output": "0x00", "value": "0x0", "calls": []any{}, "logs": []any{}}
+	pre := object{deployed: object{"balance": "0x0", "nonce": "0x0", "code": "0x"}}
+	diff := object{"pre": object{deployed: object{"nonce": "0x0", "code": "0x"}}, "post": object{deployed: object{"nonce": "0x1", "code": "0x00"}}}
+	want, _, err := Fingerprint(calls, pre, diff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := besuServer(t, func(string) any {
+		return object{"hashMode": 0, "chainId": "0x7a69", "txHash": tx.Hash().Hex(), "fingerprint": want.Hex(), "calls": calls, "codeHashes": object{}, "pre": pre, "diff": diff}
+	})
+	defer server.Close()
+	s, err := NewPreflight(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	p, err := s.Prepare(context.Background(), raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Approval.HashMode != HashStrict || p.Approval.Fingerprint != want {
+		t.Fatalf("deployment not bound in strict mode: %+v", p.Approval)
+	}
+	if !p.SurvivingCreations[deployed] || !p.FreshCreations[deployed] || !p.Trace.HasCreate {
+		t.Fatalf("deployment not registered for OPS: %+v %+v", p.SurvivingCreations, p.Trace)
+	}
+	// A deployment whose root frame creates some other address is not this transaction.
+	other := object{}
+	for k, v := range calls {
+		other[k] = v
+	}
+	other["to"] = "0x" + strings.Repeat("ab", 20)
+	otherPre := object{str(other["to"]): object{"balance": "0x0", "nonce": "0x0", "code": "0x"}}
+	otherDiff := object{"pre": object{str(other["to"]): object{"nonce": "0x0", "code": "0x"}}, "post": object{str(other["to"]): object{"nonce": "0x1", "code": "0x00"}}}
+	otherHash, _, err := Fingerprint(other, otherPre, otherDiff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server2 := besuServer(t, func(string) any {
+		return object{"hashMode": 0, "chainId": "0x7a69", "txHash": tx.Hash().Hex(), "fingerprint": otherHash.Hex(), "calls": other, "codeHashes": object{}, "pre": otherPre, "diff": otherDiff}
+	})
+	defer server2.Close()
+	s2, err := NewPreflight(server2.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s2.Close()
+	if _, err = s2.Prepare(context.Background(), raw); err == nil || !strings.Contains(err.Error(), "root frame") {
+		t.Fatalf("wrong created address must be refused, got %v", err)
 	}
 }
 

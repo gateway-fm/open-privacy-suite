@@ -26,6 +26,24 @@ final class Fixtures {
 
   private Fixtures() {}
 
+  /** JsonNode to the plain Map/List/String/Boolean shapes the encoders work on. */
+  static Object toJava(final JsonNode node) {
+    if (node.isObject()) {
+      final Map<String, Object> out = new java.util.LinkedHashMap<>();
+      node.fields().forEachRemaining(e -> out.put(e.getKey(), toJava(e.getValue())));
+      return out;
+    }
+    if (node.isArray()) {
+      final List<Object> out = new ArrayList<>();
+      node.forEach(child -> out.add(toJava(child)));
+      return out;
+    }
+    if (node.isBoolean()) {
+      return node.booleanValue();
+    }
+    return node.asText();
+  }
+
   static JsonNode load(final String name) throws IOException {
     return JSON.readTree(Files.readString(GO_TESTDATA.resolve(name)));
   }

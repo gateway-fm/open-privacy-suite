@@ -40,6 +40,16 @@
       "from": "0x0000000000000000000000000000000000001100",
       "to": "0x0000000000000000000000000000000000001300",
       "input": "0x5284a2450000000000000000000000000000000000000000000000000000000000000003",
+      "output": "0x",
+      "logs": [
+        {
+          "address": "0x0000000000000000000000000000000000001100",
+          "topics": [
+            "0x2a4c0836f0899d4ca8a13ae15d769f0d0d3bdf2401c0afde8a60c80070b912fb"
+          ],
+          "data": "0x0000000000000000000000000000000000000000000000000000000000000003"
+        }
+      ],
       "value": "0x0",
       "calls": []
     }
@@ -57,18 +67,28 @@
     "passed": true
   },
   {
-    "test": "deployment_refused_at_preflight_and_dropped_by_producer",
+    "test": "deployment_approved_and_included",
     "passed": true,
-    "error": "unsupported execution: contract creation"
+    "created": "0x8464135c8f25da09e49bc8782676a84730c318bc"
   },
   {
-    "test": "runtime_create_and_selfdestruct_refused_at_preflight_and_dropped",
+    "test": "runtime_create_create2_and_selfdestruct_included",
     "passed": true
+  },
+  {
+    "test": "plugin_state_snapshot_matches_the_mined_state",
+    "passed": true,
+    "checked": 6
+  },
+  {
+    "test": "strict_approval_denied_when_touched_state_changed",
+    "passed": true,
+    "denial": "deny tx=0xa25285bcce8e6f55412b5f32a8e3698d18fd39afd92e3a188d054ad5bc077bb9 reason=OPS_APPROVAL_MISMATCH detail=approved 0x56675cc44247506927"
   },
   {
     "test": "approved_call_that_gains_a_create_is_denied_by_the_producer",
     "passed": true,
-    "denial": "deny tx=0xdcfb3c8df8275bb26ae2b45376e55deeb6c5294b6e9eb193e5eae07cd12fcd8e reason=OPS_APPROVAL_UNSUPPORTED detail=contract creation"
+    "denial": "deny tx=0xdcfb3c8df8275bb26ae2b45376e55deeb6c5294b6e9eb193e5eae07cd12fcd8e reason=OPS_APPROVAL_UNSUPPORTED detail=approval mode 3, execution requires 0"
   },
   {
     "test": "same_signed_transaction_included_after_new_preflight_following_a_mismatch",

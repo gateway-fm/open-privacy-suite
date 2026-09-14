@@ -5,10 +5,11 @@ and the [Besu/Lineth research](../../docs/research/dsl-policy-and-node-enforceme
 Plan and decisions: [PLAN.md](PLAN.md).
 
 **Result: the signed-approval gate runs as one plugin JAR on unmodified Besu 26.8.1 — the version
-Lineth pins — and passed all 17 integration scenarios on a real node, including the same-block target
+Lineth pins — and passed all 20 integration scenarios (22 checks) on a real node, including the same-block target
 change, caught inner failures, delegatecall, forged fingerprints, a call that turns into a CREATE after
-approval, restart, resubmission after a drop, fail-closed start-up, and running beside Lineth's own
-sequencer plugins (pool validator, and the transaction selector with its ZK tracer).**
+approval, contract deployment and self-destruction, restart, resubmission after a drop, fail-closed
+start-up, and running beside Lineth's own sequencer plugins (pool validator, and the transaction
+selector with its ZK tracer).**
 The OPS delivery path (`internal/nodeapproval` signer, batches, TCP framing) is byte-for-byte unchanged;
 OPS gains a Besu preflight mode.
 
@@ -41,12 +42,27 @@ flowchart LR
   (EIP-6780 makes `selfDestructs` unreliable). `CallsFingerprint` encodes the records exactly as
   `internal/nodeapproval/call_fingerprint.go` and the Reth module's `call_hash.rs` (domain
   `OPS_CALLS_V3`); the Go golden vector passes in Java.
+- **State, for lifecycle transactions** — the same tracer records what the execution read and wrote
+  (`StateSnapshot`: accounts at first touch, slots at their first `SLOAD`/`SSTORE`, the self-destruct
+  beneficiary off the stack, per-frame logs and return data) and emits it in geth's `prestateTracer`
+  shape. `StrictFingerprint` then reproduces `internal/nodeapproval.Fingerprint` — same projection,
+  same canonical JSON, same `OPS_EXECUTION_V2` domain, verified against its Go golden vector. This is
+  what lets **contract deployment work**: an execution that creates or destroys a contract is approved
+  in strict mode, which binds the resulting state, instead of being refused.
+  "Before" values are read at first touch and "after" values when the root frame exits — before Besu
+  refunds gas, pays the fee recipient, settles self-destructs or clears emptied accounts — so fees
+  never enter the fingerprint and the preflight block's base fee cannot invalidate an approval; the
+  settlement and clearing rules are then applied by the snapshot itself.
+- **Mode** — the *execution* decides: calls V3 unless it creates or destroys a contract, in which case
+  strict V2. OPS derives the same mode from the returned call tree and refuses if the plugin's label
+  disagrees, so a plugin cannot downgrade a deployment to the weaker binding.
 - **Preflight** — `ops_prepareApproval(rawTx)` simulates the exact signed bytes through
   `TransactionSimulationService`, on the head state in the pending block's header context, with the
   same tracer, and returns the fingerprint plus a geth-shaped call tree. OPS
   (`internal/nodeapproval/besu.go`, `OPS_APPROVAL_NODE=besu`) checks that the root frame is the signed
-  envelope, runs its existing `normalizeCall` + encoder over the tree and **refuses to sign unless its
-  own hash equals the plugin's** — every preflight is a cross-implementation check, and RBAC trace
+  envelope (for a deployment: a `CREATE` of the address the signed nonce determines), runs its
+  existing `normalizeCall` + encoder over the tree — `Fingerprint` for strict, `CallFingerprint` for
+  calls — and **refuses to sign unless its own hash equals the plugin's** — every preflight is a cross-implementation check, and RBAC trace
   validation keeps using the tree it always used.
 - **Ingress** — `ApprovalListener`: same 4-byte-length frames and `OPS_APPROVAL_BATCH_V1` batches as
   the Reth module, JDK Ed25519 verification, ≤32 connections, 16 KiB frames; anything that does not
@@ -70,11 +86,14 @@ flowchart LR
 | 7 | Correctly signed approval with a forged fingerprint | Denied and dropped; nonce unchanged |
 | 8 | Flipped signature byte; approval for chain id 1; batch with duplicates; re-delivery | Ignored / ignored / harmless; transaction included once the real approval arrives |
 | 9 | Eight `tick()` calls from one sender, all approved against one pre-state | All eight included in one block, counter = 8 (calls V3 tolerates storage change) |
-| 10 | Contract creation | `ops_prepareApproval` refuses (`unsupported execution: contract creation`); unapproved tx dropped by the producer |
+| 10 | A transaction the plugin cannot describe (an unsupported type, or a lifecycle operation with no observable frame) | Refused at preflight; without an approval the producer drops it after the wait |
 | 11 | Approve, restart node, submit | Dropped after the wait (approvals are RAM only); new preflight + delivery → included |
 | 12 | `--plugins=OpsApprovalPlugin` without the JAR; plugin without options | Besu refuses to start in both cases (`requested plugins were not found`, `Halting Besu: OPS approval plugin failed to start`) |
-| 13 | Runtime CREATE inside a call (`LifeFactory.create`); `Destructible.destroy` (SELFDESTRUCT) | Both refused at preflight (`contract creation`, `selfdestruct`); the unapproved SELFDESTRUCT tx is dropped, balance untouched |
-| 14 | `maybeCreate()` approved while its branch is a plain increment; `setExtra(true)` lands first in the same block | Denied by the producer (`OPS_APPROVAL_UNSUPPORTED: contract creation`), excluded |
+| 13a | **Plain contract deployment** | Approved in strict mode, included, receipt names the created address, code persists |
+| 13b | Runtime `CREATE` and `CREATE2` inside a call (`LifeFactory`), and `SELFDESTRUCT` (`Destructible.destroy`) | All approved in strict mode and included; the constructor's nested call is bound (vault = 7); the destroyed contract's balance is swept |
+| 13c | A second deployment in the same block writes a slot the first one's approval binds | The first is denied (`MISMATCH`), nothing persisted; the positive control (same transaction alone) is included |
+| 13d | **The plugin's own state snapshot against the mined block** — every account and slot it reported in `diff.post` is re-read with `eth_getCode` / `eth_getTransactionCount` / `eth_getStorageAt` / `eth_getBalance` | All match (6 facts on the runtime-CREATE transaction); the deployment scenario additionally asserts OPS's `SurvivingCreations`/`FreshCreations` name the created address |
+| 14 | `maybeCreate()` approved in calls mode; `setExtra(true)` lands first in the same block and the call now deploys | Denied (`approval mode 3, execution requires 0`): the execution's mode decides, so a calls approval never covers a deployment |
 | 15 | Same signed `run(7)` resubmitted after the mismatch drop of scenario 4, with a fresh preflight on the new state | Included (vault B = 7): a drop is not a blacklist |
 | 16 | `identity()` (STATICCALL to precompile 0x04) and a plain 1-wei transfer to an EOA | Both approved and included |
 | 17 | **Beside Lineth's own plugins** (JARs from `linea-besu-package` v2.2.0): (a) `LineaTransactionPoolValidatorPlugin`; (b) `LineaTransactionSelectorPlugin` with its ZK line-counting tracer, on an Osaka fixture chain; (c) the same selector on the Shanghai chain | (a) gate unaffected: approved tx included, unapproved dropped; (b) both selectors and both tracers run in one node — approved tx included (`ZkTracer` in the log), unapproved still dropped by our gate; (c) the plugin loads and starts, then Lineth's tracer aborts block building with `Fork no more supported by the tracer: SHANGHAI` |
@@ -82,7 +101,8 @@ flowchart LR
 Evidence: [tests.json](evidence/tests.json), per-scenario node logs (`evidence/*.log`, decision lines
 `OPS_APPROVAL_DECISION allow|wait|drop|deny`), RPC transcripts (`evidence/*-rpc.json`), genesis and
 compiled fixtures. Unit tests: 17 Java (`gradle test`: Go golden fingerprint, Go-signed batches over the
-wire, slow-loris frame deadline, store capacity, selector fail-closed paths), 5 new Go
+wire, canonical JSON, both fingerprints against their Go golden vectors, the state snapshot,
+slow-loris frame deadline, store capacity, selector fail-closed paths), 6 new Go
 (`go test ./internal/nodeapproval/`). The frame → record mapping in `ApprovalTracer` is exercised by
 the integration scenarios and the parity check only, not by unit tests. A critic pass against the
 code preceded the final run; its blocker (EIP-6780 SELFDESTRUCT invisible to `traceEndTransaction`)
@@ -90,9 +110,10 @@ is fixed by the opcode flag.
 
 ## What is deliberately not here
 
-- **Lifecycle transactions** (CREATE/CREATE2/SELFDESTRUCT) are refused at preflight and rejected by the
-  producer. The Reth PoC's strict-V2 fallback needs opcode-level tracing and prestate logs Besu's
-  `callTracer` does not provide; porting it is a separate decision (PLAN.md §Decisions).
+- **Strict V2 is state-exact, by design.** A deployment (or any lifecycle transaction) is approved
+  against the exact state it read and wrote, so a concurrent transaction in the same block that
+  touches one of those slots denies it — it must be re-submitted after a fresh preflight. This is the
+  same trade-off the Reth PoC makes, and the reason ordinary calls use the looser calls-V3 mode.
 - **Producer-only.** Import and historical validation do not consult approvals; a block from another
   producer is not rejected. Same limit as the Reth PoC; a consensus rule needs a Besu change, not a plugin.
 - **Timeout eviction happens at the next block-building round**, not on an independent timer — Besu
@@ -111,7 +132,10 @@ is fixed by the opcode flag.
   plugin-served preflight sees exactly what the producer sees, so the two sides agree by construction.
 - **Capacity pressure is an OPS concern**: any authorised client can fill the store with orphaned
   approvals for the TTL; the store gives up unpooled approvals first, but rate-limiting belongs in OPS.
-- **Untested here**: CALLCODE, out-of-gas inner frames, >128 frames / 1 MiB inputs (unit-tested only),
+- **Untested here**: a reverted inner frame that emitted logs (the tracer discards a failed frame's
+  logs, as geth does, but no scenario exercises it), CALLCODE, out-of-gas inner frames,
+  >128 frames / >4096 touched accounts / >16384 touched slots (the snapshot fails closed at those
+  caps, unit-tested only),
   approval replacement mid-evaluation, IPv6 listen addresses. The coexistence run uses Lineth's
   *published* plugin JARs on our fixture chain, not their full sequencer configuration (bundles,
   forced transactions, profitability tuning, extra-data pricing) or a Linea network.
@@ -132,7 +156,7 @@ Go from `go.mod`, Python 3, Foundry `cast`, solc 0.8.35, the Besu 26.8.1 release
 export JAVA_HOME=$PWD/.tmp/jdk25/jdk-25.0.4.1+1/Contents/Home
 (cd poc/besu-signed-approvals && gradle --no-daemon build)      # unit tests + JAR
 go test ./internal/nodeapproval/
-python3 poc/besu-signed-approvals/run.py                         # all 17 scenarios (20 checks), ~8 min
+python3 poc/besu-signed-approvals/run.py                         # all 20 scenarios (22 checks), ~10 min
 python3 poc/besu-signed-approvals/run.py same_block_target_change
 ```
 

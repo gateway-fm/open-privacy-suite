@@ -133,6 +133,14 @@ class ApprovalSelectorTest {
     };
   }
 
+  /** A synthesised SELFDESTRUCT entry, as the tracer emits for the opcode. */
+  private static CallRecord selfDestruct() {
+    final Address contract = Address.fromHexString("0x" + "11".repeat(20));
+    final Address beneficiary = Address.fromHexString("0x" + "22".repeat(20));
+    return new CallRecord(
+        0, CallRecord.SELFDESTRUCT, contract, beneficiary, contract, Hash.EMPTY, Wei.ZERO, false, Bytes.EMPTY);
+  }
+
   private static TransactionProcessingResult result(final boolean invalid) {
     return new TransactionProcessingResult() {
       @Override
@@ -191,7 +199,7 @@ class ApprovalSelectorTest {
     tracer.traceStartTransaction(null, tx);
     observed.forEach(tracer::record);
     if (lifecycle) {
-      tracer.markLifecycle("selfdestruct");
+      tracer.record(selfDestruct());
     }
     if (ended) {
       tracer.markEnded();
@@ -241,10 +249,39 @@ class ApprovalSelectorTest {
     assertTrue(vanished.discard());
     assertEquals(Optional.of(ApprovalSelector.MISMATCH), vanished.maybeInvalidReason());
 
+    // A strict approval is a valid approval, but not for an execution that needs the calls mode.
     store.put(approval(Approval.HASH_STRICT, fingerprint));
-    final TransactionSelectionResult strict = selector.evaluateTransactionPreProcessing(ctx);
-    assertTrue(strict.discard());
-    assertEquals(Optional.of(ApprovalSelector.UNSUPPORTED), strict.maybeInvalidReason());
+    assertTrue(selector.evaluateTransactionPreProcessing(ctx).selected());
+    execute(records, false);
+    final TransactionSelectionResult wrongMode = selector.evaluateTransactionPostProcessing(ctx, result(false));
+    assertTrue(wrongMode.discard());
+    assertEquals(Optional.of(ApprovalSelector.UNSUPPORTED), wrongMode.maybeInvalidReason());
+  }
+
+  @Test
+  void aLifecycleExecutionIsSelectedWhenItsStrictApprovalMatches() throws Exception {
+    final ApprovalTracer observed = new ApprovalTracer();
+    observed.traceStartTransaction(null, tx);
+    records.forEach(observed::record);
+    observed.record(selfDestruct());
+    observed.markEnded();
+    final Hash strictHash =
+        StrictFingerprint.of(
+            CallTreeJson.toTree(observed.records()),
+            observed.observation().state().pre(),
+            observed.observation().state().diff());
+
+    final ApprovalSelector strictSelector =
+        new ApprovalSelector(store, CHAIN, WAIT, clock::get, observed);
+    store.put(approval(Approval.HASH_STRICT, strictHash));
+    final TransactionEvaluationContext ctx = context(clock.get());
+    assertTrue(strictSelector.evaluateTransactionPostProcessing(ctx, result(false)).selected());
+
+    store.put(approval(Approval.HASH_STRICT, Hash.ZERO));
+    final TransactionSelectionResult mismatch =
+        strictSelector.evaluateTransactionPostProcessing(ctx, result(false));
+    assertTrue(mismatch.discard());
+    assertEquals(Optional.of(ApprovalSelector.MISMATCH), mismatch.maybeInvalidReason());
   }
 
   @Test

@@ -69,6 +69,13 @@ public final class ApprovalSelector implements PluginTransactionSelector {
     this.metrics = metrics;
   }
 
+  /** Calls V3 unless the execution created or destroyed a contract, which only strict V2 binds. */
+  static int requiredMode(final ApprovalTracer.Observation seen) {
+    final boolean lifecycle =
+        seen.records().stream().anyMatch(record -> record.kind() >= CallRecord.CREATE);
+    return lifecycle ? Approval.HASH_STRICT : Approval.HASH_CALLS;
+  }
+
   @Override
   public BlockAwareOperationTracer getOperationTracer() {
     return tracer;
@@ -93,7 +100,7 @@ public final class ApprovalSelector implements PluginTransactionSelector {
       return TransactionSelectionResult.invalidTransient(PENDING);
     }
     final Approval a = approval.get();
-    if (a.chainId() != chainId || a.hashMode() != Approval.HASH_CALLS) {
+    if (a.chainId() != chainId || !Approval.validMode(a.hashMode())) {
       LOG.warn("OPS_APPROVAL_DECISION unsupported tx={} mode={} chain={}", txHash, a.hashMode(), a.chainId());
       metrics.mismatch(UNSUPPORTED);
       return TransactionSelectionResult.invalid(UNSUPPORTED);
@@ -114,7 +121,7 @@ public final class ApprovalSelector implements PluginTransactionSelector {
     if (approval.isEmpty()) {
       return reject(txHash, MISMATCH, "approval vanished before commit");
     }
-    if (approval.get().chainId() != chainId || approval.get().hashMode() != Approval.HASH_CALLS) {
+    if (approval.get().chainId() != chainId || !Approval.validMode(approval.get().hashMode())) {
       return reject(txHash, UNSUPPORTED, "approval replaced by an unsupported one");
     }
     final ApprovalTracer.Observation seen = tracer.observation();
@@ -128,14 +135,24 @@ public final class ApprovalSelector implements PluginTransactionSelector {
       // Interrupted or partially traced execution: nothing to compare against.
       return reject(txHash, MISMATCH, "execution not fully observed");
     }
-    if (seen.lifecycle().isPresent()) {
-      return reject(txHash, UNSUPPORTED, seen.lifecycle().get());
+    // The execution decides which fingerprint applies; the approval must have been issued for that
+    // same mode, so a calls approval can never cover an execution that deploys or self-destructs.
+    final int required = requiredMode(seen);
+    if (approval.get().hashMode() != required) {
+      return reject(
+          txHash,
+          UNSUPPORTED,
+          "approval mode " + approval.get().hashMode() + ", execution requires " + required);
     }
     final Hash actual;
     try {
-      actual = CallsFingerprint.of(seen.records());
-    } catch (final UnsupportedExecutionException e) {
-      return reject(txHash, UNSUPPORTED, e.getMessage());
+      actual =
+          required == Approval.HASH_STRICT
+              ? StrictFingerprint.of(
+                  CallTreeJson.toTree(seen.records()), seen.state().pre(), seen.state().diff())
+              : CallsFingerprint.of(seen.records());
+    } catch (final UnsupportedExecutionException | RuntimeException e) {
+      return reject(txHash, UNSUPPORTED, String.valueOf(e.getMessage()));
     }
     if (!actual.getBytes().equals(approval.get().fingerprint().getBytes())) {
       return reject(txHash, MISMATCH, "approved " + approval.get().fingerprint() + " actual " + actual);

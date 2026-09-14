@@ -92,24 +92,38 @@ final class PrepareApprovalRpc {
     if (seen.error().isPresent()) {
       throw error(-32000, "unsupported execution: " + seen.error().get());
     }
-    if (seen.lifecycle().isPresent()) {
-      throw error(-32000, "unsupported execution: " + seen.lifecycle().get());
+    // Contract creation and self-destruction cannot be expressed by the calls fingerprint, so those
+    // executions are approved in strict mode, which binds the resulting state instead.
+    if (!seen.complete()) {
+      throw error(-32000, "execution not fully observed");
     }
+    final int mode = ApprovalSelector.requiredMode(seen);
+    final Map<String, Object> calls;
+    final Map<String, Object> pre;
+    final Map<String, Object> diff;
     final Hash fingerprint;
     try {
-      fingerprint = CallsFingerprint.of(seen.records());
-    } catch (final UnsupportedExecutionException e) {
+      calls = CallTreeJson.toTree(seen.records());
+      pre = seen.state().pre();
+      diff = seen.state().diff();
+      fingerprint =
+          mode == Approval.HASH_STRICT
+              ? StrictFingerprint.of(calls, pre, diff)
+              : CallsFingerprint.of(seen.records());
+    } catch (final UnsupportedExecutionException | RuntimeException e) {
       throw error(-32000, "unsupported execution: " + e.getMessage());
     }
     final Map<String, Object> out = new LinkedHashMap<>();
-    out.put("hashMode", Approval.HASH_CALLS);
+    out.put("hashMode", mode);
     out.put("chainId", "0x" + Long.toHexString(chainId));
     out.put("txHash", tx.getHash().getBytes().toHexString());
     out.put("parentBlockHash", blockchain.getChainHeadHash().getBytes().toHexString());
     out.put("pendingBlockNumber", "0x" + Long.toHexString(pending.getNumber()));
     out.put("fingerprint", fingerprint.getBytes().toHexString());
-    out.put("calls", CallTreeJson.toTree(seen.records()));
+    out.put("calls", calls);
     out.put("codeHashes", CallTreeJson.codeHashes(seen.records()));
+    out.put("pre", pre);
+    out.put("diff", diff);
     out.put("status", result.isSuccessful() ? "success" : "failed");
     out.put("gasUsed", "0x" + Long.toHexString(result.getGasEstimate()));
     return out;
