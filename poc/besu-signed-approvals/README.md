@@ -131,9 +131,10 @@ what each number does and does not cover.
   producer is not rejected. Same limit as the Reth PoC; a consensus rule needs a Besu change, not a plugin.
 - **Timeout eviction happens at the next block-building round**, not on an independent timer — Besu
   exposes no plugin API to remove a pool transaction. Unselectable in the meantime.
-- **No load-generator benchmark.** The numbers above come from a single-threaded submitter against a
-  local stack; a real producer benchmark needs a load generator at the node's block cadence, as the
-  Reth PoC did with Gasstorm.
+- **The throughput ceiling is unknown.** Gasstorm drives the stack to ~10 000 transactions in 32 s
+  with the gate on, indistinguishable from the gate off ([DEMO.md](DEMO.md)), but at a requested
+  1 000/s the block producer stalled on this laptop. The generator, OPS, the database and the node
+  all share one machine, so these runs measure the machine, not the design.
 - **Single-producer assumptions**: approvals are released on `HEAD_ADVANCED`/`CHAIN_REORG`; a reorg that
   returns transactions to the pool leaves them waiting for a new approval, which OPS does not re-send.
   Every producer must run the plugin; a plugin that calls `BlockTransactionSelectionService.commit()`
@@ -194,7 +195,7 @@ client over the Engine API. Plugin options:
 OPS: `OPS_APPROVAL_NODE=besu`, `OPS_APPROVAL_TARGET=host:port` (the plugin's listen address),
 `OPS_APPROVAL_SEED_FILE` as before; the node's `--rpc-http-api` must include `OPS`.
 
-Demo and benchmark: [demo.py](demo.py) (see [DEMO.md](DEMO.md)).
+Demo and benchmarks: [demo.py](demo.py), sustained load [gasstorm.py](gasstorm.py) (see [DEMO.md](DEMO.md)).
 
 Code map: [gate](src/main/java/ops/approvals/ApprovalSelector.java) ·
 [tracer](src/main/java/ops/approvals/ApprovalTracer.java) ·
