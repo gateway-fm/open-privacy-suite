@@ -181,6 +181,9 @@ func (s *Server) DB() *db.DB {
 // Stop gracefully stops all background goroutines.
 // Should be called before server shutdown.
 func (s *Server) Stop() {
+	if s.jsonrpcProcessor != nil && s.jsonrpcProcessor.nodeApprovals != nil {
+		s.jsonrpcProcessor.nodeApprovals.Close()
+	}
 	if s.sessionStore != nil {
 		s.sessionStore.Stop()
 	}
@@ -699,6 +702,9 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		s.jsonrpcProcessor = NewJSONRPCProcessorWithTracing(rbacAccessCtrl, rateLimiter, proxySvc, auditDB, runtimeTracer, traceValidator, circuitBreaker, concurrencyLimiter, cfg.RPCAPIKey)
 	} else {
 		s.jsonrpcProcessor = NewJSONRPCProcessor(rbacAccessCtrl, rateLimiter, proxySvc, auditDB, circuitBreaker, concurrencyLimiter, cfg.RPCAPIKey)
+	}
+	if err := s.jsonrpcProcessor.configureNodeApprovals(cfg.NodeURL, nodeTransport); err != nil {
+		return nil, err
 	}
 	s.jsonrpcProcessor.SetMetrics(m)
 	s.jsonrpcProcessor.SetTxVisibilityStore(database)

@@ -45,7 +45,9 @@ type TraceValidatorStore interface {
 //
 // The implementation MUST resolve the code at "latest" — pinning to a
 // historical block would defeat the rotation-detection property the
-// codehash check exists to provide.
+// codehash check exists to provide. The signed-preflight path may use its
+// pinned execution snapshot because Reth enforces the same code fingerprint
+// before committing the actual candidate transaction.
 type CodeHashFetcher interface {
 	GetCodeHash(ctx context.Context, address string) (string, error)
 }
@@ -69,6 +71,14 @@ type TraceValidator struct {
 // don't have node access — tests).
 func (v *TraceValidator) SetCodeHashFetcher(f CodeHashFetcher) {
 	v.codeFetcher = f
+}
+
+// WithCodeHashFetcher isolates a request's pinned code view without mutating
+// the shared validator used by concurrent requests.
+func (v *TraceValidator) WithCodeHashFetcher(f CodeHashFetcher) *TraceValidator {
+	copy := *v
+	copy.codeFetcher = f
+	return &copy
 }
 
 // TraceValidationResult contains the result of trace validation.
@@ -107,6 +117,22 @@ type TraceOption func(*traceOptions)
 type traceOptions struct {
 	intraOrgGrantScoping bool
 	grantedContracts     map[string]bool
+	freshCreations       map[string]bool
+	noCodeRecipients     map[string]bool
+}
+
+// WithPreflightCreations identifies CREATE destinations whose pinned prestate
+// has no code and nonce zero. Only the signed-preflight path supplies this view.
+// The validator still requires a matching CREATE, a deploy claim and no foreign owner.
+func WithPreflightCreations(addresses map[string]bool) TraceOption {
+	return func(o *traceOptions) { o.freshCreations = addresses }
+}
+
+// WithPreflightValueRecipients extends the existing root ETH-transfer carve-out
+// to non-executing CALL/SELFDESTRUCT recipients. The signed snapshot proves they
+// have no code; any registered foreign ownership still takes precedence.
+func WithPreflightValueRecipients(addresses map[string]bool) TraceOption {
+	return func(o *traceOptions) { o.noCodeRecipients = addresses }
 }
 
 // WithIntraOrgGrantScoping enables the RD-1053 intra-org pass: an internal
@@ -206,6 +232,7 @@ func (v *TraceValidator) ValidateTrace(
 
 	// Rule 1: Handle runtime CREATE/CREATE2 operations
 	var createTargets []CreateTarget
+	freshCreated := map[string]bool{}
 	if trace.HasCreate || trace.HasCreate2 {
 		if !userHasDeploy {
 			return &TraceValidationResult{
@@ -240,6 +267,9 @@ func (v *TraceValidator) ValidateTrace(
 				}, nil
 			}
 
+			if o.freshCreations[addr] {
+				freshCreated[addr] = true
+			}
 			createTargets = append(createTargets, CreateTarget{
 				Type:    target.Type,
 				Address: addr,
@@ -288,7 +318,7 @@ func (v *TraceValidator) ValidateTrace(
 			return nil, fmt.Errorf("failed to check shared infrastructure: %w", err)
 		}
 		if sharedRow != nil {
-			if target.Type == "DELEGATECALL" {
+			if target.Type == "DELEGATECALL" || target.Type == "CALLCODE" {
 				slog.Debug("trace denied: DELEGATECALL into shared infrastructure",
 					"address", addr)
 				return &TraceValidationResult{
@@ -329,6 +359,13 @@ func (v *TraceValidator) ValidateTrace(
 				// No codehash pin OR no fetcher wired → legacy skip.
 				continue
 			}
+		}
+
+		// A freshly created contract belongs to this deploy operation. The
+		// CREATE pass above already checked the deploy claim and foreign ownership.
+		// Existing code at a failed CREATE destination never enters this set.
+		if freshCreated[addr] {
+			continue
 		}
 
 		// Rule 2c: Check if target is owned by any of the user's orgs
@@ -398,6 +435,12 @@ func (v *TraceValidator) ValidateTrace(
 				DenialKind:   DenialKindForeignOrg,
 				DeniedTarget: addr,
 			}, nil
+		}
+
+		// The signed snapshot proves no code runs at this recipient. Mirror
+		// the existing root ETH-transfer policy after checking foreign ownership.
+		if o.noCodeRecipients[addr] && (target.Type == "CALL" || target.Type == "SELFDESTRUCT") {
+			continue
 		}
 
 		// Rule 2e: Unregistered address — deny. All contracts are private by

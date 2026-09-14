@@ -12,6 +12,7 @@ import (
 	gethcommon "github.com/ethereum/go-ethereum/common"
 
 	"privacy-proxy/internal/metrics"
+	"privacy-proxy/internal/nodeapproval"
 	"privacy-proxy/internal/rbac"
 	"privacy-proxy/internal/tracer"
 )
@@ -751,6 +752,10 @@ func (p *JSONRPCProcessor) processDebugTrace(ctx context.Context, req *ProcessRe
 // Returns the list of CREATE/CREATE2 targets discovered during tracing (may be nil),
 // and a ProcessError if validation fails.
 func (p *JSONRPCProcessor) validateRawTxWithTracing(ctx context.Context, req *ProcessRequest, from, to, data, value string) ([]rbac.CreateTarget, *ProcessError) {
+	return p.validateRawTxWithPreparedTrace(ctx, req, from, to, data, value, nil)
+}
+
+func (p *JSONRPCProcessor) validateRawTxWithPreparedTrace(ctx context.Context, req *ProcessRequest, from, to, data, value string, prepared *nodeapproval.Prepared) ([]rbac.CreateTarget, *ProcessError) {
 	// Get user info for trace validation
 	user, err := p.rbacAccessCtrl.Store().GetUserByExternalID(ctx, req.UserID)
 	if err != nil || user == nil {
@@ -779,7 +784,13 @@ func (p *JSONRPCProcessor) validateRawTxWithTracing(ctx context.Context, req *Pr
 	}
 
 	// Perform the trace
-	traceResult, err := p.runtimeTracer.TraceTransaction(ctx, from, to, data, value)
+	var traceResult *tracer.TraceResult
+	if prepared != nil {
+		traceResult = prepared.Trace
+	}
+	if traceResult == nil {
+		traceResult, err = p.runtimeTracer.TraceTransaction(ctx, from, to, data, value)
+	}
 	if err != nil {
 		slog.Warn("raw send trace: upstream tracer error",
 			slog.String("user", req.UserID), slog.String("to", to), slog.Any("err", err))
@@ -816,7 +827,12 @@ func (p *JSONRPCProcessor) validateRawTxWithTracing(ctx context.Context, req *Pr
 	}
 
 	// Validate the trace against org isolation rules
-	validationResult, err := p.traceValidator.ValidateTrace(ctx, userOrgIDs, traceResult, userHasDeploy, traceOpts...)
+	validator := p.traceValidator
+	if prepared != nil {
+		validator = validator.WithCodeHashFetcher(prepared)
+		traceOpts = append(traceOpts, rbac.WithPreflightCreations(prepared.FreshCreations), rbac.WithPreflightValueRecipients(prepared.NoCodeRecipients))
+	}
+	validationResult, err := validator.ValidateTrace(ctx, userOrgIDs, traceResult, userHasDeploy, traceOpts...)
 	if err != nil {
 		slog.Warn("raw send trace: validator error",
 			slog.String("user", req.UserID), slog.Any("err", err))
@@ -841,7 +857,16 @@ func (p *JSONRPCProcessor) validateRawTxWithTracing(ctx context.Context, req *Pr
 		}
 	}
 
-	return validationResult.CreateTargets, nil
+	targets := validationResult.CreateTargets
+	if prepared != nil {
+		targets = nil
+		for _, target := range validationResult.CreateTargets {
+			if prepared.SurvivingCreations[strings.ToLower(target.Address)] {
+				targets = append(targets, target)
+			}
+		}
+	}
+	return targets, nil
 }
 
 // userHasDeployClaim checks whether any of the user's memberships grant the deploy claim.
