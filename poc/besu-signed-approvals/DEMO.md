@@ -36,23 +36,29 @@ no longer matches it does not get committed — not "fails with a receipt", but 
 
 ## Cost
 
-Measured by `demo.py bench`: 32 transactions per block, four samples per configuration (the first
-discarded as warm-up), the same load with and without the gate, medians. Apple M2 Max, Darwin arm64.
+`demo.py bench`: 128 transactions per block from 16 concurrent clients, four samples per
+configuration (the first discarded as warm-up), the same load with and without the gate, medians.
+Apple M2 Max, everything — OPS, PostgreSQL, Redis, Besu and the load — on one laptop.
 Raw data in [evidence/benchmark.json](evidence/benchmark.json).
 
 | | OPS submissions/s | OPS request median | Gate work per transaction |
 |---|---:|---:|---:|
-| Without the gate | 91.9 | 10.1 ms | — |
-| With the gate | 78.0 | 12.1 ms | 49 µs |
+| Without the gate | 775 | 17.5 ms | — |
+| With the gate | 657 | 21.1 ms | 22 µs |
 
-- **Submission** is end-to-end through the OPS HTTP API, including its RBAC and, with the gate on,
-  the `ops_prepareApproval` round trip plus signing and queueing. The ~2 ms per request is what that
-  preflight costs; the 15 % throughput difference is on a single-threaded submitter against a local
-  stack, not a capacity measurement.
+- **Submission** is end-to-end through the OPS HTTP API — RBAC, database, forwarding, and with the
+  gate on also the `ops_prepareApproval` round trip, the Ed25519 signature and the delivery queue.
+  The ~3.5 ms it adds to a request is what that preflight costs; the ~15 % difference in rate is
+  what 16 clients get out of this laptop, not a capacity limit of the design.
 - **Gate work** is the plugin's own pre- plus post-processing per transaction, timed inside the
-  selector. It excludes the execution itself and the tracing the EVM does while Besu builds the
-  candidate.
+  selector: the approval lookup, the fingerprint of the observed execution, and the comparison. It
+  settles at 12–22 µs once the JIT is warm, and excludes the execution itself and the EVM tracing
+  Besu does while building the candidate.
 - The harness's block wall-clock is recorded too, but it contains a fixed wait and Besu's repeated
-  candidate rebuilds, so it is **not** a producer benchmark. A proper one needs a load generator and
-  a node driven at its block cadence — the Reth PoC's Gasstorm runs are the model, and that work has
-  not been done here.
+  candidate rebuilds, so it is **not** a producer benchmark. A proper one needs a load generator at
+  the node's block cadence — the Reth PoC's Gasstorm runs are the model, and that work has not been
+  done here.
+
+Single-client numbers, for comparison: one connection submitting serially gets ~90/s simply because
+each round trip is ~11 ms. That is a latency measurement wearing a throughput costume; it is the
+concurrent figures above that say anything about the stack.

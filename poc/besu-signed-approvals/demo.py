@@ -264,8 +264,12 @@ def story(stack, pause=False):
     print("\nAll four steps passed. Evidence: poc/besu-signed-approvals/evidence/demo.json", flush=True)
 
 
-def bench(count=32, samples=3):
-    """The same load with and without the gate: OPS submission rate and block-building time."""
+def bench(count=128, samples=3, concurrency=16):
+    """The same load with and without the gate, submitted concurrently.
+
+    Transactions are built and signed before the clock starts; every timed request still passes all
+    of OPS's gates. Each worker keeps one HTTP connection, as a real SDK would.
+    """
     rows = []
     for plugin in (False, True):
         with contextlib.closing(Stack("bench-" + ("on" if plugin else "off"), plugin=plugin)) as stack:
@@ -274,23 +278,30 @@ def bench(count=32, samples=3):
             for sample in range(samples + 1):  # the first sample warms the JIT and the pools
                 txs = [n.raw(h.ADMIN, h.CALL_HASH_CASES, "setAmount(uint256)", 1000 + sample * count + i,
                              nonce=nonce + i) for i in range(count)]
+                def submit_all(part):
+                    connection = http.client.HTTPConnection(
+                        urllib.parse.urlparse(stack.url).netloc, timeout=30)
+                    taken = []
+                    try:
+                        for tx in part:
+                            body = json.dumps({"jsonrpc": "2.0", "id": 1,
+                                               "method": "eth_sendRawTransaction", "params": [tx["raw"]]})
+                            sent = time.perf_counter_ns()
+                            connection.request("POST", "/rpc/" + stack.org, body,
+                                               {"Content-Type": "application/json",
+                                                "Authorization": "Bearer " + stack.tokens[h.ADMIN]})
+                            response = connection.getresponse()
+                            result = json.loads(response.read())
+                            taken.append((time.perf_counter_ns() - sent) / 1e6)
+                            assert response.status == 200 and result.get("result") == tx["hash"], (
+                                result, {"nonce": tx["nonce"], "sender_nonce": n.nonce(h.ADMIN)})
+                    finally:
+                        connection.close()
+                    return taken
+
                 start = time.perf_counter()
-                latencies = []
-                connection = http.client.HTTPConnection(urllib.parse.urlparse(stack.url).netloc, timeout=30)
-                try:
-                    for tx in txs:
-                        body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "eth_sendRawTransaction",
-                                           "params": [tx["raw"]]})
-                        sent = time.perf_counter_ns()
-                        connection.request("POST", "/rpc/" + stack.org, body,
-                                           {"Content-Type": "application/json",
-                                            "Authorization": "Bearer " + stack.tokens[h.ADMIN]})
-                        response = connection.getresponse()
-                        result = json.loads(response.read())
-                        latencies.append((time.perf_counter_ns() - sent) / 1e6)
-                        assert response.status == 200 and result.get("result") == tx["hash"], result
-                finally:
-                    connection.close()
+                with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as pool:
+                    latencies = sum(pool.map(submit_all, [txs[i::concurrency] for i in range(concurrency)]), [])
                 submission_s = time.perf_counter() - start
                 gates_before = len(n.timings())
                 block_start = time.perf_counter()
@@ -300,6 +311,7 @@ def bench(count=32, samples=3):
                     assert n.receipt(tx["hash"])["status"] == "0x1"
                 gate_ns = [t["gate_ns"] for t in n.timings()[gates_before:]]
                 row = {"gate": plugin, "sample": sample, "warmup": sample == 0, "count": count,
+                       "concurrency": concurrency,
                        "submission_s": round(submission_s, 3),
                        "submission_tps": round(count / submission_s, 1),
                        "ops_request_median_ms": round(statistics.median(latencies), 2),
@@ -323,7 +335,9 @@ def bench(count=32, samples=3):
         }
     summary["machine"] = subprocess.check_output(["uname", "-sm"], text=True).strip()
     summary["transactions_per_block"] = count
-    summary["note"] = ("submission figures are end-to-end through the OPS HTTP API; gate_us_per_tx is "
+    summary["concurrency"] = concurrency
+    summary["note"] = ("submission figures are end-to-end through the OPS HTTP API with "
+                       f"{concurrency} concurrent clients on one local machine; gate_us_per_tx is "
                        "the plugin's own pre+post work per transaction; harness_block_wall_s includes "
                        "a fixed wait and repeated candidate rebuilds and is not a producer benchmark")
     (h.EVIDENCE / "benchmark.json").write_text(json.dumps({"summary": summary, "samples": rows}, indent=2) + "\n")
@@ -335,11 +349,12 @@ def main():
     parser.add_argument("mode", nargs="?", default="story", choices=["story", "bench"])
     parser.add_argument("--pause", action="store_true", help="wait for Enter between story steps")
     parser.add_argument("--linea", action="store_true", help="also load Lineth's transaction-pool plugin")
-    parser.add_argument("--count", type=int, default=32)
+    parser.add_argument("--count", type=int, default=128)
+    parser.add_argument("--concurrency", type=int, default=16)
     args = parser.parse_args()
     h.prepare()
     if args.mode == "bench":
-        bench(count=args.count)
+        bench(count=args.count, concurrency=args.concurrency)
         return
     with contextlib.closing(Stack("demo", linea=args.linea)) as stack:
         print(f"OPS {stack.url}   Besu {stack.node.rpc_url}   organization {stack.org}", flush=True)
