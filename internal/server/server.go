@@ -187,6 +187,9 @@ func (s *Server) DB() *db.DB {
 // Stop gracefully stops all background goroutines.
 // Should be called before server shutdown.
 func (s *Server) Stop() {
+	if s.jsonrpcProcessor != nil && s.jsonrpcProcessor.nodeApprovals != nil {
+		s.jsonrpcProcessor.nodeApprovals.Close()
+	}
 	if s.sessionStore != nil {
 		s.sessionStore.Stop()
 	}
@@ -955,6 +958,10 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		},
 		IntraOrgGrantTracingEnabled: cfg.RuntimeTracingIntraOrgGrantsEnabled,
 	})
+	if err := s.jsonrpcProcessor.configureNodeApprovals(cfg.NodeURL, nodeTransport); err != nil {
+		return nil, err
+	}
+
 
 	// RD-858: scheduled audit hash-chain integrity verifier. Default
 	// interval 15m (config: AUDIT_INTEGRITY_VERIFY_INTERVAL). On
