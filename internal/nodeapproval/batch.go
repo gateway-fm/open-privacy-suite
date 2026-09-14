@@ -37,6 +37,9 @@ func (b Batch) Message() ([]byte, error) {
 	return message, nil
 }
 
+// Frame is the length-prefixed wire encoding produced by SignBatch (test fixtures deliver it directly).
+func (b Batch) Frame() []byte { return b.frame }
+
 func SignBatch(key ed25519.PrivateKey, approvals []Approval) (Batch, error) {
 	b := Batch{Version: 1, Approvals: append([]Approval(nil), approvals...)}
 	message, err := b.Message()

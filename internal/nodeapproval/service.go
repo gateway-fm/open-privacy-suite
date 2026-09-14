@@ -66,6 +66,7 @@ func (p *Prepared) GetCodeHash(_ context.Context, address string) (string, error
 
 type Service struct {
 	hashMode    uint8
+	node        nodeKind
 	connections atomic.Uint64
 	hops        *hops
 	rpc         *rpc.Client
@@ -96,6 +97,10 @@ func NewWithTransport(url, address string, seed []byte, tc nodehttp.TransportCon
 	if err != nil {
 		return nil, err
 	}
+	node, err := configuredNodeKind(mode)
+	if err != nil {
+		return nil, err
+	}
 	maxBatch := MaxBatchApprovals
 	if value := os.Getenv("OPS_APPROVAL_MAX_BATCH"); value != "" {
 		var err error
@@ -115,7 +120,7 @@ func NewWithTransport(url, address string, seed []byte, tc nodehttp.TransportCon
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &Service{hashMode: mode, hops: newHops(), rpc: client, rpcHTTP: httpClient, key: ed25519.NewKeyFromSeed(seed), address: address, queue: make(chan Approval, 4096), signed: make(chan Batch, 128), maxBatch: maxBatch, sign: SignBatch, cancel: cancel, done: make(chan struct{}), signDone: make(chan struct{})}
+	s := &Service{hashMode: mode, node: node, hops: newHops(), rpc: client, rpcHTTP: httpClient, key: ed25519.NewKeyFromSeed(seed), address: address, queue: make(chan Approval, 4096), signed: make(chan Batch, 128), maxBatch: maxBatch, sign: SignBatch, cancel: cancel, done: make(chan struct{}), signDone: make(chan struct{})}
 	s.connections.Store(1)
 	go s.signLoop(ctx)
 	go s.deliver(ctx, conn)
@@ -128,11 +133,15 @@ func NewPreflight(url string) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
+	node, err := configuredNodeKind(mode)
+	if err != nil {
+		return nil, err
+	}
 	client, httpClient, err := dialPreflightRPC(url, nodehttp.DefaultTransportConfig())
 	if err != nil {
 		return nil, err
 	}
-	return &Service{hashMode: mode, rpc: client, rpcHTTP: httpClient}, nil
+	return &Service{hashMode: mode, node: node, rpc: client, rpcHTTP: httpClient}, nil
 }
 
 func dialPreflightRPC(url string, tc nodehttp.TransportConfig) (*rpc.Client, *http.Client, error) {
@@ -188,6 +197,9 @@ func (s *Service) Prepare(ctx context.Context, raw string) (*Prepared, error) {
 	}
 	if tx.ChainId().Uint64() != uint64(chain) {
 		return nil, errors.New("wrong chain")
+	}
+	if s.node == nodeBesu {
+		return s.prepareBesu(ctx, raw, &tx, from, uint64(chain))
 	}
 	var block struct {
 		Hash common.Hash `json:"hash"`
