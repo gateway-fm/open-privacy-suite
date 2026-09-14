@@ -1,0 +1,11 @@
+[2m2026-09-14 23:45:27.078+0200[m[2m | [m[2mmain[m[2m | [m[33mWARN [m[2m | [m[2mPluginVerifier[m[2m | [m[33mArtifact <repo>/.tmp/besu-dist/besu-26.8.1/plugins/ops-besu-approvals.jar containing plugins [OpsApprovalPlugin] is without a catalog
+[m[2m2026-09-14 23:45:27.079+0200[m[2m | [m[2mmain[m[2m | [m[33mWARN [m[2m | [m[2mPluginVerifier[m[2m | [m[33mPlugin artifact <repo>/.tmp/besu-dist/besu-26.8.1/plugins/linea-tracer-linea-8bb72b4.jar is built against Besu version 26.8.0-f2557d7 while current running Besu version is 26.8.1
+[m[2m2026-09-14 23:45:27.091+0200[m[2m | [m[2mmain[m[2m | [m[32mINFO [m[2m | [m[2mBesuPluginContextImpl[m[2m | [m[32mRegistered plugin of type ops.approvals.OpsApprovalPlugin.
+[mSetting logging level to INFO
+[2m2026-09-14 23:45:27.123+0200[m[2m | [m[2mmain[m[2m | [m[32mINFO [m[2m | [m[2mBesu[m[2m | [m[32mStarting Besu
+[m[2m2026-09-14 23:45:28.019+0200[m[2m | [m[2mmain[m[2m | [m[33mWARN [m[2m | [m[2mBesu[m[2m | [m[33m--discovery-enabled has been ignored because --p2p-enabled was not defined on the command line.
+[m[2m2026-09-14 23:45:28.028+0200[m[2m | [m[2mmain[m[2m | [m[1;31mERROR[m[2m | [m[2mBesu[m[2m | [m[1;31mFailed to start Besu: Could not use legacy or sequenced transaction pool options with layered implementation [--tx-pool-max-size]
+[mCould not use legacy or sequenced transaction pool options with layered implementation [--tx-pool-max-size]
+
+To display full help:
+besu [COMMAND] --help

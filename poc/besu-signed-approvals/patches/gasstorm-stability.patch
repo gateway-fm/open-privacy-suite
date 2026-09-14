@@ -1,0 +1,147 @@
+diff --git a/dashboard/src/app/load-test/page.tsx b/dashboard/src/app/load-test/page.tsx
+index fe183dd..ee2b6ac 100644
+--- a/dashboard/src/app/load-test/page.tsx
++++ b/dashboard/src/app/load-test/page.tsx
+@@ -1,6 +1,6 @@
+ "use client";
+ 
+-import { useCallback, useEffect, useMemo, useRef } from "react";
++import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+ import { LoadTestPanel } from "@/components/load-test/load-test-panel";
+ import { RealTimeChart } from "@/components/metrics/real-time-chart";
+ import { LatencyHistogram } from "@/components/metrics/latency-histogram";
+@@ -25,6 +25,21 @@ import type { BlockMetrics, Statistics } from "@/types/metrics";
+ import { calculateStatistics } from "@/lib/statistics";
+ 
+ export default function LoadTestPage() {
++  const [sessionError, setSessionError] = useState<string | null>(null);
++  useEffect(() => {
++    let active = true;
++    const poll = async () => {
++      try {
++        const response = await fetch("/poc/status");
++        if (!response.ok) return;
++        const session = await response.json();
++        if (active) setSessionError(session.error || null);
++      } catch { /* Normal Gasstorm deployments do not have the PoC endpoint. */ }
++    };
++    void poll();
++    const timer = setInterval(poll, 2000);
++    return () => { active = false; clearInterval(timer); };
++  }, []);
+   const {
+     status,
+     latencyStats: goLatencyStats,
+@@ -177,6 +192,7 @@ export default function LoadTestPage() {
+   return (
+     <div className="min-h-screen bg-background">
+       <main className="container mx-auto px-4 py-6 space-y-6">
++        {sessionError && <div role="alert" className="rounded-lg border border-red-500 p-4 text-red-600">{sessionError}</div>}
+         <LoadTestPanel />
+ 
+         {/* Quiet pointer to history when there's no live run */}
+diff --git a/dashboard/src/components/load-test/load-test-panel.tsx b/dashboard/src/components/load-test/load-test-panel.tsx
+index a76311c..e664127 100644
+--- a/dashboard/src/components/load-test/load-test-panel.tsx
++++ b/dashboard/src/components/load-test/load-test-panel.tsx
+@@ -976,9 +976,9 @@ function TransportAction({
+   }
+   if (status === "verifying") {
+     return (
+-      <Button variant="outline" disabled className="shrink-0 min-w-[120px]">
++      <Button variant="destructive" onClick={stop} className="shrink-0 min-w-[120px]">
+         <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+-        Verifying
++        Stop verification
+       </Button>
+     );
+   }
+diff --git a/dashboard/src/components/metrics/real-time-chart.tsx b/dashboard/src/components/metrics/real-time-chart.tsx
+index 746d102..056f4e6 100644
+--- a/dashboard/src/components/metrics/real-time-chart.tsx
++++ b/dashboard/src/components/metrics/real-time-chart.tsx
+@@ -93,7 +93,7 @@ export function RealTimeChart() {
+     const baseTimestamp = timeSeries.timestamps[startIndex] ?? 0;
+ 
+     const availablePoints = totalPoints - startIndex;
+-    const windowStart = availablePoints <= maxDisplayPoints
++    const windowStart = (isHistoricalMode || liveStatus === "completed" || liveStatus === "error" || availablePoints <= maxDisplayPoints)
+       ? startIndex
+       : totalPoints - maxDisplayPoints;
+ 
+@@ -128,7 +128,7 @@ export function RealTimeChart() {
+     }
+ 
+     return chartPoints;
+-  }, [timeSeries]);
++  }, [timeSeries, isHistoricalMode, liveStatus]);
+ 
+   // Memoize the entire Recharts tree so it doesn't re-render when unrelated
+   // store fields change (e.g. txConfirmedCount during verification).
+@@ -277,7 +277,7 @@ export function RealTimeChart() {
+           ) : (
+             <>
+               <div>
+-                <span className="text-muted-foreground">Avg: </span>
++                <span className="text-muted-foreground">{isHistoricalMode ? "Avg:" : liveStatus === "running" ? "Current:" : "Last:"} </span>
+                 <span className="font-mono font-semibold" style={{ color: COLORS.tps }}>
+                   {snapshot.currentTxPerSec.toFixed(1)} tx/s
+                 </span>
+diff --git a/dashboard/src/stores/load-test-websocket.ts b/dashboard/src/stores/load-test-websocket.ts
+index 69d46f0..4a85d72 100644
+--- a/dashboard/src/stores/load-test-websocket.ts
++++ b/dashboard/src/stores/load-test-websocket.ts
+@@ -166,6 +166,9 @@ function verifyOnlyUpdate(state: Partial<GoLoadTestState>): Partial<GoLoadTestSt
+     blocksVerified: state.blocksVerified,
+     receiptsToSample: state.receiptsToSample,
+     receiptsSampled: state.receiptsSampled,
++    // A final batch can be submitted after the chart freezes at the duration.
++    // Keep both sides of the confirmation ratio from the same server snapshot.
++    txSentCount: state.txSentCount,
+     txConfirmedCount: state.txConfirmedCount,
+     txFailedCount: state.txFailedCount,
+     latencyStats: state.latencyStats,
+diff --git a/dashboard/src/stores/load-test-websocket.test.ts b/dashboard/src/stores/load-test-websocket.test.ts
+new file mode 100644
+index 0000000..48527e0
+--- /dev/null
++++ b/dashboard/src/stores/load-test-websocket.test.ts
+@@ -0,0 +1,38 @@
++import { afterEach, expect, it, vi } from 'vitest';
++import { createWebSocketManager, type ChartTimeSeries } from './load-test-websocket';
++import type { GoLoadTestState } from './load-test-store-state';
++
++afterEach(() => vi.unstubAllGlobals());
++
++it('updates final sent and confirmed counters together after freezing the chart', () => {
++  let socket: FakeSocket;
++  class FakeSocket {
++    static OPEN = 1;
++    readyState = 1;
++    onmessage?: (event: { data: string }) => void;
++    close() {}
++    constructor() { socket = this; }
++  }
++  vi.stubGlobal('WebSocket', FakeSocket);
++  let state: Partial<GoLoadTestState> = { status: 'idle', elapsedTime: 0 };
++  let chart: ChartTimeSeries = { timestamps: [], txPerSec: [], mgasPerSec: [], fillRate: [] };
++  const manager = createWebSocketManager({
++    onStateUpdate: update => { state = {...state, ...update}; if (update.chartTimeSeries) chart = update.chartTimeSeries; },
++    onConnected() {}, onDisconnected() {}, onNewTestDetected() {}, onTestCompleted() {},
++    isHistoricalMode: () => false,
++    getCurrentStatus: () => state.status!, getElapsedTime: () => state.elapsedTime!,
++    getCurrentPeakTps: () => state.peakTps || 0, getChartTimeSeries: () => chart,
++  });
++  manager.connect();
++  const send = (status: string, elapsedMs: number, txSent: number, txConfirmed: number) => {
++    socket!.onmessage!({data: JSON.stringify({status, elapsedMs, durationMs: 10000, txSent, txConfirmed,
++      txFailed: 0, currentTps: 10, averageTps: 10, targetTps: 10, pattern: 'constant', transactionType: 'eth-transfer'})});
++  };
++  send('running', 9000, 98, 90);
++  send('verifying', 11000, 100, 99);
++  send('completed', 12000, 100, 100);
++  expect(state.txSentCount).toBe(100);
++  expect(state.txConfirmedCount).toBe(100);
++  expect(chart.timestamps).toEqual([9]);
++  manager.disconnect();
++});

@@ -178,7 +178,9 @@ class Node:
                 "--engine-jwt-secret", str(jwt_path), "--engine-host-allowlist", "*",
                 "--rpc-tx-feecap", "0", "--p2p-enabled=false", "--discovery-enabled=false",
                 # A benchmark submits a long run of future nonces from one sender before the block.
-                "--tx-pool-max-future-by-sender", "2000", "--tx-pool-max-prioritized", "2000",
+                "--tx-pool-max-future-by-sender", "2000", "--tx-pool-max-prioritized", "20000",
+                # --tx-pool-max-size belongs to the legacy pool; the layered pool sizes by bytes.
+                "--tx-pool-max-prioritized-by-type", "FRONTIER=20000", "--rpc-http-max-active-connections", "4096",
                 "--logging", log_level or os.environ.get("OPS_BESU_LOG_LEVEL", "INFO")]
         if plugin:
             # One --plugins list: Besu refuses to start if any named plugin is missing.

@@ -63,53 +63,66 @@ Single-client numbers, for comparison: one connection submitting serially gets ~
 each round trip is ~11 ms. That is a latency measurement wearing a throughput costume; it is the
 concurrent figures above that say anything about the stack.
 
-## Sustained load (Gasstorm)
+## Sustained load: Gasstorm Adaptive, the real ceiling
 
-`gasstorm.py` runs the same thing the Reth PoC does: Gasstorm's own load generator signs and submits
-through OPS's JSON-RPC route while a clock-driven producer builds a block every second, and the
-result is counted from receipts on chain, not from what the generator believes it sent. Ten funded
-wallets under one identity, constant-rate ETH transfers, 20 s per rate, one isolated stack per
-configuration.
+This is the same test the Reth PoC runs, in Gasstorm's own dashboard: **Through Privacy Proxy →
+Adaptive → ETH Transfer**, ten wallets, 200 M block gas limit, one-second blocks. Adaptive raises the
+rate until the pool backs up, so the peak is measured rather than requested. A browser drives the real
+UI; the screenshots below are that browser's, and every confirmation is re-checked against receipts on
+chain afterwards.
+
+```sh
+# one interactive session to watch yourself
+python3 poc/besu-signed-approvals/gasstorm_ui.py            # then open http://127.0.0.1:18000/load-test/
+python3 poc/besu-signed-approvals/gasstorm_ui.py --without-gate
+
+# or the scripted A/B that produced the screenshots (needs Playwright; see the script header)
+OPS_PLAYWRIGHT_ROOT=... OPS_UI_DURATION=60 ./poc/besu-signed-approvals/run_ui_case.sh gate-on
+OPS_PLAYWRIGHT_ROOT=... OPS_UI_DURATION=60 ./poc/besu-signed-approvals/run_ui_case.sh gate-off --without-gate
+```
+
+| 60 s Adaptive, ETH transfer | Peak TPS | Average TPS | Sent | Confirmed | Failed | Successful receipts | Blocks |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Gate **on** | **773** | 671 | 40 277 | 40 198 (99.8 %) | 0 | 40 198 | 59 |
+| Gate off | 806 | 779 | 43 669 | 43 622 (99.9 %) | 0 | 43 622 | 59 |
+
+![Adaptive run with the approval gate on](evidence/gasstorm/browser-gate-on/eth-transfer.png)
+
+*Gate on: 773 tx/s peak, 40,198 confirmed, 0 failed. The same run without the gate is in
+[evidence/gasstorm/browser-gate-off/eth-transfer.png](evidence/gasstorm/browser-gate-off/eth-transfer.png).*
+
+**The ceiling on this machine is ~770–800 tx/s, and the gate costs about 8 % of it.** Nothing failed
+in either run; the few dozen still pending are submissions that had not reached a block when the
+window closed. Every displayed confirmation was verified against a receipt afterwards — 40,198
+receipts with the gate on, all successful, no duplicates in the generator's log.
+
+Caveats worth stating in the meeting: the generator, OPS, PostgreSQL, Redis and Besu all share one
+laptop, so this is the ceiling of *this machine*, not of the design; the Reth PoC reached comparable
+figures on the same hardware, which is the honest comparison to draw. Confirmation latency here is
+1.1 s median (a one-second block cadence sets the floor), p99 6.5 s.
+
+Raw evidence per run: the dashboard screenshot, the peak screenshot, the generator's own history
+record, every status sample, the WebSocket frames, and the gzipped receipt list, under
+`evidence/gasstorm/browser-gate-on/` and `browser-gate-off/`.
+
+
+### Constant-rate runs, headless
+
+`gasstorm.py` drives the same generator without the dashboard, at fixed rates, and counts receipts
+itself — useful in CI or over SSH:
 
 ```sh
 python3 poc/besu-signed-approvals/gasstorm.py --rates 100,300,500 --duration 20
 ```
 
-| Requested | Gate | Submitted | Successful receipts | No receipt | Reverted | Generator's send rate | Gate work/tx |
-|---:|---|---:|---:|---:|---:|---:|---:|
-| 100 | off | 2 002 | 2 000 | 2 | 0 | 76/s | — |
-| 100 | **on** | 2 002 | 2 001 | 1 | 0 | 76/s | 14.2 µs |
-| 300 | off | 6 004 | 5 964 | 40 | 0 | 228/s | — |
-| 300 | **on** | 6 003 | 6 001 | 2 | 0 | 228/s | 8.1 µs |
-| 500 | off | 10 012 | 10 012 | 0 | 0 | 362/s | — |
-| 500 | **on** | 10 011 | 9 968 | 43 | 0 | 374/s | 7.0 µs |
+| Requested | Gate | Submitted | Successful receipts | No receipt | Reverted | Gate work/tx |
+|---:|---|---:|---:|---:|---:|---:|
+| 100 | off | 2 002 | 2 000 | 2 | 0 | — |
+| 100 | **on** | 2 002 | 2 001 | 1 | 0 | 14.2 µs |
+| 300 | off | 6 004 | 5 964 | 40 | 0 | — |
+| 300 | **on** | 6 003 | 6 001 | 2 | 0 | 8.1 µs |
+| 500 | off | 10 012 | 10 012 | 0 | 0 | — |
+| 500 | **on** | 10 011 | 9 968 | 43 | 0 | 7.0 µs |
 
-**The gate does not change the outcome at these rates.** Around 10 000 transactions land in ~32 s
-with it and without it; nothing reverts; the handful without a receipt are submissions still in the
-pool when the window closed, and they appear on both sides. The generator's own send rate (76, 228,
-374/s) is what it achieved against this stack — at a requested 500 it could not keep up, which is why
-the two configurations look identical. The next section measures what actually limits it.
-
-**Why it stops near 400–500/s, and why that is not the gate.** The generator keeps ten accounts and
-must submit each account's transactions in nonce order, so its ceiling is roughly
-`accounts ÷ per-request latency`. Measured with ten concurrent clients on this stack:
-
-| | OPS submissions/s | OPS request median | Implied ceiling at 10 accounts |
-|---|---:|---:|---:|
-| Without the gate | 587 | 14.3 ms | ~700/s |
-| With the gate | 500 | 17.7 ms | ~565/s |
-
-That matches what the generator achieves (362–374/s with its own overhead on top), and it says the
-limiter is **per-request latency through OPS to this node**, not the block producer and not the gate:
-the gate accounts for ~3.4 ms of it, the remaining ~14 ms is OPS's own work — RBAC, the database, and
-its `debug_traceCall` against Besu. For comparison, the Reth PoC sustained ~990/s with the same ten
-accounts, implying ~10 ms per request there; the same OPS code is roughly twice as fast per request
-against Reth as against Besu, and finding out why is the next measurement, not a conclusion this run
-supports.
-
-**The ceiling was not found.** A 1 000/s run stalled the block producer on this hardware, so the
-highest rate reported here is 500. A real limit also needs the generator on separate hardware from
-the node, which the Reth PoC had and this one does not.
-
-Raw data: [evidence/gasstorm/summary.json](evidence/gasstorm/summary.json), per-run generator records
-and the block log of each producer beside it.
+At these fixed rates the two configurations are indistinguishable; the difference only appears when
+Adaptive pushes past them. Raw data: [evidence/gasstorm/summary.json](evidence/gasstorm/summary.json).

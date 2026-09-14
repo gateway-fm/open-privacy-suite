@@ -1,0 +1,18 @@
+{
+  "results": [
+    {
+      "workload": "eth-transfer",
+      "confirmed": 6903,
+      "successfulReceipts": 6903,
+      "missingReceipts": 18,
+      "failed": 0,
+      "duplicateLogEntries": 0,
+      "confirmedCounterDelta": 0,
+      "peakLiveTps": 505.63072876494516,
+      "dashboardPeakTps": 505,
+      "adaptive": true,
+      "wallets": 10
+    }
+  ],
+  "websocketFrames": 155
+}

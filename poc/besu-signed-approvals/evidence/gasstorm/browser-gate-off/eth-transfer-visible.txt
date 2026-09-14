@@ -1,0 +1,208 @@
+>
+_
+GasStorm
+Dashboard
+Load Test
+History
+|
+Privacy
+Docs
+L1
+L2
+LoadGen
+Load Test
+1m 0.0s · 806 tx/s peak · 99.9% conf
+Completed
+Mode
+Direct
+Through Privacy Proxy
+JWT
+
+Optional locally (token auto-refreshes). For an external/prod proxy, log in there and paste a fresh JWT.
+
+Gasless
+Off
+Gasless network
+
+Skips funding and sends 0-value transactions — for chains with zero gas fees.
+
+Pattern
+Constant
+Ramp
+Spike
+Adaptive
+Mixed
+Realistic
+
+Adaptive rate that finds maximum throughput
+
+Transaction type
+ETH Transfer
+~21k gas
+
+Simple native ETH transfer
+
+Initial (tx/s)
+Step (tx/s)
+Target pending
+Duration
+s (1m 0s)
+Fix nonce gaps
+
+Completed·1m 0.0s·806 tx/s peak·99.9% conf·43,622 txs
+
+Reset
+TPS Over Time
+Last: 628.6 tx/s
+Peak: 806.0 tx/s
+tx/s
+0:01
+0:03
+0:05
+0:08
+0:10
+0:12
+0:14
+0:16
+0:18
+0:20
+0:22
+0:24
+0:27
+0:29
+0:31
+0:33
+0:36
+0:38
+0:40
+0:42
+0:44
+0:47
+0:49
+0:51
+0:53
+0:55
+0:58
+0
+200
+400
+600
+800
+tx/s
+Test Results
+
+THROUGHPUT
+
+Avg
+
+0.0Mgas/s
+
+Peak
+
+0.0Mgas/s
+
+Avg TPS
+
+727
+
+Peak TPS
+
+806
+
+BLOCKS
+
+Block
+
+—
+
+Avg Block
+
+—
+
+Fill
+
+0.0%
+
+Blocks
+
+60
+
+GAS
+
+Base Fee
+
+—
+
+Gas Price
+
+—
+
+Total Gas
+
+0.00 Mgas
+
+Total Txs
+
+43,622
+
+PROVENANCE
+
+Attestation
+
+OFF
+
+HSM Provider
+
+—
+
+HSM Key
+
+—
+
+HSM Failover
+
+OFF
+
+Transaction Verification
+43,669
+Sent
+43,622
+Confirmed
+0
+Failed
+47
+Pending
+Confirmation Rate
+99.9%
+Average TPS
+727 tx/s
+47 transactions still pending
+Preconfirmation Latency
+Avg: -P50: -P95: -P99: -
+Waiting for preconfirmations...
+Confirmation Latency
+Avg: 1170msP50: 1108msP95: 1592msP99: 6262ms
+0-250ms
+250-500ms
+500-1s
+1-2s
+2s+
+0
+6500
+13000
+19500
+26000
+43,622 transactions
+Statistics Summary
+Metric	Min	Mean	p50	p75	p90	p95	p99	Max
+TX Latency	440ms	1.17s	1.11s	1.36s	1.52s	1.59s	6.26s	6.83s
+Gas Throughput	0.00Mgas/s	0.00Mgas/s	0.00Mgas/s	0.00Mgas/s	0.00Mgas/s	0.00Mgas/s	0.00Mgas/s	0.00Mgas/s
+TX Throughput	0.0tx/s	0.0tx/s	0.0tx/s	0.0tx/s	0.0tx/s	0.0tx/s	0.0tx/s	0.0tx/s
+Block Fill	0.0%	0.0%	0.0%	0.0%	0.0%	0.0%	0.0%	0.0%
+Export Report
+Export JSON
+Export CSV
+>
+GasStorm
+v0.1.0-dev
+0:58

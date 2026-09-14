@@ -1,0 +1,69 @@
+{
+  "capturedAt": "2026-09-14T21:57:07.322Z",
+  "triggeringSample": {
+    "status": "running",
+    "txSent": 37054,
+    "txConfirmed": 36465,
+    "txFailed": 0,
+    "currentTps": 773.6055501448857,
+    "averageTps": 662.6962835783524,
+    "elapsedMs": 55914,
+    "durationMs": 60000,
+    "targetTps": 775,
+    "pattern": "adaptive",
+    "transactionType": "eth-transfer",
+    "warnings": [
+      "Insufficient accounts for target TPS: have 10 accounts (can sustain ~150 TPS), but targeting 200 TPS. Recommended: 100 accounts. Current capacity: 10% of target."
+    ],
+    "peakTps": 773,
+    "flowStats": {
+      "directConfirmed": 36465,
+      "pendingConfirmed": 0,
+      "preconfConfirmed": 0,
+      "droppedRequeued": 0,
+      "revokedFlow": 0,
+      "failedFlow": 0,
+      "totalTracked": 37054,
+      "avgStageCount": 1.9841042802396502
+    },
+    "latency": {
+      "count": 36465,
+      "min": 436,
+      "max": 2102,
+      "avg": 1114.2082819141642,
+      "p50": 1122,
+      "p75": 1363,
+      "p90": 1518,
+      "p95": 1587,
+      "p99": 1763,
+      "buckets": [
+        {
+          "label": "0-250ms",
+          "count": 0
+        },
+        {
+          "label": "250-500ms",
+          "count": 88
+        },
+        {
+          "label": "500-1s",
+          "count": 14007
+        },
+        {
+          "label": "1-2s",
+          "count": 22342
+        },
+        {
+          "label": "2s+",
+          "count": 28
+        }
+      ]
+    },
+    "blockCount": 56,
+    "blockAttestationEnabled": false,
+    "hsmFailoverEnabled": false,
+    "privacyAvailable": true,
+    "privacyMode": true
+  },
+  "visibleText": ">\n_\nGasStorm\nDashboard\nLoad Test\nHistory\n|\nPrivacy\nDocs\nL1\nL2\nLoadGen\nLoad Test\nRunning\nMode\nDirect\nThrough Privacy Proxy\nJWT\n\nOptional locally (token auto-refreshes). For an external/prod proxy, log in there and paste a fresh JWT.\n\nGasless\nOff\nGasless network\n\nSkips funding and sends 0-value transactions — for chains with zero gas fees.\n\nPattern\nConstant\nRamp\nSpike\nAdaptive\nMixed\nRealistic\n\nAdaptive rate that finds maximum throughput\n\nTransaction type\nETH Transfer\n~21k gas\n\nSimple native ETH transfer\n\nInitial (tx/s)\nStep (tx/s)\nTarget pending\nDuration\ns (1m 0s)\nFix nonce gaps\n\n55.00s / 1m 0.0s · 614 tx/s / 775 target · 739 peak\n\n36,967 sent·36,465 conf·502 pending\n\nStop\nTPS Over Time\nCurrent: 614.3 tx/s\nPeak: 739.0 tx/s\ntx/s\n0:01\n0:03\n0:05\n0:07\n0:09\n0:11\n0:13\n0:15\n0:17\n0:19\n0:21\n0:23\n0:25\n0:27\n0:29\n0:31\n0:33\n0:35\n0:37\n0:39\n0:41\n0:43\n0:45\n0:47\n0:49\n0:51\n0:54\n0\n200\n400\n600\n800\ntx/s\nLive Metrics\n\nTHROUGHPUT\n\nNow\n\n0.0Mgas/s\n\nPeak\n\n0.0Mgas/s\n\nTPS\n\n614\n\nPeak TPS\n\n739\n\nBLOCKS\n\nBlock\n\n—\n\nAvg Block\n\n—\n\nFill\n\n0.0%\n\nBlocks\n\n56\n\nGAS\n\nBase Fee\n\n—\n\nGas Price\n\n—\n\nTotal Gas\n\n0.00 Mgas\n\nTotal Txs\n\n36,465\n\nPROVENANCE\n\nAttestation\n\nOFF\n\nHSM Provider\n\n—\n\nHSM Key\n\n—\n\nHSM Failover\n\nOFF\n\nTransaction Verification\n36,967\nSent\n36,465\nConfirmed\n0\nFailed\n502\nPending\nConfirmation Rate\n98.6%\nAverage TPS\n662 tx/s\nTest in progress...\nPending Latency\nAvg: -P50: -P95: -P99: -\nWaiting for pending events...\nPreconfirmation Latency\nAvg: -P50: -P95: -P99: -\nWaiting for preconfirmations...\nConfirmation Latency\nAvg: 1114msP50: 1122msP95: 1587msP99: 1763ms\n0-250ms\n250-500ms\n500-1s\n1-2s\n2s+\n0\n6000\n12000\n18000\n24000\n36,465 transactions\nStatistics Summary\nMetric\tMin\tMean\tp50\tp75\tp90\tp95\tp99\tMax\nTX Latency\t436ms\t1.11s\t1.12s\t1.36s\t1.52s\t1.59s\t1.76s\t2.10s\nGas Throughput\t0.00Mgas/s\t0.00Mgas/s\t0.00Mgas/s\t0.00Mgas/s\t0.00Mgas/s\t0.00Mgas/s\t0.00Mgas/s\t0.00Mgas/s\nTX Throughput\t0.0tx/s\t0.0tx/s\t0.0tx/s\t0.0tx/s\t0.0tx/s\t0.0tx/s\t0.0tx/s\t0.0tx/s\nBlock Fill\t0.0%\t0.0%\t0.0%\t0.0%\t0.0%\t0.0%\t0.0%\t0.0%\n>\nGasStorm\nv0.1.0-dev\n24000"
+}
