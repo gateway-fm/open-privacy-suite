@@ -1,0 +1,90 @@
+[
+  {
+    "test": "approval_before_transaction_included",
+    "passed": true,
+    "hash": "0x6a043a1667ad307c143462bd590d142e28a7ea71e53aa1deb5d9c8ebdfcffb35",
+    "fingerprint": "0x35dd67c6ce7ebb6b7bfb0402f051eec5b9c2334befb059f08a4dd4562547fd79"
+  },
+  {
+    "test": "go_fingerprint_over_besu_calltracer_matches_plugin",
+    "passed": true,
+    "plugin": "0x5c941c6a3eab19f7b363da86fd18f102d2cb85f286a069d8eda4591a8abcbf36",
+    "go": {
+      "fingerprint": "0x5c941c6a3eab19f7b363da86fd18f102d2cb85f286a069d8eda4591a8abcbf36"
+    }
+  },
+  {
+    "test": "transaction_before_approval_waits_then_included",
+    "passed": true,
+    "wait_rounds": 3
+  },
+  {
+    "test": "unapproved_transaction_dropped_after_wait",
+    "passed": true,
+    "hash": "0x6a043a1667ad307c143462bd590d142e28a7ea71e53aa1deb5d9c8ebdfcffb35"
+  },
+  {
+    "test": "same_block_target_change_excludes_stale_approval",
+    "passed": true,
+    "denial": "deny tx=0x6a043a1667ad307c143462bd590d142e28a7ea71e53aa1deb5d9c8ebdfcffb35 reason=OPS_APPROVAL_MISMATCH detail=approved 0x35dd67c6ce7ebb6b7bfb0402f051eec5b9c233"
+  },
+  {
+    "test": "redirected_call_excluded_even_when_application_catches",
+    "passed": true
+  },
+  {
+    "test": "delegatecall_bound_to_caller_storage",
+    "passed": true,
+    "inner": {
+      "type": "DELEGATECALL",
+      "from": "0x0000000000000000000000000000000000001100",
+      "to": "0x0000000000000000000000000000000000001300",
+      "input": "0x5284a2450000000000000000000000000000000000000000000000000000000000000003",
+      "value": "0x0",
+      "calls": []
+    }
+  },
+  {
+    "test": "mismatching_fingerprint_excluded_and_dropped",
+    "passed": true
+  },
+  {
+    "test": "bad_signature_wrong_chain_ignored_duplicates_idempotent",
+    "passed": true
+  },
+  {
+    "test": "eight_counter_increments_approved_against_one_state_all_included",
+    "passed": true
+  },
+  {
+    "test": "deployment_refused_at_preflight_and_dropped_by_producer",
+    "passed": true,
+    "error": "unsupported execution: contract creation"
+  },
+  {
+    "test": "runtime_create_and_selfdestruct_refused_at_preflight_and_dropped",
+    "passed": true
+  },
+  {
+    "test": "approved_call_that_gains_a_create_is_denied_by_the_producer",
+    "passed": true,
+    "denial": "deny tx=0xdcfb3c8df8275bb26ae2b45376e55deeb6c5294b6e9eb193e5eae07cd12fcd8e reason=OPS_APPROVAL_UNSUPPORTED detail=contract creation"
+  },
+  {
+    "test": "same_signed_transaction_included_after_new_preflight_following_a_mismatch",
+    "passed": true
+  },
+  {
+    "test": "restart_drops_approvals_resubmission_after_new_preflight_included",
+    "passed": true
+  },
+  {
+    "test": "missing_plugin_or_configuration_refuses_to_start",
+    "passed": true
+  },
+  {
+    "test": "precompile_staticcall_and_plain_value_transfer_included",
+    "passed": true,
+    "precompile": "0x0000000000000000000000000000000000000004"
+  }
+]

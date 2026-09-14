@@ -1,0 +1,10 @@
+java.util.NoSuchElementException: The following requested plugins were not found: OpsApprovalPlugin
+	at org.hyperledger.besu.services.BesuPluginContextImpl.matchAndValidateRequestedPlugins(BesuPluginContextImpl.java:187)
+	at org.hyperledger.besu.services.BesuPluginContextImpl.registerPlugins(BesuPluginContextImpl.java:156)
+	at org.hyperledger.besu.cli.BesuCommand.lambda$createPluginRegistrationTask$0(BesuCommand.java:910)
+	at picocli.CommandLine.execute(CommandLine.java:2174)
+	at org.hyperledger.besu.cli.util.ConfigDefaultValueProviderStrategy.execute(ConfigDefaultValueProviderStrategy.java:58)
+	at picocli.CommandLine.execute(CommandLine.java:2174)
+	at org.hyperledger.besu.cli.BesuCommand.executeCommandLine(BesuCommand.java:1015)
+	at org.hyperledger.besu.cli.BesuCommand.parse(BesuCommand.java:877)
+	at org.hyperledger.besu.Besu.main(Besu.java:43)

@@ -1,0 +1,66 @@
+// OPS signed-approvals Besu plugin (PoC). Built against the Besu artifacts Lineth consumes.
+plugins {
+  id 'java'
+}
+
+group = 'fm.gateway.ops'
+version = '0.1.0-poc'
+
+def besuVersion = '26.8.1-d97cbd6'
+
+repositories {
+  mavenCentral()
+  maven { url = uri('https://artifacts.consensys.net/public/linea-besu/maven/') }
+  maven { url = uri('https://artifacts.consensys.net/public/maven/maven/') }
+  maven { url = uri('https://hyperledger.jfrog.io/artifactory/besu-maven/') }
+}
+
+java {
+  toolchain { languageVersion = JavaLanguageVersion.of(25) }
+}
+
+configurations {
+  besuRuntime
+}
+
+dependencies {
+  // Everything Besu already ships on its classpath is compileOnly; the JAR must stay thin.
+  compileOnly "org.hyperledger.besu:besu-plugin-api:${besuVersion}"
+  compileOnly "org.hyperledger.besu.internal:besu-ethereum-core:${besuVersion}"
+  compileOnly 'info.picocli:picocli:4.7.7'
+  compileOnly 'org.slf4j:slf4j-api:2.0.17'
+  compileOnly 'com.fasterxml.jackson.core:jackson-annotations:2.19.0'
+  compileOnly 'com.google.auto.service:auto-service-annotations:1.1.1'
+  annotationProcessor 'com.google.auto.service:auto-service:1.1.1'
+
+  testImplementation "org.hyperledger.besu:besu-plugin-api:${besuVersion}"
+  testImplementation "org.hyperledger.besu.internal:besu-ethereum-core:${besuVersion}"
+  testImplementation "org.hyperledger.besu.internal:besu-crypto-algorithms:${besuVersion}"
+  testImplementation 'info.picocli:picocli:4.7.7'
+  testImplementation 'org.slf4j:slf4j-api:2.0.17'
+  testImplementation 'com.fasterxml.jackson.core:jackson-databind:2.19.0'
+  testImplementation platform('org.junit:junit-bom:5.12.2')
+  testImplementation 'org.junit.jupiter:junit-jupiter'
+  testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.withType(JavaCompile).configureEach {
+  options.compilerArgs += ['-Xlint:all,-classfile,-processing', '-Werror']
+  options.encoding = 'UTF-8'
+}
+// Tests compare Besu value types with assertEquals; BytesHolder deprecates equals() but keeps it.
+compileTestJava {
+  options.compilerArgs += ['-Xlint:-deprecation']
+}
+
+test {
+  useJUnitPlatform()
+  testLogging { events 'failed'; exceptionFormat 'full' }
+}
+
+jar {
+  archiveFileName = 'ops-besu-approvals.jar'
+  manifest {
+    attributes('Implementation-Title': 'ops-besu-approvals', 'Implementation-Version': project.version)
+  }
+}
