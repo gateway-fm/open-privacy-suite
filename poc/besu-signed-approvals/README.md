@@ -114,11 +114,12 @@ is fixed by the opcode flag.
 
 ## Cost
 
-From `demo.py bench` (32 transactions per block, medians of three measured samples, M2 Max):
-OPS submissions 91.9/s without the gate and 78.0/s with it; OPS request median 10.1 ms → 12.1 ms
-(the `ops_prepareApproval` round trip plus signing and queueing); the plugin's own work per
-transaction inside the selector, 49 µs. Not a capacity measurement and not a producer benchmark —
-see [DEMO.md](DEMO.md) for what each number does and does not cover.
+From `demo.py bench` (128 transactions per block, 16 concurrent clients, medians of three measured
+samples, everything on one M2 Max): OPS submissions **775/s without the gate, 657/s with it**; OPS
+request median 17.5 ms → 21.1 ms (the `ops_prepareApproval` round trip plus signing and queueing);
+the plugin's own work per transaction inside the selector, **22 µs**. This is what one laptop gives
+16 clients, not a capacity limit, and it is not a producer benchmark — see [DEMO.md](DEMO.md) for
+what each number does and does not cover.
 
 ## What is deliberately not here
 
