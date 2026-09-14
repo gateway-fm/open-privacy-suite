@@ -1,0 +1,153 @@
+[
+ {
+  "method": "eth_getBlockByNumber",
+  "params": [
+   "latest",
+   false
+  ],
+  "response": {
+   "jsonrpc": "2.0",
+   "id": 1,
+   "result": {
+    "number": "0x0",
+    "hash": "0x206d061bf3b9595e8f05c26af5c9ee14aced73a68878f220ec3d1c8f8fe3fa10",
+    "mixHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "parentHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "nonce": "0x0000000000000000",
+    "sha3Uncles": "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
+    "logsBloom": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "transactionsRoot": "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
+    "stateRoot": "0xdd43580e35d232b50d00bdb1523ceb982108e8325b3fd90e73f1aef93cb1ce34",
+    "receiptsRoot": "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
+    "miner": "0x0000000000000000000000000000000000000000",
+    "difficulty": "0x1",
+    "totalDifficulty": "0x1",
+    "extraData": "0x",
+    "baseFeePerGas": "0x3b9aca00",
+    "size": "0x220",
+    "gasLimit": "0x1c9c380",
+    "gasUsed": "0x0",
+    "timestamp": "0x0",
+    "uncles": [],
+    "transactions": [],
+    "withdrawalsRoot": "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
+    "withdrawals": []
+   }
+  }
+ },
+ {
+  "method": "web3_clientVersion",
+  "params": [],
+  "response": {
+   "jsonrpc": "2.0",
+   "id": 1,
+   "result": "besu/v26.8.0-f2557d7/osx-aarch_64/openjdk-java-25"
+  }
+ },
+ {
+  "method": "engine_getClientVersionV1",
+  "params": [
+   {
+    "code": "BU",
+    "name": "besu",
+    "version": "x",
+    "commit": "00000000"
+   }
+  ],
+  "response": {
+   "jsonrpc": "2.0",
+   "id": 1,
+   "result": [
+    {
+     "code": "BU",
+     "name": "Besu",
+     "version": "26.8.0-f2557d7",
+     "commit": "f2557d7c"
+    }
+   ]
+  }
+ },
+ {
+  "method": "eth_getBlockByNumber",
+  "params": [
+   "latest",
+   false
+  ],
+  "response": {
+   "jsonrpc": "2.0",
+   "id": 1,
+   "result": {
+    "number": "0x0",
+    "hash": "0x206d061bf3b9595e8f05c26af5c9ee14aced73a68878f220ec3d1c8f8fe3fa10",
+    "mixHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "parentHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "nonce": "0x0000000000000000",
+    "sha3Uncles": "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
+    "logsBloom": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "transactionsRoot": "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
+    "stateRoot": "0xdd43580e35d232b50d00bdb1523ceb982108e8325b3fd90e73f1aef93cb1ce34",
+    "receiptsRoot": "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
+    "miner": "0x0000000000000000000000000000000000000000",
+    "difficulty": "0x1",
+    "totalDifficulty": "0x1",
+    "extraData": "0x",
+    "baseFeePerGas": "0x3b9aca00",
+    "size": "0x220",
+    "gasLimit": "0x1c9c380",
+    "gasUsed": "0x0",
+    "timestamp": "0x0",
+    "uncles": [],
+    "transactions": [],
+    "withdrawalsRoot": "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
+    "withdrawals": []
+   }
+  }
+ },
+ {
+  "method": "engine_forkchoiceUpdatedV2",
+  "params": [
+   {
+    "headBlockHash": "0x206d061bf3b9595e8f05c26af5c9ee14aced73a68878f220ec3d1c8f8fe3fa10",
+    "safeBlockHash": "0x206d061bf3b9595e8f05c26af5c9ee14aced73a68878f220ec3d1c8f8fe3fa10",
+    "finalizedBlockHash": "0x206d061bf3b9595e8f05c26af5c9ee14aced73a68878f220ec3d1c8f8fe3fa10"
+   },
+   null
+  ],
+  "response": {
+   "jsonrpc": "2.0",
+   "id": 1,
+   "result": {
+    "payloadStatus": {
+     "status": "VALID",
+     "latestValidHash": "0x206d061bf3b9595e8f05c26af5c9ee14aced73a68878f220ec3d1c8f8fe3fa10",
+     "validationError": null
+    },
+    "payloadId": null
+   }
+  }
+ },
+ {
+  "method": "engine_forkchoiceUpdatedV3",
+  "params": [
+   {
+    "headBlockHash": "0x206d061bf3b9595e8f05c26af5c9ee14aced73a68878f220ec3d1c8f8fe3fa10",
+    "safeBlockHash": "0x206d061bf3b9595e8f05c26af5c9ee14aced73a68878f220ec3d1c8f8fe3fa10",
+    "finalizedBlockHash": "0x206d061bf3b9595e8f05c26af5c9ee14aced73a68878f220ec3d1c8f8fe3fa10"
+   },
+   {
+    "timestamp": "0x1",
+    "prevRandao": "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "suggestedFeeRecipient": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+    "withdrawals": []
+   }
+  ],
+  "response": {
+   "jsonrpc": "2.0",
+   "id": 1,
+   "error": {
+    "code": -32604,
+    "message": "Method not enabled"
+   }
+  }
+ }
+]

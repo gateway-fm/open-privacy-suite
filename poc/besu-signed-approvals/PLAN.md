@@ -110,6 +110,9 @@ fake RPC server; a mismatch between plugin and Go fingerprints must fail closed.
 | 15 | approved `maybeCreate()` whose branch flips to CREATE in the same block | denied by the producer (lifecycle), excluded |
 | 16 | same signed tx resubmitted after a MISMATCH drop, with a fresh preflight | included |
 | 17 | precompile STATICCALL; plain value transfer to an EOA | both included |
+| 18 | beside Lineth's published `LineaTransactionPoolValidatorPlugin` | gate unaffected |
+| 19 | beside Lineth's `LineaTransactionSelectorPlugin` + ZK tracer on an Osaka fixture chain | both selectors decide; approved included, unapproved dropped |
+| 20 | the same selector on the Shanghai chain | loads and starts; Lineth's tracer then refuses the fork (recorded) |
 
 Evidence under `evidence/` (tests.json, node logs, RPC transcripts). Producer-time benchmark is out of phase 1.
 

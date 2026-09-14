@@ -336,6 +336,91 @@ def restart_loses_approvals():
         record("restart_drops_approvals_resubmission_after_new_preflight_included")
 
 
+def coexists_with_lineth_plugins():
+    """Our gate next to Lineth's own plugins, using the JARs from the linea-besu-package release."""
+    if not (h.BESU_HOME / "plugins" / "linea-sequencer-linea-8bb72b4.jar").is_file():
+        print("SKIP coexists_with_lineth_plugins: Lineth plugin JARs not installed in", h.BESU_HOME / "plugins")
+        return
+
+    def wait_for(node, markers, timeout=60):
+        deadline = time.time() + timeout
+        while True:
+            log = node.log_path.read_text(errors="replace")
+            missing = [m for m in markers if m not in log]
+            if not missing:
+                return log
+            assert time.time() < deadline, missing
+            time.sleep(0.5)
+
+    # Lineth's transaction-pool validator runs in the same node as our gate, on every submission.
+    with node("lineth-pool", linea_plugins=[h.LINEA_POOL_PLUGIN], wait_ms=2000) as n, contextlib.closing(Client(n)) as c:
+        wait_for(n, ["Starting Linea plugin lineth.sequencer.txpoolvalidation.LineaTransactionPoolValidatorPlugin",
+                     "OPS approval gate active"])
+        besu = n.rpc("web3_clientVersion")
+        tx = n.raw(h.ALICE, h.ROUTER, "run(uint256)", 7)
+        c.approve(tx)
+        time.sleep(0.2)
+        n.submit(tx)
+        n.make_block([tx])
+        assert n.receipt(tx["hash"])["status"] == "0x1" and n.storage(h.VAULT_A) == 7
+        blocked = n.raw(h.ALICE, h.ROUTER, "run(uint256)", 5)
+        before = n.nonce(h.ALICE)
+        n.submit(blocked)
+        time.sleep(2.3)
+        n.make_block([])
+        for _ in range(40):
+            if not n.in_pool(blocked["hash"]):
+                break
+            time.sleep(0.25)
+        assert not n.in_pool(blocked["hash"]) and n.nonce(h.ALICE) == before
+        record("gate_works_beside_lineth_transaction_pool_validator", besu=besu)
+
+    # The full sequencer selector, ZK line-counting tracer included, on an Osaka fixture chain.
+    with node("lineth-selector-osaka", linea_plugins=[h.LINEA_SELECTOR_PLUGIN], wait_ms=2000,
+              fork="osaka") as n, contextlib.closing(Client(n)) as c:
+        wait_for(n, ["Starting Linea plugin lineth.sequencer.txselection.LineaTransactionSelectorPlugin",
+                     "OPS approval gate active"])
+        tx = n.raw(h.ALICE, h.ROUTER, "run(uint256)", 7, legacy=False)
+        c.approve(tx)
+        time.sleep(0.2)
+        n.submit(tx)
+        n.make_block([tx])
+        assert n.receipt(tx["hash"])["status"] == "0x1" and n.storage(h.VAULT_A) == 7
+        log = n.log_path.read_text(errors="replace")
+        assert "ZkTracer" in log, "Lineth's ZK tracer must have run beside ours"
+        # Our gate still decides on its own: no approval, no inclusion, even though Lineth's
+        # selector would have accepted the transaction.
+        blocked = n.raw(h.ALICE, h.ROUTER, "run(uint256)", 5, legacy=False)
+        before = n.nonce(h.ALICE)
+        n.submit(blocked)
+        time.sleep(2.3)
+        n.make_block([])
+        for _ in range(40):
+            if not n.in_pool(blocked["hash"]):
+                break
+            time.sleep(0.25)
+        assert not n.in_pool(blocked["hash"]) and n.nonce(h.ALICE) == before and n.storage(h.VAULT_A) == 7
+        record("gate_works_beside_lineth_sequencer_selector_on_osaka")
+
+    # On a pre-Osaka chain the same plugin loads and starts, but its tracer refuses the fork.
+    # DEBUG: at INFO Besu reports only "Block creation failed unexpectedly" without the cause.
+    with node("lineth-selector", linea_plugins=[h.LINEA_SELECTOR_PLUGIN], wait_ms=2000, log_level="DEBUG") as n, contextlib.closing(Client(n)) as c:
+        wait_for(n, ["Starting Linea plugin lineth.sequencer.txselection.LineaTransactionSelectorPlugin",
+                     "OPS approval gate active"])
+        tx = n.raw(h.ALICE, h.ROUTER, "run(uint256)", 7)
+        c.approve(tx)
+        time.sleep(0.2)
+        n.submit(tx)
+        try:
+            n.make_block([tx])
+            outcome = "included"
+        except RuntimeError as e:
+            outcome = str(e)
+        log = wait_for(n, ["Fork no more supported by the tracer"], timeout=30)
+        assert "lineth.sequencer.txselection.selectors.TraceLineLimitTransactionSelector" in log
+        record("lineth_sequencer_selector_loads_but_needs_an_osaka_chain", outcome=outcome[:120])
+
+
 def fail_closed_startup():
     plugin_jar = h.BESU_HOME / "plugins" / h.PLUGIN_JAR.name
     hidden = plugin_jar.with_suffix(".jar.hidden")
@@ -383,7 +468,8 @@ SCENARIOS = {f.__name__: f for f in (
     approval_first, transaction_first, no_approval_timeout, same_block_target_change, caught_inner_failure,
     delegatecall_path, wrong_fingerprint, bad_deliveries, shared_counter, deployment_refused,
     lifecycle_refused, state_change_turns_call_into_lifecycle, resubmission_after_mismatch,
-    restart_loses_approvals, fail_closed_startup, precompile_and_value_paths)}
+    restart_loses_approvals, coexists_with_lineth_plugins, fail_closed_startup,
+    precompile_and_value_paths)}
 
 
 def main():

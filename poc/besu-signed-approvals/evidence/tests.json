@@ -79,6 +79,20 @@
     "passed": true
   },
   {
+    "test": "gate_works_beside_lineth_transaction_pool_validator",
+    "passed": true,
+    "besu": "besu/v26.8.1/osx-aarch_64/openjdk-java-25"
+  },
+  {
+    "test": "gate_works_beside_lineth_sequencer_selector_on_osaka",
+    "passed": true
+  },
+  {
+    "test": "lineth_sequencer_selector_loads_but_needs_an_osaka_chain",
+    "passed": true,
+    "outcome": "engine_forkchoiceUpdatedV2: HTTP 400 b'{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32600,\"message\":\"Invalid Request\"}}'"
+  },
+  {
     "test": "missing_plugin_or_configuration_refuses_to_start",
     "passed": true
   },
