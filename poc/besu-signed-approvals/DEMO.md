@@ -87,13 +87,29 @@ python3 poc/besu-signed-approvals/gasstorm.py --rates 100,300,500 --duration 20
 **The gate does not change the outcome at these rates.** Around 10 000 transactions land in ~32 s
 with it and without it; nothing reverts; the handful without a receipt are submissions still in the
 pool when the window closed, and they appear on both sides. The generator's own send rate (76, 228,
-374/s) is what it achieved while sharing this laptop with OPS, PostgreSQL, Redis and Besu — at a
-requested 500 it could not keep up, which is why the two configurations look identical: the bottleneck
-is the machine, not the gate.
+374/s) is what it achieved against this stack — at a requested 500 it could not keep up, which is why
+the two configurations look identical. The next section measures what actually limits it.
+
+**Why it stops near 400–500/s, and why that is not the gate.** The generator keeps ten accounts and
+must submit each account's transactions in nonce order, so its ceiling is roughly
+`accounts ÷ per-request latency`. Measured with ten concurrent clients on this stack:
+
+| | OPS submissions/s | OPS request median | Implied ceiling at 10 accounts |
+|---|---:|---:|---:|
+| Without the gate | 587 | 14.3 ms | ~700/s |
+| With the gate | 500 | 17.7 ms | ~565/s |
+
+That matches what the generator achieves (362–374/s with its own overhead on top), and it says the
+limiter is **per-request latency through OPS to this node**, not the block producer and not the gate:
+the gate accounts for ~3.4 ms of it, the remaining ~14 ms is OPS's own work — RBAC, the database, and
+its `debug_traceCall` against Besu. For comparison, the Reth PoC sustained ~990/s with the same ten
+accounts, implying ~10 ms per request there; the same OPS code is roughly twice as fast per request
+against Reth as against Besu, and finding out why is the next measurement, not a conclusion this run
+supports.
 
 **The ceiling was not found.** A 1 000/s run stalled the block producer on this hardware, so the
-highest rate reported here is 500. Finding the real limit needs the generator on separate hardware
-from the node, which the Reth PoC had and this one does not.
+highest rate reported here is 500. A real limit also needs the generator on separate hardware from
+the node, which the Reth PoC had and this one does not.
 
 Raw data: [evidence/gasstorm/summary.json](evidence/gasstorm/summary.json), per-run generator records
 and the block log of each producer beside it.
