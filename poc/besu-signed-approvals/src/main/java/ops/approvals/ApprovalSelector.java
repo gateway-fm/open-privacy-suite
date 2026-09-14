@@ -81,13 +81,17 @@ public final class ApprovalSelector implements PluginTransactionSelector {
     return tracer;
   }
 
+  private long gateNanos;
+
   @Override
   public TransactionSelectionResult evaluateTransactionPreProcessing(
       final TransactionEvaluationContext context) {
+    final long started = System.nanoTime();
     tracer.reset(); // never compare against frames of an earlier candidate
     final PendingTransaction pending = context.getPendingTransaction();
     final Hash txHash = pending.getTransaction().getHash();
     final Optional<Approval> approval = store.get(txHash);
+    gateNanos = System.nanoTime() - started;
     if (approval.isEmpty()) {
       final long waited = clock.getAsLong() - pending.getAddedAt();
       if (waited >= waitMs) {
@@ -111,6 +115,7 @@ public final class ApprovalSelector implements PluginTransactionSelector {
   @Override
   public TransactionSelectionResult evaluateTransactionPostProcessing(
       final TransactionEvaluationContext context, final TransactionProcessingResult result) {
+    final long postStarted = System.nanoTime();
     final Hash txHash = context.getPendingTransaction().getTransaction().getHash();
     if (result.isInvalid()) {
       // Besu's ProcessingResultTransactionSelector rejects these before we are consulted; if that
@@ -159,6 +164,12 @@ public final class ApprovalSelector implements PluginTransactionSelector {
     }
     metrics.matched();
     LOG.info("OPS_APPROVAL_DECISION allow tx={} calls={}", txHash, seen.records().size());
+    LOG.info(
+        "OPS_APPROVAL_TIMING {\"tx\":\"{}\",\"mode\":{},\"calls\":{},\"gate_ns\":{}}",
+        txHash,
+        required,
+        seen.records().size(),
+        gateNanos + (System.nanoTime() - postStarted));
     return TransactionSelectionResult.SELECTED;
   }
 

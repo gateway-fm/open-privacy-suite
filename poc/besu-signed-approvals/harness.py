@@ -143,6 +143,7 @@ class Node:
                  expect_exit=False, besu_home=None, linea_plugins=(), log_level=None, genesis=None,
                  fork="shanghai"):
         self.name = name
+        self.plugin = plugin
         self.fork = fork
         genesis = genesis or (osaka_genesis() if fork == "osaka" else EVIDENCE / "genesis.json")
         # The Linea plugin JARs are copied into the stock 26.8.1 distribution (the Besu commit the
@@ -229,12 +230,20 @@ class Node:
         payload_id = start["payloadId"]
         deadline = time.time() + timeout
         while True:
-            decisions = self.decisions()
-            allowed = all(any(f"allow tx={tx['hash']}" in d for d in decisions) for tx in expected)
-            vetoed = denied is None or any(f"deny tx={denied['hash']}" in d for d in decisions)
-            if allowed and vetoed:
+            if self.plugin:
+                decisions = self.decisions()
+                allowed = all(any(f"allow tx={tx['hash']}" in d for d in decisions) for tx in expected)
+                vetoed = denied is None or any(f"deny tx={denied['hash']}" in d for d in decisions)
+                ready = allowed and vetoed
+                detail = {"expected": [tx["hash"] for tx in expected], "decisions": decisions}
+            else:
+                # No gate to report progress: wait until the pool holds every expected transaction.
+                pooled = {t["hash"].lower() for t in self.rpc("txpool_besuTransactions")}
+                ready = all(tx["hash"].lower() in pooled for tx in expected)
+                detail = {"expected": [tx["hash"] for tx in expected], "pooled": sorted(pooled)}
+            if ready:
                 break
-            assert time.time() < deadline, {"expected": [tx["hash"] for tx in expected], "decisions": decisions}
+            assert time.time() < deadline, detail
             time.sleep(0.2)
         time.sleep(1.2 if not expected else 0.8)  # let the candidate holding those decisions be stored
         envelope = self.engine("engine_getPayload" + get_payload, payload_id)
@@ -308,6 +317,25 @@ class Node:
 
     def balance(self, address):
         return int(self.rpc("eth_getBalance", address, "latest"), 16)
+
+    def snapshot(self):
+        """The state the demo asserts is untouched when a transaction is excluded."""
+        return {
+            "alice_nonce": self.nonce(ALICE),
+            "alice_balance": self.rpc("eth_getBalance", ALICE, "latest"),
+            "router": [self.rpc("eth_getStorageAt", ROUTER, hex(i), "latest") for i in range(3)],
+            "relay": [self.rpc("eth_getStorageAt", RELAY, hex(i), "latest") for i in range(3)],
+            "vault_a": self.rpc("eth_getStorageAt", VAULT_A, "0x0", "latest"),
+            "vault_b": self.rpc("eth_getStorageAt", VAULT_B, "0x0", "latest"),
+        }
+
+    def timings(self):
+        """Per-transaction gate cost, as the plugin reports it."""
+        out = []
+        for line in self.log_path.read_text(errors="replace").splitlines():
+            if "OPS_APPROVAL_TIMING " in line:
+                out.append(json.loads(line.split("OPS_APPROVAL_TIMING ", 1)[1]))
+        return out
 
     def decisions(self):
         out = []
