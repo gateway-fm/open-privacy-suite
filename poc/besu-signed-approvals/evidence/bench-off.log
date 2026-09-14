@@ -1,0 +1,117 @@
+Setting logging level to INFO
+[2m2026-09-14 22:08:31.864+0200[m[2m | [m[2mmain[m[2m | [m[32mINFO [m[2m | [m[2mBesu[m[2m | [m[32mStarting Besu
+[m[2m2026-09-14 22:08:32.467+0200[m[2m | [m[2mmain[m[2m | [m[33mWARN [m[2m | [m[2mBesu[m[2m | [m[33m--discovery-enabled has been ignored because --p2p-enabled was not defined on the command line.
+[m[2m2026-09-14 22:08:33.323+0200[m[2m | [m[2mmain[m[2m | [m[32mINFO [m[2m | [m[2mBesu[m[2m | [m[32mRPC HTTP JSON-RPC config: JsonRpcConfiguration{enabled=true, port=65513, host=127.0.0.1, corsAllowedDomains=[], hostsAllowlist=[localhost, 127.0.0.1], rpcApis=[ETH, NET, WEB3, DEBUG, TXPOOL, ADMIN], authenticationEnabled=false, authenticationCredentialsFile=null, authenticationPublicKeyFile=null, tlsConfiguration=Optional.empty, httpTimeoutSec=30, maxActiveConnections=80, maxBatchSize=1024}
+[m[2m2026-09-14 22:08:33.325+0200[m[2m | [m[2mmain[m[2m | [m[32mINFO [m[2m | [m[2mBesu[m[2m | [m[32mEngine JSON-RPC config: JsonRpcConfiguration{enabled=true, port=65514, host=127.0.0.1, corsAllowedDomains=[], hostsAllowlist=[*], rpcApis=[ENGINE, ETH], authenticationEnabled=true, authenticationCredentialsFile=null, authenticationPublicKeyFile=<repo>/.tmp/besu-approval-runs/bench-off-85334-1789416510/jwt.hex, tlsConfiguration=Optional.empty, httpTimeoutSec=30, maxActiveConnections=80, maxBatchSize=1024}
+[m[2m2026-09-14 22:08:33.330+0200[m[2m | [m[2mmain[m[2m | [m[33mWARN [m[2m | [m[2mBesu[m[2m | [m[33mForcing --bonsai-limit-trie-logs-enabled=false, since it cannot be enabled with --sync-mode=FULL and --data-storage-format=BONSAI.
+[m[2m2026-09-14 22:08:33.330+0200[m[2m | [m[2mmain[m[2m | [m[32mINFO [m[2m | [m[2mBesu[m[2m | [m[32mConnecting to 0 static nodes.
+[m[2m2026-09-14 22:08:33.337+0200[m[2m | [m[2mmain[m[2m | [m[33mWARN [m[2m | [m[2mBesu[m[2m | [m[33mForcing price bump for transaction replacement to 0, since min-gas-price is set to 0
+[m[2m2026-09-14 22:08:33.338+0200[m[2m | [m[2mmain[m[2m | [m[33mWARN [m[2m | [m[2mBesu[m[2m | [m[33mForcing tx-pool-min-gas-price=0, since it cannot be greater than the value of min-gas-price
+[m[2m2026-09-14 22:08:33.374+0200[m[2m | [m[2mmain[m[2m | [m[32mINFO [m[2m | [m[2mBesu[m[2m | [m[32m
+####################################################################################################
+#                                                                                                  #
+# Besu version 26.8.1                                                                              #
+#                                                                                                  #
+# Configuration:                                                                                   #
+# Network: Custom genesis file                                                                     #
+# <repo>/.tmp/worktrees/ops-besu-signed-appr                     #
+# ovals/poc/besu-signed-approvals/evidence/genesis.json                                            #
+# Network Id: 31337                                                                                #
+# Data storage: Bonsai                                                                             #
+# RocksDB max open files: 1024 (derived from available resources)                                  #
+# Sync mode: Full                                                                                  #
+# Sync min peers: 5                                                                                #
+# P2P Discovery: disabled                                                                          #
+# RPC HTTP APIs: ETH,NET,WEB3,DEBUG,TXPOOL,ADMIN                                                   #
+# RPC HTTP port: 65513                                                                             #
+# Engine APIs: ENGINE,ETH                                                                          #
+# Engine port: 65514                                                                               #
+# Engine JWT: <repo>/.tmp/worktrees/ops-besu                     #
+# -signed-approvals/.tmp/besu-approval-runs/bench-off-85334-1789416510/jwt.hex                     #
+# Using LAYERED transaction pool implementation                                                    #
+# Using STACKED worldstate update mode                                                             #
+# Opcode optimizations enabled                                                                     #
+# Parallel transaction processing enabled                                                          #
+# BAL pruning enabled (retained BALs: 113056)                                                      #
+#                                                                                                  #
+# Host:                                                                                            #
+# Java: openjdk-java-25                                                                            #
+# Maximum heap size: 2,00 GB                                                                       #
+# OS: osx-aarch_64                                                                                 #
+# Total memory: 32,00 GB                                                                           #
+# CPU cores: 12                                                                                    #
+#                                                                                                  #
+# Plugin Registration Summary:                                                                     #
+# No plugins have been registered.                                                                 #
+# TOTAL = 0 of 0 plugins successfully registered.                                                  #
+#                                                                                                  #
+####################################################################################################
+[m[2m2026-09-14 22:08:33.374+0200[m[2m | [m[2mmain[m[2m | [m[32mINFO [m[2m | [m[2mBesu[m[2m | [m[32mSecurity Module: localfile
+[m[2m2026-09-14 22:08:33.374+0200[m[2m | [m[2mmain[m[2m | [m[32mINFO [m[2m | [m[2mVersionMetadata[m[2m | [m[32mLookup version metadata file in data directory: <repo>/.tmp/besu-approval-runs/bench-off-85334-1789416510/data
+[m[2m2026-09-14 22:08:33.375+0200[m[2m | [m[2mmain[m[2m | [m[32mINFO [m[2m | [m[2mVersionMetadata[m[2m | [m[32mData directory <repo>/.tmp/besu-approval-runs/bench-off-85334-1789416510/data does not exist - creating it
+[m[2m2026-09-14 22:08:33.375+0200[m[2m | [m[2mmain[m[2m | [m[32mINFO [m[2m | [m[2mVersionMetadata[m[2m | [m[32mNo version data detected. Writing Besu version 26.8.1 to metadata file
+[m[2m2026-09-14 22:08:33.620+0200[m[2m | [m[2mmain[m[2m | [m[32mINFO [m[2m | [m[2mBesu[m[2m | [m[32mUsing the native implementation of alt bn128
+[m[2m2026-09-14 22:08:33.621+0200[m[2m | [m[2mmain[m[2m | [m[32mINFO [m[2m | [m[2mBesu[m[2m | [m[32mUsing the Java implementation of modexp
+[m[2m2026-09-14 22:08:33.628+0200[m[2m | [m[2mmain[m[2m | [m[32mINFO [m[2m | [m[2mBesu[m[2m | [m[32mUsing the native implementation of the signature algorithm
+[m[2m2026-09-14 22:08:33.630+0200[m[2m | [m[2mmain[m[2m | [m[32mINFO [m[2m | [m[2mBesu[m[2m | [m[32mUsing the Java implementation of the blake2bf algorithm
+[m[2m2026-09-14 22:08:34.083+0200[m[2m | [m[2mmain[m[2m | [m[32mINFO [m[2m | [m[2mBesu[m[2m | [m[32mUsing the native BoringSSL implementation of p256verify
+[m[2m2026-09-14 22:08:34.127+0200[m[2m | [m[2mmain[m[2m | [m[33mWARN [m[2m | [m[2mBesuController[m[2m | [m[33mNo consensus mechanism detected in genesis config, using PoS
+[m[2m2026-09-14 22:08:34.135+0200[m[2m | [m[2mmain[m[2m | [m[33mWARN [m[2m | [m[2mBesu[m[2m | [m[33mForcing price bump for transaction replacement to 0, since min-gas-price is set to 0
+[m[2m2026-09-14 22:08:34.135+0200[m[2m | [m[2mmain[m[2m | [m[33mWARN [m[2m | [m[2mBesu[m[2m | [m[33mForcing tx-pool-min-gas-price=0, since it cannot be greater than the value of min-gas-price
+[m[2m2026-09-14 22:08:34.136+0200[m[2m | [m[2mmain[m[2m | [m[32mINFO [m[2m | [m[2mKeyPairUtil[m[2m | [m[32mAttempting to load public key from <repo>/.tmp/besu-approval-runs/bench-off-85334-1789416510/key
+[m[2m2026-09-14 22:08:34.145+0200[m[2m | [m[2mmain[m[2m | [m[32mINFO [m[2m | [m[2mKeyPairUtil[m[2m | [m[32mLoaded public key 0x8318535b54105d4a7aae60c08fc45f9687181b4fdfc625bd1a753fa7397fed753547f11ca8696646f2f3acb08e31016afac23e630c5d11f59f61fef57b0d2aa5 from <repo>/.tmp/besu-approval-runs/bench-off-85334-1789416510/key
+[m[2m2026-09-14 22:08:34.200+0200[m[2m | [m[2mmain[m[2m | [m[32mINFO [m[2m | [m[2mProtocolScheduleBuilder[m[2m | [m[32mProtocol schedule created with milestones: [Shanghai:0]
+[m[2m2026-09-14 22:08:34.201+0200[m[2m | [m[2mmain[m[2m | [m[32mINFO [m[2m | [m[2mRocksDBKeyValueStorageFactory[m[2m | [m[32mNo existing database at <repo>/.tmp/besu-approval-runs/bench-off-85334-1789416510/data. Using default metadata for new db versionedStorageFormat=BaseVersionedStorageFormat{format=BONSAI, version=3}
+[m[2m2026-09-14 22:08:34.703+0200[m[2m | [m[2mmain[m[2m | [m[32mINFO [m[2m | [m[2mFlatDbStrategyProvider[m[2m | [m[32mFlat db mode found FULL
+[m[2m2026-09-14 22:08:34.705+0200[m[2m | [m[2mmain[m[2m | [m[32mINFO [m[2m | [m[2mFlatDbStrategyProvider[m[2m | [m[32mDB mode with code stored using code hash enabled = true
+[m[2m2026-09-14 22:08:34.711+0200[m[2m | [m[2mmain[m[2m | [m[32mINFO [m[2m | [m[2mFlatDbStrategyProvider[m[2m | [m[32mFlat db mode found FULL
+[m[2m2026-09-14 22:08:34.711+0200[m[2m | [m[2mmain[m[2m | [m[32mINFO [m[2m | [m[2mFlatDbStrategyProvider[m[2m | [m[32mDB mode with code stored using code hash enabled = true
+[m[2m2026-09-14 22:08:34.762+0200[m[2m | [m[2mmain[m[2m | [m[32mINFO [m[2m | [m[2mBesuControllerBuilder[m[2m | [m[32mAdding ChainDataPruner to observe block added events
+[m[2m2026-09-14 22:08:34.763+0200[m[2m | [m[2mmain[m[2m | [m[32mINFO [m[2m | [m[2mBesuControllerBuilder[m[2m | [m[32mBAL pruning enabled | BALs retained: 113056 | Frequency: 256
+[m[2m2026-09-14 22:08:34.776+0200[m[2m | [m[2mmain[m[2m | [m[32mINFO [m[2m | [m[2mTransactionPoolFactory[m[2m | [m[32mEnabling transaction pool
+[m[2m2026-09-14 22:08:34.782+0200[m[2m | [m[2mmain[m[2m | [m[32mINFO [m[2m | [m[2mEthPeers[m[2m | [m[32mUpdating the default best peer comparator
+[m[2m2026-09-14 22:08:34.786+0200[m[2m | [m[2mmain[m[2m | [m[32mINFO [m[2m | [m[2mBesuControllerBuilder[m[2m | [m[32mTTD difficulty is present, creating initial sync for PoS
+[m[2m2026-09-14 22:08:34.799+0200[m[2m | [m[2mmain[m[2m | [m[32mINFO [m[2m | [m[2mRunnerBuilder[m[2m | [m[32mDetecting NAT service.
+[m[2m2026-09-14 22:08:34.879+0200[m[2m | [m[2mmain[m[2m | [m[32mINFO [m[2m | [m[2mRunner[m[2m | [m[32mStarting external services ... 
+[m[2m2026-09-14 22:08:34.879+0200[m[2m | [m[2mmain[m[2m | [m[32mINFO [m[2m | [m[2mJsonRpcHttpService[m[2m | [m[32mStarting JSON-RPC service on 127.0.0.1:65513
+[m[2m2026-09-14 22:08:34.915+0200[m[2m | [m[2mmain[m[2m | [m[32mINFO [m[2m | [m[2mEngineJsonRpcService[m[2m | [m[32mStarting JSON-RPC service on 127.0.0.1:65514
+[m[2m2026-09-14 22:08:34.915+0200[m[2m | [m[2mvert.x-eventloop-thread-1[m[2m | [m[32mINFO [m[2m | [m[2mJsonRpcHttpService[m[2m | [m[32mJSON-RPC service started and listening on 127.0.0.1:65513
+[m[2m2026-09-14 22:08:34.917+0200[m[2m | [m[2mvert.x-eventloop-thread-1[m[2m | [m[32mINFO [m[2m | [m[2mEngineJsonRpcService[m[2m | [m[32mJSON-RPC service started and listening on 127.0.0.1:65514
+[m[2m2026-09-14 22:08:34.919+0200[m[2m | [m[2mmain[m[2m | [m[32mINFO [m[2m | [m[2mAutoTransactionLogBloomCachingService[m[2m | [m[32mStarting auto transaction log bloom caching service.
+[m[2m2026-09-14 22:08:34.919+0200[m[2m | [m[2mmain[m[2m | [m[32mINFO [m[2m | [m[2mLogBloomCacheMetadata[m[2m | [m[32mLookup cache metadata file in data directory: <repo>/.tmp/besu-approval-runs/bench-off-85334-1789416510/data/caches
+[m[2m2026-09-14 22:08:34.924+0200[m[2m | [m[2mmain[m[2m | [m[32mINFO [m[2m | [m[2mRunner[m[2m | [m[32mStarting Ethereum main loop ... 
+[m[2m2026-09-14 22:08:34.924+0200[m[2m | [m[2mmain[m[2m | [m[32mINFO [m[2m | [m[2mNatService[m[2m | [m[32mNo NAT environment detected so no service could be started
+[m[2m2026-09-14 22:08:34.924+0200[m[2m | [m[2mmain[m[2m | [m[32mINFO [m[2m | [m[2mNetworkRunner[m[2m | [m[32mStarting Network.
+[m[2m2026-09-14 22:08:34.927+0200[m[2m | [m[2mmain[m[2m | [m[32mINFO [m[2m | [m[2mNetworkRunner[m[2m | [m[32mSupported capabilities: [eth/68, eth/69, eth/70, eth/71], [snap/1]
+[m[2m2026-09-14 22:08:34.927+0200[m[2m | [m[2mmain[m[2m | [m[32mINFO [m[2m | [m[2mRunner[m[2m | [m[32mEthereum main loop is up.
+[m[2m2026-09-14 22:08:38.124+0200[m[2m | [m[2mengine-ordered-execution-0[m[2m | [m[32mINFO [m[2m | [m[2mMergeCoordinator[m[2m | [m[32mStart building proposals for block 1 identified by 0x0094b6536c934601
+[m[2m2026-09-14 22:08:38.126+0200[m[2m | [m[2mengine-ordered-execution-0[m[2m | [m[32mINFO [m[2m | [m[2mEngineForkchoiceUpdatedV2[m[2m | [m[32mFCU(VALID) | head: 206d0.....3fa10 | safe: 206d0.....3fa10 | finalized: 206d0.....3fa10
+[m[2m2026-09-14 22:08:38.154+0200[m[2m | [m[2mEthScheduler-BlockCreation-0-1[m[2m | [m[32mINFO [m[2m | [m[2mPostMergeContext[m[2m | [m[32mNew proposal for payloadId 0x0094b6536c934601 block 1 (0xfc60f8e5a37ed0fd3dff61ddcbf334030b87bbe77e7c33dc05e5381a277a3ff3) gas used 864864 transactions 32 reward 972,97 szabo is better than the previous one by 972,97 szabo
+[m[2m2026-09-14 22:08:38.945+0200[m[2m | [m[2mvert.x-worker-thread-9[m[2m | [m[32mINFO [m[2m | [m[2mEngineGetPayloadV2[m[2m | [m[32mProduced #1  (fc60f.....a3ff3)|   32 tx | 0 ws | 864.864 (2,9%) gas in 0,818s | Timing(started at 2026-09-14T20:08:38.125903Z, duplicateWorldState=0ms, preTxsSelection=0ms, txsSelection=11ms, selectedTxsEvaluation=6ms, blockAssembled=3ms, awaitingRetrieval=803ms) | PayloadId 0x0094b6536c934601
+[m[2m2026-09-14 22:08:38.977+0200[m[2m | [m[2mengine-ordered-execution-0[m[2m | [m[32mINFO [m[2m | [m[2mEngineNewPayloadV2[m[2m | [m[32mImported #1  (fc60f.....a3ff3)|   32 tx|  0 ws| 875,00 mwei bfee|     864.864 (  2,9%) gas used| 14,3ms exec|  60,47 Mgas/s|  0 peers
+[m[2m2026-09-14 22:08:38.990+0200[m[2m | [m[2mengine-ordered-execution-0[m[2m | [m[32mINFO [m[2m | [m[2mEngineForkchoiceUpdatedV2[m[2m | [m[32mFCU(VALID) | head: fc60f.....a3ff3 | safe: fc60f.....a3ff3 | finalized: fc60f.....a3ff3
+[m[2m2026-09-14 22:08:40.008+0200[m[2m | [m[2mengine-ordered-execution-0[m[2m | [m[32mINFO [m[2m | [m[2mMergeCoordinator[m[2m | [m[32mStart building proposals for block 2 identified by 0x0094b6174a686702
+[m[2m2026-09-14 22:08:40.008+0200[m[2m | [m[2mengine-ordered-execution-0[m[2m | [m[32mINFO [m[2m | [m[2mEngineForkchoiceUpdatedV2[m[2m | [m[32mFCU(VALID) | head: fc60f.....a3ff3 | safe: fc60f.....a3ff3 | finalized: fc60f.....a3ff3
+[m[2m2026-09-14 22:08:40.019+0200[m[2m | [m[2mEthScheduler-BlockCreation-0-2[m[2m | [m[32mINFO [m[2m | [m[2mPostMergeContext[m[2m | [m[32mNew proposal for payloadId 0x0094b6174a686702 block 2 (0xc95caade26310d836fa51e69f08b09e95b69988e56ca20d6f3b9305b8d3cf11e) gas used 847776 transactions 32 reward 1,04 finney is better than the previous one by 1,04 finney
+[m[2m2026-09-14 22:08:40.822+0200[m[2m | [m[2mvert.x-worker-thread-11[m[2m | [m[32mINFO [m[2m | [m[2mEngineGetPayloadV2[m[2m | [m[32mProduced #2  (c95ca.....cf11e)|   32 tx | 0 ws | 847.776 (2,8%) gas in 0,813s | Timing(started at 2026-09-14T20:08:40.008564Z, duplicateWorldState=0ms, preTxsSelection=0ms, txsSelection=4ms, selectedTxsEvaluation=3ms, blockAssembled=0ms, awaitingRetrieval=808ms) | PayloadId 0x0094b6174a686702
+[m[2m2026-09-14 22:08:40.833+0200[m[2m | [m[2mengine-ordered-execution-0[m[2m | [m[32mINFO [m[2m | [m[2mEngineNewPayloadV2[m[2m | [m[32mImported #2  (c95ca.....cf11e)|   32 tx|  0 ws| 771,93 mwei bfee|     847.776 (  2,8%) gas used| 6,7ms exec| 126,96 Mgas/s|  0 peers
+[m[2m2026-09-14 22:08:40.837+0200[m[2m | [m[2mengine-ordered-execution-0[m[2m | [m[32mINFO [m[2m | [m[2mEngineForkchoiceUpdatedV2[m[2m | [m[32mFCU(VALID) | head: c95ca.....cf11e | safe: c95ca.....cf11e | finalized: c95ca.....cf11e
+[m[2m2026-09-14 22:08:41.835+0200[m[2m | [m[2mengine-ordered-execution-0[m[2m | [m[32mINFO [m[2m | [m[2mMergeCoordinator[m[2m | [m[32mStart building proposals for block 3 identified by 0x0094b67f5adafffd
+[m[2m2026-09-14 22:08:41.835+0200[m[2m | [m[2mengine-ordered-execution-0[m[2m | [m[32mINFO [m[2m | [m[2mEngineForkchoiceUpdatedV2[m[2m | [m[32mFCU(VALID) | head: c95ca.....cf11e | safe: c95ca.....cf11e | finalized: c95ca.....cf11e
+[m[2m2026-09-14 22:08:41.844+0200[m[2m | [m[2mEthScheduler-BlockCreation-0-3[m[2m | [m[32mINFO [m[2m | [m[2mPostMergeContext[m[2m | [m[32mNew proposal for payloadId 0x0094b67f5adafffd block 3 (0x827ab113073b8d5cde7c3cdfe69e213d13cb0a4d9665f7ba8d8c7e67981088df) gas used 847776 transactions 32 reward 1,12 finney is better than the previous one by 1,12 finney
+[m[2m2026-09-14 22:08:42.647+0200[m[2m | [m[2mvert.x-worker-thread-13[m[2m | [m[32mINFO [m[2m | [m[2mEngineGetPayloadV2[m[2m | [m[32mProduced #3  (827ab.....088df)|   32 tx | 0 ws | 847.776 (2,8%) gas in 0,810s | Timing(started at 2026-09-14T20:08:41.835865Z, duplicateWorldState=0ms, preTxsSelection=0ms, txsSelection=3ms, selectedTxsEvaluation=2ms, blockAssembled=0ms, awaitingRetrieval=806ms) | PayloadId 0x0094b67f5adafffd
+[m[2m2026-09-14 22:08:42.656+0200[m[2m | [m[2mengine-ordered-execution-0[m[2m | [m[32mINFO [m[2m | [m[2mEngineNewPayloadV2[m[2m | [m[32mImported #3  (827ab.....088df)|   32 tx|  0 ws| 680,89 mwei bfee|     847.776 (  2,8%) gas used| 5,1ms exec| 166,18 Mgas/s|  0 peers
+[m[2m2026-09-14 22:08:42.660+0200[m[2m | [m[2mengine-ordered-execution-0[m[2m | [m[32mINFO [m[2m | [m[2mEngineForkchoiceUpdatedV2[m[2m | [m[32mFCU(VALID) | head: 827ab.....088df | safe: 827ab.....088df | finalized: 827ab.....088df
+[m[2m2026-09-14 22:08:43.630+0200[m[2m | [m[2mengine-ordered-execution-0[m[2m | [m[32mINFO [m[2m | [m[2mMergeCoordinator[m[2m | [m[32mStart building proposals for block 4 identified by 0x0094b66208535704
+[m[2m2026-09-14 22:08:43.630+0200[m[2m | [m[2mengine-ordered-execution-0[m[2m | [m[32mINFO [m[2m | [m[2mEngineForkchoiceUpdatedV2[m[2m | [m[32mFCU(VALID) | head: 827ab.....088df | safe: 827ab.....088df | finalized: 827ab.....088df
+[m[2m2026-09-14 22:08:43.638+0200[m[2m | [m[2mEthScheduler-BlockCreation-0-4[m[2m | [m[32mINFO [m[2m | [m[2mPostMergeContext[m[2m | [m[32mNew proposal for payloadId 0x0094b66208535704 block 4 (0xffcd2a887bd97d61bc5e99d4e1f7ed7a63d7986e89b80313f8d9d3e805c48c95) gas used 847776 transactions 32 reward 1,19 finney is better than the previous one by 1,19 finney
+[m[2m2026-09-14 22:08:44.444+0200[m[2m | [m[2mvert.x-worker-thread-15[m[2m | [m[32mINFO [m[2m | [m[2mEngineGetPayloadV2[m[2m | [m[32mProduced #4  (ffcd2.....48c95)|   32 tx | 0 ws | 847.776 (2,8%) gas in 0,813s | Timing(started at 2026-09-14T20:08:43.630624Z, duplicateWorldState=0ms, preTxsSelection=0ms, txsSelection=2ms, selectedTxsEvaluation=1ms, blockAssembled=0ms, awaitingRetrieval=809ms) | PayloadId 0x0094b66208535704
+[m[2m2026-09-14 22:08:44.452+0200[m[2m | [m[2mengine-ordered-execution-0[m[2m | [m[32mINFO [m[2m | [m[2mEngineNewPayloadV2[m[2m | [m[32mImported #4  (ffcd2.....48c95)|   32 tx|  0 ws| 600,59 mwei bfee|     847.776 (  2,8%) gas used| 5,0ms exec| 169,69 Mgas/s|  0 peers
+[m[2m2026-09-14 22:08:44.456+0200[m[2m | [m[2mengine-ordered-execution-0[m[2m | [m[32mINFO [m[2m | [m[2mEngineForkchoiceUpdatedV2[m[2m | [m[32mFCU(VALID) | head: ffcd2.....48c95 | safe: ffcd2.....48c95 | finalized: ffcd2.....48c95
+[m[2m2026-09-14 22:08:44.507+0200[m[2m | [m[2mBesuCommand-Shutdown-Hook[m[2m | [m[32mINFO [m[2m | [m[2mNetworkRunner[m[2m | [m[32mStopping Network.
+[m[2m2026-09-14 22:08:44.507+0200[m[2m | [m[2mBesuCommand-Shutdown-Hook[m[2m | [m[32mINFO [m[2m | [m[2mEthProtocolManager[m[2m | [m[32mStopping eth Subprotocol.
+[m[2m2026-09-14 22:08:44.512+0200[m[2m | [m[2mBesuCommand-Shutdown-Hook[m[2m | [m[32mINFO [m[2m | [m[2mEthProtocolManager[m[2m | [m[32meth Subprotocol stopped.
+[m[2m2026-09-14 22:08:44.512+0200[m[2m | [m[2mBesuCommand-Shutdown-Hook[m[2m | [m[32mINFO [m[2m | [m[2mNetworkRunner[m[2m | [m[32mNetwork stopped.
+[m[2m2026-09-14 22:08:44.512+0200[m[2m | [m[2mBesuCommand-Shutdown-Hook[m[2m | [m[32mINFO [m[2m | [m[2mAutoTransactionLogBloomCachingService[m[2m | [m[32mShutting down Auto transaction logs caching service.
+[m[2m2026-09-14 22:08:44.512+0200[m[2m | [m[2mBesuCommand-Shutdown-Hook[m[2m | [m[32mINFO [m[2m | [m[2mNatService[m[2m | [m[32mNo NAT environment detected so no service could be stopped
+[m

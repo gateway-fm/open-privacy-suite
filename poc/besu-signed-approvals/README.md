@@ -13,6 +13,10 @@ selector with its ZK tracer).**
 The OPS delivery path (`internal/nodeapproval` signer, batches, TCP framing) is byte-for-byte unchanged;
 OPS gains a Besu preflight mode.
 
+**[DEMO.md](DEMO.md) — one command brings up the real OPS server, PostgreSQL, Redis and Besu and walks
+four steps (allowed call, cross-org refusal, same-block divergence veto, contract deployment), plus
+the cost measurement.**
+
 ## How it works
 
 ```mermaid
@@ -108,6 +112,14 @@ the integration scenarios and the parity check only, not by unit tests. A critic
 code preceded the final run; its blocker (EIP-6780 SELFDESTRUCT invisible to `traceEndTransaction`)
 is fixed by the opcode flag.
 
+## Cost
+
+From `demo.py bench` (32 transactions per block, medians of three measured samples, M2 Max):
+OPS submissions 91.9/s without the gate and 78.0/s with it; OPS request median 10.1 ms → 12.1 ms
+(the `ops_prepareApproval` round trip plus signing and queueing); the plugin's own work per
+transaction inside the selector, 49 µs. Not a capacity measurement and not a producer benchmark —
+see [DEMO.md](DEMO.md) for what each number does and does not cover.
+
 ## What is deliberately not here
 
 - **Strict V2 is state-exact, by design.** A deployment (or any lifecycle transaction) is approved
@@ -118,8 +130,9 @@ is fixed by the opcode flag.
   producer is not rejected. Same limit as the Reth PoC; a consensus rule needs a Besu change, not a plugin.
 - **Timeout eviction happens at the next block-building round**, not on an independent timer — Besu
   exposes no plugin API to remove a pool transaction. Unselectable in the meantime.
-- No producer-time benchmark yet; `TracerAggregator` cost is per opcode and must be measured on the
-  target workload.
+- **No load-generator benchmark.** The numbers above come from a single-threaded submitter against a
+  local stack; a real producer benchmark needs a load generator at the node's block cadence, as the
+  Reth PoC did with Gasstorm.
 - **Single-producer assumptions**: approvals are released on `HEAD_ADVANCED`/`CHAIN_REORG`; a reorg that
   returns transactions to the pool leaves them waiting for a new approval, which OPS does not re-send.
   Every producer must run the plugin; a plugin that calls `BlockTransactionSelectionService.commit()`
@@ -179,6 +192,8 @@ client over the Engine API. Plugin options:
 
 OPS: `OPS_APPROVAL_NODE=besu`, `OPS_APPROVAL_TARGET=host:port` (the plugin's listen address),
 `OPS_APPROVAL_SEED_FILE` as before; the node's `--rpc-http-api` must include `OPS`.
+
+Demo and benchmark: [demo.py](demo.py) (see [DEMO.md](DEMO.md)).
 
 Code map: [gate](src/main/java/ops/approvals/ApprovalSelector.java) ·
 [tracer](src/main/java/ops/approvals/ApprovalTracer.java) ·

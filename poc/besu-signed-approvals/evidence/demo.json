@@ -1,0 +1,28 @@
+{
+  "ops": "http://127.0.0.1:64678",
+  "besu": "http://127.0.0.1:64659",
+  "checks": [
+    {
+      "name": "same_org_executes",
+      "tx": "0x6a043a1667ad307c143462bd590d142e28a7ea71e53aa1deb5d9c8ebdfcffb35"
+    },
+    {
+      "name": "ops_rejects_cross_org",
+      "response": {
+        "error": "transaction denied: cross-org access not permitted",
+        "http_status": 403
+      }
+    },
+    {
+      "name": "besu_excludes_divergent_execution",
+      "tx": "0xf34f22c369a88232c1823da4ade767e229df9ff1d0a55c827899a68c18ceb873",
+      "decisions": [
+        "deny tx=0xf34f22c369a88232c1823da4ade767e229df9ff1d0a55c827899a68c18ceb873 reason=OPS_APPROVAL_MISMATCH detail=approved 0xbabb630a2f7c7ff75f7e7d3f29bc0074263249864b9937a5434af7468e1866ac actual 0x7458081dd03073f9962d1ea20ab2559a939fe224fbc2494542874c5a0fdc3490"
+      ]
+    },
+    {
+      "name": "deployment_included_and_registered",
+      "address": "0x71c95911e9a5d330f4d621842ec243ee1343292e"
+    }
+  ]
+}
