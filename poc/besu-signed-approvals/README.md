@@ -131,10 +131,12 @@ what each number does and does not cover.
   producer is not rejected. Same limit as the Reth PoC; a consensus rule needs a Besu change, not a plugin.
 - **Timeout eviction happens at the next block-building round**, not on an independent timer — Besu
   exposes no plugin API to remove a pool transaction. Unselectable in the meantime.
-- **The throughput ceiling is unknown.** Gasstorm drives the stack to ~10 000 transactions in 32 s
-  with the gate on, indistinguishable from the gate off ([DEMO.md](DEMO.md)), but at a requested
-  1 000/s the block producer stalled on this laptop. The generator, OPS, the database and the node
-  all share one machine, so these runs measure the machine, not the design.
+- **The throughput ceiling is unknown, and per-request latency is what limits these runs.** Gasstorm
+  drives the stack to ~10 000 transactions in 32 s with the gate on, indistinguishable from the gate
+  off, stalling near 400–500/s because the generator's ten accounts each submit in nonce order at
+  ~14–18 ms per request. The gate is ~3.4 ms of that; the rest is OPS's own work against this node —
+  and the same OPS code is about twice as fast per request against Reth, which is the open question
+  ([DEMO.md](DEMO.md)).
 - **Single-producer assumptions**: approvals are released on `HEAD_ADVANCED`/`CHAIN_REORG`; a reorg that
   returns transactions to the pool leaves them waiting for a new approval, which OPS does not re-send.
   Every producer must run the plugin; a plugin that calls `BlockTransactionSelectionService.commit()`
