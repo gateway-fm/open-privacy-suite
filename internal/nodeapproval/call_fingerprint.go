@@ -34,6 +34,19 @@ func validHashMode(mode uint8) bool { return mode == HashStrict || mode == HashC
 // CallFingerprint binds call structure, inputs, value and executed code. It
 // deliberately does not bind storage, balances, account nonces, outputs or logs.
 func CallFingerprint(calls, pre object) (common.Hash, *tracer.TraceResult, error) {
+	codes := map[string]common.Hash{}
+	for address, account := range pre {
+		code, e := hexutil.Decode(field(obj(account), "code", "0x"))
+		if e != nil {
+			return common.Hash{}, nil, e
+		}
+		codes[strings.ToLower(address)] = crypto.Keccak256Hash(code)
+	}
+	return callFingerprintWithCodes(calls, codes)
+}
+
+// callFingerprintWithCodes is the encoder proper; the Besu path supplies code hashes directly.
+func callFingerprintWithCodes(calls object, codes map[string]common.Hash) (common.Hash, *tracer.TraceResult, error) {
 	trace := &tracer.TraceResult{}
 	count := 0
 	normalized, err := normalizeCall(calls, "", &count, trace, 0)
@@ -44,14 +57,6 @@ func CallFingerprint(calls, pre object) (common.Hash, *tracer.TraceResult, error
 		if target.Type == "CREATE" || target.Type == "CREATE2" || target.Type == "SELFDESTRUCT" {
 			return common.Hash{}, nil, errCallLifecycle
 		}
-	}
-	codes := map[string]common.Hash{}
-	for address, account := range pre {
-		code, e := hexutil.Decode(field(obj(account), "code", "0x"))
-		if e != nil {
-			return common.Hash{}, nil, e
-		}
-		codes[strings.ToLower(address)] = crypto.Keccak256Hash(code)
 	}
 	buf := append([]byte{}, callDomain...)
 	buf = binary.BigEndian.AppendUint32(buf, uint32(count))
