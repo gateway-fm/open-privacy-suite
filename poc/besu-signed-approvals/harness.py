@@ -5,14 +5,17 @@ Besu 26.x has no Clique block production: the node runs as a post-merge executio
 harness plays the consensus client over the Engine API, as Maru does in Lineth.
 """
 import base64
+import contextlib
 import hashlib
 import hmac
+import http.client
 import json
 import os
 from pathlib import Path
 import shutil
 import socket
 import subprocess
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -158,6 +161,9 @@ class Node:
         self.engine_url = f"http://127.0.0.1:{self.engine_port}"
         self.log_path = self.directory / "node.log"
         self.records = []
+        self.local = threading.local()
+        self.connections = []
+        self.connections_lock = threading.Lock()
         self.secret = bytes.fromhex("11" * 32)
         jwt_path = self.directory / "jwt.hex"
         jwt_path.write_text(self.secret.hex())
@@ -275,17 +281,50 @@ class Node:
             token = b64(b'{"alg":"HS256","typ":"JWT"}') + "." + b64(json.dumps({"iat": int(time.time())}).encode())
             headers["Authorization"] = "Bearer " + token + "." + b64(hmac.new(self.secret, token.encode(), hashlib.sha256).digest())
         body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode()
-        req = urllib.request.Request(self.engine_url if engine else self.rpc_url, data=body, headers=headers)
-        try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                result = json.loads(resp.read())
-        except urllib.error.HTTPError as e:  # surface the node's reason, not just the status
-            raise RuntimeError(f"{method}: HTTP {e.code} {e.read()[:300]!r}") from None
+        # One kept-alive connection per thread: opening a socket per call exhausts Besu's
+        # connection limit under load, which shows up as connections reset mid-benchmark.
+        for attempt in range(4):
+            connection = self._connection(engine)
+            try:
+                connection.request("POST", "/", body, headers)
+                response = connection.getresponse()
+                payload = response.read()
+                if response.status >= 400:
+                    raise RuntimeError(f"{method}: HTTP {response.status} {payload[:300]!r}")
+                result = json.loads(payload)
+                break
+            except (OSError, http.client.HTTPException) as e:
+                self._drop_connection(engine)
+                if attempt == 3:
+                    raise RuntimeError(f"{method}: {type(e).__name__} {e}") from None
+                time.sleep(0.2)
         if method not in ("eth_blockNumber", "eth_chainId", "txpool_besuTransactions", "eth_getTransactionReceipt", "engine_getPayloadV2", "engine_getPayloadV5"):
             self.records.append({"method": method, "params": params, "response": result})
         if "error" in result:
             raise RuntimeError(f"{method}: {result['error']}")
         return result["result"]
+
+    def _connection(self, engine):
+        if not hasattr(self.local, "connections"):
+            self.local.connections = {}
+        key = "engine" if engine else "rpc"
+        if key not in self.local.connections:
+            host = (self.engine_url if engine else self.rpc_url).removeprefix("http://")
+            connection = http.client.HTTPConnection(host, timeout=30)
+            self.local.connections[key] = connection
+            with self.connections_lock:
+                self.connections.append(connection)
+        return self.local.connections[key]
+
+    def _drop_connection(self, engine):
+        key = "engine" if engine else "rpc"
+        connection = self.local.connections.pop(key, None)
+        if connection is not None:
+            with contextlib.suppress(Exception):
+                connection.close()
+            with self.connections_lock:
+                if connection in self.connections:
+                    self.connections.remove(connection)
 
     def rpc(self, method, *params):
         return self.request(method, list(params))
@@ -347,6 +386,11 @@ class Node:
         return out
 
     def stop(self):
+        with self.connections_lock:
+            for connection in self.connections:
+                with contextlib.suppress(Exception):
+                    connection.close()
+            self.connections.clear()
         if self.process.poll() is None:
             self.process.terminate()
             try:

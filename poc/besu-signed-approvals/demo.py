@@ -103,6 +103,7 @@ class Stack:
                 DISABLE_COINGECKO="true", MAX_CONCURRENT_REQUESTS="128", EXPLORER_DATABASE_URL="",
                 TRACE_TIERED_VALIDATION="false", AUDIT_BUFFER_DIR=str(self.directory / "audit-buffer"),
                 DB_MAX_OPEN_CONNS="30")
+            env.update(getattr(self, "extra_env", {}))
             if plugin:
                 env.update(OPS_APPROVAL_NODE="besu", OPS_APPROVAL_TARGET=f"127.0.0.1:{self.node.approval_port}",
                            OPS_APPROVAL_SEED_FILE=str(seed), OPS_APPROVAL_MAX_BATCH="32")

@@ -1,0 +1,155 @@
+{
+  "machine": "Darwin arm64",
+  "block_interval_s": 1.0,
+  "workload": "eth-transfer",
+  "rates": [
+    100,
+    300,
+    500
+  ],
+  "duration_s": 20,
+  "results": [
+    {
+      "gate": false,
+      "workload": "eth-transfer",
+      "requested_rate": 100,
+      "duration_s": 20,
+      "submitted": 2002,
+      "confirmed": 2000,
+      "reverted": 0,
+      "no_receipt": 2,
+      "confirmed_tps": 63.9,
+      "blocks": 31,
+      "generator_report": {
+        "txSent": 2002,
+        "txConfirmed": 2000,
+        "txFailed": 0,
+        "txDiscarded": 2,
+        "averageTps": 76.250694568748,
+        "peakTps": 68,
+        "onChainTps": 98,
+        "onChainTxCount": 1960
+      },
+      "window_s": 31.3
+    },
+    {
+      "gate": false,
+      "workload": "eth-transfer",
+      "requested_rate": 300,
+      "duration_s": 20,
+      "submitted": 6004,
+      "confirmed": 5964,
+      "reverted": 0,
+      "no_receipt": 40,
+      "confirmed_tps": 187.6,
+      "blocks": 34,
+      "generator_report": {
+        "txSent": 6004,
+        "txConfirmed": 5964,
+        "txFailed": 0,
+        "txDiscarded": 40,
+        "averageTps": 227.98866874671836,
+        "peakTps": 208,
+        "onChainTps": 285.8,
+        "onChainTxCount": 5716
+      },
+      "window_s": 31.8
+    },
+    {
+      "gate": false,
+      "workload": "eth-transfer",
+      "requested_rate": 500,
+      "duration_s": 20,
+      "submitted": 10012,
+      "confirmed": 10012,
+      "reverted": 0,
+      "no_receipt": 0,
+      "confirmed_tps": 296.2,
+      "blocks": 40,
+      "generator_report": {
+        "txSent": 10012,
+        "txConfirmed": 10012,
+        "txFailed": 0,
+        "txDiscarded": null,
+        "averageTps": 361.946835822947,
+        "peakTps": 420,
+        "onChainTps": 471.1,
+        "onChainTxCount": 9422
+      },
+      "window_s": 33.8
+    },
+    {
+      "gate": true,
+      "workload": "eth-transfer",
+      "requested_rate": 100,
+      "duration_s": 20,
+      "submitted": 2002,
+      "confirmed": 2001,
+      "reverted": 0,
+      "no_receipt": 1,
+      "confirmed_tps": 64.0,
+      "blocks": 31,
+      "generator_report": {
+        "txSent": 2002,
+        "txConfirmed": 2001,
+        "txFailed": 0,
+        "txDiscarded": 1,
+        "averageTps": 76.25520926192337,
+        "peakTps": 69,
+        "onChainTps": 98,
+        "onChainTxCount": 1960
+      },
+      "window_s": 31.3,
+      "gate_us_per_tx_median": 14.2
+    },
+    {
+      "gate": true,
+      "workload": "eth-transfer",
+      "requested_rate": 300,
+      "duration_s": 20,
+      "submitted": 6003,
+      "confirmed": 6001,
+      "reverted": 0,
+      "no_receipt": 2,
+      "confirmed_tps": 188.7,
+      "blocks": 35,
+      "generator_report": {
+        "txSent": 6003,
+        "txConfirmed": 6001,
+        "txFailed": 0,
+        "txDiscarded": 2,
+        "averageTps": 228.07463825172528,
+        "peakTps": 221,
+        "onChainTps": 285.95,
+        "onChainTxCount": 5719
+      },
+      "window_s": 31.8,
+      "gate_us_per_tx_median": 8.1
+    },
+    {
+      "gate": true,
+      "workload": "eth-transfer",
+      "requested_rate": 500,
+      "duration_s": 20,
+      "submitted": 10011,
+      "confirmed": 9968,
+      "reverted": 0,
+      "no_receipt": 43,
+      "confirmed_tps": 308.5,
+      "blocks": 39,
+      "generator_report": {
+        "txSent": 10011,
+        "txConfirmed": 9947,
+        "txFailed": 58,
+        "txDiscarded": 43,
+        "averageTps": 374.231567274087,
+        "peakTps": 307,
+        "onChainTps": 462.14285714285717,
+        "onChainTxCount": 9705
+      },
+      "window_s": 32.3,
+      "gate_us_per_tx_median": 7.0
+    }
+  ],
+  "note": "confirmed = successful receipts on chain; the generator, OPS, PostgreSQL, Redis and Besu all run on this one machine"
+}
