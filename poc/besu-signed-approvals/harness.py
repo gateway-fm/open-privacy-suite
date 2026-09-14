@@ -14,6 +14,7 @@ import shutil
 import socket
 import subprocess
 import time
+import urllib.error
 import urllib.request
 
 HERE = Path(__file__).resolve().parent
@@ -21,6 +22,21 @@ ROOT = next(p for p in HERE.parents if (p / "go.mod").is_file())
 EVIDENCE = Path(os.environ.get("OPS_EVIDENCE_DIR", str(HERE / "evidence"))).resolve()
 SCRATCH = ROOT / ".tmp/besu-approval-runs"
 BESU_HOME = Path(os.environ.get("OPS_BESU_HOME", str(ROOT / ".tmp/besu-dist/besu-26.8.1")))
+# The Lineth distribution (linea-besu-package v2.2.0): its own Besu build plus the Linea plugins.
+LINEA_HOME = Path(os.environ.get("OPS_LINEA_BESU_HOME", str(ROOT / ".tmp/linea-pkg/linea-besu/package/linea-besu/besu")))
+# Lineth plugin names: the pool validator works on any chain, the sequencer's selector additionally
+# needs its ZK line-counting tracer, which only supports the Osaka fork.
+LINEA_POOL_PLUGIN = "LineaTransactionPoolValidatorPlugin"
+LINEA_SELECTOR_PLUGIN = "LineaTransactionSelectorPlugin"
+LINEA_SELECTOR_OPTIONS = [
+    "--plugin-linea-deny-list-path", str(LINEA_HOME.parent / "config/denylist.sepolia.txt"),
+    "--plugin-linea-module-limit-file-path", str(LINEA_HOME.parent / "config/trace-limits.sepolia.toml"),
+    "--plugin-linea-l1l2-bridge-contract", "0x33bf916373159A8c1b54b025202517BfDbB7863D",
+    "--plugin-linea-l1l2-bridge-topic", "e856c2b8bd4eb0027ce32eeaf595c21b0b6b4644b326e5b7bd80a1cf8db72e6c",
+    "--plugin-linea-fixed-gas-cost-wei", "0",
+    "--plugin-linea-variable-gas-cost-wei", "0",
+    "--plugin-linea-min-margin", "0.0",
+]
 JAVA_HOME = Path(os.environ.get("OPS_JAVA_HOME", str(next(iter(sorted((ROOT / ".tmp/jdk25").glob("jdk-25*"))), Path("/nonexistent")) / "Contents/Home")))
 PLUGIN_JAR = HERE / "build/libs/ops-besu-approvals.jar"
 CLIENT = ROOT / ".tmp/besu-approval-client"
@@ -43,6 +59,25 @@ VALUE_ROUTER, VALUE_RECEIVER = ["0x" + format(n, "040x") for n in (0x6100, 0x620
 
 def command(args, **kwargs):
     return subprocess.check_output(args, cwd=HERE, text=True, **kwargs).strip()
+
+
+def osaka_genesis():
+    """Our fixtures on an Osaka chain: Lineth's ZK line-counting tracer supports no earlier fork.
+
+    The fork config and the Prague/Osaka system contracts come from Besu's own Osaka
+    acceptance-test genesis (evidence/besu-osaka-reference-genesis.json, taken from the pinned Besu
+    commit); only osakaTime moves to 0 so the chain is Osaka from the first block.
+    """
+    reference = json.loads((EVIDENCE / "besu-osaka-reference-genesis.json").read_text())
+    genesis = json.loads((EVIDENCE / "genesis.json").read_text())
+    genesis["config"] = {**genesis["config"], **reference["config"], "osakaTime": 0, "chainId": CHAIN_ID}
+    for address, account in reference.get("alloc", {}).items():
+        if account.get("code"):  # system contracts only; the reference test's funded EOAs stay out
+            genesis["alloc"][address] = account
+    genesis.update(blobGasUsed="0x0", excessBlobGas="0x0", parentBeaconBlockRoot=ZERO)
+    path = EVIDENCE / "genesis-osaka.json"
+    path.write_text(json.dumps(genesis, indent=2) + "\n")
+    return path
 
 
 def unused_port():
@@ -85,9 +120,11 @@ def prepare():
     }
     (EVIDENCE / "genesis.json").write_text(json.dumps(genesis, indent=2) + "\n")
     subprocess.check_call(["go", "build", "-o", str(CLIENT), "./poc/besu-signed-approvals/client"], cwd=ROOT)
-    plugins = BESU_HOME / "plugins"
-    plugins.mkdir(exist_ok=True)
-    shutil.copy(PLUGIN_JAR, plugins / PLUGIN_JAR.name)
+    for home in (BESU_HOME, LINEA_HOME):
+        if home.joinpath("bin/besu").is_file():
+            plugins = home / "plugins"
+            plugins.mkdir(exist_ok=True)
+            shutil.copy(PLUGIN_JAR, plugins / PLUGIN_JAR.name)
 
 
 def b64(data):
@@ -97,8 +134,15 @@ def b64(data):
 class Node:
     """Besu as a post-merge execution client; the harness plays the consensus client (Engine API)."""
 
-    def __init__(self, name, plugin=True, configured=True, wait_ms=5000, directory=None, extra=(), expect_exit=False):
+    def __init__(self, name, plugin=True, configured=True, wait_ms=5000, directory=None, extra=(),
+                 expect_exit=False, besu_home=None, linea_plugins=(), log_level=None, genesis=None,
+                 fork="shanghai"):
         self.name = name
+        self.fork = fork
+        genesis = genesis or (osaka_genesis() if fork == "osaka" else EVIDENCE / "genesis.json")
+        # The Linea plugin JARs are copied into the stock 26.8.1 distribution (the Besu commit the
+        # Lineth monorepo pins on main); the packaged 26.8.0 build rejects our Engine API driving.
+        besu_home = Path(besu_home) if besu_home else BESU_HOME
         self.directory = Path(directory) if directory else Path(SCRATCH / f"{name}-{os.getpid()}-{int(time.time())}")
         self.directory.mkdir(parents=True, exist_ok=True)
         self.rpc_port = unused_port()
@@ -113,17 +157,20 @@ class Node:
         jwt_path.write_text(self.secret.hex())
         key_file = self.directory / "key"
         key_file.write_text("0x" + KEYS[ADMIN])
-        args = [str(BESU_HOME / "bin/besu"), "--data-path", str(self.directory / "data"),
-                "--genesis-file", str(EVIDENCE / "genesis.json"), "--node-private-key-file", str(key_file),
+        args = [str(besu_home / "bin/besu"), "--data-path", str(self.directory / "data"),
+                "--genesis-file", str(genesis or (EVIDENCE / "genesis.json")), "--node-private-key-file", str(key_file),
                 "--min-gas-price", "0",
                 "--rpc-http-enabled", "--rpc-http-host", "127.0.0.1", "--rpc-http-port", str(self.rpc_port),
                 "--rpc-http-api", "ETH,NET,WEB3,DEBUG,TXPOOL,ADMIN" + (",OPS" if plugin else ""),
                 "--engine-rpc-enabled", "--engine-rpc-port", str(self.engine_port),
                 "--engine-jwt-secret", str(jwt_path), "--engine-host-allowlist", "*",
                 "--rpc-tx-feecap", "0", "--p2p-enabled=false", "--discovery-enabled=false",
-                "--logging", "INFO"]
+                "--logging", log_level or os.environ.get("OPS_BESU_LOG_LEVEL", "INFO")]
         if plugin:
-            args += ["--plugins", "OpsApprovalPlugin"]
+            # One --plugins list: Besu refuses to start if any named plugin is missing.
+            args += ["--plugins", ",".join(["OpsApprovalPlugin", *linea_plugins])]
+        if linea_plugins:
+            args += LINEA_SELECTOR_OPTIONS
         if plugin and configured:
             args += ["--plugin-ops-approval-listen", f"127.0.0.1:{self.approval_port}",
                      "--plugin-ops-approval-public-key", APPROVAL_PUBLIC_KEY,
@@ -168,7 +215,11 @@ class Node:
                  "finalizedBlockHash": self.head["hash"]}
         attrs = {"timestamp": hex(int(self.head["timestamp"], 16) + 1), "prevRandao": ZERO,
                  "suggestedFeeRecipient": ADMIN, "withdrawals": []}
-        start = self.engine("engine_forkchoiceUpdatedV2", state, attrs)
+        fcu, get_payload, new_payload = "V2", "V2", "V2"
+        if self.fork == "osaka":
+            attrs["parentBeaconBlockRoot"] = ZERO
+            fcu, get_payload, new_payload = "V3", "V5", "V4"
+        start = self.engine("engine_forkchoiceUpdated" + fcu, state, attrs)
         assert start["payloadStatus"]["status"] == "VALID", start
         payload_id = start["payloadId"]
         deadline = time.time() + timeout
@@ -181,11 +232,16 @@ class Node:
             assert time.time() < deadline, {"expected": [tx["hash"] for tx in expected], "decisions": decisions}
             time.sleep(0.2)
         time.sleep(1.2 if not expected else 0.8)  # let the candidate holding those decisions be stored
-        payload = self.engine("engine_getPayloadV2", payload_id)["executionPayload"]
+        envelope = self.engine("engine_getPayload" + get_payload, payload_id)
+        payload = envelope["executionPayload"]
         assert len(payload["transactions"]) == len(expected), (payload["transactions"], expected)
-        result = self.engine("engine_newPayloadV2", payload)
+        if self.fork == "osaka":
+            result = self.engine("engine_newPayload" + new_payload, payload, [], ZERO,
+                                 envelope.get("executionRequests", []))
+        else:
+            result = self.engine("engine_newPayload" + new_payload, payload)
         assert result["status"] == "VALID", result
-        result = self.engine("engine_forkchoiceUpdatedV2", dict.fromkeys(state, payload["blockHash"]), None)
+        result = self.engine("engine_forkchoiceUpdated" + fcu, dict.fromkeys(state, payload["blockHash"]), None)
         assert result["payloadStatus"]["status"] == "VALID", result
         for _ in range(100):
             self.head = self.rpc("eth_getBlockByNumber", "latest", False)
@@ -204,9 +260,12 @@ class Node:
             headers["Authorization"] = "Bearer " + token + "." + b64(hmac.new(self.secret, token.encode(), hashlib.sha256).digest())
         body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode()
         req = urllib.request.Request(self.engine_url if engine else self.rpc_url, data=body, headers=headers)
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            result = json.loads(resp.read())
-        if method not in ("eth_blockNumber", "eth_chainId", "txpool_besuTransactions", "eth_getTransactionReceipt", "engine_getPayloadV2"):
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                result = json.loads(resp.read())
+        except urllib.error.HTTPError as e:  # surface the node's reason, not just the status
+            raise RuntimeError(f"{method}: HTTP {e.code} {e.read()[:300]!r}") from None
+        if method not in ("eth_blockNumber", "eth_chainId", "txpool_besuTransactions", "eth_getTransactionReceipt", "engine_getPayloadV2", "engine_getPayloadV5"):
             self.records.append({"method": method, "params": params, "response": result})
         if "error" in result:
             raise RuntimeError(f"{method}: {result['error']}")

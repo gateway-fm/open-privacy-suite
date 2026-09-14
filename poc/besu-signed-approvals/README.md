@@ -5,9 +5,10 @@ and the [Besu/Lineth research](../../docs/research/dsl-policy-and-node-enforceme
 Plan and decisions: [PLAN.md](PLAN.md).
 
 **Result: the signed-approval gate runs as one plugin JAR on unmodified Besu 26.8.1 — the version
-Lineth pins — and passed all 16 integration scenarios on a real node, including the same-block target
+Lineth pins — and passed all 17 integration scenarios on a real node, including the same-block target
 change, caught inner failures, delegatecall, forged fingerprints, a call that turns into a CREATE after
-approval, restart, resubmission after a drop, and fail-closed start-up.**
+approval, restart, resubmission after a drop, fail-closed start-up, and running beside Lineth's own
+sequencer plugins (pool validator, and the transaction selector with its ZK tracer).**
 The OPS delivery path (`internal/nodeapproval` signer, batches, TCP framing) is byte-for-byte unchanged;
 OPS gains a Besu preflight mode.
 
@@ -76,6 +77,7 @@ flowchart LR
 | 14 | `maybeCreate()` approved while its branch is a plain increment; `setExtra(true)` lands first in the same block | Denied by the producer (`OPS_APPROVAL_UNSUPPORTED: contract creation`), excluded |
 | 15 | Same signed `run(7)` resubmitted after the mismatch drop of scenario 4, with a fresh preflight on the new state | Included (vault B = 7): a drop is not a blacklist |
 | 16 | `identity()` (STATICCALL to precompile 0x04) and a plain 1-wei transfer to an EOA | Both approved and included |
+| 17 | **Beside Lineth's own plugins** (JARs from `linea-besu-package` v2.2.0): (a) `LineaTransactionPoolValidatorPlugin`; (b) `LineaTransactionSelectorPlugin` with its ZK line-counting tracer, on an Osaka fixture chain; (c) the same selector on the Shanghai chain | (a) gate unaffected: approved tx included, unapproved dropped; (b) both selectors and both tracers run in one node — approved tx included (`ZkTracer` in the log), unapproved still dropped by our gate; (c) the plugin loads and starts, then Lineth's tracer aborts block building with `Fork no more supported by the tracer: SHANGHAI` |
 
 Evidence: [tests.json](evidence/tests.json), per-scenario node logs (`evidence/*.log`, decision lines
 `OPS_APPROVAL_DECISION allow|wait|drop|deny`), RPC transcripts (`evidence/*-rpc.json`), genesis and
@@ -95,9 +97,8 @@ is fixed by the opcode flag.
   producer is not rejected. Same limit as the Reth PoC; a consensus rule needs a Besu change, not a plugin.
 - **Timeout eviction happens at the next block-building round**, not on an independent timer — Besu
   exposes no plugin API to remove a pool transaction. Unselectable in the meantime.
-- **Not run alongside Lineth's `linea-sequencer` plugin** (built here against plain Besu; the selector
-  factories aggregate, so coexistence is expected but unmeasured). No producer-time benchmark yet;
-  `TracerAggregator` cost is per opcode and must be measured on the target workload.
+- No producer-time benchmark yet; `TracerAggregator` cost is per opcode and must be measured on the
+  target workload.
 - **Single-producer assumptions**: approvals are released on `HEAD_ADVANCED`/`CHAIN_REORG`; a reorg that
   returns transactions to the pool leaves them waiting for a new approval, which OPS does not re-send.
   Every producer must run the plugin; a plugin that calls `BlockTransactionSelectionService.commit()`
@@ -111,7 +112,9 @@ is fixed by the opcode flag.
 - **Capacity pressure is an OPS concern**: any authorised client can fill the store with orphaned
   approvals for the TTL; the store gives up unpooled approvals first, but rate-limiting belongs in OPS.
 - **Untested here**: CALLCODE, out-of-gas inner frames, >128 frames / 1 MiB inputs (unit-tested only),
-  a second plugin selector, approval replacement mid-evaluation, IPv6 listen addresses.
+  approval replacement mid-evaluation, IPv6 listen addresses. The coexistence run uses Lineth's
+  *published* plugin JARs on our fixture chain, not their full sequencer configuration (bundles,
+  forced transactions, profitability tuning, extra-data pricing) or a Linea network.
 - **Harness timing**: after the selector log shows the candidate, the harness waits 0.8–1.2 s before
   the single `engine_getPayload`; on a slow machine that margin is the one flaky spot.
 - **`debug_traceCall` + `prestateTracer`** returned "Internal error" on this Besu build for the parity
@@ -129,9 +132,14 @@ Go from `go.mod`, Python 3, Foundry `cast`, solc 0.8.35, the Besu 26.8.1 release
 export JAVA_HOME=$PWD/.tmp/jdk25/jdk-25.0.4.1+1/Contents/Home
 (cd poc/besu-signed-approvals && gradle --no-daemon build)      # unit tests + JAR
 go test ./internal/nodeapproval/
-python3 poc/besu-signed-approvals/run.py                         # all 16 scenarios (17 checks), ~5 min
+python3 poc/besu-signed-approvals/run.py                         # all 17 scenarios (20 checks), ~8 min
 python3 poc/besu-signed-approvals/run.py same_block_target_change
 ```
+
+The Lineth coexistence scenario additionally needs the `linea-besu-package` v2.2.0 release unpacked
+under `.tmp/linea-pkg/` and its `linea-sequencer`, `linea-tracer`, `arithmetization` and
+`sequencer-interfaces` JARs (plus their dependency JARs) copied into the Besu distribution's
+`plugins/`; it skips itself when they are absent.
 
 `run.py` copies the JAR into `.tmp/besu-dist/besu-26.8.1/plugins/`, writes the genesis to `evidence/`,
 starts an isolated loopback-only Besu per scenario (`.tmp/besu-approval-runs/`), and plays the consensus
