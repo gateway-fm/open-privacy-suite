@@ -34,7 +34,8 @@ const rpc = async (method, params) => {
 };
 try {
   await page.goto(base + '/load-test/', {waitUntil: 'networkidle'});
-  await page.getByRole('button', {name: 'Through Privacy Proxy', exact: true}).click();
+  const mode = process.env.OPS_UI_MODE || 'Through Privacy Proxy';
+  await page.getByRole('button', {name: mode, exact: true}).click();
   await page.getByRole('tab', {name: 'Adaptive', exact: true}).click();
   const inputs = page.getByRole('spinbutton');
   assert.equal(await inputs.count(), 4);
@@ -82,7 +83,7 @@ try {
     assert(new Set(samples.filter(s => s.status === 'running').map(s => s.targetTps)).size > 1, 'Adaptive rate did not change');
     const history = (await api('/history?limit=1')).runs[0];
     assert.equal(history.config.numAccounts, 10);
-    assert.equal(history.config.privacyMode, true);
+    assert.equal(!!history.config.privacyMode, mode === 'Through Privacy Proxy');
     assert.equal(history.config.pattern, 'adaptive');
     assert.equal(history.config.transactionType, workload);
     let logs = [];
@@ -133,7 +134,10 @@ try {
     await page.screenshot({path: `${evidence}/${workload}.png`, fullPage: true});
     const visibleText = await page.locator('body').innerText();
     await fs.writeFile(`${evidence}/${workload}-visible.txt`, visibleText);
-    const displayedPeak = visibleText.match(/([\d,]+)\s+tx\/s peak/);
+    // The header reports tx/s through the proxy and MGas/s in Direct mode, where the peak rate
+    // is on the chart instead ("TPS: current / peak"). Accept either rendering.
+    const displayedPeak = visibleText.match(/([\d,]+)\s+tx\/s peak/)
+      || visibleText.match(/TPS:\s*[\d,.]+\s*\/\s*([\d,]+)\s*peak/);
     assert(displayedPeak, 'Dashboard did not display the peak');
     results.push({workload, confirmed: history.txConfirmed, successfulReceipts: successful,
       missingReceipts: receipts.filter(r => !r.receipt).length, failed: history.txFailed,

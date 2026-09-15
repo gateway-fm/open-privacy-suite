@@ -150,18 +150,22 @@ class Miner:
 class Loadgen:
     """Gasstorm's generator, pointed at OPS: it signs and submits, OPS authorizes, Besu includes."""
 
-    def __init__(self, stack):
+    def __init__(self, stack, direct=False):
         self.stack = stack
+        self.direct = direct
         self.url = "http://127.0.0.1:" + str(h.unused_port())
         token = stack.directory / "loadgen-token"
         token.write_text(stack.tokens[next(iter(WALLETS))])
         token.chmod(0o600)
         env = {k: v for k, v in os.environ.items() if k in ("PATH", "HOME", "TMPDIR", "LANG")}
-        env.update(PRIVACY_RPC_URL=stack.url, PRIVACY_ORG_ID=stack.org, PRIVACY_ROUTE_ALL="true",
+        # Direct mode measures the node alone: the generator talks to Besu's RPC, no OPS in the path.
+        route = stack.node.rpc_url if direct else stack.url + "/rpc/" + stack.org
+        env.update(PRIVACY_RPC_URL="" if direct else stack.url, PRIVACY_ORG_ID=stack.org,
+                   PRIVACY_ROUTE_ALL="false" if direct else "true",
                    PRIVACY_AUTH_TOKEN_FILE=str(token), EXECUTION_LAYER="gravity-reth",
-                   PRECONF_WS_URL="", BUILDER_RPC_URL=stack.url + "/rpc/" + stack.org,
-                   L2_RPC_URL=stack.url + "/rpc/" + stack.org, GAS_TIP_CAP="1000000",
-                   GAS_FEE_CAP="3000000000", BLOCK_TIME_MS="1000", LOG_LEVEL="info")
+                   PRECONF_WS_URL="", BUILDER_RPC_URL=route, L2_RPC_URL=route,
+                   GAS_TIP_CAP="1000000", GAS_FEE_CAP="3000000000", BLOCK_TIME_MS="1000",
+                   LOG_LEVEL="info")
         self.log = (stack.directory / "loadgen.log").open("w")
         self.database = stack.directory / "loadgen.db"
         self.process = subprocess.Popen(
@@ -181,7 +185,8 @@ class Loadgen:
 
     def run(self, miner, workload, rate, duration, label):
         config = {"pattern": "constant", "durationSec": duration, "constantRate": rate,
-                  "numAccounts": len(WALLETS), "transactionType": workload, "privacyMode": True}
+                  "numAccounts": len(WALLETS), "transactionType": workload,
+                  "privacyMode": not self.direct}
         answer = request(self.url + "/start", "POST", config)
         assert answer["status"] == "started", answer
         deadline = time.monotonic() + duration + 300
