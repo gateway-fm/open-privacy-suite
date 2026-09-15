@@ -143,6 +143,14 @@ table and what each number does and does not cover.
   itself (bundle-style) must be checked before coexistence.
 - **Approvals are final once issued** (until inclusion or TTL); there is no revocation path, as in the
   Reth PoC.
+- **Transaction types are a PoC scope limit, not a technical barrier.** `nodeapproval.Prepare` approves
+  protected legacy and EIP-1559 only; access-list (2930), blob (4844) and set-code (7702) transactions are
+  refused. OPS itself has no such limit — the product's raw-transaction path is type-agnostic and forwards
+  every type; this is the approval path alone, and it is opt-in (`OPS_APPROVAL_TARGET`). Access-list and
+  blob support is a short change, since neither alters execution semantics. **EIP-7702 is doable but is real
+  work**: its authorization list installs code on an EOA outside the call tree, so `CallFingerprint` cannot
+  see it and the signed envelope has to carry it — both encoders, plus a decision on what a delegation means
+  for contract ownership.
 - **Besu-vs-geth frame deltas** (do not affect the gate, only which facts a policy can see): Besu creates
   no frame for a CALL with insufficient balance or at depth 1024, nor for a CREATE that fails before
   its frame exists; EIP-7702-delegated code hashes differ from `prestateTracer`'s designator. The
