@@ -75,35 +75,54 @@ chain afterwards.
 # one interactive session to watch yourself
 python3 poc/besu-signed-approvals/gasstorm_ui.py            # then open http://127.0.0.1:18000/load-test/
 python3 poc/besu-signed-approvals/gasstorm_ui.py --without-gate
+python3 poc/besu-signed-approvals/gasstorm_ui.py --direct   # neither OPS nor the gate in the path
 
 # or the scripted A/B that produced the screenshots (needs Playwright; see the script header)
 OPS_PLAYWRIGHT_ROOT=... OPS_UI_DURATION=60 ./poc/besu-signed-approvals/run_ui_case.sh gate-on
 OPS_PLAYWRIGHT_ROOT=... OPS_UI_DURATION=60 ./poc/besu-signed-approvals/run_ui_case.sh gate-off --without-gate
+OPS_PLAYWRIGHT_ROOT=... OPS_UI_DURATION=60 ./poc/besu-signed-approvals/run_ui_case.sh direct --direct
 ```
 
-| 60 s Adaptive, ETH transfer | Peak TPS | Average TPS | Sent | Confirmed | Failed | Successful receipts | Blocks |
+Three configurations, because "what does the gate cost" is only half the question — the other half is
+how much of the ceiling belongs to Besu itself. **Direct** is Gasstorm's own mode: the generator signs
+and submits straight to Besu's RPC, with OPS and the plugin out of the picture entirely.
+
+| 60 s Adaptive, ETH transfer | Average TPS | Peak TPS | Sent | Confirmed | Failed | Successful receipts | Blocks |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| Gate **on** | **773** | 671 | 40 277 | 40 198 (99.8 %) | 0 | 40 198 | 59 |
-| Gate off | 806 | 779 | 43 669 | 43 622 (99.9 %) | 0 | 43 622 | 59 |
+| **Direct to Besu** (no OPS, no gate) | **765** | 791 | 45 903 | 45 887 (100.0 %) | 0 | 45 887 | 59 |
+| Through OPS, gate off | 727 | 806 | 43 669 | 43 622 (99.9 %) | 0 | 43 622 | 60 |
+| Through OPS, gate **on** | 671 | 773 | 40 277 | 40 198 (99.8 %) | 0 | 40 198 | 59 |
 
-![Adaptive run with the approval gate on](evidence/gasstorm/browser-gate-on/eth-transfer.png)
+![Adaptive run straight against Besu, with OPS and the gate out of the path](evidence/gasstorm/browser-direct/eth-transfer.png)
 
-*Gate on: 773 tx/s peak, 40,198 confirmed, 0 failed. The same run without the gate is in
-[evidence/gasstorm/browser-gate-off/eth-transfer.png](evidence/gasstorm/browser-gate-off/eth-transfer.png).*
+*Direct: 765 tx/s average, 45,887 confirmed, 0 failed — and blocks only 15.9 % full. The gate-on and
+gate-off runs are in [browser-gate-on/eth-transfer.png](evidence/gasstorm/browser-gate-on/eth-transfer.png)
+and [browser-gate-off/eth-transfer.png](evidence/gasstorm/browser-gate-off/eth-transfer.png).*
 
-**The ceiling on this machine is ~770–800 tx/s, and the gate costs about 8 % of it.** Nothing failed
-in either run; the few dozen still pending are submissions that had not reached a block when the
-window closed. Every displayed confirmation was verified against a receipt afterwards — 40,198
-receipts with the gate on, all successful, no duplicates in the generator's log.
+**The ceiling on this machine is Besu's, not the gate's.** Taking OPS and the plugin out of the path
+entirely buys ~13 % — 765 tx/s instead of 671 — of which OPS's own authorization path is ~5 % and the
+approval gate ~7 %. At that ceiling Besu's blocks are **15.9 % full** (1.87 Ggas of a 200 M-per-block
+limit over 59 blocks), so what runs out first is Besu's per-transaction RPC and pool handling, not
+block space.
+
+Compare the metrics by **average**, not peak: two identical Direct runs peaked at 791 and 905 tx/s
+while their averages sat at 765 and 774 (the repeat is in
+[evidence/gasstorm/browser-direct/repeat-run/](evidence/gasstorm/browser-direct/repeat-run/)).
+Adaptive's peak is a single sample taken while the rate is still climbing, so it swings by over 10 %
+between runs of the same configuration — it is the number the dashboard shows, not the number to
+draw conclusions from.
+
+Nothing failed in any run; the few dozen still pending are submissions that had not reached a block
+when the window closed. Every displayed confirmation was verified against a receipt afterwards —
+45,887 receipts in the Direct run, all successful, no duplicates in the generator's log.
 
 Caveats worth stating in the meeting: the generator, OPS, PostgreSQL, Redis and Besu all share one
-laptop, so this is the ceiling of *this machine*, not of the design; the Reth PoC reached comparable
-figures on the same hardware, which is the honest comparison to draw. Confirmation latency here is
-1.1 s median (a one-second block cadence sets the floor), p99 6.5 s.
+laptop, so these are the ceilings of *this machine*, not of the design. Confirmation latency is 1.0 s
+median in all three (a one-second block cadence sets the floor), p99 6.5–7.0 s.
 
 Raw evidence per run: the dashboard screenshot, the peak screenshot, the generator's own history
 record, every status sample, the WebSocket frames, and the gzipped receipt list, under
-`evidence/gasstorm/browser-gate-on/` and `browser-gate-off/`.
+`evidence/gasstorm/browser-direct/`, `browser-gate-on/` and `browser-gate-off/`.
 
 
 ### Constant-rate runs, headless

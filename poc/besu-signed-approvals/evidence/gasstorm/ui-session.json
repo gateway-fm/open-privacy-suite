@@ -1,13 +1,14 @@
 {
   "url": "http://127.0.0.1:18000/load-test/",
-  "pid": 57351,
+  "pid": 88093,
   "enforcement": false,
+  "direct": true,
   "wallets": 10,
   "gas_limit": 200000000,
   "block_seconds": 1.0,
-  "loadgen": "http://127.0.0.1:64712",
-  "ops": "http://127.0.0.1:64633",
-  "org": "9541a194-a6e5-411c-bc9b-d9257bf744ea",
-  "node": "http://127.0.0.1:64602",
+  "loadgen": "http://127.0.0.1:59680",
+  "ops": "http://127.0.0.1:59589",
+  "org": "e704cbe0-6b3d-471b-adc8-594bd7b8d2e0",
+  "node": "http://127.0.0.1:59541",
   "dashboard_image": "sha256:e9fc249f842453d4c66e408f0166ce4cf1849b6f7d2648fc9242948fef62640e"
 }

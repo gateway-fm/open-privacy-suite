@@ -115,11 +115,12 @@ is fixed by the opcode flag.
 ## Cost
 
 Gasstorm's Adaptive test through the real dashboard, 60 s of ETH transfers on one M2 Max running
-everything: **773 tx/s peak with the gate, 806 without** (40,198 vs 43,622 confirmed, zero failures
-either way) — about 8 % of the machine's throughput. Per request, OPS costs 17.5 ms without the gate
-and 21.1 ms with it; the plugin's own work inside the block producer is 7–22 µs per transaction.
-[DEMO.md](DEMO.md) has the screenshots, the constant-rate table and what each number does and does
-not cover.
+everything: **671 tx/s average with the gate, 727 without it, and 765 submitting straight to Besu**
+(40,198 / 43,622 / 45,887 confirmed, zero failures in any run). So the gate costs ~7 % and OPS's
+authorization path ~5 %, and **the remaining ceiling is Besu's** — at it, blocks are only 15.9 % full.
+Per request, OPS costs 17.5 ms without the gate and 21.1 ms with it; the plugin's own work inside the
+block producer is 7–22 µs per transaction. [DEMO.md](DEMO.md) has the screenshots, the constant-rate
+table and what each number does and does not cover.
 
 ## What is deliberately not here
 
@@ -131,11 +132,11 @@ not cover.
   producer is not rejected. Same limit as the Reth PoC; a consensus rule needs a Besu change, not a plugin.
 - **Timeout eviction happens at the next block-building round**, not on an independent timer — Besu
   exposes no plugin API to remove a pool transaction. Unselectable in the meantime.
-- **Throughput, measured with Gasstorm Adaptive on this laptop: 773 tx/s peak with the gate, 806
-  without** — 40,198 confirmed transactions in 60 s, nothing failed, every confirmation checked
-  against a receipt. That is the ceiling of one machine running the generator, OPS, PostgreSQL,
-  Redis and Besu together, not of the design. Screenshots and per-run evidence in
-  [DEMO.md](DEMO.md).
+- **Throughput, measured with Gasstorm Adaptive on this laptop: 671 tx/s average with the gate, 727
+  without it, 765 with OPS out of the path entirely** — 40,198 confirmed transactions in 60 s with the
+  gate, nothing failed, every confirmation checked against a receipt. That is the ceiling of one
+  machine running the generator, OPS, PostgreSQL, Redis and Besu together, not of the design — and
+  most of it is Besu's, not the gate's. Screenshots and per-run evidence in [DEMO.md](DEMO.md).
 - **Single-producer assumptions**: approvals are released on `HEAD_ADVANCED`/`CHAIN_REORG`; a reorg that
   returns transactions to the pool leaves them waiting for a new approval, which OPS does not re-send.
   Every producer must run the plugin; a plugin that calls `BlockTransactionSelectionService.commit()`

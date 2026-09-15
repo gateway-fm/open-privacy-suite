@@ -65,7 +65,8 @@ class Control:
                     if self.path == "/start" and self.command == "POST":
                         # The session has ten configured wallets and a real fee market; refuse a
                         # configuration this fixture cannot honour instead of failing mid-run.
-                        body = json.dumps(normalize_start(json.loads(body or b"{}"))).encode()
+                        body = json.dumps(normalize_start(json.loads(body or b"{}"),
+                                                          direct=loadgen.direct)).encode()
                     connection = http.client.HTTPConnection(
                         urlparse(loadgen.url).netloc, timeout=60)
                     try:
@@ -152,6 +153,8 @@ server {{
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--without-gate", action="store_true", help="run the same session with the plugin off")
+    parser.add_argument("--direct", action="store_true",
+                        help="generator talks straight to Besu, with neither OPS nor the gate in the path")
     parser.add_argument("--port", type=int, default=18000)
     parser.add_argument("--gas-limit", type=int, default=200_000_000)
     parser.add_argument("--block-interval", type=float, default=1.0)
@@ -174,9 +177,9 @@ def main():
     try:
         with contextlib.ExitStack() as resources:
             stack = resources.enter_context(contextlib.closing(
-                LoadStack("gasstorm-ui", plugin=not args.without_gate)))
+                LoadStack("gasstorm-ui", plugin=not (args.without_gate or args.direct))))
             miner = Miner(stack.node, interval=args.block_interval)
-            loadgen = resources.enter_context(contextlib.closing(Loadgen(stack)))
+            loadgen = resources.enter_context(contextlib.closing(Loadgen(stack, direct=args.direct)))
             control = resources.enter_context(contextlib.closing(Control(stack, loadgen)))
             dashboard = resources.enter_context(contextlib.closing(
                 Dashboard(stack, loadgen, control, args.port)))
@@ -190,16 +193,18 @@ def main():
                         raise
                     time.sleep(0.2)
             session = {"url": dashboard.url + "/load-test/", "pid": os.getpid(),
-                       "enforcement": not args.without_gate, "wallets": 10,
+                       "enforcement": not args.without_gate and not args.direct,
+                       "direct": args.direct, "wallets": 10,
                        "gas_limit": args.gas_limit, "block_seconds": args.block_interval,
                        "loadgen": loadgen.url, "ops": stack.url, "org": stack.org,
                        "node": stack.node.rpc_url,
                        "dashboard_image": docker("inspect", "--format", "{{.Image}}", dashboard.container)}
             save("ui-session.json", session)
             print("READY " + session["url"], flush=True)
-            print(f"Gate {'OFF' if args.without_gate else 'ON'}; ten wallets; "
+            print(f"Gate {'OFF' if (args.without_gate or args.direct) else 'ON'}"
+                  f"{'; DIRECT to Besu, OPS bypassed' if args.direct else ''}; ten wallets; "
                   f"block gas limit {args.gas_limit:,}; {args.block_interval}s blocks.", flush=True)
-            print("In the UI: Through Privacy Proxy -> Adaptive -> Start Test. "
+            print(f"In the UI: {'Direct' if args.direct else 'Through Privacy Proxy'} -> Adaptive -> Start Test. "
                   "Leave JWT empty and Gasless off.", flush=True)
             print("Ctrl+C ends the session and removes everything it created.", flush=True)
             with (h.EVIDENCE / "gasstorm" / "ui-pool.jsonl").open("w") as pool_log:

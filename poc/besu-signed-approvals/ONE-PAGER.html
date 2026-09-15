@@ -1,0 +1,91 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Transaction approval enforcement on Besu — PoC result</title>
+<style>
+  @page { size: A4; margin: 13mm 14mm; }
+  html { font-family: -apple-system, "Helvetica Neue", Arial, sans-serif; color: #17202a; }
+  body { margin: 0; font-size: 8.7pt; line-height: 1.33; }
+  h1 { font-size: 15pt; margin: 0 0 1mm; letter-spacing: -0.2px; }
+  .sub { color: #5a6573; font-size: 8.4pt; margin: 0 0 3.2mm; }
+  h2 { font-size: 9.2pt; margin: 3.4mm 0 1.4mm; text-transform: uppercase;
+       letter-spacing: 0.6px; color: #0b5cad; border-bottom: 0.6pt solid #cfd8e3; padding-bottom: 0.8mm; }
+  p { margin: 0 0 1.6mm; }
+  ul { margin: 0 0 1.6mm; padding-left: 4.2mm; }
+  li { margin-bottom: 0.9mm; }
+  table { border-collapse: collapse; width: 100%; margin: 0 0 1.6mm; font-size: 8.4pt; }
+  th, td { padding: 1.1mm 1.6mm; border-bottom: 0.4pt solid #dde3ea; text-align: right; }
+  th:first-child, td:first-child { text-align: left; }
+  thead th { background: #eef3f9; border-bottom: 0.6pt solid #b9c6d6; font-weight: 600; }
+  tr.headline td { background: #f2f8f2; font-weight: 600; }
+  .verdict { background: #f4f8fc; border-left: 2.2pt solid #0b5cad; padding: 1.8mm 2.4mm; margin: 0 0 3mm; }
+  .two { display: flex; gap: 5mm; }
+  .two > div { flex: 1; }
+  .note { color: #5a6573; font-size: 7.8pt; }
+  footer { margin-top: 3.2mm; padding-top: 1.4mm; border-top: 0.4pt solid #cfd8e3;
+           color: #5a6573; font-size: 7.6pt; }
+  b.k { color: #0b5cad; }
+  code { font-family: "SF Mono", Menlo, monospace; font-size: 7.9pt; }
+</style>
+
+<h1>Transaction-level approval enforcement on Besu</h1>
+<p class="sub">Proof of concept, 15 September 2026 &middot; unmodified Besu 26.8.1 &middot; measured on one laptop (Apple M2 Max)</p>
+
+<div class="verdict">
+<b>It works as a plain Besu plugin — no fork, no patch, one JAR.</b> The node refuses to include any
+transaction whose actual execution differs from what was authorized: the block producer compares a
+fingerprint of the execution it just performed against a signed approval and drops the transaction
+<i>before</i> the state change is committed. Not "it fails with a receipt" — it never enters the block.
+<b>Throughput cost: about 7 %.</b> The remaining ceiling belongs to Besu itself, not to the gate.
+</div>
+
+<h2>Measured throughput — 60 s adaptive load, ETH transfers, 10 wallets, 1 s blocks</h2>
+<table>
+  <thead><tr><th>Configuration</th><th>Avg tx/s</th><th>Confirmed</th><th>Failed</th><th>Block fill</th></tr></thead>
+  <tbody>
+    <tr><td>Straight to Besu — neither the proxy nor the gate in the path</td><td>765</td><td>45,887</td><td>0</td><td>15.9 %</td></tr>
+    <tr><td>Through the authorization proxy, gate off</td><td>727</td><td>43,622</td><td>0</td><td>&mdash;</td></tr>
+    <tr class="headline"><td>Through the authorization proxy, <b>gate on</b></td><td>671</td><td>40,198</td><td>0</td><td>&mdash;</td></tr>
+  </tbody>
+</table>
+<p><b class="k">Read it this way:</b> the gate costs ~7 % and the proxy's own authorization work ~5 %.
+Taking both out entirely buys only 13 %, and at that ceiling Besu's blocks are just <b>15.9 % full</b> —
+so what runs out first is Besu's per-transaction RPC and pool handling, not block space or our enforcement.
+Zero failures in every run; all 40,198 confirmations were re-verified against on-chain receipts.</p>
+
+<div class="two">
+<div>
+<h2>Where the time goes</h2>
+<ul>
+  <li><b>Inside the block producer: 7–22 µs per transaction</b> for the plugin's own work (approval lookup, fingerprint, comparison). Negligible.</li>
+  <li><b>Per client request: 17.5 ms → 21.1 ms</b> end-to-end through the proxy. The ~3.5 ms the gate adds is a pre-flight simulation on the node plus a signature.</li>
+  <li>Confirmation latency ~1.0 s median in every configuration — that is the 1 s block cadence, unchanged by the gate.</li>
+</ul>
+</div>
+<div>
+<h2>What was verified</h2>
+<ul>
+  <li>20 end-to-end scenarios / 22 checks green on a real node, including <b>contract deployment</b>.</li>
+  <li><b>Coexists with the target stack's own sequencer plugin</b> — both plugins, both tracers, one node; our gate still decides.</li>
+  <li>The headline case: an approved call overtaken in the same block by a higher-fee transaction that redirects it is <b>excluded</b> — no receipt, nonce and balances untouched.</li>
+</ul>
+</div>
+</div>
+
+<h2>Limits worth knowing before anyone plans around this</h2>
+<ul>
+  <li><b>Enforcement is producer-only.</b> It is a block-building rule, not a consensus rule: every producer must run the plugin, and a block received from elsewhere is not re-checked. Making it a consensus rule would require changing Besu, not a plugin.</li>
+  <li><b>Deployments and other state-binding transactions are approved against exact state.</b> A concurrent transaction in the same block touching one of the same storage slots invalidates the approval; the client must re-submit after a fresh pre-flight. Ordinary calls use a looser binding and are unaffected.</li>
+  <li><b>An expired approval is dropped at the next block-building round</b>, not on a timer — Besu gives plugins no way to remove a transaction from the pool. In the meantime it simply cannot be selected.</li>
+  <li><b>Version coupling.</b> The Besu plugin interfaces used here are marked unstable and were split into separate artifacts in 26.8.x. Pin the node version and re-run the suite on every upgrade. Requires JDK 25.</li>
+  <li><b>Co-running with the target stack's ZK tracer requires an Osaka-fork chain</b>; on older forks that tracer refuses and block building stops. This is their constraint, not ours, but it pins the network's fork.</li>
+  <li><b>Reorgs need an answer.</b> Transactions returned to the pool by a reorg wait for a fresh approval, which the proxy does not currently re-send. Approvals also cannot be revoked once issued (they expire).</li>
+  <li><b>Not yet covered:</b> EIP-7702 and blob transactions are refused outright; bundle-style plugins that commit transactions themselves must be checked before coexisting.</li>
+  <li><b>All numbers come from one laptop</b> running the load generator, the proxy, PostgreSQL, Redis and Besu together. They bound this machine, not the design — a production sizing exercise is still owed.</li>
+</ul>
+
+<footer>
+Evidence: dashboard screenshots, per-run history records, status samples and gzipped receipt lists for all
+three configurations, plus the scenario suite and the reproduction commands, live with the PoC branch
+(<code>poc/ops-besu-signed-approvals</code>, see <code>DEMO.md</code>). Nothing here is simulated: the runs use the real
+authorization service, its own database and signing keys, and a real Besu node.
+</footer>
