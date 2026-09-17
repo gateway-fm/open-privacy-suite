@@ -144,18 +144,65 @@ in `internal/db` and the trigger functions in the migrations). "Why Postgres"
 answers two questions at once: why not on chain, and why not inside a
 declarative document.
 
-| Role | Tables | Who writes | Why it is in Postgres |
-|---|---|---|---|
-| **Configuration — the record** | `configuration_revisions`; `execution_policy_revisions` (compiled artifact per execution-rules revision) | the revision lifecycle only | the reviewed document *is* the authoritative record (DECISION §3.1: the database is the governance record); the node receives the compiled policy, never the source; on chain it would be public and cost a transaction per review step |
-| **Projections of activated configuration** | `organizations`, `groups`, `group_access`, `contracts`, `contract_grants`, `compliance_config`, `address_threshold_overrides`, `token_prices`, `shared_infrastructure`, `allowed_azure_tenants` | activation transaction (`configuration_revision_*.go`); legacy writers only while a stream is not yet active (`rbac_store_*.go`, `compliance_store.go`, `azure_tenant_store.go`); deployment reconciliation for discovered contracts (`node_submission.go`); triggers (075) refuse anything else | two kinds of readers depend on them: the existing product paths (RBAC checks in `rbac_store_*`, explorer redaction in `explorer_redaction.go`, UI lists) **and the fact export to the node** (`node_policy_export.go` reads `groups`, `group_access`, `contracts`, `contract_grants`, `shared_infrastructure`, `preregistered_addresses`). So they are not only a legacy convenience: today they are the source the node's facts are built from. Derivable, and could be replaced by reading the documents directly later |
-| **Facts about people — operational, never a document** | `users`, `user_memberships`, `eth_address_links`, `preregistered_addresses` | login, onboarding, `memberships/by-did`, `eth/link/*`, ban/KYC handlers; `tx_rbac.go` for atomic bootstrap | several writers and per-person cadence; a link is a signature the user produced; a re-applied document would overwrite bans or memberships written by someone else. Sent to the node as facts through the outbox — the node holds a copy, Postgres stays the only writer |
-| **Fact stream to the node** | `node_policy_clock` (one version counter), `node_policy_outbox` (per version: which principals/groups/contracts/policies changed), `node_policy_cursors` (what the node acknowledged: version, digest, expiry) | AFTER triggers on the fact and projection tables call `node_policy_mark_dirty` (migration 073), which bumps the clock **in the same transaction** as the change and records the markers; the pusher writes the cursor | the clock bump commits with the change or not at all — that is what "durable in Postgres, then pushed" rests on. The pusher exports the **full fact set at the clock version** in one repeatable-read transaction and sends a delta diffed against the last acknowledged generation (a full snapshot on first publish, when accumulated deltas exceed the checkpoint budget, or when the node asks to resync). The outbox markers are not consumed by Go code today; they are the audit of what each version changed |
-| **Execution bookkeeping** | `node_submissions` (raw tx, identity envelope, principal, outcome, reconciliation), `pending_tx_visibility`, `tx_visible_to` | `node_submissions`: admission and the reconciler (`node_submission.go`); visibility: the send path enqueues `pending_tx_visibility` (`jsonrpc_processor.go`), a worker promotes rows to `tx_visible_to` once the transaction is included; in node mode the reconciler enqueues from the submission record | the node knows the decision; only OPS knows which principal, which `visibleTo` recipients and which receipt it belongs to — that join is the product's read side |
-| **Audit** | `rbac_audit_log` + `audit_chain_anchor/checkpoint/reanchor` (main DB); `access_logs` + anchors in the separate `privacy_proxy_audit` database | append-only from the mutating transactions; the access log from the request path | tamper-evident hash chain verified on a schedule; a separate database with a separate role so the application role cannot rewrite history |
-| **Compliance evidence and feeds** | `sanctioned_addresses`, `travel_rule_records`, `compliance_logs`, `system_token_prices`, `system_settings` | sanctions/travel-rule handlers, price fetcher, system currency setting | observations and evidence arrive from outside and are not anyone's desired state; the manual overrides that *are* desired state moved to the `compliance` document |
-| **Disclosure** | `disclosure_requests`, `disclosure_grants`, `disclosure_events`, `disclosure_reports` | the request/approve/reject/revoke handlers | a state machine between two organisations; each step is an answer, not configuration |
-| **Sessions and runtime** | `refresh_tokens`, `revoked_tokens`, `oauth_silent_sso_log`, `impersonation_log`, `effective_permissions_cache`, `rbac_cache_generation`, `schema_version` | auth handlers, cache, tern | runtime state and caches; the permission cache is derivable and is invalidated, never authored |
-| **Dormant / legacy — kept only because production migrations are expand-only** | `access_policies` (read once by the fact export for legacy flags; no writer), `api_keys`, `managed_proxies`, `price_change_log`, `tx_log_visible_to` (no reader or writer in Go) | nobody | cannot be dropped in production by policy; candidates for a documented forward migration that marks them retired |
+**Configuration — the record**
+
+- Tables: `configuration_revisions`; `execution_policy_revisions` (compiled artifact per execution-rules revision)
+- Written by: the revision lifecycle only
+- Why Postgres: the reviewed document *is* the authoritative record (DECISION §3.1: the database is the governance record); the node receives the compiled policy, never the source; on chain it would be public and cost a transaction per review step
+
+**Projections of activated configuration**
+
+- Tables: `organizations`, `groups`, `group_access`, `contracts`, `contract_grants`, `compliance_config`, `address_threshold_overrides`, `token_prices`, `shared_infrastructure`, `allowed_azure_tenants`
+- Written by: activation transaction (`configuration_revision_*.go`); legacy writers only while a stream is not yet active (`rbac_store_*.go`, `compliance_store.go`, `azure_tenant_store.go`); deployment reconciliation for discovered contracts (`node_submission.go`); triggers (075) refuse anything else
+- Why Postgres: two kinds of readers depend on them: the existing product paths (RBAC checks in `rbac_store_*`, explorer redaction in `explorer_redaction.go`, UI lists) **and the fact export to the node** (`node_policy_export.go` reads `groups`, `group_access`, `contracts`, `contract_grants`, `shared_infrastructure`, `preregistered_addresses`). So they are not only a legacy convenience: today they are the source the node's facts are built from. Derivable, and could be replaced by reading the documents directly later
+
+**Facts about people — operational, never a document**
+
+- Tables: `users`, `user_memberships`, `eth_address_links`, `preregistered_addresses`
+- Written by: login, onboarding, `memberships/by-did`, `eth/link/*`, ban/KYC handlers; `tx_rbac.go` for atomic bootstrap
+- Why Postgres: several writers and per-person cadence; a link is a signature the user produced; a re-applied document would overwrite bans or memberships written by someone else. Sent to the node as facts through the outbox — the node holds a copy, Postgres stays the only writer
+
+**Fact stream to the node**
+
+- Tables: `node_policy_clock` (one version counter), `node_policy_outbox` (per version: which principals/groups/contracts/policies changed), `node_policy_cursors` (what the node acknowledged: version, digest, expiry)
+- Written by: AFTER triggers on the fact and projection tables call `node_policy_mark_dirty` (migration 073), which bumps the clock **in the same transaction** as the change and records the markers; the pusher writes the cursor
+- Why Postgres: the clock bump commits with the change or not at all — that is what "durable in Postgres, then pushed" rests on. The pusher exports the **full fact set at the clock version** in one repeatable-read transaction and sends a delta diffed against the last acknowledged generation (a full snapshot on first publish, when accumulated deltas exceed the checkpoint budget, or when the node asks to resync). The outbox markers are not consumed by Go code today; they are the audit of what each version changed
+
+**Execution bookkeeping**
+
+- Tables: `node_submissions` (raw tx, identity envelope, principal, outcome, reconciliation), `pending_tx_visibility`, `tx_visible_to`
+- Written by: `node_submissions`: admission and the reconciler (`node_submission.go`); visibility: the send path enqueues `pending_tx_visibility` (`jsonrpc_processor.go`), a worker promotes rows to `tx_visible_to` once the transaction is included; in node mode the reconciler enqueues from the submission record
+- Why Postgres: the node knows the decision; only OPS knows which principal, which `visibleTo` recipients and which receipt it belongs to — that join is the product's read side
+
+**Audit**
+
+- Tables: `rbac_audit_log` + `audit_chain_anchor/checkpoint/reanchor` (main DB); `access_logs` + anchors in the separate `privacy_proxy_audit` database
+- Written by: append-only from the mutating transactions; the access log from the request path
+- Why Postgres: tamper-evident hash chain verified on a schedule; a separate database with a separate role so the application role cannot rewrite history
+
+**Compliance evidence and feeds**
+
+- Tables: `sanctioned_addresses`, `travel_rule_records`, `compliance_logs`, `system_token_prices`, `system_settings`
+- Written by: sanctions/travel-rule handlers, price fetcher, system currency setting
+- Why Postgres: observations and evidence arrive from outside and are not anyone's desired state; the manual overrides that *are* desired state moved to the `compliance` document
+
+**Disclosure**
+
+- Tables: `disclosure_requests`, `disclosure_grants`, `disclosure_events`, `disclosure_reports`
+- Written by: the request/approve/reject/revoke handlers
+- Why Postgres: a state machine between two organisations; each step is an answer, not configuration
+
+**Sessions and runtime**
+
+- Tables: `refresh_tokens`, `revoked_tokens`, `oauth_silent_sso_log`, `impersonation_log`, `effective_permissions_cache`, `rbac_cache_generation`, `schema_version`
+- Written by: auth handlers, cache, tern
+- Why Postgres: runtime state and caches; the permission cache is derivable and is invalidated, never authored
+
+**Dormant / legacy — kept only because production migrations are expand-only**
+
+- Tables: `access_policies` (read once by the fact export for legacy flags; no writer), `api_keys`, `managed_proxies`, `price_change_log`, `tx_log_visible_to` (no reader or writer in Go)
+- Written by: nobody
+- Why Postgres: cannot be dropped in production by policy; candidates for a documented forward migration that marks them retired
 
 Two honest qualifications. The projection tables are the largest group and
 the least fundamental: they exist so that a hundred existing readers did not
