@@ -1,0 +1,114 @@
+# API migration map: what moved to the DSL, what stayed an operation, what an agent sees
+
+Companion to [DECISION.md §3.5](../research/dsl-policy-and-node-enforcement/DECISION.md)
+(the model) and `API_ENDPOINTS.md` (the generated inventory, 173 canonical
+operations on `feat/ops-dsl-reth`, of which ~50 are admin impersonation mirrors
+of explorer/RPC reads). This document is the endpoint-level answer to three
+questions: which endpoints the DSL replaced, which stayed and why, and what
+changed for a headless client. Everything below is verified against the
+registered routes and the guards in `internal/server/admin_rbac.go`,
+`admin_compliance.go`, `admin_shared_infra.go`, `admin_configuration.go`.
+
+**The rule that sorted every endpoint.** Something is authored as a *declarative
+document* (one revision per `(organisation, kind)`, re-applied, reviewed,
+activated by a second person) only when a snapshot is enough: one owner,
+reproducible result, absence means safe deletion, reviewable size, no dependency
+on another party's future answer. Everything else stays an *operation* on its
+existing REST endpoint, because a snapshot would either undo another writer's
+work (bans, memberships from an IdP), cannot be authored (a signature proof),
+or is inherently a request/answer between parties (disclosure).
+
+## 1. Migrated to the DSL: 32 legacy write operations → 8 uniform revision operations × 6 streams
+
+Each stream is edited through the same eight calls:
+`GET …/{kind}/context`, `GET/POST …/{kind}/revisions`, `GET …/revisions/{id}`,
+`POST …/revisions/{id}/simulate`, `POST …/revisions/{id}/activate`,
+`POST …/revisions/{id}/activate-ci`, `POST …/revisions/{id}/withdraw`
+(organisation streams under `/api/v1/admin/orgs/{org_id}/configuration/{kind}/…`,
+platform under `/api/v1/admin/configuration/platform/…`, no `activate-ci`).
+Once a stream has an active revision, the legacy writers below answer **409
+"use a configuration revision"** and the database triggers refuse a direct
+write; their `GET`s keep working as reads of the projection.
+
+| Stream (`kind`) | What the document holds | Legacy write endpoints it replaces (now 409 when active) | Why a snapshot suffices |
+|---|---|---|---|
+| `groups` | group definitions: slug, name, admin flags, RPC method allowlist, claims, verbose errors | `POST /orgs/{o}/groups`, `PUT/DELETE /orgs/{o}/groups/{g}`, `PUT /orgs/{o}/groups/{g}/access`, `POST /orgs/{o}/groups/batch-delete` | one owner (org admin), reproducible; deleting a group with live members requires the exact member count in the document, so it cannot silently drop other writers' memberships |
+| `contract-registry` | contracts (address, name, ABI, visibility flags) and their read grants (claims metadata, event rules) | `POST /orgs/{o}/contracts`, `PUT/DELETE /orgs/{o}/contracts/{a}`, `PUT …/{a}/abi`, `PUT …/{a}/visibleto-unlock`, `PUT …/{a}/events-allow-dynamic-payload`, `POST /orgs/{o}/contracts/claim`, `POST …/contracts/sync-delete`, `POST …/contracts/batch-move`, `POST/PUT/DELETE …/contracts/{a}/grants[/{g}]` (claims / event-rules part) | configuration, not observation: pipeline-registered contracts are *adopted* as drift into the next revision, never deleted by re-applying |
+| `execution-rules` | the policy: which group may call which function with which argument bounds, nested-call / delegatecall rules, deployment rights — compiled to Solidity and executed by the node on every frame | `contract_grants.functions` (the function part of `POST/PUT/DELETE …/grants`), and the RD-1287 `POST /orgs/{o}/execution-policy/revisions`, `…/{id}/activate`, `…/{id}/withdraw` | the single statement of what may execute; anything else would be a second writer of the same permission |
+| `compliance` | org settings (enabled, threshold, currency, unknown-price policy, enforce/monitor), per-address thresholds, manual token prices | `PUT /orgs/{o}/compliance/config`, `PUT/DELETE …/compliance/tokens/{t}`, `PUT/DELETE …/compliance/address-thresholds/{a}` | settings, not observations: fetched rates, sanctions hits, travel-rule records stay operational |
+| `approvers` | which admin groups may activate revisions; trusted CI issuers/keys | — (new) | it is the authority configuration itself; human-only, activated by a different human |
+| `platform` | shared infrastructure (address, codehash pin), tenants (default org/group, auto-provision) | `POST/PUT/DELETE /admin/azure-tenants[/{id}]`, `POST/PUT/DELETE /admin/shared-infrastructure[/{a}]`, `POST …/shared-infrastructure/{a}/refresh-codehash` | platform-owned, human-only, activated by a different allowlisted human |
+
+Import: an organisation's first `execution-rules` revision is generated from
+its existing grants (`legacyExecution` in the registry context keeps the
+null-means-all vs empty-means-none distinction); `contract_grants.functions`
+stays as a dormant column under the expand-only migration policy.
+
+## 2. New endpoints (not replacements)
+
+| Endpoint | Purpose |
+|---|---|
+| `…/configuration/{kind}/context` | complete editable source + live projection + `viewer` (can this principal activate?) + `capabilities` (API version, kinds, human-only kinds, approval modes, size limit, compiler version and availability) |
+| `…/revisions/{id}/simulate` | review without mutation: diffs (create/update/delete/adopt), preserved drift, projected result, compiled digests |
+| `…/revisions/{id}/activate` | atomic activation of one draft plus named siblings (ABI + dependent rules together); author ≠ activator; authority re-checked in the transaction |
+| `…/revisions/{id}/activate-ci` | same, with an externally signed approval manifest instead of a second human (trusted issuer/key configured in `approvers`) |
+| `POST /orgs/{o}/execution/simulate` | preview an `eth_call` / `eth_estimateGas` / `debug_traceCall` against a candidate policy on the node, without activating it |
+| `GET /ready` | node-mode readiness: desired vs applied fact version, staleness, publication pending |
+| `GET /me/transactions/{hash}/execution` | the submitter's own transaction lifecycle: queued → accepted → included / reverted / denied (`POLICY_DENIED`) / expired, with finality |
+
+## 3. Kept as operations — and why each is not a document
+
+| Group | Endpoints | Why it stays an operation |
+|---|---|---|
+| Users, bans, KYC | `GET /admin/users`, `GET/PUT/DELETE /admin/users/{u}`, `GET …/{u}/effective-permissions`, `GET …/{u}/linked-addresses` | user rows are created by login; bans/KYC are also set by compliance automation — a re-applied document with `banned: false` would undo an incident ban |
+| Memberships | `GET/POST /admin/users/{u}/memberships`, `DELETE …/memberships/{m}`, `POST/DELETE /orgs/{o}/memberships/by-did` | several writers (admin, HR/IdP sync, ZK self-service, expiry) at people scale; a snapshot would fight them |
+| Address links | `POST /eth/link/challenge`, `POST /eth/link/verify`, `GET /eth/addresses`, `DELETE /eth/addresses/{a}`, `POST …/refresh-ens`, `GET /admin/eth-addresses/collisions` | the link *is* a signature by the user's key; nobody can author it for them |
+| Organisation lifecycle | `GET/POST /admin/orgs`, `GET/PUT/DELETE /admin/orgs/{o}` | bootstrap creates the scope a document lives in; platform-only entry point, not tenant configuration |
+| Disclosure | `GET/POST /admin/disclosure/requests`, `GET/DELETE …/requests/{r}`, `GET /admin/disclosure/grants`, `…/{g}/revoke`, `…/{g}/summary|events|logs|report`, `GET …/check-access`; `GET /me/disclosure/*`, `POST /me/disclosure/requests/{r}/approve|reject|revoke` | a request needs the other organisation's answer; state machine between parties, not desired state |
+| Compliance operations | `GET/POST /admin/compliance/sanctions`, `DELETE …/sanctions/{id}`, `GET/POST /orgs/{o}/compliance/travel-rule-records`, `DELETE …/{id}`, `GET …/compliance/logs`, `GET/PUT /admin/compliance/currency`, `GET /admin/compliance/system-token-prices` | feeds and evidence (sanctions lists, travel-rule records, logs); the system currency is a one-off platform runtime setting |
+| Upstream credential | `PUT /orgs/{o}/groups/{g}/rpc-credential` | a secret; never source text, never in a diff or audit value |
+| Sessions and tokens | `POST /auth/request|verify|callback`, `/auth/azure/*`, `/auth/azure/service-principal`, `POST /refresh`, `/revoke`, `/introspect`, `GET /admin/sessions`, `DELETE /admin/sessions/{s}`, `/oauth/*` | runtime authentication, no desired state |
+| Diagnostics and reads | `POST /orgs/{o}/dry-run`, `POST /admin/access/check`, `POST …/contracts/sync-check`, `POST …/groups/batch-delete-preview`, `GET …/contracts/grant-summary`, `GET …/contracts/{a}/events`, `GET /admin/contracts/by-address/{a}`, `GET /admin/audit-logs`, `GET /admin/logs`, `GET /admin/cache/stats`, `GET /admin/status`, `GET /admin/system/version`, `GET/POST /admin/system/eth-call-tracing`, `GET/POST /admin/system/intra-org-grant-tracing` | reads, previews and runtime switches |
+| Chain reads and RPC | `GET /explorer/*` (~40 reads), `POST /rpc`, `POST /rpc/{org}` | the product's read side; visibility is decided per viewer at read time |
+| Explorer ABI upload | `POST /explorer/addresses/{a}/abi`, `POST /explorer/index/block/{n}` | **known defect, parked by decision**: this writes a separate explorer store, not the registry the node and redaction read; it must close or route into the registry stream before `contract-registry` is the single ABI writer |
+| Development only | `GET /dev/test-identities`, `POST /admin/dev/deploy-demo-erc20`, `POST /admin/test-request`, `/oauth/session/{id}/mock-complete` | mock-auth builds |
+
+Reads of every migrated class (`GET /orgs/{o}/groups`, `GET …/contracts`,
+`GET …/grants`, `GET …/compliance/config|tokens|address-thresholds`,
+`GET /admin/azure-tenants`, `GET /admin/shared-infrastructure`, RD-1287
+`GET …/execution-policy/context|revisions`) stay as they are: they read the
+projection the activation wrote.
+
+## 4. What changed for a headless client or an AI agent
+
+Delivered on this branch (REST + SDK; no MCP):
+
+| Before | Now |
+|---|---|
+| ~32 different setters, each with its own body shape and ordering constraints, the model deciding the order | one shape for all six streams: read context → edit the complete source → `POST revisions` → `simulate` → `activate` by someone else; the server reports diffs, deletions and drift; no planner, no change-set API |
+| no way to know what the deployment supports | `capabilities` in every context: kinds, human-only kinds, approval modes (`human`, `trusted-ci`), document size limit, pinned compiler version and whether it is installed |
+| a returned tx hash meant "sent" and nothing more | `GET /me/transactions/{hash}/execution`: queued / accepted / included / reverted / `POLICY_DENIED` / expired, with finality; `POST /orgs/{o}/execution/simulate` previews against a candidate policy |
+| only a human login or the full admin token | Azure service-principal login (RD-1120) yields a scoped org-admin or read-only-admin JWT; a read-only principal can draft and simulate but not activate; approval is either a different human or a signed CI manifest |
+| hand-written clients | `sdk/` — TypeScript client generated from the OpenAPI document with examples for login/refresh, prepare/review, activate (human or CI), operations, RPC and status tracking |
+
+Deferred by decision (MCP out of this delivery), recorded here so it is not
+lost. The 4 September research and DECISION §3.5 fixed the target shape:
+
+| Today (`mcp/`) | Planned |
+|---|---|
+| 94 flat tools, one per endpoint, ordering left to the model | 6 revision tools parametrised by `(org, kind)` (`context`, `draft`, `simulate`, `get`, `activate`, `withdraw`) replacing ~40 setter tools; composite read tools per scope; operation tools grouped by role |
+| server holds the full `PRIVACY_ADMIN_TOKEN` | server runs as a service principal with a scoped JWT; per-principal tool lists via the SDK's per-request server factory |
+| workflows implicit | workflows published as MCP prompts plus preconditions in tool descriptions |
+| stdio only | streamable HTTP for hosted agents |
+| confirm token returned to the model | approval is the revision lifecycle itself (human `activate` or trusted CI) |
+
+## 5. Questions this map leaves for the CTO
+
+1. When does Reth policy mode become the default? Until then the legacy
+   writers stay open for organisations without active streams, and the old
+   preflight gate still decides access in legacy mode.
+2. The explorer ABI upload writes a store nobody enforces from. Close it, or
+   route it into the registry stream?
+3. Scoped admin roles and quotas for standing agent automation ("add up to N
+   members a day") — an RBAC extension, not a DSL question; not built.
+4. MCP rebuild timing (table above).

@@ -223,7 +223,9 @@ Completion means code integrated on a clearly identified branch/worktree, review
 ## Delivery status (17 September 2026)
 
 What is on the branch and how it was verified. Evidence files are under
-`docs/implementation/evidence/`; the runbook is `docs/implementation/ops-reth-stack.md`.
+`docs/implementation/evidence/`; the runbook is `docs/implementation/ops-reth-stack.md`;
+the endpoint-level map of what moved to the DSL, what stayed an operation and
+why, and what changed for a headless client is `docs/implementation/api-migration-map.md`.
 
 | Area | State | Evidence |
 |---|---|---|
