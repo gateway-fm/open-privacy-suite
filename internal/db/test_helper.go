@@ -118,6 +118,11 @@ func ResetTestDatabase(database *DB) error {
 	// Delete data from tables in correct order to respect foreign keys
 	// This is safer than TRUNCATE which can cause deadlocks in concurrent tests
 	tables := []string{
+		// Remove desired-state ownership before clearing its projected rows.
+		// Production projection guards intentionally reject direct writes while
+		// an active revision owns the stream.
+		"configuration_revisions",
+		"node_submissions",
 		"tx_visible_to",
 		"rbac_audit_log",
 		"effective_permissions_cache",

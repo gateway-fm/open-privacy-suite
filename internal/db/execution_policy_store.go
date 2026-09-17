@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"privacy-proxy/internal/policydsl"
@@ -26,8 +27,8 @@ const (
 	PolicyStatusWithdrawn  = "withdrawn"
 )
 
-// ErrPolicyStaleBase is returned when a submission was written against a
-// revision that is no longer the latest, so applying it would silently discard
+// ErrPolicyStaleBase is returned when a submission was written against an
+// active revision that has changed, so applying it would silently discard
 // whatever landed in between.
 var ErrPolicyStaleBase = errors.New("policy base revision is stale")
 
@@ -35,12 +36,17 @@ var ErrPolicyStaleBase = errors.New("policy base revision is stale")
 // not awaiting approval.
 var ErrPolicyNotDraft = errors.New("policy revision is not a draft")
 
+var ErrPolicyActorRequired = errors.New("an identified policy actor is required")
+var ErrPolicySelfApproval = errors.New("policy submitter and activator must be different actors")
+
 // ExecutionPolicyRevision is one stored policy and the artifact built from it.
 type ExecutionPolicyRevision struct {
 	ID       string `json:"id"`
 	OrgID    string `json:"org_id"`
 	Revision int64  `json:"revision"`
-	Status   string `json:"status"`
+	// Nil identifies a legacy revision whose authoring base was not recorded.
+	BaseRevision *int64 `json:"base_revision"`
+	Status       string `json:"status"`
 
 	Source       string `json:"source"`
 	PolicyDigest string `json:"policy_digest"`
@@ -61,7 +67,7 @@ type ExecutionPolicyRevision struct {
 const executionPolicyColumns = `
     id, org_id, revision, status, source, policy_digest,
     solidity_source, solidity_digest, runtime_bytecode, runtime_digest,
-    compiler, created_by, created_at, activated_by, activated_at`
+    compiler, created_by, created_at, activated_by, activated_at, base_revision`
 
 func scanExecutionPolicy(scan func(dest ...any) error) (*ExecutionPolicyRevision, error) {
 	var (
@@ -71,7 +77,7 @@ func scanExecutionPolicy(scan func(dest ...any) error) (*ExecutionPolicyRevision
 	if err := scan(
 		&rev.ID, &rev.OrgID, &rev.Revision, &rev.Status, &rev.Source, &rev.PolicyDigest,
 		&rev.SoliditySource, &rev.SolidityDigest, &rev.RuntimeBytecode, &rev.RuntimeDigest,
-		&compiler, &rev.CreatedBy, &rev.CreatedAt, &rev.ActivatedBy, &rev.ActivatedAt,
+		&compiler, &rev.CreatedBy, &rev.CreatedAt, &rev.ActivatedBy, &rev.ActivatedAt, &rev.BaseRevision,
 	); err != nil {
 		return nil, err
 	}
@@ -81,6 +87,16 @@ func scanExecutionPolicy(scan func(dest ...any) error) (*ExecutionPolicyRevision
 		}
 	}
 	return &rev, nil
+}
+
+// ActiveExecutionPolicyRevisionNumber is the base for authoring. Drafts and
+// withdrawals do not change it; zero means no policy has been activated.
+func (d *DB) ActiveExecutionPolicyRevisionNumber(ctx context.Context, orgID string) (int64, error) {
+	var active int64
+	err := d.conn.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(revision), 0) FROM execution_policy_revisions WHERE org_id = $1 AND status = 'active'`, orgID,
+	).Scan(&active)
+	return active, err
 }
 
 // LatestExecutionPolicyRevisionNumber returns the highest revision number an
@@ -102,8 +118,8 @@ func (d *DB) LatestExecutionPolicyRevisionNumber(ctx context.Context, orgID stri
 // CreateExecutionPolicyRevision stores a submitted policy and its artifact as a
 // draft.
 //
-// baseRevision is the revision the author wrote against. It must still be the
-// latest, or the submission is refused: merging it would discard whatever was
+// baseRevision is the active revision the author wrote against. It must still
+// be active, or the submission is refused: merging it would discard whatever was
 // approved in between without anyone seeing the difference.
 func (d *DB) CreateExecutionPolicyRevision(
 	ctx context.Context,
@@ -113,6 +129,9 @@ func (d *DB) CreateExecutionPolicyRevision(
 	artifact *policydsl.Artifact,
 	createdBy *string,
 ) (*ExecutionPolicyRevision, error) {
+	if createdBy == nil || strings.TrimSpace(*createdBy) == "" {
+		return nil, ErrPolicyActorRequired
+	}
 	tx, err := d.conn.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("starting the policy transaction: %w", err)
@@ -136,17 +155,14 @@ func (d *DB) CreateExecutionPolicyRevision(
 		return nil, fmt.Errorf("locking the organization: %w", err)
 	}
 
-	var latest sql.NullInt64
+	var latest, current int64
 	if err := tx.QueryRowContext(ctx,
-		`SELECT MAX(revision) FROM execution_policy_revisions WHERE org_id = $1`, orgID,
-	).Scan(&latest); err != nil {
+		`SELECT COALESCE(MAX(revision), 0), COALESCE(MAX(revision) FILTER (WHERE status = 'active'), 0)
+         FROM execution_policy_revisions WHERE org_id = $1`, orgID,
+	).Scan(&latest, &current); err != nil {
 		return nil, fmt.Errorf("reading the latest policy revision: %w", err)
 	}
 
-	current := int64(0)
-	if latest.Valid {
-		current = latest.Int64
-	}
 	if baseRevision != current {
 		return nil, fmt.Errorf("%w: written against revision %d, current is %d", ErrPolicyStaleBase, baseRevision, current)
 	}
@@ -160,12 +176,12 @@ func (d *DB) CreateExecutionPolicyRevision(
         INSERT INTO execution_policy_revisions (
             org_id, revision, status, source, policy_digest,
             solidity_source, solidity_digest, runtime_bytecode, runtime_digest,
-            compiler, created_by
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            compiler, created_by, base_revision
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         RETURNING `+executionPolicyColumns,
-		orgID, current+1, PolicyStatusDraft, source, artifact.PolicyDigest,
+		orgID, latest+1, PolicyStatusDraft, source, artifact.PolicyDigest,
 		artifact.Source, artifact.SourceDigest, artifact.RuntimeBytecode, artifact.RuntimeDigest,
-		compiler, createdBy,
+		compiler, createdBy, baseRevision,
 	)
 
 	rev, err := scanExecutionPolicy(row.Scan)
@@ -251,24 +267,51 @@ func (d *DB) ListExecutionPolicyRevisions(ctx context.Context, orgID string, lim
 // organisation either with two policies in force or with none, and the second
 // is an outage while the first has no defined winner.
 func (d *DB) ActivateExecutionPolicyRevision(ctx context.Context, orgID, id string, activatedBy *string) (*ExecutionPolicyRevision, error) {
+	if activatedBy == nil || strings.TrimSpace(*activatedBy) == "" {
+		return nil, ErrPolicyActorRequired
+	}
 	tx, err := d.conn.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("starting the activation transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	var status string
-	err = tx.QueryRowContext(ctx,
-		`SELECT status FROM execution_policy_revisions
-         WHERE org_id = $1 AND id = $2 FOR UPDATE`, orgID, id).Scan(&status)
+	// All stream writers take the organisation lock before any revision lock.
+	// This serializes replacement even when there is no active row to lock.
+	var locked string
+	err = tx.QueryRowContext(ctx, `SELECT id FROM organizations WHERE id = $1 FOR UPDATE`, orgID).Scan(&locked)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("locking the organization: %w", err)
+	}
+	candidate, err := scanExecutionPolicy(tx.QueryRowContext(ctx,
+		`SELECT `+executionPolicyColumns+` FROM execution_policy_revisions
+         WHERE org_id = $1 AND id = $2 FOR UPDATE`, orgID, id).Scan)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("reading the policy revision: %w", err)
 	}
-	if status != PolicyStatusDraft {
-		return nil, fmt.Errorf("%w: it is %s", ErrPolicyNotDraft, status)
+	if candidate.Status != PolicyStatusDraft {
+		return nil, fmt.Errorf("%w: it is %s", ErrPolicyNotDraft, candidate.Status)
+	}
+	if candidate.CreatedBy == nil || strings.TrimSpace(*candidate.CreatedBy) == "" {
+		return nil, ErrPolicyActorRequired
+	}
+	if strings.EqualFold(*candidate.CreatedBy, *activatedBy) {
+		return nil, ErrPolicySelfApproval
+	}
+	var active int64
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(revision), 0) FROM execution_policy_revisions WHERE org_id = $1 AND status = 'active'`, orgID,
+	).Scan(&active); err != nil {
+		return nil, fmt.Errorf("reading the active policy revision: %w", err)
+	}
+	if candidate.BaseRevision == nil || *candidate.BaseRevision != active {
+		return nil, ErrPolicyStaleBase
 	}
 
 	if _, err := tx.ExecContext(ctx,
