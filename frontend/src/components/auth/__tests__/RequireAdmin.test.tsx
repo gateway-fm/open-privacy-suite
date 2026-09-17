@@ -67,6 +67,12 @@ function renderWithRoutes(children: React.ReactNode) {
 // Tests ---------------------------------------------------------------------
 
 describe('RequireAdmin', () => {
+  it('admits a named platform administrator without inventing organization authority', async () => {
+    seedAuth(makeFakeJWT('did:test:platform'));
+    server.use(http.get('/api/v1/me/admin-status', () => HttpResponse.json({ is_admin: false, is_platform_admin: true, admin_org_ids: [] })));
+    renderWithAuth(<div>Platform settings</div>);
+    expect(await screen.findByText('Platform settings')).toBeInTheDocument();
+  });
   beforeEach(() => {
     sessionStorage.clear();
   });

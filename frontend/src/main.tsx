@@ -22,7 +22,8 @@ import GroupList from './components/rbac/GroupList';
 import UserList from './components/rbac/UserList';
 import ContractList from './components/rbac/ContractList';
 import AzureTenantList from './components/rbac/AzureTenantList';
-import ExecutionPolicy from './components/rbac/ExecutionPolicy';
+import ExecutionPolicyRoute from './components/rbac/ExecutionPolicyRoute';
+import Configuration, { PlatformConfiguration } from './components/rbac/Configuration';
 import { AdminDisclosureDashboard } from './pages/admin/AdminDisclosureDashboard';
 import { AccountPage } from './pages/AccountPage';
 import ComplianceManager from './components/compliance/ComplianceManager';
@@ -90,7 +91,9 @@ function Root() {
                     <Route path="users" element={<UserList />} />
                     <Route path="users/:userId" element={<UserList />} />
                     <Route path="contracts" element={<ContractList />} />
-                    <Route path="execution-policy" element={<ExecutionPolicy />} />
+                    <Route path="execution-policy" element={<ExecutionPolicyRoute />} />
+                    <Route path="configuration" element={<Configuration />} />
+                    <Route path="platform-configuration" element={<PlatformConfiguration />} />
                     <Route path="azure-tenants" element={<AzureTenantList />} />
                   </Route>
                   <Route path="compliance" element={<ComplianceManager />}>

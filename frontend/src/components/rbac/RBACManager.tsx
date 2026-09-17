@@ -25,8 +25,9 @@ import {
 } from 'lucide-react';
 import { rbacApi } from '@/api/rbac';
 import type { Organization } from '@/types/rbac';
+import { useAdmin } from '@/components/auth/RequireAdmin';
 
-type RBACTab = 'organizations' | 'groups' | 'users' | 'contracts' | 'execution-policy' | 'azure-tenants';
+type RBACTab = 'organizations' | 'groups' | 'users' | 'contracts' | 'execution-policy' | 'configuration' | 'platform-configuration' | 'azure-tenants';
 
 // Context for sharing organization selection across sub-tabs
 interface OrgContextType {
@@ -72,6 +73,7 @@ export function useOrgContextOptional(): OrgContextType | null {
 }
 
 export default function RBACManager() {
+  const { isPlatformAdmin } = useAdmin();
   const location = useLocation();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -83,8 +85,10 @@ export default function RBACManager() {
   // Derive active tab from URL
   const getActiveTab = (): RBACTab => {
     const path = location.pathname;
+    if (path.includes('/platform-configuration')) return 'platform-configuration';
     if (path.includes('/azure-tenants')) return 'azure-tenants';
     if (path.includes('/execution-policy')) return 'execution-policy';
+    if (path.includes('/configuration')) return 'configuration';
     if (path.includes('/groups')) return 'groups';
     if (path.includes('/users')) return 'users';
     if (path.includes('/contracts')) return 'contracts';
@@ -177,7 +181,7 @@ export default function RBACManager() {
 
   const handleTabChange = (value: string) => {
     const tab = value as RBACTab;
-    const orgTabs: RBACTab[] = ['groups', 'users', 'contracts', 'execution-policy'];
+    const orgTabs: RBACTab[] = ['groups', 'users', 'contracts', 'execution-policy', 'configuration'];
     const needsOrg = orgTabs.includes(tab);
 
     const path = `/admin/rbac/${tab === 'organizations' ? 'organizations' : tab}`;
@@ -189,10 +193,10 @@ export default function RBACManager() {
   };
 
   // Tabs that show org selector (users shows it but doesn't block without one)
-  const orgRequiredTabs: RBACTab[] = ['groups', 'users', 'contracts', 'execution-policy'];
+  const orgRequiredTabs: RBACTab[] = ['groups', 'users', 'contracts', 'execution-policy', 'configuration'];
   const requiresOrg = orgRequiredTabs.includes(activeTab);
   // Tabs that are completely blocked without org selection
-  const orgBlockedTabs: RBACTab[] = ['groups', 'contracts', 'execution-policy'];
+  const orgBlockedTabs: RBACTab[] = ['groups', 'contracts', 'execution-policy', 'configuration'];
   const blockedWithoutOrg = orgBlockedTabs.includes(activeTab) && !selectedOrg;
 
   // Single-org admin: lock the dropdown. After RD-916/917 a tier-2 admin
@@ -378,6 +382,13 @@ export default function RBACManager() {
                 <ShieldCheck className="w-4 h-4" />
                 <span>Execution Policy</span>
               </TabsTrigger>
+              <TabsTrigger value="configuration" className="gap-2" data-testid="tab-configuration">
+                <FileCode2 className="w-4 h-4" />
+                <span>Configuration</span>
+              </TabsTrigger>
+              {isPlatformAdmin && <TabsTrigger value="platform-configuration" className="gap-2" data-testid="tab-platform-configuration">
+                <Globe className="h-4 w-4" />Platform configuration
+              </TabsTrigger>}
               <TabsTrigger value="azure-tenants" className="gap-2" data-testid="tab-azure-tenants">
                 <Shield className="w-4 h-4" />
                 <span>Azure AD</span>

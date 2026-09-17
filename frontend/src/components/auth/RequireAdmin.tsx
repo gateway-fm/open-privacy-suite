@@ -21,6 +21,7 @@ type AdminCheck =
 
 export interface AdminContextType {
   isAdmin: boolean;
+  isPlatformAdmin?: boolean;
   isReadonlyAdmin: boolean;
   adminOrgIds: string[];
   readonlyAdminOrgIds: string[];
@@ -87,13 +88,14 @@ export function RequireAdmin({ children }: RequireAdminProps) {
         // a probe superseded by a token change cannot decide this gate.
         if (cancelled) return;
         // Strict equality so a malformed body cannot read as admin.
-        if (data?.is_admin === true) {
+        if (data?.is_admin === true || data?.is_platform_admin === true) {
           setCheck({
             status: 'admin',
             token: probedToken,
             data: {
-              isAdmin: data.is_admin,
-              isReadonlyAdmin: data.is_readonly_admin,
+              isAdmin: data.is_admin === true,
+              isPlatformAdmin: data.is_platform_admin === true,
+              isReadonlyAdmin: data.is_readonly_admin === true,
               adminOrgIds: data.admin_org_ids || [],
               readonlyAdminOrgIds: data.readonly_admin_org_ids || [],
             },
