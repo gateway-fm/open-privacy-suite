@@ -132,8 +132,10 @@ Group deletion with live members requires the exact current count in
 `{id,liveMemberships}`. Unmanaged drift is retained until explicitly adopted.
 Once activated, legacy desired-state writer routes return 409 — including the
 earlier `/execution-policy/revisions` submit/activate/withdraw routes once the
-`execution-rules` stream is active; database guards also reject stale or direct
-writers. That 409 guard authorizes first: on the
+`execution-rules` stream is active, and the `…/contracts/{address}/grants`
+routes once **either** the `contract-registry` stream (claims, event rules) or
+the `execution-rules` stream (function rules) is active; database triggers
+enforce the same split for direct writers. That 409 guard authorizes first: on the
 registry and compliance streams the operator token is rejected before the
 managed-stream lookup, and on the platform stream anything but the super-admin
 token is, exactly as the handlers behind it would reject them, so a forbidden

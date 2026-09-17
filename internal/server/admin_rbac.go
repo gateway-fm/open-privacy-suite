@@ -57,9 +57,12 @@ func (s *Server) registerRBACRoutes(api *gin.RouterGroup) {
 
 	// Contract Grants
 	api.GET("/orgs/:org_id/contracts/:address/grants", s.listContractGrants)
-	api.POST("/orgs/:org_id/contracts/:address/grants", registryWriter, s.createContractGrant)
-	api.PUT("/orgs/:org_id/contracts/:address/grants/:group_id", registryWriter, s.updateContractGrant)
-	api.DELETE("/orgs/:org_id/contracts/:address/grants/:group_id", registryWriter, s.deleteContractGrant)
+	// A grant row is owned by two streams: claims/event rules by the registry,
+	// function rules by execution-rules. Either active stream closes the row's
+	// legacy writers (the contract_grants trigger enforces the same split).
+	api.POST("/orgs/:org_id/contracts/:address/grants", registryWriter, executionWriter, s.createContractGrant)
+	api.PUT("/orgs/:org_id/contracts/:address/grants/:group_id", registryWriter, executionWriter, s.updateContractGrant)
+	api.DELETE("/orgs/:org_id/contracts/:address/grants/:group_id", registryWriter, executionWriter, s.deleteContractGrant)
 
 	// Execution policies (RD-1287). A policy restricts what a group may
 	// execute; it never grants anything. Submitting compiles and stores a

@@ -236,3 +236,11 @@ in `API_ENDPOINTS.md`; `requireConfigurationPlatform` rejects token callers, so
 the label is a limitation of the inventory generator's auth mapping, not of the
 route.
 
+Follow-up (2026-09-17, DECISION §4 item 10): the legacy `…/grants` routes closed
+only when the registry stream was active; the `contract_grants` trigger already
+refused a `functions` write under an active execution-rules stream, so the
+route answered an opaque 500 instead of the 409 the other legacy writers give.
+`TestLegacyGrantWritersCloseWhenExecutionRulesAreManaged` (red: 404 reached the
+handler → green: 409 on POST/PUT/DELETE) and the three routes now carry both
+stream guards.
+
