@@ -326,3 +326,27 @@ without a policy); one core, no block-building concurrency; a shared laptop.
 Reports: `.tmp/frame-cost-report.json` (print on), `.tmp/frame-cost-report-nolog.json`
 (print off).
 
+## Where the stack's throughput actually goes (2026-09-17)
+
+With the policy check at ≈18 µs per frame, the end-to-end ceiling the load
+harness saw (≈11 tx/s; admission p50 352 ms at concurrency 8, submitting
+directly to the node's private API) has another cause. `Runtime::accept_identity`
+(`node/reth/src/runtime.rs`) takes the single `ingestion` mutex and, for every
+transaction-scoped identity, does `archive.put` (temp file, `sync_all`, hard
+link, directory `sync_all`), `set_pointer("tx-…")` (temp file, `sync_all`,
+rename, directory `sync_all`) and `remove_pointer("terminal-…")`; canonical
+reconciliation later adds another `put` + `set_pointer`. On macOS Rust's
+`File::sync_all` is `F_FULLFSYNC`, measured here at **4.6 ms p50 / 8.5 ms p95
+per call** (plain `fsync` is 0.03 ms), so one admission costs roughly 20–25 ms
+of serialized disk time and reconciliation about as much again — a ceiling of a
+few tens of transactions per second on this machine, and a few hundred on a
+Linux host with ordinary `fsync`, independent of OPS, the load generator and the
+policy.
+
+Consequence for any load test (GasStorm included): until identity durability is
+batched — one `sync_all` per block or per bounded interval for all identities
+accepted in it, which keeps DECISION §3.4's "identities durable before the payload
+is published" — the measured number will be the disk's full-sync rate, not the
+system's. This is a design change to the node's admission path, not a tuning
+knob; it is the next item before quoting throughput.
+

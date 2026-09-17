@@ -245,6 +245,10 @@ cost"): ≈ 18 µs and 6.4 k node-internal gas per checked frame with the fixtur
 policy, i.e. about a quarter of one core at 5 000 tx/s × 3 frames. Neither
 number is evidence for or against the roadmap's 5 000 TPS target as a whole;
 that needs the deployment's block production, real policies and an isolated host.
+The identified ceiling today is the node's per-transaction durable identity
+admission (4–5 full disk syncs per transaction under one lock — `reth-runtime.md`,
+"Where the stack's throughput actually goes"); batching it is the next design
+item before any load figure is quoted.
 
 Still excluded, as decided: Besu/Lineth runtime (E), MCP tooling, ASRN /
 operator blindness, multi-validator consensus, scoped administrative roles and
