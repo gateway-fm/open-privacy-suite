@@ -36,6 +36,7 @@ belongs to OPS; the node only receives trusted public keys.
 | `OPS_NODE_POLICY_TOKEN` | Bearer token shared with OPS |
 | `OPS_NODE_POLICY_STATE_DIR` | Dedicated durable policy/archive directory |
 | `OPS_NODE_POLICY_CAPACITY` | Optional pending identity limit; default `100000` |
+| `OPS_POLICY_DECISION_LOG` | Set to `1` to print one `OPS_POLICY_DECISION {…}` JSON line per checked transaction on stderr (development diagnostic; off by default — it costs a synchronous write per transaction and records principal/selector pairs in the node log) |
 
 ```sh
 node/reth/target/release/ops-reth node \

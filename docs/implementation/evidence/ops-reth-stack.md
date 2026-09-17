@@ -103,3 +103,13 @@ Live checks of the new behaviour against that stack, as the mock-auth author:
 block with `compiler.available: true` (native solc 0.8.35 on this host); an
 unknown stream name returns 400 `unsupported configuration kind`.
 
+After the per-frame cost measurement (`reth-runtime.md`) the guarded Reth binary
+was rebuilt with the per-transaction decision print off by default and the
+optional check timing; the stack was restarted on it and the acceptance passed
+all 12 checks again.
+
+| Binary | SHA-256 (prefix) |
+|---|---|
+| Guarded Reth (final) | `6f2b3ddbd8e1136c…` |
+| OPS (unchanged) | `ae7d23dc22f249fd…` |
+

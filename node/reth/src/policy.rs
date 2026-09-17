@@ -46,7 +46,11 @@ use std::{
     cell::Cell,
     error::Error,
     fmt,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Instant,
 };
 
 const POLICY: Address = address!("0000000000000000000000000000000000000900");
@@ -62,6 +66,63 @@ pub struct PolicyFactory {
     identities: Arc<dyn IdentityResolver>,
     diagnostic: Option<Arc<DiagnosticReport>>,
     candidate: Option<(Arc<PinnedPolicySnapshot>, Arc<DiagnosticReport>)>,
+    timing: Option<Arc<PolicyTiming>>,
+}
+
+/// One measured active policy check: the frame's application depth, how long the
+/// facts took to resolve and encode, how long the policy frame ran, and the gas it used.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct FrameSample {
+    pub depth: u64,
+    pub prepare_nanos: u64,
+    pub evaluate_nanos: u64,
+    pub gas: u64,
+}
+
+/// Cost accounting for active policy checks, opted into with `PolicyFactory::timed`.
+///
+/// Totals are cheap atomics; samples are kept only while a caller holds the handle
+/// (measurement runs and diagnostics), never on the production path by default.
+#[derive(Debug, Default)]
+pub struct PolicyTiming {
+    frames: AtomicU64,
+    prepare_nanos: AtomicU64,
+    evaluate_nanos: AtomicU64,
+    gas: AtomicU64,
+    samples: Mutex<Vec<FrameSample>>,
+}
+
+impl PolicyTiming {
+    fn record(&self, sample: FrameSample) {
+        self.frames.fetch_add(1, Ordering::Relaxed);
+        self.prepare_nanos
+            .fetch_add(sample.prepare_nanos, Ordering::Relaxed);
+        self.evaluate_nanos
+            .fetch_add(sample.evaluate_nanos, Ordering::Relaxed);
+        self.gas.fetch_add(sample.gas, Ordering::Relaxed);
+        if let Ok(mut samples) = self.samples.lock() {
+            samples.push(sample);
+        }
+    }
+    pub fn frames(&self) -> u64 {
+        self.frames.load(Ordering::Relaxed)
+    }
+    pub fn prepare_nanos(&self) -> u64 {
+        self.prepare_nanos.load(Ordering::Relaxed)
+    }
+    pub fn evaluate_nanos(&self) -> u64 {
+        self.evaluate_nanos.load(Ordering::Relaxed)
+    }
+    pub fn gas(&self) -> u64 {
+        self.gas.load(Ordering::Relaxed)
+    }
+    /// Returns and clears the per-frame samples recorded so far.
+    pub fn take_samples(&self) -> Vec<FrameSample> {
+        self.samples
+            .lock()
+            .map(|mut samples| std::mem::take(&mut *samples))
+            .unwrap_or_default()
+    }
 }
 
 #[derive(Debug, Default)]
@@ -88,7 +149,15 @@ impl PolicyFactory {
             identities,
             diagnostic: None,
             candidate: None,
+            timing: None,
         }
+    }
+
+    /// Records the cost of every active policy check made through this factory.
+    pub fn timed(mut self) -> (Self, Arc<PolicyTiming>) {
+        let timing = Arc::new(PolicyTiming::default());
+        self.timing = Some(timing.clone());
+        (self, timing)
     }
 
     pub fn diagnostic(mut self) -> (Self, Arc<DiagnosticReport>) {
@@ -170,6 +239,7 @@ impl EvmFactory for PolicyFactory {
                         self.snapshot.clone(),
                         self.diagnostic.clone(),
                         self.candidate.clone(),
+                        self.timing.clone(),
                     ),
                     inspector,
                 ))
@@ -193,6 +263,7 @@ impl<DB: Database, I: Inspector<EthEvmContext<DB>>> PolicyEvm<DB, I> {
             factory.snapshot,
             factory.diagnostic,
             factory.candidate,
+            factory.timing,
         );
         self.identities = factory.identities;
     }
@@ -292,18 +363,20 @@ impl<DB: Database, I: Inspector<EthEvmContext<DB>>> Evm for PolicyEvm<DB, I> {
         if let Some(reason) = check.denied.take() {
             // The result's state, including nonce/fees and caught-revert writes, never reaches
             // the block executor's commit path. A catchable inner revert is not our final veto.
-            let evm_success = result.as_ref().is_ok_and(|r| r.result.is_success());
-            eprintln!(
-                "OPS_POLICY_DECISION {}",
-                serde_json::json!({
-                    "decision":"deny", "subject":subject, "nonce":nonce, "block":block.to_string(),
-                    "reason":reason, "application_returned_success":evm_success,
-                    "calls":check.calls,
-                })
-            );
+            if decision_log_enabled() {
+                let evm_success = result.as_ref().is_ok_and(|r| r.result.is_success());
+                eprintln!(
+                    "OPS_POLICY_DECISION {}",
+                    serde_json::json!({
+                        "decision":"deny", "subject":subject, "nonce":nonce, "block":block.to_string(),
+                        "reason":reason, "application_returned_success":evm_success,
+                        "calls":check.calls,
+                    })
+                );
+            }
             return Err(EVMError::Transaction(PolicyTxError::Denied(reason)));
         }
-        if !check.calls.is_empty() && result.is_ok() {
+        if decision_log_enabled() && !check.calls.is_empty() && result.is_ok() {
             eprintln!(
                 "OPS_POLICY_DECISION {}",
                 serde_json::json!({
@@ -352,6 +425,18 @@ impl<DB: Database, I: Inspector<EthEvmContext<DB>>> Evm for PolicyEvm<DB, I> {
 pub enum PolicyTxError {
     Ethereum(InvalidTransaction),
     Denied(String),
+}
+
+/// Per-transaction decision lines on stderr (`OPS_POLICY_DECISION {...}`) are a
+/// development diagnostic, enabled with `OPS_POLICY_DECISION_LOG=1`. They are off by
+/// default because on the block-production path they cost a synchronous JSON
+/// serialization and write for every transaction (measured at roughly the price of a
+/// policy check itself, see tests/frame_cost.rs) and because they record which
+/// principal called which selector in the node's log. OPS receives every outcome
+/// through the identity record regardless of this setting.
+fn decision_log_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("OPS_POLICY_DECISION_LOG").is_some_and(|v| v == "1"))
 }
 
 impl fmt::Display for PolicyTxError {
@@ -403,6 +488,9 @@ struct PolicyInspector<CTX> {
     candidate: Option<(Arc<PinnedPolicySnapshot>, Arc<DiagnosticReport>)>,
     candidate_calls: Vec<CallRecord>,
     evaluating_candidate: bool,
+    timing: Option<Arc<PolicyTiming>>,
+    /// Gas spent by the most recent active policy frame, for `timing`.
+    last_gas: u64,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -422,6 +510,7 @@ impl<CTX: ContextTr + Host> PolicyInspector<CTX> {
         snapshot: Arc<PinnedPolicySnapshot>,
         diagnostic: Option<Arc<DiagnosticReport>>,
         candidate: Option<(Arc<PinnedPolicySnapshot>, Arc<DiagnosticReport>)>,
+        timing: Option<Arc<PolicyTiming>>,
     ) -> Self {
         Self {
             instructions: EthInstructions::new_mainnet_with_spec(spec),
@@ -441,6 +530,8 @@ impl<CTX: ContextTr + Host> PolicyInspector<CTX> {
             candidate,
             candidate_calls: Vec::new(),
             evaluating_candidate: false,
+            timing,
+            last_gas: 0,
         }
     }
 
@@ -474,10 +565,21 @@ impl<CTX: ContextTr + Host> PolicyInspector<CTX> {
             self.denied.get_or_insert(error.clone());
             return Err(error);
         }
-        let active = self
-            .snapshot
-            .prepare(identity, observed, &self.created)
-            .and_then(|invocation| self.evaluate(context, invocation, observed));
+        let started = self.timing.as_ref().map(|_| Instant::now());
+        let prepared = self.snapshot.prepare(identity, observed, &self.created);
+        let prepared_at = started.map(|_| Instant::now());
+        self.last_gas = 0;
+        let active = prepared.and_then(|invocation| self.evaluate(context, invocation, observed));
+        if let (Some(timing), Some(started), Some(prepared_at)) =
+            (&self.timing, started, prepared_at)
+        {
+            timing.record(FrameSample {
+                depth: observed.depth,
+                prepare_nanos: (prepared_at - started).as_nanos() as u64,
+                evaluate_nanos: prepared_at.elapsed().as_nanos() as u64,
+                gas: self.last_gas,
+            });
+        }
         // A candidate is diagnostic only. Never run a speculative frame denied
         // by the active policy unless the independently scoped admin mode applies.
         if self.diagnostic.is_none() && !matches!(active, Ok(0)) {
@@ -539,7 +641,12 @@ impl<CTX: ContextTr + Host> PolicyInspector<CTX> {
         }
 
         let result = match outcome? {
-            FrameResult::Call(outcome) => outcome.result,
+            FrameResult::Call(outcome) => {
+                if !self.evaluating_candidate {
+                    self.last_gas = outcome.result.gas.total_gas_spent();
+                }
+                outcome.result
+            }
             FrameResult::Create(_) => return Err("malformed policy result".into()),
         };
         if result.result == InstructionResult::FatalExternalError {

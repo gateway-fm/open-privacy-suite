@@ -271,3 +271,58 @@ that path, not policy evaluation. A throughput claim needs an isolated host, a
 block-production configuration matching the deployment, and a per-frame
 measurement inside the node — none of which this run had.
 
+## Per-frame cost of a policy check (2026-09-17)
+
+The number the load harness could not give. `node/reth/tests/frame_cost.rs`
+(`cargo test --release --features reth-sdk --test frame_cost -- --ignored --nocapture`)
+runs the real inspector on the real EVM in-process: the fixture policy from
+`internal/policydsl/testdata/lifecycle-v1.json` (compiled with the pinned solc;
+three rules — org wildcard, EOA transfer, create), facts for 1 000 and 10 000
+principals through the production `FactsPolicy` encoder, and an application
+contract that forwards its call to itself so a transaction has exactly 1, 2 or 3
+checked frames. 2 000 transactions per configuration after 200 warm-up; the
+same transaction on a stock EVM without any policy is the baseline. Apple M2
+Max, single thread, `InMemoryDB`, shared workstation. Timing comes from
+`PolicyFactory::timed()` (new), which records per active check the fact
+preparation time, the policy frame time and the gas the frame used.
+
+| Frames/tx | check() µs mean / p50 / p95 / p99 | of which facts→calldata | gas per check | tx wall µs: no policy → with policy | overhead per frame |
+|---|---|---|---|---|---|
+| 1 | 17.7 / 17.4 / 20.0 / 22.9 | 1.9 µs | 6 436 | 0.8 → 18.7 | 17.9 µs |
+| 2 | 18.0 / 17.5 / 21.5 / 25.1 | 1.8 µs | 6 436 | 1.1 → 37.7 | 18.3 µs |
+| 3 | 17.9 / 17.5 / 18.6 / 22.1 | 1.9 µs | 6 436 | 1.4 → 55.8 | 18.2 µs |
+
+(10 000 principals; the 1 000-principal rows are within noise of these — the
+fact index is a hash lookup, so principal count does not enter the frame cost.)
+
+Reading: **one checked frame costs ≈ 18 µs of node CPU and 6.4 k node-internal
+gas** with this policy, and the overhead per frame equals the check itself — the
+inspector adds nothing measurable around it. Against the roadmap workload:
+5 000 tx/s × 3 frames = 15 000 checks/s × 18 µs ≈ 0.27 core-seconds per second,
+i.e. about a quarter of one core at 1 s blocks (9 % at one frame per
+transaction). Policy evaluation is therefore not what bounds the harness's 11
+tx/s; the signed admission path and the development miner are.
+
+What the measurement also found: the node printed one `OPS_POLICY_DECISION`
+JSON line to stderr for **every allowed transaction** (a PoC diagnostic that had
+survived into the runtime). With it on, the overhead per frame was 48–63 µs —
+the synchronous serialization and write cost more than the policy check. The
+print is now off by default and enabled with `OPS_POLICY_DECISION_LOG=1`; OPS
+receives every outcome through the identity record regardless. Before/after:
+
+| Frames/tx | overhead per frame, print on | overhead per frame, print off |
+|---|---|---|
+| 1 | 62–64 µs | 18–21 µs |
+| 2 | 51 µs | 18 µs |
+| 3 | 48 µs | 18 µs |
+
+Limits of this measurement: one fixture policy with three wildcard rules — a
+policy with many selector and argument rules runs more Solidity per check and
+costs more gas, roughly in proportion to the rules the generated code evaluates
+for the frame's target, so the acceptance stack's real policy should be
+re-measured the same way before quoting a number for a customer configuration;
+in-memory state (real state access is paid by the application frame with or
+without a policy); one core, no block-building concurrency; a shared laptop.
+Reports: `.tmp/frame-cost-report.json` (print on), `.tmp/frame-cost-report-nolog.json`
+(print off).
+

@@ -239,9 +239,12 @@ Measured, not claimed: the load harness sustains ~10–11 mined transactions per
 second end to end on a shared laptop with 1 s development blocks, with no wrong
 verdicts under nested frames, live record reads or continuous fact churn
 (`reth-runtime.md`, "Load measurement"). That is a bound of the harness's signed
-admission path and the development miner, not of policy evaluation, and it is
-not evidence for or against the roadmap's 5,000 TPS target; a per-frame
-measurement on an isolated host is still owed.
+admission path and the development miner, not of policy evaluation. The policy
+check itself was measured in-process on 2026-09-17 (`reth-runtime.md`, "Per-frame
+cost"): ≈ 18 µs and 6.4 k node-internal gas per checked frame with the fixture
+policy, i.e. about a quarter of one core at 5 000 tx/s × 3 frames. Neither
+number is evidence for or against the roadmap's 5 000 TPS target as a whole;
+that needs the deployment's block production, real policies and an isolated host.
 
 Still excluded, as decided: Besu/Lineth runtime (E), MCP tooling, ASRN /
 operator blindness, multi-validator consensus, scoped administrative roles and
