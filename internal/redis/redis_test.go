@@ -251,7 +251,7 @@ func TestOAuthStore_SetCodeAndGetByCode(t *testing.T) {
 	sessionID := store.CreateSession("client1", "https://example.com/callback", "state123", "auth-sess-1", "")
 	require.NotEmpty(t, sessionID)
 
-	err := store.SetCode(sessionID, "code-abc", "did:test:user1", true)
+	err := store.SetCode(sessionID, "code-abc", "did:test:user1", true, "service")
 	require.NoError(t, err)
 
 	// Retrieve by code
@@ -260,6 +260,7 @@ func TestOAuthStore_SetCodeAndGetByCode(t *testing.T) {
 	assert.Equal(t, "code-abc", session.Code)
 	assert.Equal(t, "did:test:user1", session.UserDID)
 	assert.True(t, session.KYC)
+	assert.Equal(t, "service", session.PrincipalKind)
 }
 
 func TestOAuthStore_MarkCodeUsedSingleUse(t *testing.T) {

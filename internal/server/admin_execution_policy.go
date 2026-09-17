@@ -23,6 +23,9 @@ func toRevisionResponse(rev *db.ExecutionPolicyRevision) apimodels.ExecutionPoli
 	out := apimodels.ExecutionPolicyRevision{
 		ID:             rev.ID,
 		Revision:       rev.Revision,
+		BaseRevision:   rev.BaseRevision,
+		CreatedBy:      rev.CreatedBy,
+		ActivatedBy:    rev.ActivatedBy,
 		Status:         rev.Status,
 		PolicyDigest:   rev.PolicyDigest,
 		SolidityDigest: rev.SolidityDigest,
@@ -111,10 +114,10 @@ func (s *Server) getExecutionPolicyContext(c *gin.Context) {
 		return
 	}
 
-	base, err := s.db.LatestExecutionPolicyRevisionNumber(ctx, orgID)
+	base, err := s.db.ActiveExecutionPolicyRevisionNumber(ctx, orgID)
 	if err != nil {
 		respondInternalErrorAndLog(c, "failed to read policy revisions",
-			"admin_execution_policy: LatestExecutionPolicyRevisionNumber failed", "org_id", orgID, "err", err)
+			"admin_execution_policy: ActiveExecutionPolicyRevisionNumber failed", "org_id", orgID, "err", err)
 		return
 	}
 
@@ -167,7 +170,7 @@ func (s *Server) getExecutionPolicyContext(c *gin.Context) {
 // draft awaiting approval.
 //
 // @Summary      Submit an execution-policy candidate
-// @Description  Validates a candidate against the organisation's groups and registered ABIs, generates and compiles the policy contract, and stores the result as a draft. A draft enforces nothing until it is activated. The submission must declare the current base revision; a stale base is refused rather than merged, so two administrators cannot silently overwrite each other. Scoped to {org_id}; the restricted operator token is rejected.
+// @Description  Validates and compiles a candidate and stores it as an attributed draft. Full and read-only org admins may submit; token-only credentials cannot submit. base_revision names the currently active revision (zero before first activation), independently of draft numbering. Stale bases are refused. A different identified full org admin must activate the draft. Scoped to {org_id}; the restricted operator token is rejected.
 // @Tags         Admin: Execution policy
 // @Accept       json
 // @Produce      json
@@ -180,10 +183,18 @@ func (s *Server) getExecutionPolicyContext(c *gin.Context) {
 // @Failure      409 {object} apimodels.APIError "the candidate was written against a superseded revision"
 // @Failure      500 {object} apimodels.APIError
 // @Failure      503 {object} apimodels.APIError "the policy compiler is unavailable"
-// @Security     AdminToken
+// @Security     BearerAuth
 // @Router       /api/v1/admin/orgs/{org_id}/execution-policy/revisions [post]
 func (s *Server) submitExecutionPolicy(c *gin.Context) {
+	if s.closeLegacyExecutionWriter(c) {
+		return
+	}
 	if denyOperatorOrgScoped(c) {
+		return
+	}
+	actor := auditActorUserID(c)
+	if actor == nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": db.ErrPolicyActorRequired.Error()})
 		return
 	}
 	orgID := c.Param("org_id")
@@ -194,7 +205,7 @@ func (s *Server) submitExecutionPolicy(c *gin.Context) {
 	// rather than re-encoded from a decoded map.
 	var input struct {
 		Policy       json.RawMessage `json:"policy" binding:"required"`
-		BaseRevision int64           `json:"base_revision"`
+		BaseRevision *int64          `json:"base_revision" binding:"required,gte=0"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		respondBadRequestAndLog(c, "invalid request body",
@@ -217,22 +228,22 @@ func (s *Server) submitExecutionPolicy(c *gin.Context) {
 	if err != nil {
 		// Validation messages name the field at fault and nothing else, so they
 		// are safe to return: an administrator of this org supplied the text.
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondClientError(c, http.StatusBadRequest, err, "invalid policy document", "admin_execution_policy: parse rejected without client text", "org_id", orgID)
 		return
 	}
 
 	// Check the base revision before compiling. A submission written against a
 	// superseded revision is going to be refused either way, and compiling first
 	// would let a stale client burn a compile per retry.
-	latest, err := s.db.LatestExecutionPolicyRevisionNumber(ctx, orgID)
+	latest, err := s.db.ActiveExecutionPolicyRevisionNumber(ctx, orgID)
 	if err != nil {
 		respondInternalErrorAndLog(c, "failed to read policy revisions",
-			"admin_execution_policy: LatestExecutionPolicyRevisionNumber failed (submit)", "org_id", orgID, "err", err)
+			"admin_execution_policy: ActiveExecutionPolicyRevisionNumber failed (submit)", "org_id", orgID, "err", err)
 		return
 	}
-	if input.BaseRevision != latest {
+	if *input.BaseRevision != latest {
 		c.JSON(http.StatusConflict, gin.H{
-			"error": fmt.Sprintf("policy base revision is stale: written against revision %d, current is %d", input.BaseRevision, latest),
+			"error": fmt.Sprintf("policy base revision is stale: written against revision %d, current is %d", *input.BaseRevision, latest),
 		})
 		return
 	}
@@ -246,7 +257,7 @@ func (s *Server) submitExecutionPolicy(c *gin.Context) {
 
 	validated, err := policydsl.Validate(policy, cat)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondClientError(c, http.StatusBadRequest, err, "invalid policy document", "admin_execution_policy: validate rejected without client text", "org_id", orgID)
 		return
 	}
 
@@ -260,11 +271,10 @@ func (s *Server) submitExecutionPolicy(c *gin.Context) {
 		return
 	}
 
-	actor := auditActorUserID(c)
-	rev, err := s.db.CreateExecutionPolicyRevision(ctx, orgID, input.BaseRevision, string(input.Policy), artifact, actor)
+	rev, err := s.db.CreateExecutionPolicyRevision(ctx, orgID, *input.BaseRevision, string(input.Policy), artifact, actor)
 	if err != nil {
 		if errors.Is(err, db.ErrPolicyStaleBase) {
-			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+			respondConflict(c, db.ErrPolicyStaleBase.Error())
 			return
 		}
 		respondInternalErrorAndLog(c, "failed to store the policy revision",
@@ -365,7 +375,7 @@ func (s *Server) getExecutionPolicyRevision(c *gin.Context) {
 // activateExecutionPolicyRevision puts a draft in force.
 //
 // @Summary      Activate an execution-policy revision
-// @Description  Puts a draft in force and retires whatever was active before it, in one transaction. Only a draft can be activated. The approving administrator is recorded against the revision and in the audit log. Scoped to {org_id}; the restricted operator token is rejected.
+// @Description  Atomically activates a draft only if its recorded base is still active. Requires an identified full org admin different from the submitter; read-only and token-only credentials are refused. Legacy drafts without recorded provenance must be resubmitted. The approving administrator and artifact digests are audited. Scoped to {org_id}; the restricted operator token is rejected.
 // @Tags         Admin: Execution policy
 // @Produce      json
 // @Param        org_id path string true "Organization ID"
@@ -374,12 +384,23 @@ func (s *Server) getExecutionPolicyRevision(c *gin.Context) {
 // @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
 // @Failure      403 {object} apimodels.APIError "operator token cannot manage per-org policy, or caller is out of org scope"
 // @Failure      404 {object} apimodels.APIError "no such revision in this organization"
-// @Failure      409 {object} apimodels.APIError "the revision is not a draft"
+// @Failure      409 {object} apimodels.APIError "the revision is not a draft or its authoring base is stale"
 // @Failure      500 {object} apimodels.APIError
-// @Security     AdminToken
+// @Security     BearerAuth
 // @Router       /api/v1/admin/orgs/{org_id}/execution-policy/revisions/{revision_id}/activate [post]
 func (s *Server) activateExecutionPolicyRevision(c *gin.Context) {
+	if s.closeLegacyExecutionWriter(c) {
+		return
+	}
 	if denyOperatorOrgScoped(c) {
+		return
+	}
+	if !requireHumanConfigurationActor(c) {
+		return
+	}
+	actor := auditActorUserID(c)
+	if actor == nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": db.ErrPolicyActorRequired.Error()})
 		return
 	}
 	orgID := c.Param("org_id")
@@ -402,7 +423,7 @@ func (s *Server) activateExecutionPolicyRevision(c *gin.Context) {
 		return
 	}
 	if err := s.revalidateStoredPolicy(ctx, orgID, candidate); err != nil {
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		respondClientError(c, http.StatusConflict, err, "the stored policy no longer validates", "admin_execution_policy: revalidation failed without client text", "org_id", orgID)
 		return
 	}
 
@@ -413,10 +434,20 @@ func (s *Server) activateExecutionPolicyRevision(c *gin.Context) {
 		return
 	}
 
-	rev, err := s.db.ActivateExecutionPolicyRevision(ctx, orgID, revisionID, auditActorUserID(c))
+	rev, err := s.db.ActivateExecutionPolicyRevision(ctx, orgID, revisionID, actor)
 	if err != nil {
-		if errors.Is(err, db.ErrPolicyNotDraft) {
-			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		switch {
+		case errors.Is(err, db.ErrPolicyActorRequired):
+			respondForbidden(c, db.ErrPolicyActorRequired.Error())
+			return
+		case errors.Is(err, db.ErrPolicySelfApproval):
+			respondForbidden(c, db.ErrPolicySelfApproval.Error())
+			return
+		case errors.Is(err, db.ErrPolicyNotDraft):
+			respondConflict(c, db.ErrPolicyNotDraft.Error())
+			return
+		case errors.Is(err, db.ErrPolicyStaleBase):
+			respondConflict(c, db.ErrPolicyStaleBase.Error())
 			return
 		}
 		respondInternalErrorAndLog(c, "failed to activate the policy revision",
@@ -445,6 +476,24 @@ func (s *Server) activateExecutionPolicyRevision(c *gin.Context) {
 		})
 
 	c.JSON(http.StatusOK, toRevisionResponse(rev))
+}
+
+// isExecutionPolicyPreparation names the two draft-only POST capabilities a
+// scoped read-only admin may use. Match registered routes exactly so an
+// unrelated endpoint cannot obtain an exception by resembling a policy URL.
+func isExecutionPolicyPreparation(c *gin.Context) bool {
+	if c.Request.Method != http.MethodPost {
+		return false
+	}
+	path := c.FullPath()
+	for _, mount := range []string{"/api/v1/admin", "/api/admin"} {
+		switch path {
+		case mount + "/orgs/:org_id/execution-policy/revisions",
+			mount + "/orgs/:org_id/execution-policy/revisions/:revision_id/simulate":
+			return true
+		}
+	}
+	return false
 }
 
 // withdrawExecutionPolicyRevision abandons a draft.
@@ -501,7 +550,7 @@ func auditActorUserID(c *gin.Context) *string {
 // simulateExecutionPolicy evaluates a described execution against a revision.
 //
 // @Summary      Simulate an execution against a policy revision
-// @Description  Evaluates a hypothetical execution against a stored revision and returns the decision. The candidate is evaluated twice, once by the reference evaluator and once by running the compiled contract, and the response reports whether the two agreed. Simulation mutates nothing and can be run against a draft, which is the point: it is how a reviewer checks what a policy would do before putting it in force. Scoped to {org_id}; the restricted operator token is rejected.
+// @Description  Legacy mode only; Reth mode returns 409 and uses configuration/execution-rules with execution/simulate. Evaluates a hypothetical execution against a stored revision and returns the decision. The candidate is evaluated twice, once by the reference evaluator and once by running the compiled contract, and the response reports whether the two agreed. Simulation mutates nothing and can be run against a draft, which is the point: it is how a reviewer checks what a policy would do before putting it in force. Scoped to {org_id}; the restricted operator token is rejected.
 // @Tags         Admin: Execution policy
 // @Accept       json
 // @Produce      json
@@ -515,8 +564,12 @@ func auditActorUserID(c *gin.Context) *string {
 // @Failure      404 {object} apimodels.APIError "no such revision in this organization"
 // @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
+// @Failure      409 {object} apimodels.APIError "use configuration execution rules in Reth mode"
 // @Router       /api/v1/admin/orgs/{org_id}/execution-policy/revisions/{revision_id}/simulate [post]
 func (s *Server) simulateExecutionPolicy(c *gin.Context) {
+	if s.closeLegacyExecutionWriter(c) {
+		return
+	}
 	if denyOperatorOrgScoped(c) {
 		return
 	}
@@ -557,19 +610,34 @@ func (s *Server) simulateExecutionPolicy(c *gin.Context) {
 	if err != nil {
 		// The stored policy no longer validates against the current catalog, for
 		// example because a contract's ABI was replaced after it was approved.
-		c.JSON(http.StatusConflict, gin.H{"error": "the stored policy no longer validates against the organization's current contracts: " + err.Error()})
+		respondClientError(c, http.StatusConflict, clientErrorWithPrefix("the stored policy no longer validates against the organization's current contracts", err), "the stored policy no longer validates", "admin_execution_policy: revalidation failed without client text", "org_id", orgID)
 		return
 	}
 
 	if err := checkSimulationSize(input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondClientError(c, http.StatusBadRequest, err, "invalid simulation request", "admin_execution_policy: simulation size rejected without client text")
 		return
 	}
 
 	simCtx, frames, err := buildSimulationInputs(orgID, input)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondClientError(c, http.StatusBadRequest, err, "invalid simulation request", "admin_execution_policy: simulation input rejected without client text")
 		return
+	}
+	// Ownership is a current server fact, never asserted by the hypothetical
+	// frame request. Literal policy bindings now enforce it in both evaluators.
+	for i := range frames {
+		codeOwner, err := s.db.GetContractOwnerOrgID(ctx, frames[i].CodeAddress.Hex())
+		if err != nil {
+			respondInternalErrorAndLog(c, "failed to resolve simulation ownership", "admin_execution_policy: code owner failed", "err", err)
+			return
+		}
+		storageOwner, err := s.db.GetContractOwnerOrgID(ctx, frames[i].StorageAddress.Hex())
+		if err != nil {
+			respondInternalErrorAndLog(c, "failed to resolve simulation ownership", "admin_execution_policy: storage owner failed", "err", err)
+			return
+		}
+		frames[i].CodeOrg, frames[i].StorageOrg = codeOwner, storageOwner
 	}
 
 	reference := validated.Evaluate(simCtx, frames)
@@ -605,19 +673,27 @@ func (s *Server) simulateExecutionPolicy(c *gin.Context) {
 	})
 }
 
+func (s *Server) closeLegacyExecutionWriter(c *gin.Context) bool {
+	if s.config == nil || !s.config.NodePolicy.Enabled() {
+		return false
+	}
+	c.JSON(http.StatusConflict, gin.H{"error": "Reth execution rules use configuration/execution-rules revisions and execution/simulate previews", "code": "use_configuration_execution_rules"})
+	return true
+}
+
 // buildSimulationInputs converts a described execution into evaluator inputs.
 func buildSimulationInputs(orgID string, input apimodels.ExecutionPolicySimulateRequest) (policydsl.Context, []policydsl.Frame, error) {
 	ctx := policydsl.Context{Org: orgID, Groups: input.Groups}
 
 	if input.Signer != "" {
 		if !common.IsHexAddress(input.Signer) {
-			return ctx, nil, errors.New("signer is not a valid address")
+			return ctx, nil, clientErrorf("signer is not a valid address")
 		}
 		ctx.Signer = common.HexToAddress(input.Signer)
 	}
 	for _, a := range input.LinkedAddresses {
 		if !common.IsHexAddress(a) {
-			return ctx, nil, errors.New("linked_addresses contains a value that is not a valid address")
+			return ctx, nil, clientErrorf("linked_addresses contains a value that is not a valid address")
 		}
 		ctx.LinkedAddresses = append(ctx.LinkedAddresses, common.HexToAddress(a))
 	}
@@ -625,21 +701,21 @@ func buildSimulationInputs(orgID string, input apimodels.ExecutionPolicySimulate
 	frames := make([]policydsl.Frame, 0, len(input.Frames))
 	for i, f := range input.Frames {
 		if !common.IsHexAddress(f.StorageAddress) {
-			return ctx, nil, fmt.Errorf("frame %d: storage_address is not a valid address", i)
+			return ctx, nil, clientErrorf("frame %d: storage_address is not a valid address", i)
 		}
 		storage := common.HexToAddress(f.StorageAddress)
 
 		code := storage
 		if f.CodeAddress != "" {
 			if !common.IsHexAddress(f.CodeAddress) {
-				return ctx, nil, fmt.Errorf("frame %d: code_address is not a valid address", i)
+				return ctx, nil, clientErrorf("frame %d: code_address is not a valid address", i)
 			}
 			code = common.HexToAddress(f.CodeAddress)
 		}
 
 		calldata, err := hex.DecodeString(strings.TrimPrefix(f.Calldata, "0x"))
 		if err != nil {
-			return ctx, nil, fmt.Errorf("frame %d: calldata is not valid hex", i)
+			return ctx, nil, clientErrorf("frame %d: calldata is not valid hex", i)
 		}
 
 		frames = append(frames, policydsl.Frame{
@@ -664,16 +740,17 @@ func buildSimulationInputs(orgID string, input apimodels.ExecutionPolicySimulate
 func (s *Server) revalidateStoredPolicy(ctx context.Context, orgID string, rev *db.ExecutionPolicyRevision) error {
 	policy, err := policydsl.Parse([]byte(rev.Source))
 	if err != nil {
-		return fmt.Errorf("the stored policy document is no longer readable: %w", err)
+		return clientErrorWithPrefix("the stored policy document is no longer readable", err)
 	}
 
 	cat, err := s.buildCatalog(ctx, orgID)
 	if err != nil {
-		return fmt.Errorf("could not read the organization's current contracts and groups")
+		slog.Error("admin_execution_policy: buildCatalog failed (revalidate)", "org_id", orgID, "err", err)
+		return clientErrorf("could not read the organization's current contracts and groups")
 	}
 
 	if _, err := policydsl.Validate(policy, cat); err != nil {
-		return fmt.Errorf("the policy no longer validates against this organization's current contracts and groups: %w", err)
+		return clientErrorWithPrefix("the policy no longer validates against this organization's current contracts and groups", err)
 	}
 	return nil
 }
@@ -697,17 +774,17 @@ const (
 // checkSimulationSize bounds a described execution before any of it is run.
 func checkSimulationSize(input apimodels.ExecutionPolicySimulateRequest) error {
 	if len(input.Frames) > maxSimulationFrames {
-		return fmt.Errorf("an execution may describe at most %d frames", maxSimulationFrames)
+		return clientErrorf("an execution may describe at most %d frames", maxSimulationFrames)
 	}
 	if len(input.LinkedAddresses) > maxSimulationAddresses {
-		return fmt.Errorf("at most %d linked addresses may be supplied", maxSimulationAddresses)
+		return clientErrorf("at most %d linked addresses may be supplied", maxSimulationAddresses)
 	}
 	if len(input.Groups) > maxSimulationGroups {
-		return fmt.Errorf("at most %d groups may be supplied", maxSimulationGroups)
+		return clientErrorf("at most %d groups may be supplied", maxSimulationGroups)
 	}
 	for i, f := range input.Frames {
 		if len(f.Calldata) > maxSimulationCalldata {
-			return fmt.Errorf("frame %d: calldata is longer than the %d-character limit", i, maxSimulationCalldata)
+			return clientErrorf("frame %d: calldata is longer than the %d-character limit", i, maxSimulationCalldata)
 		}
 	}
 	return nil

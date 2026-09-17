@@ -138,6 +138,12 @@ func TestHandleAzureServicePrincipal(t *testing.T) {
 		assert.NotEmpty(t, resp.AccessToken)
 		assert.NotEmpty(t, resp.RefreshToken)
 		assert.Equal(t, "Bearer", resp.TokenType)
+		accessClaims, err := ts.jwtService.ValidateAccessToken(resp.AccessToken)
+		require.NoError(t, err)
+		require.Equal(t, auth.PrincipalService, accessClaims.PrincipalKind)
+		refreshClaims, err := ts.jwtService.ValidateRefreshToken(resp.RefreshToken)
+		require.NoError(t, err)
+		require.Equal(t, auth.PrincipalService, refreshClaims.PrincipalKind)
 
 		// The SP is provisioned as azuread:<oid> with its tenant pinned.
 		user, err := ts.db.GetUserByExternalID(context.Background(), auth.AzureSubject("sp-allowed-oid"))

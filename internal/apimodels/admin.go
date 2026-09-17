@@ -30,6 +30,7 @@ type DryRunResponseDoc struct {
 	Reason            string `json:"reason,omitempty"`
 	Response          any    `json:"response,omitempty"`
 	Trace             any    `json:"trace,omitempty"`
+	Policy            any    `json:"policy,omitempty"`
 	LogsEmitted       []any  `json:"logs_emitted,omitempty"`
 	LogsVisibleToUser []any  `json:"logs_visible_to_user,omitempty"`
 }

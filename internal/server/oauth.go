@@ -137,7 +137,17 @@ func (s *OAuthSessionStore) GetSessionByCode(code string) *types.OAuthSession {
 }
 
 // SetCode sets the authorization code for a session
-func (s *OAuthSessionStore) SetCode(sessionID, code, userDID string, kyc bool) error {
+func (s *OAuthSessionStore) SetCode(sessionID, code, userDID string, kyc bool, principalKind ...string) error {
+	kind := ""
+	if len(principalKind) > 1 {
+		return fmt.Errorf("invalid principal kind")
+	}
+	if len(principalKind) == 1 {
+		kind = principalKind[0]
+	}
+	if kind != "" && kind != "human" && kind != "service" {
+		return fmt.Errorf("invalid principal kind")
+	}
 	value, ok := s.sessions.Load(sessionID)
 	if !ok {
 		return fmt.Errorf("session not found")
@@ -151,6 +161,7 @@ func (s *OAuthSessionStore) SetCode(sessionID, code, userDID string, kyc bool) e
 	session.CodeExpires = time.Now().Add(OAuthCodeTTL)
 	session.UserDID = userDID
 	session.KYC = kyc
+	session.PrincipalKind = kind
 
 	// Index by code for quick lookup
 	s.codeIndex.Store(code, sessionID)
@@ -292,7 +303,7 @@ func (s *Server) handleOAuthMockComplete(c *gin.Context) {
 	}
 
 	code := generateSecureCode()
-	if err := s.oauthSessionStore.SetCode(oauthSessionID, code, mockDID, kyc); err != nil {
+	if err := s.oauthSessionStore.SetCode(oauthSessionID, code, mockDID, kyc, string(authpkg.PrincipalHuman)); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to complete session"})
 		return
 	}
@@ -391,7 +402,13 @@ func (s *Server) handleOAuthSilentComplete(c *gin.Context) {
 	}
 
 	code := generateSecureCode()
-	if err := s.oauthSessionStore.SetCode(oauthSessionID, code, callerDID, kyc); err != nil {
+	principalKind := ""
+	if raw, ok := c.Get("claims"); ok {
+		if claims, ok := raw.(*authpkg.TokenClaims); ok {
+			principalKind = string(claims.PrincipalKind)
+		}
+	}
+	if err := s.oauthSessionStore.SetCode(oauthSessionID, code, callerDID, kyc, principalKind); err != nil {
 		slog.Error("oauth silent-complete: SetCode failed", "session_id", oauthSessionID, "err", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to complete session"})
 		return
@@ -770,7 +787,7 @@ func (s *Server) handleOAuthCallback(c *gin.Context) {
 	code := generateSecureCode()
 
 	// Store the code in the OAuth session
-	if err := s.oauthSessionStore.SetCode(oauthSessionID, code, userDID, kyc); err != nil {
+	if err := s.oauthSessionStore.SetCode(oauthSessionID, code, userDID, kyc, string(authpkg.PrincipalHuman)); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate authorization code"})
 		return
 	}
@@ -919,7 +936,7 @@ func (s *Server) handleOAuthToken(c *gin.Context) {
 	}
 
 	// Issue access token (same JWT format as regular auth)
-	accessToken, err := s.jwtService.IssueAccessToken(session.UserDID, session.KYC)
+	accessToken, err := s.jwtService.IssueAccessTokenForPrincipal(session.UserDID, session.KYC, authpkg.PrincipalKind(session.PrincipalKind), nil)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, apimodels.OAuthErrorResponse{
 			Error:            "server_error",
@@ -932,7 +949,7 @@ func (s *Server) handleOAuthToken(c *gin.Context) {
 	// a full re-authentication. The access token is intentionally short-lived
 	// (AccessTokenTTL = 5 min) so that banning a user takes effect within one
 	// TTL window — banned users are rejected at refresh time.
-	refreshToken, err := s.jwtService.IssueRefreshToken(session.UserDID)
+	refreshToken, err := s.jwtService.IssueRefreshTokenForPrincipal(session.UserDID, authpkg.PrincipalKind(session.PrincipalKind))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, apimodels.OAuthErrorResponse{
 			Error:            "server_error",
@@ -1088,7 +1105,7 @@ func (s *Server) scheduleOAuthDemoAutoAuth(oauthSessionID, authSessionID string)
 
 		// Generate authorization code
 		code := generateSecureCode()
-		if err := s.oauthSessionStore.SetCode(oauthSessionID, code, mockDID, kyc); err != nil {
+		if err := s.oauthSessionStore.SetCode(oauthSessionID, code, mockDID, kyc, string(authpkg.PrincipalHuman)); err != nil {
 			slog.Error("demo OAuth auto-auth: failed to set code", "error", err)
 			return
 		}

@@ -214,7 +214,17 @@ func (s *OAuthSessionStore) GetSessionByCode(code string) *types.OAuthSession {
 // and uses a Lua script to check-and-SET atomically. All JSON encoding
 // happens in Go to avoid Redis Lua's cjson library, which corrupts empty
 // arrays ([] -> {}).
-func (s *OAuthSessionStore) SetCode(sessionID, code, userDID string, kyc bool) error {
+func (s *OAuthSessionStore) SetCode(sessionID, code, userDID string, kyc bool, principalKind ...string) error {
+	kind := ""
+	if len(principalKind) > 1 {
+		return fmt.Errorf("invalid principal kind")
+	}
+	if len(principalKind) == 1 {
+		kind = principalKind[0]
+	}
+	if kind != "" && kind != "human" && kind != "service" {
+		return fmt.Errorf("invalid principal kind")
+	}
 	ctx := context.Background()
 	sessKey := oauthSessionKeyPrefix + sessionID
 	codeKey := oauthCodeKeyPrefix + code
@@ -228,6 +238,7 @@ func (s *OAuthSessionStore) SetCode(sessionID, code, userDID string, kyc bool) e
 	session.CodeExpires = time.Now().Add(oauthCodeTTL)
 	session.UserDID = userDID
 	session.KYC = kyc
+	session.PrincipalKind = kind
 
 	data, err := json.Marshal(session)
 	if err != nil {

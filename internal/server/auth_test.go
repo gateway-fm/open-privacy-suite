@@ -303,6 +303,12 @@ func TestHandleAuthCallback_Success(t *testing.T) {
 	assert.NotEmpty(t, response.RefreshToken)
 	assert.Equal(t, "Bearer", response.TokenType)
 	assert.Equal(t, int(AccessTokenTTL.Seconds()), response.ExpiresIn)
+	accessClaims, err := srv.jwtService.ValidateAccessToken(response.AccessToken)
+	require.NoError(t, err)
+	require.Equal(t, auth.PrincipalHuman, accessClaims.PrincipalKind)
+	refreshClaims, err := srv.jwtService.ValidateRefreshToken(response.RefreshToken)
+	require.NoError(t, err)
+	require.Equal(t, auth.PrincipalHuman, refreshClaims.PrincipalKind)
 }
 
 func TestHandleAuthCallback_VerificationFailure(t *testing.T) {

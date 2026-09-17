@@ -113,6 +113,20 @@ func setupTestServerForExecutionPolicy(t *testing.T) *testServerExecutionPolicy 
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
+	// Handler lifecycle fixtures carry real user attribution. Dedicated auth
+	// tests below exercise production JWT/scoping middleware independently.
+	author, reviewer := uuid.NewString(), uuid.NewString()
+	for _, id := range []string{author, reviewer} {
+		require.NoError(t, database.CreateUser(ctx, &rbac.User{ID: id, ExternalID: "did:test:" + id}))
+	}
+	router.Use(func(c *gin.Context) {
+		actor := author
+		if strings.HasSuffix(c.FullPath(), "/activate") {
+			actor = reviewer
+		}
+		c.Set("admin_user_id", actor)
+		c.Set("admin_principal_kind", auth.PrincipalHuman)
+	})
 
 	srv := &Server{
 		db:             database,
@@ -424,7 +438,14 @@ func TestExecutionPolicy_StaleBaseIsRefused(t *testing.T) {
 	})
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 
-	// A second author still believes revision zero is current.
+	var draft struct {
+		ID string `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &draft))
+	rec = s.do(t, http.MethodPost, s.base()+"/revisions/"+draft.ID+"/activate", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	// A second author still believes active revision zero is current.
 	rec = s.do(t, http.MethodPost, s.base()+"/revisions", map[string]any{
 		"policy": s.epPolicy(t, "5"), "base_revision": 0,
 	})
@@ -485,7 +506,7 @@ func TestExecutionPolicy_WithdrawOnlyAffectsDrafts(t *testing.T) {
 
 	// And an activated revision cannot be withdrawn at all.
 	rec = s.do(t, http.MethodPost, s.base()+"/revisions", map[string]any{
-		"policy": s.epPolicy(t, "42"), "base_revision": 1,
+		"policy": s.epPolicy(t, "42"), "base_revision": 0,
 	})
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 	var second struct {
@@ -580,4 +601,64 @@ func TestExecutionPolicy_ActivationRechecksTheCurrentCatalog(t *testing.T) {
 		}},
 	})
 	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+}
+
+func TestExecutionPolicy_AuthenticatedReviewBoundary(t *testing.T) {
+	s := setupTestServerForExecutionPolicy(t)
+	s.config.AdminAPIToken = "bootstrap-test-token"
+	router := gin.New()
+	s.registerRBACRoutes(router.Group("/api/v1/admin", s.adminAuthMiddleware(), s.orgScopingMiddleware()))
+	ctx := t.Context()
+	principal := func(readonly bool, kind auth.PrincipalKind) string {
+		id := uuid.NewString()
+		group := &rbac.Group{ID: uuid.NewString(), OrgID: s.orgID, Slug: "review-" + id, Name: "Reviewer " + id, Path: "review-" + id,
+			IsOrgAdmin: !readonly, IsOrgReadonlyAdmin: readonly}
+		require.NoError(t, s.db.CreateGroup(ctx, group))
+		user := &rbac.User{ID: id, ExternalID: "did:test:" + id}
+		require.NoError(t, s.db.CreateUser(ctx, user))
+		require.NoError(t, s.db.CreateMembership(ctx, &rbac.UserMembership{ID: uuid.NewString(), UserID: id, GroupID: group.ID, Source: rbac.MembershipSourceAdmin}))
+		token, err := s.jwtService.IssueAccessTokenForPrincipal(user.ExternalID, true, kind, nil)
+		require.NoError(t, err)
+		return token
+	}
+	readonly, admin, otherAdmin := principal(true, auth.PrincipalHuman), principal(false, auth.PrincipalHuman), principal(false, auth.PrincipalHuman)
+	service, legacy := principal(false, auth.PrincipalService), principal(false, "")
+	request := func(token, path string, body any) *httptest.ResponseRecorder {
+		return orgAdminGateReq(t, router, http.MethodPost, path, token, "", mustJSON(t, body))
+	}
+	payload := map[string]any{"policy": s.epPolicy(t, "100"), "base_revision": 0}
+	missingBase := request(admin, s.base()+"/revisions", map[string]any{"policy": s.epPolicy(t, "100")})
+	require.Equal(t, http.StatusBadRequest, missingBase.Code, "the base must be explicitly supplied even for first activation")
+	bootstrap := orgAdminGateReq(t, router, http.MethodPost, s.base()+"/revisions", "", s.config.AdminAPIToken, mustJSON(t, payload))
+	require.Equal(t, http.StatusForbidden, bootstrap.Code, "shared bootstrap token is not an accountable document author")
+	for _, author := range []string{readonly, admin} {
+		rec := request(author, s.base()+"/revisions", payload)
+		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+		var draft struct {
+			ID        string `json:"id"`
+			CreatedBy string `json:"created_by"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &draft))
+		require.NotEmpty(t, draft.CreatedBy)
+		rec = request(author, s.base()+"/revisions/"+draft.ID+"/activate", nil)
+		require.Equal(t, http.StatusForbidden, rec.Code, "read-only and same-author activation are both denied")
+		if author == readonly {
+			signer := common.HexToAddress("0x1111111111111111111111111111111111111111")
+			rec = request(readonly, s.base()+"/revisions/"+draft.ID+"/simulate", map[string]any{
+				"groups": []string{s.group}, "signer": signer.Hex(), "frames": []map[string]any{{
+					"call_type": "call", "storage_address": s.vault, "calldata": epTransferCalldata(t, signer, 1),
+				}},
+			})
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		} else {
+			for _, token := range []string{service, legacy} {
+				rec = request(token, s.base()+"/revisions/"+draft.ID+"/activate", nil)
+				require.Equal(t, http.StatusForbidden, rec.Code, "service and legacy tokens cannot approve as a human")
+			}
+			rec = request(otherAdmin, s.base()+"/revisions/"+draft.ID+"/activate", nil)
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		}
+	}
+	rec := request(readonly, "/api/v1/admin/orgs/"+s.orgID+"/memberships/by-did", map[string]any{})
+	require.Equal(t, http.StatusForbidden, rec.Code)
 }

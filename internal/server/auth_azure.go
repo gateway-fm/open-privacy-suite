@@ -322,8 +322,14 @@ func (s *Server) completeAzureLogin(c *gin.Context, identity *auth.AzureIdentity
 		}
 	}
 
+	// The verified login route determines principal kind; an Azure subject
+	// string is shared by people and service principals and cannot infer it.
+	kind := auth.PrincipalHuman
+	if providerMetric == "azure_ad_sp" {
+		kind = auth.PrincipalService
+	}
 	// Issue access token (short-lived)
-	accessToken, err := s.jwtService.IssueAccessToken(subject, kyc)
+	accessToken, err := s.jwtService.IssueAccessTokenForPrincipal(subject, kyc, kind, nil)
 	if err != nil {
 		// JWT signing errors expose key-material state; never to client. RD-934.
 		respondInternalErrorAndLog(c, "failed to issue access token",
@@ -332,7 +338,7 @@ func (s *Server) completeAzureLogin(c *gin.Context, identity *auth.AzureIdentity
 	}
 
 	// Issue refresh token (long-lived)
-	refreshToken, err := s.jwtService.IssueRefreshToken(subject)
+	refreshToken, err := s.jwtService.IssueRefreshTokenForPrincipal(subject, kind)
 	if err != nil {
 		respondInternalErrorAndLog(c, "failed to issue refresh token",
 			"auth_azure: IssueRefreshToken failed", "subject", subject, "err", err)

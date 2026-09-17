@@ -62,7 +62,7 @@ type OAuthSessionManager interface {
 	CreateSession(clientID, redirectURI, state, authSessionID, initiatorDID string) string
 	GetSession(sessionID string) *types.OAuthSession
 	GetSessionByCode(code string) *types.OAuthSession
-	SetCode(sessionID, code, userDID string, kyc bool) error
+	SetCode(sessionID, code, userDID string, kyc bool, principalKind ...string) error
 	MarkCodeUsed(code string) bool
 	DeleteSession(sessionID string)
 	Stop()

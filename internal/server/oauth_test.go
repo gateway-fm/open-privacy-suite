@@ -1463,6 +1463,7 @@ func TestOAuth_TokenExchange_ReturnsRefreshToken(t *testing.T) {
 	// Validate the access token is a valid JWT
 	claims, err := srv.jwtService.ValidateAccessToken(tokenResp.AccessToken)
 	require.NoError(t, err)
+	require.Equal(t, auth.PrincipalHuman, claims.PrincipalKind, "verified OAuth login must retain human approval eligibility")
 	assert.Contains(t, claims.Subject, "did:privado:mock_")
 
 	// Step 6: Use the refresh token to get new tokens via POST /api/v1/refresh
@@ -1494,6 +1495,7 @@ func TestOAuth_TokenExchange_ReturnsRefreshToken(t *testing.T) {
 	// Validate the new access token
 	newClaims, err := srv.jwtService.ValidateAccessToken(refreshResp.AccessToken)
 	require.NoError(t, err)
+	require.Equal(t, auth.PrincipalHuman, newClaims.PrincipalKind)
 	assert.Equal(t, claims.Subject, newClaims.Subject, "subject should be preserved across refresh")
 
 	// Step 8: Verify the old refresh token no longer works (it was revoked during rotation)

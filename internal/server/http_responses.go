@@ -1,6 +1,8 @@
 package server
 
 import (
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 
@@ -154,4 +156,52 @@ func respondMessage(c *gin.Context, message string) {
 
 func respondDeleted(c *gin.Context, resourceType string) {
 	c.JSON(http.StatusOK, gin.H{"message": resourceType + " deleted"})
+}
+
+// ── Client-authored input: the one carve-out from rule 4 ─────────────────────
+//
+// A validation message about a document or request the caller wrote is the
+// caller's own diagnostic — "rule 3: unknown selector" — and withholding it
+// makes the API unusable for its author. The carve-out is decided by TYPE, not
+// by the call site: only errors that implement ClientMessage reach the wire
+// (policydsl.ValidationError, configuration.SourceError,
+// db.ConfigurationConflictError, and the server's own clientError below).
+// Everything else — a driver error, an I/O error, a wrapped chain from
+// somewhere unexpected — is logged and replaced by the opaque fallback.
+
+type clientMessenger interface{ ClientMessage() string }
+
+// clientError is a validation message this package composed from constants
+// and values the caller supplied.
+type clientError struct{ message string }
+
+func (e *clientError) Error() string         { return e.message }
+func (e *clientError) ClientMessage() string { return e.message }
+
+// clientErrorf composes a client-safe message from a constant format and plain
+// values. Never pass an error as an argument; use clientErrorWithPrefix.
+func clientErrorf(format string, args ...any) error {
+	return &clientError{message: fmt.Sprintf(format, args...)}
+}
+
+// clientErrorWithPrefix prefixes an error that carries client text. An error
+// without client text yields the prefix alone, so nothing untyped is echoed.
+func clientErrorWithPrefix(prefix string, err error) error {
+	var client clientMessenger
+	if errors.As(err, &client) {
+		return &clientError{message: prefix + ": " + client.ClientMessage()}
+	}
+	return &clientError{message: prefix}
+}
+
+// respondClientError writes err's client text with status when err (or an
+// error it wraps) carries one; otherwise it logs err and writes fallback.
+func respondClientError(c *gin.Context, status int, err error, fallback, logMsg string, logKVs ...any) {
+	var client clientMessenger
+	if errors.As(err, &client) {
+		c.JSON(status, gin.H{"error": client.ClientMessage()})
+		return
+	}
+	slog.Warn(logMsg, append(logKVs, "err", err)...)
+	c.JSON(status, gin.H{"error": fallback})
 }

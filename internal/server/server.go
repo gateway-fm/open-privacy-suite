@@ -100,7 +100,10 @@ type Server struct {
 
 	// policyCompiler builds execution-policy artifacts (RD-1287). It shells out
 	// to a pinned solc when a policy is submitted, never while serving a request.
-	policyCompiler       *policydsl.Compiler
+	policyCompiler *policydsl.Compiler
+	// compilerProbe shares one availability probe of policyCompiler between
+	// configuration context reads; see configuration_capabilities.go.
+	compilerProbe        compilerProbe
 	proxy                *proxy.Proxy
 	privadoVerifier      PrivadoVerifier
 	jwtService           *auth.JWTService
@@ -115,6 +118,9 @@ type Server struct {
 	config               *config.Config
 	ensResolver          *ens.Resolver
 	jsonrpcProcessor     *JSONRPCProcessor
+	nodeExecution        *nodeExecutionBridge
+	nodePolicyCancel     context.CancelFunc
+	nodePolicyDone       chan struct{}
 	zkRoleExtractor      *auth.ZKRoleExtractor
 	runtimeTracer        *tracer.RuntimeTracer
 	azureAuthenticator   *auth.AzureADAuthenticator
@@ -192,6 +198,10 @@ func (s *Server) DB() *db.DB {
 // Stop gracefully stops all background goroutines.
 // Should be called before server shutdown.
 func (s *Server) Stop() {
+	if s.nodePolicyCancel != nil {
+		s.nodePolicyCancel()
+		<-s.nodePolicyDone
+	}
 	if s.sessionStore != nil {
 		s.sessionStore.Stop()
 	}
@@ -919,6 +929,10 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		"batch", reconcilerCfg.BatchSize,
 		"drain", "event-driven")
 
+	if err := s.initNodePolicy(); err != nil {
+		s.Stop()
+		return nil, fmt.Errorf("initialize node policy enforcement: %w", err)
+	}
 	// Initialize the JSON-RPC processor, fully wired at construction (RD-1259).
 	// Every dependency above exists by now; there is no Set* step to forget.
 	// RD-1147: the AccessLogger fallback (used only when the chained/buffered
@@ -934,7 +948,12 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	if s.auditBuffer != nil {
 		procAuditBuffer = s.auditBuffer
 	}
+	var nodeExecutionService NodeExecutionService
+	if s.nodeExecution != nil {
+		nodeExecutionService = s.nodeExecution
+	}
 	s.jsonrpcProcessor = NewJSONRPCProcessor(JSONRPCProcessorConfig{
+		NodeExecution:             nodeExecutionService,
 		RBACAccessCtrl:            rbacAccessCtrl,
 		RateLimiter:               rateLimiter,
 		Proxy:                     proxySvc,
@@ -1084,6 +1103,8 @@ func (s *Server) setupRouter() *gin.Engine {
 	// Health check endpoint (no auth required)
 	router.GET("/health", s.handleHealth)
 	router.HEAD("/health", s.handleHealth)
+	router.GET("/ready", s.handleReady)
+	router.HEAD("/ready", s.handleReady)
 
 	// Generated OpenAPI document (RD-1166). Public by design: it is the
 	// published API reference (open-source project) and serves static
@@ -1704,7 +1725,8 @@ func (s *Server) adminAuthMiddleware() gin.HandlerFunc {
 					return
 				}
 
-				if !isOrgAdmin && !isReadonlyAdmin {
+				configurationPlatform := claims.PrincipalKind == auth.PrincipalHuman && isPlatformConfigurationRoute(c) && s.configurationPlatformSubject(claims.Subject)
+				if !isOrgAdmin && !isReadonlyAdmin && !configurationPlatform {
 					c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions: org admin or read-only admin required"})
 					c.Abort()
 					return
@@ -1712,6 +1734,8 @@ func (s *Server) adminAuthMiddleware() gin.HandlerFunc {
 
 				c.Set("auth_method", "jwt_admin")
 				c.Set("admin_subject", claims.Subject)
+				c.Set("admin_principal_kind", claims.PrincipalKind)
+				c.Set("configuration_platform_admin", configurationPlatform)
 				c.Set("admin_user_id", user.ID)                      // Internal Postgres UUID
 				c.Set("admin_org_ids", adminOrgIDs)                  // Org IDs where user is org admin
 				c.Set("admin_readonly_org_ids", readonlyAdminOrgIDs) // Org IDs where user is read-only org admin
@@ -1744,6 +1768,10 @@ func (s *Server) adminAuthMiddleware() gin.HandlerFunc {
 func (s *Server) orgScopingMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authMethod := c.GetString("auth_method")
+		if c.GetBool("configuration_platform_admin") && isPlatformConfigurationRoute(c) {
+			c.Next()
+			return
+		}
 
 		// Super admin (X-Admin-Token) bypasses org scoping entirely. The
 		// operator token also bypasses scoping so it can reach any org's
@@ -1827,7 +1855,7 @@ func (s *Server) orgScopingMiddleware() gin.HandlerFunc {
 							}
 						}
 					}
-					if !isFullAdmin {
+					if !isFullAdmin && !isExecutionPolicyPreparation(c) && !isConfigurationPreparation(c) {
 						c.JSON(http.StatusForbidden, gin.H{"error": "mutating actions are restricted for read-only admins"})
 						c.Abort()
 						return
@@ -1991,6 +2019,7 @@ func (s *Server) getStatus(c *gin.Context) {
 	}
 
 	status := apimodels.StatusResponse{
+		Execution: s.executionStatus(c.Request.Context()),
 		Proxy: apimodels.ProxyStatus{
 			Status: "running",
 			Port:   proxyPort,
@@ -2242,6 +2271,7 @@ func (s *Server) registerUserProfileRoutes(router *gin.Engine) {
 	{
 		me.GET("/orgs", s.getMyOrganizations)
 		me.GET("/admin-status", s.getMyAdminStatus)
+		me.GET("/transactions/:hash/execution", s.getMyNodeTransactionStatus)
 	}
 }
 
@@ -2269,8 +2299,18 @@ func (s *Server) getMyAdminStatus(c *gin.Context) {
 	user, err := s.db.GetUserByExternalID(c.Request.Context(), subject.(string))
 	if err != nil || user == nil {
 		// User not in DB yet — not an admin.
-		c.JSON(http.StatusOK, gin.H{"is_admin": false, "admin_org_ids": []string{}})
+		c.JSON(http.StatusOK, gin.H{"is_admin": false, "admin_org_ids": []string{}, "is_platform_admin": false})
 		return
+	}
+	if user.Banned {
+		c.JSON(http.StatusForbidden, gin.H{"error": "user is banned"})
+		return
+	}
+	platform := false
+	if raw, ok := c.Get("claims"); ok {
+		if claims, ok := raw.(*auth.TokenClaims); ok {
+			platform = claims.PrincipalKind == auth.PrincipalHuman && s.configurationPlatformSubject(claims.Subject)
+		}
 	}
 
 	isOrgAdmin, orgIDs, err := s.db.IsOrgAdmin(c.Request.Context(), user.ID)
@@ -2293,6 +2333,7 @@ func (s *Server) getMyAdminStatus(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
+		"is_platform_admin":      platform,
 		"is_admin":               isOrgAdmin || isReadonlyAdmin,
 		"admin_org_ids":          orgIDs,
 		"is_readonly_admin":      isReadonlyAdmin,

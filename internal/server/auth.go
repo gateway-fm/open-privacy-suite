@@ -328,12 +328,12 @@ func (s *Server) scheduleDemoAutoAuth(sessionID string) {
 			}
 		}
 
-		accessToken, err := s.jwtService.IssueAccessToken(mockDID, kyc)
+		accessToken, err := s.jwtService.IssueAccessTokenForPrincipal(mockDID, kyc, auth.PrincipalHuman, nil)
 		if err != nil {
 			slog.Error("demo auto-auth: failed to issue access token", "error", err)
 			return
 		}
-		refreshToken, err := s.jwtService.IssueRefreshToken(mockDID)
+		refreshToken, err := s.jwtService.IssueRefreshTokenForPrincipal(mockDID, auth.PrincipalHuman)
 		if err != nil {
 			slog.Error("demo auto-auth: failed to issue refresh token", "error", err)
 			return
@@ -606,7 +606,7 @@ func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authReque
 	}
 
 	// Issue access token (short-lived)
-	accessToken, err := s.jwtService.IssueAccessToken(userDID, kyc)
+	accessToken, err := s.jwtService.IssueAccessTokenForPrincipal(userDID, kyc, auth.PrincipalHuman, nil)
 	if err != nil {
 		s.failAuthSession(sessionID, AuthFailInternalError)
 		respondInternalErrorAndLog(c, "failed to issue access token",
@@ -615,7 +615,7 @@ func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authReque
 	}
 
 	// Issue refresh token (long-lived)
-	refreshToken, err := s.jwtService.IssueRefreshToken(userDID)
+	refreshToken, err := s.jwtService.IssueRefreshTokenForPrincipal(userDID, auth.PrincipalHuman)
 	if err != nil {
 		s.failAuthSession(sessionID, AuthFailInternalError)
 		respondInternalErrorAndLog(c, "failed to issue refresh token",
@@ -793,7 +793,7 @@ func (s *Server) handleRefresh(c *gin.Context) {
 	}
 
 	// Issue new access token
-	accessToken, err := s.jwtService.IssueAccessToken(claims.Subject, kyc)
+	accessToken, err := s.jwtService.IssueAccessTokenForPrincipal(claims.Subject, kyc, claims.PrincipalKind, nil)
 	if err != nil {
 		respondInternalErrorAndLog(c, "failed to issue access token",
 			"auth: refresh→IssueAccessToken failed",
@@ -803,7 +803,7 @@ func (s *Server) handleRefresh(c *gin.Context) {
 
 	// Optionally rotate refresh token (security best practice)
 	// For now, we'll issue a new refresh token and revoke the old one
-	newRefreshToken, err := s.jwtService.IssueRefreshToken(claims.Subject)
+	newRefreshToken, err := s.jwtService.IssueRefreshTokenForPrincipal(claims.Subject, claims.PrincipalKind)
 	if err != nil {
 		respondInternalErrorAndLog(c, "failed to issue new refresh token",
 			"auth: refresh→IssueRefreshToken failed",

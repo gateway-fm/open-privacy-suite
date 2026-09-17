@@ -11,6 +11,7 @@ import (
 
 	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/auth"
+	"privacy-proxy/internal/configuration"
 	"privacy-proxy/internal/rbac"
 )
 
@@ -57,11 +58,11 @@ import (
 // registerRBACRoutes.
 func (s *Server) registerSharedInfraRoutes(api *gin.RouterGroup) {
 	api.GET("/shared-infrastructure", s.listSharedInfrastructure)
-	api.POST("/shared-infrastructure", s.createSharedInfrastructure)
+	api.POST("/shared-infrastructure", s.configurationWriterGuard(configuration.Platform), s.createSharedInfrastructure)
 	api.GET("/shared-infrastructure/:address", s.getSharedInfrastructure)
-	api.PUT("/shared-infrastructure/:address", s.updateSharedInfrastructure)
-	api.DELETE("/shared-infrastructure/:address", s.deleteSharedInfrastructure)
-	api.POST("/shared-infrastructure/:address/refresh-codehash", s.refreshSharedInfraCodehash)
+	api.PUT("/shared-infrastructure/:address", s.configurationWriterGuard(configuration.Platform), s.updateSharedInfrastructure)
+	api.DELETE("/shared-infrastructure/:address", s.configurationWriterGuard(configuration.Platform), s.deleteSharedInfrastructure)
+	api.POST("/shared-infrastructure/:address/refresh-codehash", s.configurationWriterGuard(configuration.Platform), s.refreshSharedInfraCodehash)
 }
 
 // validateSharedInfraInput checks the input shape before any DB

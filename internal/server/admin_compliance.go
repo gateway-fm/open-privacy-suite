@@ -16,6 +16,7 @@ import (
 	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/compliance"
+	"privacy-proxy/internal/configuration"
 	"privacy-proxy/internal/db"
 	"privacy-proxy/internal/rbac"
 )
@@ -36,18 +37,19 @@ func internalError(c *gin.Context, msg string, err error) {
 func (s *Server) registerComplianceRoutes(adminGroup *gin.RouterGroup) {
 	// org-scoped routes
 	orgRoutes := adminGroup.Group("/orgs/:org_id/compliance")
+	writer := s.configurationWriterGuard(configuration.Compliance)
 	orgRoutes.GET("/config", s.getComplianceConfig)
-	orgRoutes.PUT("/config", s.updateComplianceConfig)
+	orgRoutes.PUT("/config", writer, s.updateComplianceConfig)
 	orgRoutes.GET("/tokens", s.listTokenPrices)
-	orgRoutes.PUT("/tokens/:token_address", s.upsertTokenPrice)
-	orgRoutes.DELETE("/tokens/:token_address", s.deleteTokenPrice)
+	orgRoutes.PUT("/tokens/:token_address", writer, s.upsertTokenPrice)
+	orgRoutes.DELETE("/tokens/:token_address", writer, s.deleteTokenPrice)
 	orgRoutes.POST("/travel-rule-records", s.createTravelRuleRecord)
 	orgRoutes.GET("/travel-rule-records", s.listTravelRuleRecords)
 	orgRoutes.DELETE("/travel-rule-records/:id", s.deleteTravelRuleRecord)
 	orgRoutes.GET("/logs", s.listComplianceLogs)
 	orgRoutes.GET("/address-thresholds", s.listAddressThresholdOverrides)
-	orgRoutes.PUT("/address-thresholds/:address", s.upsertAddressThresholdOverride)
-	orgRoutes.DELETE("/address-thresholds/:address", s.deleteAddressThresholdOverride)
+	orgRoutes.PUT("/address-thresholds/:address", writer, s.upsertAddressThresholdOverride)
+	orgRoutes.DELETE("/address-thresholds/:address", writer, s.deleteAddressThresholdOverride)
 
 	// global routes
 	adminGroup.GET("/compliance/system-token-prices", s.listSystemTokenPrices)

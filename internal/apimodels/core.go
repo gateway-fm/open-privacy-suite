@@ -109,6 +109,7 @@ type MyOrganizationsResponse struct {
 // always present as arrays (never null); the degenerate "user not in DB yet"
 // path returns only {is_admin:false, admin_org_ids:[]}.
 type MyAdminStatusResponse struct {
+	IsPlatformAdmin     bool     `json:"is_platform_admin" example:"false"`
 	IsAdmin             bool     `json:"is_admin" example:"true"`
 	AdminOrgIDs         []string `json:"admin_org_ids"`
 	IsReadonlyAdmin     bool     `json:"is_readonly_admin" example:"false"`

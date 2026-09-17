@@ -38,6 +38,7 @@ type AuditBuffer interface {
 // It separates concerns from HTTP handling, making the logic testable
 // and reusable.
 type JSONRPCProcessor struct {
+	nodeExecution     NodeExecutionService
 	rbacAccessCtrl    *rbac.AccessController
 	rateLimiter       RateLimiterInterface
 	proxy             *proxy.Proxy
@@ -227,6 +228,9 @@ type EthCallTracingConfig struct {
 // zero-value meaning; each matches the degraded mode the corresponding
 // unwired Set* call used to leave behind.
 type JSONRPCProcessorConfig struct {
+	// NodeExecution selects the private node execution path. Nil retains legacy.
+	NodeExecution NodeExecutionService
+
 	// Core request-path dependencies.
 	RBACAccessCtrl     *rbac.AccessController
 	RateLimiter        RateLimiterInterface
@@ -270,6 +274,7 @@ type JSONRPCProcessorConfig struct {
 // NewJSONRPCProcessor creates a fully wired processor from cfg (RD-1259).
 func NewJSONRPCProcessor(cfg JSONRPCProcessorConfig) *JSONRPCProcessor {
 	p := &JSONRPCProcessor{
+		nodeExecution:          cfg.NodeExecution,
 		rbacAccessCtrl:         cfg.RBACAccessCtrl,
 		rateLimiter:            cfg.RateLimiter,
 		proxy:                  cfg.Proxy,
@@ -627,6 +632,9 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 	// node still receives req.Body verbatim; only the internal method string is
 	// normalized. Unknown methods (linea_*, wildcard passthrough) pass through.
 	req.Method = rbac.CanonicalizeMethod(req.Method)
+	if p.nodeExecution != nil && nodeExecutionMethod(req.Method) {
+		return p.processNodeExecution(ctx, req)
+	}
 
 	// Handle eth_sendRawTransaction specially - requires runtime tracing
 	if req.Method == "eth_sendRawTransaction" {

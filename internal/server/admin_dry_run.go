@@ -62,6 +62,7 @@ type dryRunResponse struct {
 	Response json.RawMessage `json:"response,omitempty"`
 	// For write methods: debug_traceCall output + per-user log filtering.
 	Trace             json.RawMessage   `json:"trace,omitempty"`
+	Policy            json.RawMessage   `json:"policy,omitempty"`
 	LogsEmitted       []json.RawMessage `json:"logs_emitted,omitempty"`
 	LogsVisibleToUser []json.RawMessage `json:"logs_visible_to_user,omitempty"`
 }
@@ -89,7 +90,7 @@ var dryRunTraceMethods = map[string]bool{
 // handleDryRun handles POST /api/orgs/:org_id/dry-run.
 //
 // @Summary      Dry-run an RPC call as a user
-// @Description  Evaluates "what would this user see if they made this RPC call?" in the path org, without mutating chain state. Read methods are forwarded and redacted as the impersonated user; write methods (eth_sendTransaction / eth_sendRawTransaction) are translated to debug_traceCall so the RBAC verdict and the events the tx would emit (and the subset visible to the user) can be inspected. Requires a tier-2 org-admin JWT of the path org: X-Admin-Token credentials (both the full super-admin token and the operator token) are explicitly rejected, since impersonation reads tenant data as the user. The impersonated user must exist and be a member of the path org, else an opaque 404 (no cross-org existence leak). Every evaluation is written to the impersonation audit log fail-closed. Supported methods: eth_call, eth_getLogs, eth_getTransactionReceipt, eth_getTransactionByHash, eth_getBalance, eth_getCode, eth_getStorageAt, eth_blockNumber, eth_chainId, eth_sendTransaction, eth_sendRawTransaction.
+// @Description  In Reth mode, execution requests use the node evaluator with a human-only diagnostic bypass, while organization isolation remains mandatory. Evaluates "what would this user see if they made this RPC call?" in the path org, without mutating chain state. Read methods are forwarded and redacted as the impersonated user; write methods (eth_sendTransaction / eth_sendRawTransaction) are translated to debug_traceCall so the RBAC verdict and the events the tx would emit (and the subset visible to the user) can be inspected. Requires a tier-2 org-admin JWT of the path org: X-Admin-Token credentials (both the full super-admin token and the operator token) are explicitly rejected, since impersonation reads tenant data as the user. The impersonated user must exist and be a member of the path org, else an opaque 404 (no cross-org existence leak). Every evaluation is written to the impersonation audit log fail-closed. Supported methods: eth_call, eth_getLogs, eth_getTransactionReceipt, eth_getTransactionByHash, eth_getBalance, eth_getCode, eth_getStorageAt, eth_blockNumber, eth_chainId, eth_sendTransaction, eth_sendRawTransaction.
 // @Tags         Admin: RBAC
 // @Accept       json
 // @Produce      json
@@ -157,6 +158,9 @@ func (s *Server) handleDryRun(c *gin.Context) {
 	// than a silent denial.
 	isRead := dryRunReadMethods[req.RPC.Method]
 	isTrace := dryRunTraceMethods[req.RPC.Method]
+	if s.config != nil && s.config.NodePolicy.Enabled() && (req.RPC.Method == "eth_estimateGas" || req.RPC.Method == "debug_traceCall") {
+		isRead = true
+	}
 	if !isRead && !isTrace {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": "method not supported by dry-run; supported: eth_call, eth_getLogs, eth_getTransactionReceipt, eth_getTransactionByHash, eth_getBalance, eth_getCode, eth_getStorageAt, eth_blockNumber, eth_chainId, eth_sendTransaction, eth_sendRawTransaction",
@@ -191,6 +195,10 @@ func (s *Server) handleDryRun(c *gin.Context) {
 	}
 	if !inAdminOrg {
 		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return
+	}
+	if s.config != nil && s.config.NodePolicy.Enabled() && nodeExecutionMethod(req.RPC.Method) {
+		s.handleNodeDryRun(c, req, user)
 		return
 	}
 

@@ -15,6 +15,9 @@ type ExecutionPolicyRevision struct {
 	ID string `json:"id"`
 	// Revision is the monotonic number within the organisation.
 	Revision int64 `json:"revision" example:"3"`
+	// BaseRevision identifies the active policy used to author this draft.
+	// Null means legacy provenance is unavailable and activation is refused.
+	BaseRevision *int64 `json:"base_revision"`
 	// Status is draft, active, superseded or withdrawn. Only one revision per
 	// organisation is active, and only an active one decides anything.
 	Status string `json:"status" example:"active"`
@@ -32,8 +35,10 @@ type ExecutionPolicyRevision struct {
 	// Compiler is the exact build the artifact was produced with.
 	Compiler ExecutionPolicyCompiler `json:"compiler"`
 
-	CreatedAt   string `json:"created_at"`
-	ActivatedAt string `json:"activated_at,omitempty"`
+	CreatedBy   *string `json:"created_by,omitempty"`
+	ActivatedBy *string `json:"activated_by,omitempty"`
+	CreatedAt   string  `json:"created_at"`
+	ActivatedAt string  `json:"activated_at,omitempty"`
 }
 
 // ExecutionPolicyCompiler is the pinned build an artifact was produced with.
@@ -80,8 +85,8 @@ type ExecutionPolicyContract struct {
 type ExecutionPolicyContext struct {
 	OrgID string `json:"org_id"`
 
-	// BaseRevision is the revision a candidate must declare. A submission
-	// written against a stale base is refused rather than merged.
+	// BaseRevision is the active revision a candidate must declare. Creating
+	// another draft does not move this base. A stale base is refused.
 	BaseRevision int64 `json:"base_revision" example:"3"`
 
 	APIVersion  string `json:"api_version"`
@@ -102,8 +107,8 @@ type ExecutionPolicyContext struct {
 type ExecutionPolicySubmitRequest struct {
 	// Policy is the candidate document.
 	Policy map[string]any `json:"policy"`
-	// BaseRevision is the revision the candidate was written against. Zero means
-	// the organisation has no policy yet.
+	// BaseRevision is the active revision the candidate was written against.
+	// Zero means the organisation has no active policy yet.
 	BaseRevision int64 `json:"base_revision" example:"3"`
 }
 

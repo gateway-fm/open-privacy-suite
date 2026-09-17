@@ -6,10 +6,24 @@ package apimodels
 
 // StatusResponse represents the system status
 type StatusResponse struct {
-	Proxy    ProxyStatus    `json:"proxy"`
-	Node     NodeStatus     `json:"node"`
-	Security SecurityStatus `json:"security"`
-	Methods  MethodsStatus  `json:"methods"`
+	Proxy     ProxyStatus     `json:"proxy"`
+	Node      NodeStatus      `json:"node"`
+	Security  SecurityStatus  `json:"security"`
+	Methods   MethodsStatus   `json:"methods"`
+	Execution ExecutionStatus `json:"execution"`
+}
+
+type ReadinessResponse struct {
+	Status string `json:"status"`
+}
+
+type ExecutionStatus struct {
+	Mode           string `json:"mode"`
+	Ready          bool   `json:"ready"`
+	Reason         string `json:"reason,omitempty"`
+	DesiredVersion uint64 `json:"desired_version,omitempty"`
+	AppliedVersion uint64 `json:"applied_version,omitempty"`
+	ExpiresAt      int64  `json:"expires_at,omitempty"`
 }
 
 // MethodsStatus exposes available RPC methods to the admin frontend.
