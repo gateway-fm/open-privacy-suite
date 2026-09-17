@@ -10,12 +10,14 @@ export const metadata = {
 # Execution Policies
 
 <Callout type="warning">
-  **Not yet enforced.** This release provides the authoring, review and approval path only.
-  Policies are validated, compiled, stored and activated, but **no request is currently checked
-  against them**: an active policy does not block, narrow or alter any call. Treat it as a way
-  to prepare and review rules, not as a control that is in force. Do not record it as an
-  operating control in an audit or compliance context, and do not rely on it in place of
-  contract grants or method allowlists, which remain the mechanisms that actually decide access.
+  **Enforced only in Reth policy mode.** With `OPS_NODE_POLICY_MODE=reth` (see
+  [Node policy](/docs/node-policy)) the guarded node checks every call frame against the active
+  policy at execution time, and the same policy decides `eth_call`, gas estimation and traces.
+  In the default legacy mode policies are validated, compiled, stored and activated but **no
+  request is checked against them**: an active policy does not block, narrow or alter any call,
+  and contract grants and method allowlists remain the mechanisms that decide access. Do not
+  record a policy as an operating control in an audit or compliance context unless the
+  deployment runs in Reth policy mode.
 </Callout>
 
 ## Overview
