@@ -1,0 +1,112 @@
+export const metadata = {
+  title: "Reth policies and configuration revisions",
+  description: "Author, approve and test OPS configuration with execution enforced by Reth.",
+};
+
+# Reth policies and configuration revisions
+
+In Reth policy mode, OPS authenticates users and checks their linked sender,
+organization, RPC methods and compliance requirements. Reth checks the active
+execution policy on every actual call and deployment. Contracts and signed
+Ethereum transactions keep their existing format.
+
+## Author and approve configuration
+
+Open **Administration → RBAC → Configuration** and select an organization.
+The execution-policy tab opens the execution-rules stream automatically in
+Reth mode. Sign in with a named account; an operator or bootstrap token cannot
+author or approve a revision.
+
+| Stream | Contents |
+| --- | --- |
+| Groups | Group definitions, administrative roles, RPC methods and claims |
+| Contracts | Registered contracts, ABI, read grants and event visibility |
+| Execution rules | Groups, callable functions, argument conditions and nested calls |
+| Compliance | Organization settings, thresholds and token configuration |
+| Approvers | Eligible approval groups and trusted external CI identities |
+| Platform | Shared infrastructure with code pins and tenant defaults |
+
+Start from the current source, edit it, and save a draft. Review the complete
+changes and compiled policy before activation. A different human administrator
+with current approval authority must activate it. Read-only administrators and
+service principals can prepare ordinary drafts and reviews. Approver trust and
+platform documents require a human author and a separate human approver.
+
+Cross-stream dependencies are pinned by digest. Supply sibling revision IDs to
+review and activate a related bundle together, such as an ABI and its execution
+rules. Editing the selected bundle invalidates its review. Stale base revisions
+must be reloaded and reviewed again.
+
+Include each managed resource to keep, or explicitly list its deletion. Omitting
+a managed resource is an error. Automation-created resources are retained as
+drift for adoption in a later revision. Once a stream is active, its former
+configuration mutation endpoints close. User onboarding, memberships, bans,
+address links, sanctions and disclosure remain operational actions. Upstream
+RPC credentials can still be rotated separately.
+
+## Preview and observe execution
+
+An execution revision offers a node preview using `eth_call`, `eth_estimateGas`
+or `debug_traceCall`. Use one of your linked addresses as `from`. The preview uses
+current chain state and current facts; the active policy must permit execution.
+A successful preview does not guarantee inclusion after state or permissions change.
+
+Unapproved record getters can reveal information through their verdict, so
+ordinary candidate previews cannot perform live record reads. A full human
+organization administrator can select the audited diagnostic option to evaluate
+these candidates. Diagnostic execution remains restricted to the selected
+organization, including nested getters and account reads.
+
+Activation commits a revision in OPS. The publication panel separately reports
+whether Reth has applied the current facts. Requests fail closed while required
+facts are unavailable or stale. Revocation applies to the next candidate built
+after the new version reaches the node.
+
+Use `GET /api/v1/me/transactions/{hash}/execution` with the original submitting
+principal's JWT to follow a submitted transaction. Inclusion remains provisional
+until the node reports finality. OPS then registers successful CREATE/CREATE2
+results and commits visibility bookkeeping. Wait for `reconciled: true` before
+depending on automatic deployment registration. A missing receipt, a policy
+denial or an expired identity does not prove that an already-running candidate
+cannot be included. OPS observes these states without automatically resending
+the transaction.
+
+## Shared signers and service principals
+
+Several OPS principals may link the same Ethereum address. Their permissions
+remain separate: each transaction and simulation is bound to its authenticated
+principal as well as its signer. Sharing a signing key does not share status
+visibility or combine memberships. Review this binding choice when enabling the
+new mode, particularly if an automation service shares a key with a human.
+
+Agents can use Azure service-principal login, refresh tokens, scoped context,
+revision APIs, operational APIs and RPC directly. The configuration context
+also reports the API's capabilities (streams, human-only streams, approval
+modes, document size limit, and whether the pinned policy compiler is available
+on this deployment), so a headless client can discover what it may do before
+drafting. Human approval is a separate
+authenticated action. Trusted CI activation requires an externally signed proof
+bound to the exact revision bundle and configured reviewers; possessing a service
+JWT alone does not permit activation. MCP tooling is not required.
+
+## Operator configuration
+
+Set `OPS_NODE_POLICY_MODE=reth` and point `NODE_URL` at the guarded Reth node.
+Configure the private policy endpoint with `OPS_NODE_POLICY_URL`,
+`OPS_NODE_POLICY_TOKEN`, `OPS_NODE_POLICY_PRIVATE_KEY_FILE`,
+`OPS_NODE_POLICY_KEY_ID`, `OPS_NODE_POLICY_CHAIN_ID` and
+`OPS_NODE_POLICY_DEPLOYMENT_ID`. The signing-key file contains a base64 Ed25519
+seed or private key. Configure the corresponding public key and matching network
+identity in the Reth launcher. Keep its private endpoint off user-facing networks.
+
+The default fact lifetime is 30 seconds, publication interval one second and
+identity lifetime one minute. Configure named platform operators through
+`PLATFORM_ADMIN_SUBJECTS`. Supply the pinned Solidity compiler through
+`POLICY_SOLC` or the executable search path. `GET /ready` returns 503 until the
+node has fresh matching facts and required capabilities.
+
+The development stack uses Reth's local block production and an explicit short
+finality depth. Its local finality behavior is for testing and does not establish
+external consensus. Use the repository's `docs/implementation/ops-reth-stack.md`
+for the isolated stack and acceptance commands. Keep node state and OPS databases
+persistent across restarts.

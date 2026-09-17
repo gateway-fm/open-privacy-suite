@@ -10,7 +10,11 @@ export const metadata = {
 
 This guide is for **users deploying their own contracts through the proxy**. If you're an operator rolling out the Open Privacy Suite stack itself (compose manifests, secrets, trust zones), see [Operator Deployment](/docs/operator-deployment) instead.
 
-The proxy validates all transactions at runtime using `debug_traceCall`, so deploying is nearly identical to deploying on any public chain.
+In [Reth policy mode](/docs/node-policy), the node checks deployment and every
+nested call during execution. Legacy mode uses the proxy's trace checks.
+Sign locally and submit an ordinary raw transaction in either mode. With Reth,
+wait for finalized execution and OPS reconciliation before relying on automatic
+contract registration and deployment grants.
 
 ### Prerequisites
 
@@ -198,4 +202,3 @@ In production, the admin frontend is served by **nginx** (not the Vite developme
 The backend starts successfully even if the explorer database is unavailable. It logs a warning and continues serving all non-explorer endpoints, retrying the connection in the background. Explorer API endpoints return errors until the connection is established.
 
 This supports deployment scenarios where the explorer database is provisioned after the proxy.
-
