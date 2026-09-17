@@ -175,3 +175,27 @@ the audit separation was confirmed in migration 058 and `audit_chain.go`. Three
 rows were corrected as a result (fact stream, execution bookkeeping, the
 `functions` column).
 
+## 8. Why six streams and not one organisation document
+
+The revision mechanics would work for a single "organisation configuration"
+document. The split into streams per `(organisation, kind)` is a deliberate
+choice about review, blast radius and ownership, not a limitation of the
+mechanics.
+
+| Concern | Six streams (built) | One document per organisation |
+|---|---|---|
+| **Different approval rules per part** | each stream has its own rules today: `approvers` and `platform` may be drafted and activated only by humans; the other four may be drafted by a service or agent and activated by a different human (or by a trusted-CI manifest). Per-stream approval *policies* — one approval for group changes, three for execution rules — are the natural extension of the `approvers` stream, not built yet | one rule set for the whole document, or section-level rules hidden inside it — the same split, harder to see and to audit |
+| **Blast radius of a mistake** | a wrong revision changes one stream; activation, rollback (a new revision of that stream) and the review diff are scoped to it; a broken execution-rules compile cannot block a compliance threshold change | every change re-applies and re-reviews everything; a mistake in one section is a revision of the whole organisation; rollback rewinds unrelated parts too |
+| **Ownership and cadence** | execution rules change with every contract deployment; groups and compliance rarely; approvers almost never — each on its owner's cadence | one owner set and one cadence for all |
+| **Parallel work** | a compliance officer and a rule author draft at the same time without touching each other's base revision | both drafts conflict on `baseRevision`; one redoes the work |
+| **Cost of activation** | the Solidity compile runs only when `execution-rules` changes | compile on every activation, or track per-section digests — the streams again, internally |
+| **Review size** | each diff is one class of objects | a diff across ~1 MB of ABIs and rules for a one-line threshold change |
+| **Cross-references** | pinned by digest between streams (`abiDigest` from registry into rules); `activate` co-activates named siblings atomically | implicit inside the document |
+| **Agent ergonomics** | one uniform API shape, six contexts | one context — genuinely simpler |
+
+The ergonomics argument is the only one that favours a single document, and
+it can be served without giving up the rest: a read of all contexts in one call
+and a "bundle" submission that fans one organisation-wide document out into
+per-stream drafts and co-activates them. That is a convenience layer over the
+streams (about a day), not a change of storage or approval model.
+
