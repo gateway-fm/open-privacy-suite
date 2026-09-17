@@ -22,6 +22,10 @@ const (
 	// EVMVersion is the target the artifact is built for. It is chosen to be
 	// executable by both this process and the node that will later run it.
 	EVMVersion = "shanghai"
+	// MaxRuntimeBytecode matches the signed fact protocol's policy size bound.
+	// Reject before approval so one oversized policy cannot block publication
+	// of the complete directory snapshot for every organization.
+	MaxRuntimeBytecode = 24576
 )
 
 // buildTimeout bounds a compiler invocation. Compilation happens when a policy
@@ -147,6 +151,9 @@ func (c *Compiler) Build(ctx context.Context, v *Validated) (*Artifact, error) {
 
 	cmd := exec.CommandContext(buildCtx, c.binary(),
 		"--combined-json", "bin,bin-runtime",
+		// Source-unit names are included in Solidity's bytecode metadata. Strip
+		// the temporary build directory so identical source has identical bytes.
+		"--base-path", dir,
 		"--optimize", "--optimize-runs", fmt.Sprint(OptimizerRuns),
 		"--evm-version", EVMVersion,
 		path,
@@ -180,6 +187,9 @@ func (c *Compiler) Build(ctx context.Context, v *Validated) (*Artifact, error) {
 	runtimeCode, err := hex.DecodeString(runtimeHex)
 	if err != nil {
 		return nil, fmt.Errorf("policydsl: the compiler's runtime bytecode is not valid hex: %w", err)
+	}
+	if len(runtimeCode) > MaxRuntimeBytecode {
+		return nil, fmt.Errorf("policydsl: runtime bytecode exceeds %d bytes; split or simplify the policy", MaxRuntimeBytecode)
 	}
 	creationCode, err := hex.DecodeString(creationHex)
 	if err != nil {

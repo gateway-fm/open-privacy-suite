@@ -111,11 +111,14 @@ func (e *EVMEvaluator) Evaluate(policyOrg string, ctx Context, frames []Frame) D
 	}
 
 	for i, f := range frames {
-		allowed, reason, err := e.checkFrame(ctx, f)
+		if f.Value != nil && (f.Value.Sign() < 0 || f.Value.BitLen() > 256) {
+			return deny(DenialInvalidContext, fmt.Sprintf("frame %d: native value must fit uint256", i))
+		}
+		reason, err := e.checkFacts(ctx, f)
 		if err != nil {
 			return deny(DenialMalformedCalldata, fmt.Sprintf("frame %d: %v", i, err))
 		}
-		if !allowed {
+		if reason != reasonOK {
 			return deny(reasonToDenialCode(reason), fmt.Sprintf("frame %d: the compiled policy returned reason %d", i, reason))
 		}
 	}
@@ -123,7 +126,57 @@ func (e *EVMEvaluator) Evaluate(policyOrg string, ctx Context, frames []Frame) D
 	return Decision{Allowed: true}
 }
 
-// checkFrame runs one frame through the artifact.
+func (e *EVMEvaluator) checkFacts(ctx Context, f Frame) (uint16, error) {
+	if _, ok := CallTypeOrdinal(f.CallType); !ok {
+		return reasonNoMatchingRule, nil
+	}
+	input, err := packCheck(ctx, f)
+	if err != nil {
+		return 0, err
+	}
+	ret, err := e.execute(input)
+	if err != nil {
+		return 0, err
+	}
+	if len(ret) != 32 {
+		return 0, fmt.Errorf("the facts policy returned %d bytes, expected 32", len(ret))
+	}
+	reason := new(big.Int).SetBytes(ret)
+	if !reason.IsUint64() || reason.Uint64() > reasonInvalidFacts {
+		return 0, fmt.Errorf("the facts policy returned an unknown reason")
+	}
+	return uint16(reason.Uint64()), nil
+}
+
+func (e *EVMEvaluator) execute(input []byte) ([]byte, error) {
+	return e.staticRead(callerAddress, policyAddress, input, evaluationGasLimit)
+}
+
+// ReadContract supplies a state-backed getter reader to the offline Go oracle.
+// Callers must arrange the same candidate state as their compiled evaluation;
+// no admission-time network lookup is an execution authority. The nested caller
+// matches the policy account and all journal effects are reverted afterwards.
+func (e *EVMEvaluator) ReadContract(target common.Address, input []byte, gas uint64) ([]byte, error) {
+	if gas == 0 || gas > RecordReadGas || len(input) > 4+64+MaxRecordIDBytes {
+		return nil, fmt.Errorf("policydsl: record getter exceeds offline read bounds")
+	}
+	return e.staticRead(policyAddress, target, input, gas)
+}
+
+func (e *EVMEvaluator) staticRead(from, target common.Address, input []byte, gas uint64) ([]byte, error) {
+	snapshot := e.stateDB.Snapshot()
+	defer e.stateDB.RevertToSnapshot(snapshot)
+	evm := vm.NewEVM(e.blockCtx, e.stateDB, e.chainCfg, vm.Config{NoBaseFee: true})
+	evm.SetTxContext(vm.TxContext{Origin: callerAddress, GasPrice: uint256.NewInt(0)})
+	ret, _, err := evm.StaticCall(from, target, input, vm.GasBudget{RegularGas: gas})
+	if err != nil {
+		return nil, fmt.Errorf("the compiled policy did not return a decision: %w", err)
+	}
+	return ret, nil
+}
+
+// checkFrame is the legacy offline compatibility oracle. New evaluation and the
+// node use check(Facts,Call), which does not omit execution/ownership facts.
 func (e *EVMEvaluator) checkFrame(ctx Context, f Frame) (bool, uint16, error) {
 	ordinal, ok := callTypeOrdinal[f.CallType]
 	if !ok {
@@ -142,21 +195,26 @@ func (e *EVMEvaluator) checkFrame(ctx Context, f Frame) (bool, uint16, error) {
 		return false, 0, err
 	}
 
-	evm := vm.NewEVM(e.blockCtx, e.stateDB, e.chainCfg, vm.Config{NoBaseFee: true})
-	evm.SetTxContext(vm.TxContext{Origin: callerAddress, GasPrice: uint256.NewInt(0)})
-
-	ret, _, err := evm.StaticCall(callerAddress, policyAddress, input, vm.GasBudget{RegularGas: evaluationGasLimit})
+	ret, err := e.execute(input)
 	if err != nil {
 		// A revert or an exhausted gas budget is a failure to decide, and a
 		// policy that cannot decide denies.
-		return false, 0, fmt.Errorf("the compiled policy did not return a decision: %w", err)
+		return false, 0, err
 	}
 	if len(ret) != 64 {
 		return false, 0, fmt.Errorf("the compiled policy returned %d bytes, expected 64", len(ret))
 	}
 
-	allowed := new(big.Int).SetBytes(ret[:32]).Sign() != 0
-	reason := uint16(new(big.Int).SetBytes(ret[32:]).Uint64())
+	allowedWord := new(big.Int).SetBytes(ret[:32])
+	reasonWord := new(big.Int).SetBytes(ret[32:])
+	if allowedWord.BitLen() > 1 || reasonWord.BitLen() > 16 {
+		return false, 0, fmt.Errorf("the compiled policy returned non-canonical bool or uint16 words")
+	}
+	allowed := allowedWord.Sign() != 0
+	reason := uint16(reasonWord.Uint64())
+	if (allowed && reason != reasonOK) || (!allowed && (reason < reasonNoMatchingRule || reason > reasonMalformedCalldata)) {
+		return false, 0, fmt.Errorf("the compiled policy returned an inconsistent or unknown decision")
+	}
 	return allowed, reason, nil
 }
 
@@ -167,6 +225,20 @@ func reasonToDenialCode(reason uint16) DenialCode {
 		return DenialArgumentConstraint
 	case reasonMalformedCalldata:
 		return DenialMalformedCalldata
+	case reasonOwnership:
+		return DenialOwnership
+	case reasonValue:
+		return DenialValue
+	case reasonDepth:
+		return DenialDepth
+	case reasonUnsupportedCreate:
+		return DenialUnsupportedCreate
+	case reasonOperationalClaim:
+		return DenialOperationalClaim
+	case reasonInvalidFacts:
+		return DenialInvalidFacts
+	case reasonCaller:
+		return DenialCaller
 	default:
 		return DenialNoMatchingRule
 	}

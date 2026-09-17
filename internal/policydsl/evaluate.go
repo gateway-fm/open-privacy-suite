@@ -31,6 +31,24 @@ type Frame struct {
 	// bytes. The selector is taken from here rather than supplied separately so
 	// that the bytes checked are the bytes that ran.
 	Calldata []byte
+
+	// The offline caller must supply resolved owner facts explicitly, matching
+	// the node's resolver. Shared flags alone never widen literal-address rules.
+	CodeKind         uint8
+	UpgradeTargetOrg string
+	// GroupClaims contains the current target-specific mask for each group.
+	GroupClaims     map[string]uint8
+	CallerOrg       string
+	CodeOrg         string
+	StorageOrg      string
+	CodeShared      bool
+	StorageShared   bool
+	StorageDeployer bool
+	StoragePending  bool
+	CallerAddress   common.Address
+	// Nil Value is zero native value. Depth is zero for the top-level frame.
+	Value *big.Int
+	Depth uint64
 }
 
 // Context carries the runtime facts a decision depends on.
@@ -38,10 +56,9 @@ type Frame struct {
 // None of these may be asserted by a policy document. They come from OPS at
 // evaluation time, which is what stops a policy from granting itself authority.
 type Context struct {
-	// Org is the organisation the principal is acting in. It must match the
-	// policy's own org: group identifiers are only meaningful within one
-	// organisation, so evaluating a principal against another org's policy could
-	// otherwise match on a colliding identifier.
+	// Org is the selected policy organisation. Registered storage selects its
+	// owner; native/shared/unowned/create roots use the authenticated identity
+	// organisation. The resolver supplies current memberships in this org.
 	Org string
 
 	// Groups are the principal's current group memberships in the organisation.
@@ -54,6 +71,11 @@ type Context struct {
 
 	// LinkedAddresses are the accounts linked to the authenticated principal.
 	LinkedAddresses []common.Address
+	Claims          uint8
+	// ReadRecord is an offline reference-oracle dependency. Production execution
+	// runs generated STATICCALLs inside the node's live candidate state instead.
+	// A missing reader denies record-party constraints.
+	ReadRecord func(common.Address, []byte, uint64) ([]byte, error) `json:"-"`
 }
 
 // DenialCode is a stable, client-safe category for a denial.
@@ -74,7 +96,14 @@ const (
 	DenialNoFrames DenialCode = "no_frames_observed"
 	// DenialInvalidContext means the supplied runtime facts cannot support a
 	// decision, for example a principal from a different organisation.
-	DenialInvalidContext DenialCode = "invalid_context"
+	DenialInvalidContext    DenialCode = "invalid_context"
+	DenialOwnership         DenialCode = "ownership"
+	DenialValue             DenialCode = "value_constraint"
+	DenialDepth             DenialCode = "depth_constraint"
+	DenialUnsupportedCreate DenialCode = "unsupported_create"
+	DenialCaller            DenialCode = "caller_constraint"
+	DenialOperationalClaim  DenialCode = "operational_claim"
+	DenialInvalidFacts      DenialCode = "invalid_facts"
 )
 
 // Decision is the result of evaluating an execution against a policy.
@@ -113,6 +142,9 @@ func (v *Validated) Evaluate(ctx Context, frames []Frame) Decision {
 	}
 
 	for i, f := range frames {
+		if f.Value != nil && (f.Value.Sign() < 0 || f.Value.BitLen() > 256) {
+			return deny(DenialInvalidContext, fmt.Sprintf("frame %d: native value must fit uint256", i))
+		}
 		if code, err := v.matchFrame(ctx, f); err != nil {
 			return deny(code, fmt.Sprintf("frame %d: %v", i, err))
 		}
@@ -123,51 +155,58 @@ func (v *Validated) Evaluate(ctx Context, frames []Frame) Decision {
 
 // matchFrame reports why a frame is not permitted, or nil when it is.
 func (v *Validated) matchFrame(ctx Context, f Frame) (DenialCode, error) {
-	if len(f.Calldata) < 4 {
-		return DenialMalformedCalldata, fmt.Errorf("calldata is %d bytes, too short to carry a function selector", len(f.Calldata))
+	if f.CodeKind > CodePrecompile {
+		return DenialInvalidFacts, fmt.Errorf("unknown code kind")
 	}
-
 	var selector [4]byte
-	copy(selector[:], f.Calldata[:4])
-
-	key := frameKey{
-		storage:  f.StorageAddress,
-		code:     f.CodeAddress,
-		selector: selector,
+	if len(f.Calldata) >= 4 {
+		copy(selector[:], f.Calldata[:4])
 	}
-
-	// firstErr keeps the most specific explanation seen. A frame whose selector
-	// and contract are permitted but whose arguments are out of bounds should say
-	// so, rather than reporting the same "no rule" as an entirely unknown call.
 	var firstErr error
 	firstCode := DenialNoMatchingRule
-
 	for _, group := range ctx.Groups {
-		index, ok := v.byGroup[group]
-		if !ok {
-			continue
-		}
-		for _, rule := range index[key] {
-			if _, ok := rule.callTypes[f.CallType]; !ok {
+		index := v.byGroup[group]
+		for _, key := range sortedFrameKeys(index) {
+			if !key.matchesTarget(ctx.Org, f) {
 				continue
 			}
-			code, err := rule.checkArgs(ctx, f.Calldata)
-			if err != nil {
-				if firstErr == nil {
-					firstErr, firstCode = err, code
+			if key.selectorMode == selectorExact && (len(f.Calldata) < 4 || key.selector != selector) {
+				continue
+			}
+			if key.selectorMode == selectorEmpty && len(f.Calldata) != 0 {
+				continue
+			}
+			for _, rule := range index[key] {
+				if _, ok := rule.callTypes[f.CallType]; !ok {
+					continue
 				}
-				continue
+				code, err := rule.checkAuthority(ctx, f, f.GroupClaims[group], key)
+				if err == nil {
+					code, err = rule.checkArgs(ctx, f)
+				}
+				if err != nil {
+					if firstErr == nil {
+						firstErr, firstCode = err, code
+					}
+					continue
+				}
+				return "", nil
 			}
-			return "", nil
 		}
 	}
-
 	if firstErr != nil {
 		return firstCode, firstErr
 	}
-
-	return DenialNoMatchingRule, fmt.Errorf("no rule permits %s of selector 0x%s on %s (code %s)",
-		callTypeName(f.CallType), hex.EncodeToString(selector[:]), f.StorageAddress.Hex(), f.CodeAddress.Hex())
+	if f.CallType == CallTypeCreate || f.CallType == CallTypeCreate2 {
+		return DenialUnsupportedCreate, fmt.Errorf("no deployment rule permits this frame")
+	}
+	if f.CodeOrg != ctx.Org || f.StorageOrg != ctx.Org {
+		return DenialOwnership, fmt.Errorf("no explicit target class permits this ownership")
+	}
+	if len(f.Calldata) < 4 {
+		return DenialMalformedCalldata, fmt.Errorf("calldata has no function selector and no wildcard rule")
+	}
+	return DenialNoMatchingRule, fmt.Errorf("no rule permits %s of selector 0x%s on %s (code %s)", callTypeName(f.CallType), hex.EncodeToString(selector[:]), f.StorageAddress.Hex(), f.CodeAddress.Hex())
 }
 
 // checkArgs applies every constraint to the frame's calldata.
@@ -175,18 +214,35 @@ func (v *Validated) matchFrame(ctx Context, f Frame) (DenialCode, error) {
 // Arguments are read as head slots, which is the same view a policy contract
 // has. Nothing is decoded out of line, so a constraint can only ever be placed
 // on a statically sized argument, which validation already enforces.
-func (r *compiledRule) checkArgs(ctx Context, calldata []byte) (DenialCode, error) {
+func (r *compiledRule) checkArgs(ctx Context, f Frame) (DenialCode, error) {
+	calldata := f.Calldata
 	if len(calldata) < r.headLen() {
-		return DenialMalformedCalldata, fmt.Errorf("calldata for %s is %d bytes, too short for its %d arguments", r.sig, len(calldata), r.headSlots)
+		return DenialMalformedCalldata, fmt.Errorf("calldata for %s is %d bytes, too short for its %d-word ABI head", r.sig, len(calldata), r.headSlots)
 	}
 	// Every argument of a fully static signature sits in the head, so anything
 	// past it is calldata a callee reading raw input would still see.
 	if r.exactLen && len(calldata) != r.headLen() {
 		return DenialMalformedCalldata, fmt.Errorf("calldata for %s is %d bytes, but its arguments occupy exactly %d", r.sig, len(calldata), r.headLen())
 	}
+	if r.maxValue != nil && f.Value != nil && f.Value.Cmp(r.maxValue) > 0 {
+		return DenialValue, fmt.Errorf("native value exceeds the rule's bound")
+	}
+	if r.maxDepth != nil && f.Depth > uint64(*r.maxDepth) {
+		return DenialDepth, fmt.Errorf("frame depth exceeds the rule's bound")
+	}
+	if r.caller != nil && f.CallerAddress != *r.caller {
+		return DenialCaller, fmt.Errorf("immediate caller differs from the rule's callerAddress")
+	}
 
 	for _, a := range r.args {
-		slot := calldata[4+32*a.index : 36+32*a.index]
+		if a.kind == argRecordParty {
+			code, err := a.checkRecordParty(ctx, f, r.headLen())
+			if err != nil {
+				return code, err
+			}
+			continue
+		}
+		slot := calldata[a.offset : a.offset+32]
 		if err := a.check(ctx, slot); err != nil {
 			if errors.Is(err, errMalformedArgument) {
 				return DenialMalformedCalldata, err

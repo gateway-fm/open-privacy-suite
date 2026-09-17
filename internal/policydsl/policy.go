@@ -1,10 +1,11 @@
 // Package policydsl defines the typed, versioned schema for contract execution
 // policies and the reference evaluator for them.
 //
-// A policy is a restriction inside a principal's existing OPS authority. It can
-// never widen access: a document cannot manufacture membership, contract
-// ownership, KYC state or an administrative bypass. Identity and directory facts
-// are supplied at evaluation time by OPS and are never embedded in a policy.
+// A policy is the execution rule authority for its organisation. The node
+// authenticates the principal and supplies current membership, ownership,
+// account classification and operational-claim facts. A policy can grant frames
+// over those facts; it cannot manufacture identity or directory facts.
+// Admission and non-execution visibility retain their separate OPS gates.
 //
 // The schema is deliberately closed. Unknown fields, unsupported rule kinds and
 // ambiguous references are rejected at validation time so that a policy either
@@ -12,8 +13,7 @@
 //
 // Known limits of this first grammar, which constrain what a policy can promise:
 //
-//   - Native value is not modelled. A rule permitting a payable function permits
-//     it for any amount of ether. Bounding value needs a field of its own.
+//   - Native value is unbounded unless a rule explicitly sets maxValue.
 //   - Cumulative limits are not supported. A rule can bound one call's argument
 //     but not a total across calls, which would need durable counters and a
 //     rollback story tied to execution.
@@ -61,6 +61,9 @@ const (
 	CallTypeDelegateCall CallType = "delegatecall"
 	// CallTypeCallCode is a CALLCODE frame, the legacy form of DelegateCall.
 	CallTypeCallCode CallType = "callcode"
+	// CREATE and CREATE2 require an explicit create target class rule.
+	CallTypeCreate  CallType = "create"
+	CallTypeCreate2 CallType = "create2"
 )
 
 // AddressSource names whose address an address constraint compares against.
@@ -85,7 +88,7 @@ type Policy struct {
 	APIVersion string `json:"apiVersion"`
 	Kind       string `json:"kind"`
 
-	// Org is the organisation whose authority this policy restricts. Every
+	// Org is the organisation whose execution this policy governs. Every
 	// contract and group referenced below must belong to it.
 	Org string `json:"org"`
 
@@ -101,7 +104,7 @@ type Policy struct {
 
 // Binding grants one group a set of permitted execution frames.
 type Binding struct {
-	// Group is the stable identifier of an existing regular group.
+	// Group is the stable identifier of an existing organisation group.
 	Group string `json:"group"`
 
 	// Allow is the complete set of frames this group may execute. An empty or
@@ -109,9 +112,21 @@ type Binding struct {
 	Allow []FrameRule `json:"allow"`
 }
 
-// FrameRule permits one selector on one contract, optionally constrained by
-// the decoded arguments of the call.
+// FrameRule permits a selector or input shape on literal addresses or an
+// explicit resolved target class, with optional execution and argument bounds.
 type FrameRule struct {
+	// TargetClass optionally names a resolved target class: org, shared, eoa,
+	// precompile or create. Omitted means the literal addresses below. Classes
+	// never accept author-supplied ownership or code classification facts.
+	TargetClass string `json:"targetClass,omitempty"`
+	// AllowUpgrade permits recognized proxy-upgrade selectors only when this
+	// binding's current target-specific claims also authorize the operation.
+	AllowUpgrade bool `json:"allowUpgrade,omitempty"`
+	// Except suppresses only this deployer fallback for an exact target while
+	// the principal belongs to any listed group. Other explicit rules still
+	// union normally; read-grant rows never become an execution authority.
+	Except []DeployerException `json:"except,omitempty"`
+
 	// StorageAddress is the account whose storage the frame may touch. For a
 	// normal call this is simply the contract being called.
 	StorageAddress string `json:"storageAddress"`
@@ -121,12 +136,13 @@ type FrameRule struct {
 	// because that is precisely the case where the two differ.
 	CodeAddress string `json:"codeAddress,omitempty"`
 
-	// Selector is the exact 4-byte function selector, lowercase hex with an 0x
-	// prefix. Selectors are used rather than names because names are ambiguous
-	// under overloading.
+	// Selector is an exact four-byte 0x-prefixed selector, * for any input
+	// (including receive/fallback), or 0x for exactly empty input. Exact selectors
+	// use the pinned ABI; wildcard and empty-input rules cannot constrain args.
 	Selector string `json:"selector"`
 
-	// ABIDigest pins the ABI this rule was validated against, as lowercase hex
+	// ABIDigest is required for exact selectors and absent for * / 0x. It pins
+	// the ABI this rule was validated against, as lowercase hex
 	// sha256 of the canonical ABI text. If the contract's ABI later changes, the
 	// mismatch is detectable instead of silently reinterpreting argument indexes.
 	ABIDigest string `json:"abiDigest"`
@@ -137,11 +153,70 @@ type FrameRule struct {
 
 	// Args constrains decoded arguments. All constraints must hold.
 	Args []ArgConstraint `json:"args,omitempty"`
+
+	// MaxValue bounds native value in wei, as decimal uint256 text. Nil means
+	// unbounded; a present zero allows only zero-value frames.
+	MaxValue *string `json:"maxValue,omitempty"`
+	// MaxDepth bounds frame depth inclusively. Nil means unbounded; zero permits
+	// the top-level frame only. The node supplies depth with the root at zero.
+	MaxDepth *int64 `json:"maxDepth,omitempty"`
+	// CallerAddress optionally requires the immediate EVM caller, not the signer.
+	CallerAddress string `json:"callerAddress,omitempty"`
+}
+
+// UnmarshalJSON keeps optional bounds unambiguous: explicit null is not an
+// omitted constraint. Unknown fields remain errors inside this custom decoder.
+func (r *FrameRule) UnmarshalJSON(data []byte) error {
+	fields := json.NewDecoder(bytes.NewReader(data))
+	if opening, err := fields.Token(); err != nil || opening != json.Delim('{') {
+		return fmt.Errorf("frame rule must be an object")
+	}
+	present := map[string]json.RawMessage{}
+	for fields.More() {
+		key, err := fields.Token()
+		if err != nil {
+			return err
+		}
+		name, ok := key.(string)
+		if !ok {
+			return fmt.Errorf("frame rule field must be a string")
+		}
+		switch name {
+		case "storageAddress", "codeAddress", "selector", "abiDigest", "callTypes", "args", "maxValue", "maxDepth", "callerAddress", "targetClass", "allowUpgrade", "except":
+		default:
+			return fmt.Errorf("unknown frame rule field %q", name)
+		}
+		if _, exists := present[name]; exists {
+			return fmt.Errorf("duplicate frame rule field %q", name)
+		}
+		var value json.RawMessage
+		if err := fields.Decode(&value); err != nil {
+			return err
+		}
+		present[name] = value
+	}
+	if _, err := fields.Token(); err != nil {
+		return err
+	}
+	for _, name := range []string{"maxValue", "maxDepth", "callerAddress", "targetClass", "allowUpgrade", "except"} {
+		if value, ok := present[name]; ok && bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			return fmt.Errorf("frame constraint %s must not be null", name)
+		}
+	}
+	type alias FrameRule
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	var decoded alias
+	if err := dec.Decode(&decoded); err != nil {
+		return err
+	}
+	*r = FrameRule(decoded)
+	return nil
 }
 
 // ArgConstraint restricts a single decoded argument of a call.
 //
-// Exactly one of AddressEquals or UintAtMost must be set. A constraint that sets
+// Exactly one of AddressEquals, UintAtMost or RecordParty must be set. A constraint that sets
 // neither would be a silent no-op, and one that sets both would have two
 // meanings; both are rejected.
 type ArgConstraint struct {
@@ -158,6 +233,10 @@ type ArgConstraint struct {
 	// UintAtMost is an inclusive upper bound for an unsigned integer argument,
 	// written in decimal so that large token amounts survive JSON round-trips.
 	UintAtMost *string `json:"uintAtMost,omitempty"`
+
+	// RecordParty maps this record ID to a pinned getter on the guarded storage
+	// address and requires a returned party to match a principal-linked address.
+	RecordParty *RecordPartyMatch `json:"recordParty,omitempty"`
 }
 
 // AddressMatch describes which address an address argument must equal.
@@ -188,6 +267,15 @@ func (p *Policy) clone() *Policy {
 
 		for j, r := range b.Allow {
 			nr := r
+			nr.Except = cloneDeployerExceptions(r.Except)
+			if r.MaxValue != nil {
+				value := *r.MaxValue
+				nr.MaxValue = &value
+			}
+			if r.MaxDepth != nil {
+				depth := *r.MaxDepth
+				nr.MaxDepth = &depth
+			}
 			nr.CallTypes = append([]CallType(nil), r.CallTypes...)
 			nr.Args = make([]ArgConstraint, len(r.Args))
 
@@ -200,6 +288,11 @@ func (p *Policy) clone() *Policy {
 				if a.UintAtMost != nil {
 					s := *a.UintAtMost
 					na.UintAtMost = &s
+				}
+				if a.RecordParty != nil {
+					read := *a.RecordParty
+					read.PartyOutputs = append([]int(nil), read.PartyOutputs...)
+					na.RecordParty = &read
 				}
 				nr.Args[k] = na
 			}
@@ -218,8 +311,8 @@ func (p *Policy) clone() *Policy {
 // A custom unmarshaller is needed because the outer decoder's strictness does
 // not reach a type that decodes itself, so unknown fields are rejected here too.
 func (a *ArgConstraint) UnmarshalJSON(data []byte) error {
-	var present map[string]json.RawMessage
-	if err := json.Unmarshal(data, &present); err != nil {
+	present, err := strictFields(data, "index", "addressEquals", "uintAtMost", "recordParty")
+	if err != nil {
 		return fmt.Errorf("argument constraint: %w", err)
 	}
 	if _, ok := present["index"]; !ok {
@@ -245,7 +338,17 @@ func (a *ArgConstraint) UnmarshalJSON(data []byte) error {
 // Decoding is strict: unknown fields are an error rather than being ignored, and
 // anything at all after the document is rejected. Parse performs no semantic
 // validation; call Validate for that.
+// A non-nil error is a *ValidationError.
 func Parse(data []byte) (*Policy, error) {
+	v0, err := parsePolicy(data)
+	if err != nil {
+		return v0, validationError(err)
+	}
+	return v0, nil
+}
+
+// parsePolicy is Parse before its error is typed.
+func parsePolicy(data []byte) (*Policy, error) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 

@@ -20,11 +20,12 @@ const SolidityVersion = "0.8.35"
 // ContractName is the name of the generated contract.
 const ContractName = "ExecutionPolicy"
 
-// CheckFrameSignature is the entry point every generated policy exposes.
-//
-// A policy decides one frame at a time. The caller, whether that is this process
-// or a node adapter, walks the frames of an execution and requires every one of
-// them to be permitted.
+// CheckSignature is the node's facts/frame entry point. The caller must resolve
+// identity and current facts before invoking it for each actual EVM frame.
+const CheckSignature = "check((address,address[],bytes32[],bytes32,bytes32,bytes32,bytes32,uint8,bool,bool,uint8,bytes32,uint8[],bool,bool),(uint8,address,address,address,bytes,uint256,uint256))"
+
+// CheckFrameSignature is retained for offline compatibility with old fixtures.
+// It has no ownership/value/depth/caller facts and is never a node entry point.
 const CheckFrameSignature = "checkFrame(uint8,address,address,address,address[],bytes32[],bytes)"
 
 // Reason codes returned alongside the decision. They mirror the Go evaluator's
@@ -35,6 +36,13 @@ const (
 	reasonNoMatchingRule     = 1
 	reasonArgumentConstraint = 2
 	reasonMalformedCalldata  = 3
+	reasonOwnership          = 4
+	reasonValue              = 5
+	reasonDepth              = 6
+	reasonUnsupportedCreate  = 7
+	reasonCaller             = 8
+	reasonOperationalClaim   = 9
+	reasonInvalidFacts       = 10
 )
 
 // callTypeOrdinal is the wire encoding of a call type. The generated contract
@@ -45,6 +53,8 @@ var callTypeOrdinal = map[CallType]uint8{
 	CallTypeStaticCall:   1,
 	CallTypeDelegateCall: 2,
 	CallTypeCallCode:     3,
+	CallTypeCreate:       4,
+	CallTypeCreate2:      5,
 }
 
 // CallTypeOrdinal returns the wire encoding of a call type.
@@ -60,6 +70,15 @@ func CallTypeOrdinal(ct CallType) (uint8, bool) {
 // operator chose to name a group.
 func GroupID(group string) common.Hash {
 	return crypto.Keccak256Hash([]byte(group))
+}
+
+// OrgID encodes a stable database organisation identifier. Missing ownership
+// uses the zero word, which no compiled policy organisation can match.
+func OrgID(org string) common.Hash {
+	if org == "" {
+		return common.Hash{}
+	}
+	return crypto.Keccak256Hash([]byte(org))
 }
 
 // GenerateSolidity renders a validated policy as Solidity source.
@@ -90,28 +109,42 @@ func GenerateSolidity(v *Validated) (string, error) {
 	b.WriteString(fmt.Sprintf("    uint16 internal constant OK = %d;\n", reasonOK))
 	b.WriteString(fmt.Sprintf("    uint16 internal constant NO_MATCHING_RULE = %d;\n", reasonNoMatchingRule))
 	b.WriteString(fmt.Sprintf("    uint16 internal constant ARGUMENT_CONSTRAINT = %d;\n", reasonArgumentConstraint))
-	b.WriteString(fmt.Sprintf("    uint16 internal constant MALFORMED_CALLDATA = %d;\n\n", reasonMalformedCalldata))
-
-	b.WriteString("    /// @notice Decide whether one observed call frame is permitted.\n")
-	b.WriteString("    /// @dev Pure: a policy reads only the facts it is handed. It holds no state,\n")
-	b.WriteString("    ///      so it cannot accumulate counters or remember earlier calls.\n")
-	b.WriteString("    function checkFrame(\n")
-	b.WriteString("        uint8 callType,\n")
-	b.WriteString("        address storageAddress,\n")
-	b.WriteString("        address codeAddress,\n")
-	b.WriteString("        address signer,\n")
-	b.WriteString("        address[] calldata linked,\n")
-	b.WriteString("        bytes32[] calldata groups,\n")
-	b.WriteString("        bytes calldata payload\n")
-	b.WriteString("    ) external pure returns (bool allowed, uint16 reason) {\n")
-	b.WriteString("        if (payload.length < 4) return (false, MALFORMED_CALLDATA);\n")
-	b.WriteString("        bytes4 sel = bytes4(payload[0:4]);\n\n")
+	b.WriteString(fmt.Sprintf("    uint16 internal constant MALFORMED_CALLDATA = %d;\n", reasonMalformedCalldata))
+	b.WriteString(fmt.Sprintf("    uint16 internal constant OWNERSHIP = %d;\n", reasonOwnership))
+	b.WriteString(fmt.Sprintf("    uint16 internal constant VALUE = %d;\n", reasonValue))
+	b.WriteString(fmt.Sprintf("    uint16 internal constant DEPTH = %d;\n", reasonDepth))
+	b.WriteString(fmt.Sprintf("    uint16 internal constant UNSUPPORTED_CREATE = %d;\n", reasonUnsupportedCreate))
+	b.WriteString(fmt.Sprintf("    uint16 internal constant CALLER = %d;\n\n", reasonCaller))
+	b.WriteString(fmt.Sprintf("    uint16 internal constant OPERATIONAL_CLAIM = %d;\n", reasonOperationalClaim))
+	b.WriteString(fmt.Sprintf("    uint16 internal constant INVALID_FACTS = %d;\n", reasonInvalidFacts))
+	var entries strings.Builder
+	writeEntryPoints(&entries, v.policy.Org)
+	entrySource := entries.String()
+	if v.hasRecordReads() {
+		entrySource = strings.ReplaceAll(entrySource, " pure ", " view ")
+	}
+	b.WriteString(entrySource)
+	b.WriteString("        bytes4 sel;\n        if (payload.length >= 4) sel = bytes4(payload[0:4]);\n\n")
+	b.WriteString(`        if (frame.kind != 4 && frame.kind != 5) {
+            uint256 upgradeOffset;
+            if (sel == 0x3659cfe6 || sel == 0x4f1ef286 || sel == 0xd784d426) upgradeOffset = 4;
+            if (sel == 0x99a88ec4 || sel == 0x9623609d) upgradeOffset = 36;
+            if (upgradeOffset != 0) {
+                if (payload.length < upgradeOffset + 32) return MALFORMED_CALLDATA;
+                uint256 target = uint256(bytes32(payload[upgradeOffset:upgradeOffset + 32]));
+                if (target >> 160 != 0) return MALFORMED_CALLDATA;
+                frame.upgrade = true;
+                frame.upgradeAddress = address(uint160(target));
+            }
+        }
+`)
 	b.WriteString("        // Denials are ranked so the most specific explanation survives: an\n")
 	b.WriteString("        // argument that is out of bounds says so rather than reporting the same\n")
 	b.WriteString("        // thing as a call the policy never mentions.\n")
 	b.WriteString("        uint16 worst = NO_MATCHING_RULE;\n\n")
 	b.WriteString("        for (uint256 i = 0; i < groups.length; i++) {\n")
-	b.WriteString("            bytes32 g = groups[i];\n\n")
+	b.WriteString("            bytes32 g = groups[i];\n")
+	b.WriteString("            if (frame.complete) frame.groupClaim = frame.groupClaims[i];\n\n")
 
 	// Groups are emitted in a fixed order so the same policy always renders the
 	// same source, and therefore always compiles to the same bytecode.
@@ -135,7 +168,11 @@ func GenerateSolidity(v *Validated) (string, error) {
 	}
 
 	b.WriteString("        }\n\n")
-	b.WriteString("        return (false, worst);\n")
+	b.WriteString("        if (worst != NO_MATCHING_RULE) return worst;\n")
+	b.WriteString("        if (frame.kind == 4 || frame.kind == 5) return UNSUPPORTED_CREATE;\n")
+	b.WriteString("        if (frame.complete && (frame.codeOrg != frame.policyOrg || frame.storageOrg != frame.policyOrg)) return OWNERSHIP;\n")
+	b.WriteString("        if (payload.length < 4) return MALFORMED_CALLDATA;\n")
+	b.WriteString("        return worst;\n")
 	b.WriteString("    }\n")
 	b.WriteString(bodies.String())
 	b.WriteString("}\n")
@@ -143,24 +180,113 @@ func GenerateSolidity(v *Validated) (string, error) {
 	return b.String(), nil
 }
 
+func writeEntryPoints(b *strings.Builder, org string) {
+	b.WriteString(`    struct Facts {
+        address signer;
+        address[] linkedAddresses;
+        bytes32[] groups;
+        bytes32 policyOrg;
+        bytes32 callerOrg;
+        bytes32 codeOrg;
+        bytes32 storageOrg;
+        uint8 claims;
+        bool codeShared;
+        bool storageShared;
+        uint8 codeKind;
+        bytes32 upgradeTargetOrg;
+        uint8[] groupClaims;
+        bool storageDeployer;
+        bool storagePending;
+    }
+    struct Call {
+        uint8 kind;
+        address caller;
+        address codeAddress;
+        address storageAddress;
+        bytes data;
+        uint256 value;
+        uint256 depth;
+    }
+    struct FrameContext {
+        uint8 kind;
+        address caller;
+        address codeAddress;
+        address storageAddress;
+        uint256 value;
+        uint256 depth;
+        bool complete;
+        bytes32 policyOrg;
+        bytes32 callerOrg;
+        bytes32 codeOrg;
+        bytes32 storageOrg;
+        bool codeShared;
+        bool storageShared;
+        uint8 codeKind;
+        bytes32 upgradeTargetOrg;
+        uint8[] groupClaims;
+        uint8 groupClaim;
+        bool upgrade;
+        address upgradeAddress;
+        bool storageDeployer;
+        bool storagePending;
+        bytes32[] groups;
+    }
+
+    /// @notice Check one actual frame against resolved, block-pinned facts.
+    /// @dev The node validates identity, bans, links and membership expiry first.
+    function check(Facts calldata facts, Call calldata frame) external pure returns (uint256) {
+`)
+	fmt.Fprintf(b, "        if (facts.policyOrg != %s) return OWNERSHIP;\n", OrgID(org).Hex())
+	b.WriteString(`        if (facts.groups.length != facts.groupClaims.length || facts.codeKind > 3) return INVALID_FACTS;
+        FrameContext memory observed;
+        observed.kind = frame.kind;
+        observed.caller = frame.caller;
+        observed.codeAddress = frame.codeAddress;
+        observed.storageAddress = frame.storageAddress;
+        observed.value = frame.value;
+        observed.depth = frame.depth;
+        observed.complete = true;
+        observed.policyOrg = facts.policyOrg;
+        observed.callerOrg = facts.callerOrg;
+        observed.codeOrg = facts.codeOrg;
+        observed.storageOrg = facts.storageOrg;
+        observed.codeShared = facts.codeShared;
+        observed.storageShared = facts.storageShared;
+        observed.codeKind = facts.codeKind;
+        observed.upgradeTargetOrg = facts.upgradeTargetOrg;
+        observed.groupClaims = facts.groupClaims;
+        observed.storageDeployer = facts.storageDeployer;
+        observed.storagePending = facts.storagePending;
+        observed.groups = facts.groups;
+        return _checkFrame(facts.signer, facts.linkedAddresses, facts.groups, frame.data, observed);
+    }
+
+    /// @notice Offline compatibility only. The node must call check(Facts,Call).
+    /// @dev Rules needing fields absent from this interface cannot pass here.
+    function checkFrame(uint8 callType, address storageAddress, address codeAddress, address signer,
+        address[] calldata linked, bytes32[] calldata groups, bytes calldata payload)
+        external pure returns (bool allowed, uint16 reason)
+    {
+        FrameContext memory observed;
+        observed.kind = callType;
+        observed.codeAddress = codeAddress;
+        observed.storageAddress = storageAddress;
+        reason = _checkFrame(signer, linked, groups, payload, observed);
+        return (reason == OK, reason);
+    }
+
+    function _checkFrame(address signer, address[] calldata linked, bytes32[] calldata groups,
+        bytes calldata payload, FrameContext memory frame) internal pure returns (uint16)
+    {
+`)
+}
+
 // writeGroupBlock emits the dispatch for the rules bound to one group.
 func writeGroupBlock(b, bodies *strings.Builder, next *int, group string, index map[frameKey][]*compiledRule) error {
 	b.WriteString(fmt.Sprintf("            // group %s\n", solidityComment(group)))
 	b.WriteString(fmt.Sprintf("            if (g == %s) {\n", GroupID(group).Hex()))
 
-	keys := make([]frameKey, 0, len(index))
-	for key := range index {
-		keys = append(keys, key)
-	}
-	sort.Slice(keys, func(i, j int) bool {
-		if keys[i].storage != keys[j].storage {
-			return keys[i].storage.Hex() < keys[j].storage.Hex()
-		}
-		if keys[i].code != keys[j].code {
-			return keys[i].code.Hex() < keys[j].code.Hex()
-		}
-		return string(keys[i].selector[:]) < string(keys[j].selector[:])
-	})
+	keys := sortedFrameKeys(index)
 
 	for _, key := range keys {
 		for _, rule := range index[key] {
@@ -169,7 +295,7 @@ func writeGroupBlock(b, bodies *strings.Builder, next *int, group string, index 
 			if err := writeRuleDispatch(b, n, key, rule); err != nil {
 				return err
 			}
-			if err := writeRuleBody(bodies, n, group, rule); err != nil {
+			if err := writeRuleBody(bodies, n, group, key, rule); err != nil {
 				return err
 			}
 		}
@@ -177,6 +303,30 @@ func writeGroupBlock(b, bodies *strings.Builder, next *int, group string, index 
 
 	b.WriteString("            }\n\n")
 	return nil
+}
+
+func sortedFrameKeys(index map[frameKey][]*compiledRule) []frameKey {
+	keys := make([]frameKey, 0, len(index))
+	for key := range index {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		a, b := keys[i], keys[j]
+		if a.targetClass != b.targetClass {
+			return a.targetClass < b.targetClass
+		}
+		if a.storage != b.storage {
+			return a.storage.Hex() < b.storage.Hex()
+		}
+		if a.code != b.code {
+			return a.code.Hex() < b.code.Hex()
+		}
+		if a.selectorMode != b.selectorMode {
+			return a.selectorMode < b.selectorMode
+		}
+		return string(a.selector[:]) < string(b.selector[:])
+	})
+	return keys
 }
 
 // writeRuleDispatch emits the guard that routes a frame to one rule.
@@ -187,23 +337,92 @@ func writeRuleDispatch(b *strings.Builder, n int, key frameKey, rule *compiledRu
 	}
 
 	b.WriteString(fmt.Sprintf("                // %s\n", solidityComment(rule.sig)))
-	b.WriteString(fmt.Sprintf("                if (storageAddress == %s && codeAddress == %s && sel == %s) {\n",
-		solidityAddress(key.storage), solidityAddress(key.code), solidityBytes4(key.selector)))
+	target := targetCondition(key)
+	selector := "true"
+	if key.selectorMode == selectorExact {
+		selector = fmt.Sprintf("payload.length >= 4 && sel == %s", solidityBytes4(key.selector))
+	}
+	if key.selectorMode == selectorEmpty {
+		selector = "payload.length == 0"
+	}
+	fmt.Fprintf(b, "                if ((%s) && (%s)) {\n", target, selector)
+
 	b.WriteString(fmt.Sprintf("                    if (%s) {\n", cond))
-	b.WriteString(fmt.Sprintf("                        uint16 r = _rule%d(signer, linked, payload);\n", n))
-	b.WriteString("                        if (r == OK) return (true, OK);\n")
+	b.WriteString(fmt.Sprintf("                        uint16 r = _rule%d(signer, linked, payload, frame);\n", n))
+	b.WriteString("                        if (r == OK) return OK;\n")
 	b.WriteString("                        if (worst == NO_MATCHING_RULE) worst = r;\n")
 	b.WriteString("                    }\n")
 	b.WriteString("                }\n")
 	return nil
 }
 
+func targetCondition(key frameKey) string {
+	switch key.targetClass {
+	case "":
+		return fmt.Sprintf("frame.storageAddress == %s && frame.codeAddress == %s", solidityAddress(key.storage), solidityAddress(key.code))
+	case "org":
+		return "frame.codeOrg == frame.policyOrg && frame.storageOrg == frame.policyOrg"
+	case "deployer":
+		return "frame.codeAddress == frame.storageAddress && frame.storageDeployer"
+	case "pending":
+		return "frame.codeAddress == frame.storageAddress && frame.storagePending"
+	case "shared":
+		return "frame.codeAddress == frame.storageAddress && frame.codeKind == 2 && frame.codeShared && frame.storageShared"
+	case "eoa":
+		return "frame.codeAddress == frame.storageAddress && frame.codeKind == 1 && frame.codeOrg == bytes32(0) && frame.storageOrg == bytes32(0)"
+	case "precompile":
+		return "frame.codeAddress == frame.storageAddress && frame.codeKind == 3"
+	case "create":
+		return "frame.kind == 4 || frame.kind == 5"
+	default:
+		return "false"
+	}
+}
+
 // writeRuleBody emits one rule's argument checks as its own function.
-func writeRuleBody(b *strings.Builder, n int, group string, rule *compiledRule) error {
+func writeRuleBody(b *strings.Builder, n int, group string, key frameKey, rule *compiledRule) error {
 	b.WriteString(fmt.Sprintf("\n    /// @dev group %s, %s\n", solidityComment(group), solidityComment(rule.sig)))
-	b.WriteString(fmt.Sprintf("    function _rule%d(address signer, address[] calldata linked, bytes calldata payload)\n", n))
-	b.WriteString("        internal pure returns (uint16)\n")
+	b.WriteString(fmt.Sprintf("    function _rule%d(address signer, address[] calldata linked, bytes calldata payload, FrameContext memory frame)\n", n))
+	mutability := "pure"
+	if rule.hasRecordRead() {
+		mutability = "view"
+	}
+	fmt.Fprintf(b, "        internal %s returns (uint16)\n", mutability)
 	b.WriteString("    {\n")
+	if rule.maxValue != nil || rule.maxDepth != nil || rule.caller != nil || rule.hasRecordRead() {
+		b.WriteString("        if (!frame.complete) return NO_MATCHING_RULE;\n")
+	}
+
+	if key.targetClass != "" {
+		b.WriteString("        if (!frame.complete) return NO_MATCHING_RULE;\n")
+	}
+	if key.targetClass == "" || key.targetClass == "org" || key.targetClass == "create" || key.targetClass == "deployer" || key.targetClass == "pending" {
+		b.WriteString("        if (frame.complete && (frame.codeOrg != frame.policyOrg || frame.storageOrg != frame.policyOrg)) return OWNERSHIP;\n")
+	}
+	for _, exception := range rule.exceptions {
+		fmt.Fprintf(b, "        if (frame.storageAddress == %s) {\n            for (uint256 ei=0; ei<frame.groups.length; ei++) {\n", solidityAddress(common.HexToAddress(exception.StorageAddress)))
+		var conditions []string
+		for _, group := range exception.Groups {
+			conditions = append(conditions, "frame.groups[ei] == "+GroupID(group).Hex())
+		}
+		fmt.Fprintf(b, "                if (%s) return NO_MATCHING_RULE;\n            }\n        }\n", strings.Join(conditions, " || "))
+	}
+	if key.targetClass == "pending" {
+		b.WriteString("        if ((frame.groupClaim & 3) == 0) return OPERATIONAL_CLAIM;\n")
+	}
+	if key.targetClass == "create" {
+		b.WriteString("        if ((frame.groupClaim & 3) == 0) return OPERATIONAL_CLAIM;\n")
+		b.WriteString("        if (payload.length == 0) return MALFORMED_CALLDATA;\n")
+		b.WriteString("        if (frame.depth > 0 && frame.callerOrg != frame.policyOrg) return OWNERSHIP;\n")
+	} else {
+		if rule.allowUpgrade {
+			b.WriteString("        if (frame.upgrade) {\n")
+			b.WriteString("            if (!frame.complete || (frame.groupClaim & 5) == 0) return OPERATIONAL_CLAIM;\n")
+			b.WriteString("            if (frame.upgradeTargetOrg != frame.policyOrg || frame.upgradeAddress == address(0)) return OWNERSHIP;\n        }\n")
+		} else {
+			b.WriteString("        if (frame.upgrade) return OPERATIONAL_CLAIM;\n")
+		}
+	}
 
 	// Length is checked before any slot is read, so a short payload can never be
 	// indexed past its end.
@@ -213,8 +432,22 @@ func writeRuleBody(b *strings.Builder, n int, group string, rule *compiledRule) 
 		b.WriteString("        // it is calldata a callee reading raw input would still see.\n")
 		b.WriteString(fmt.Sprintf("        if (payload.length != %d) return MALFORMED_CALLDATA;\n", rule.headLen()))
 	}
+	if rule.maxValue != nil {
+		fmt.Fprintf(b, "        if (frame.value > %s) return VALUE;\n", rule.maxValue.String())
+	}
+	if rule.maxDepth != nil {
+		fmt.Fprintf(b, "        if (frame.depth > %d) return DEPTH;\n", *rule.maxDepth)
+	}
+	if rule.caller != nil {
+		fmt.Fprintf(b, "        if (frame.caller != %s) return CALLER;\n", solidityAddress(*rule.caller))
+	}
 
 	for _, arg := range rule.args {
+		if arg.kind == argRecordParty {
+			fmt.Fprintf(b, "        uint16 recordReason%d = _record%d_%d(linked, payload, frame.storageAddress);\n", arg.index, n, arg.index)
+			fmt.Fprintf(b, "        if (recordReason%d != OK) return recordReason%d;\n", arg.index, arg.index)
+			continue
+		}
 		if err := writeArgCheck(b, arg); err != nil {
 			return err
 		}
@@ -222,12 +455,17 @@ func writeRuleBody(b *strings.Builder, n int, group string, rule *compiledRule) 
 
 	b.WriteString("        return OK;\n")
 	b.WriteString("    }\n")
+	for _, arg := range rule.args {
+		if arg.kind == argRecordParty {
+			writeRecordPartyCheck(b, n, arg, rule.headLen())
+		}
+	}
 	return nil
 }
 
 // writeArgCheck emits one argument constraint.
 func writeArgCheck(b *strings.Builder, arg compiledArg) error {
-	offset := 4 + 32*arg.index
+	offset := arg.offset
 	b.WriteString(fmt.Sprintf("\n        uint256 w%d = uint256(bytes32(payload[%d:%d]));\n", arg.index, offset, offset+32))
 
 	switch arg.kind {
@@ -280,7 +518,7 @@ func callTypeCondition(rule *compiledRule) (string, error) {
 
 	parts := make([]string, 0, len(ordinals))
 	for _, n := range ordinals {
-		parts = append(parts, fmt.Sprintf("callType == %d", n))
+		parts = append(parts, fmt.Sprintf("frame.kind == %d", n))
 	}
 	if len(parts) == 0 {
 		// Unreachable for a validated policy; emitting false keeps a generator

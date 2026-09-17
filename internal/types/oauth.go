@@ -21,8 +21,9 @@ type OAuthSession struct {
 	CodeExpires time.Time `json:"code_expires"`
 
 	// User info (set after successful auth)
-	UserDID string `json:"user_did"`
-	KYC     bool   `json:"kyc"`
+	UserDID       string `json:"user_did"`
+	KYC           bool   `json:"kyc"`
+	PrincipalKind string `json:"principal_kind,omitempty"`
 
 	// RD-993: DID of the caller who triggered /oauth/authorize, captured
 	// from their PP JWT if they had one. Empty when the flow was started by

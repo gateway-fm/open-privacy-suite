@@ -117,6 +117,7 @@ func conformancePolicy(t *testing.T) (*Policy, Catalog) {
 func libCall(t *testing.T, limit uint64) Frame {
 	t.Helper()
 	return Frame{
+		CodeOrg: orgID, StorageOrg: orgID,
 		CallType:       CallTypeCall,
 		StorageAddress: libraryAddr,
 		CodeAddress:    libraryAddr,
@@ -227,6 +228,9 @@ func TestConformance_GoAndSolidityAgree(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			for i := range tc.frames {
+				tc.frames[i].CodeOrg, tc.frames[i].StorageOrg = orgID, orgID
+			}
 			want := reference.Evaluate(tc.ctx, tc.frames)
 			got := compiled.Evaluate(orgID, tc.ctx, tc.frames)
 

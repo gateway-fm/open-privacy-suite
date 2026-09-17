@@ -2,6 +2,7 @@ package policydsl
 
 import (
 	"fmt"
+	"math/big"
 	"strings"
 	"sync"
 
@@ -31,6 +32,82 @@ const checkFrameABI = `[{
     {"name": "reason",  "type": "uint16"}
   ]
 }]`
+
+const checkABI = `[{"type":"function","name":"check","stateMutability":"pure","inputs":[
+  {"name":"facts","type":"tuple","components":[
+    {"name":"signer","type":"address"},{"name":"linkedAddresses","type":"address[]"},{"name":"groups","type":"bytes32[]"},
+    {"name":"policyOrg","type":"bytes32"},{"name":"callerOrg","type":"bytes32"},{"name":"codeOrg","type":"bytes32"},{"name":"storageOrg","type":"bytes32"},
+    {"name":"claims","type":"uint8"},{"name":"codeShared","type":"bool"},{"name":"storageShared","type":"bool"},{"name":"codeKind","type":"uint8"},{"name":"upgradeTargetOrg","type":"bytes32"},{"name":"groupClaims","type":"uint8[]"},{"name":"storageDeployer","type":"bool"},{"name":"storagePending","type":"bool"}]},
+  {"name":"frame","type":"tuple","components":[
+    {"name":"kind","type":"uint8"},{"name":"caller","type":"address"},{"name":"codeAddress","type":"address"},{"name":"storageAddress","type":"address"},
+    {"name":"data","type":"bytes"},{"name":"value","type":"uint256"},{"name":"depth","type":"uint256"}]}],
+  "outputs":[{"name":"reason","type":"uint256"}]}]`
+
+type policyFacts struct {
+	Signer           common.Address
+	LinkedAddresses  []common.Address
+	Groups           [][32]byte
+	PolicyOrg        [32]byte
+	CallerOrg        [32]byte
+	CodeOrg          [32]byte
+	StorageOrg       [32]byte
+	Claims           uint8
+	CodeShared       bool
+	StorageShared    bool
+	CodeKind         uint8
+	UpgradeTargetOrg [32]byte
+	GroupClaims      []uint8
+	StorageDeployer  bool
+	StoragePending   bool
+}
+
+type policyCall struct {
+	Kind           uint8
+	Caller         common.Address
+	CodeAddress    common.Address
+	StorageAddress common.Address
+	Data           []byte
+	Value          *big.Int
+	Depth          *big.Int
+}
+
+var checkSpec = sync.OnceValues(func() (abi.ABI, error) {
+	spec, err := abi.JSON(strings.NewReader(checkABI))
+	if err == nil && spec.Methods["check"].Sig != CheckSignature {
+		err = fmt.Errorf("policydsl: facts packing signature differs from generated entry point")
+	}
+	return spec, err
+})
+
+func packCheck(ctx Context, f Frame) ([]byte, error) {
+	spec, err := checkSpec()
+	if err != nil {
+		return nil, err
+	}
+	kind, ok := CallTypeOrdinal(f.CallType)
+	if !ok {
+		return nil, fmt.Errorf("unsupported frame kind")
+	}
+	value := new(big.Int)
+	if f.Value != nil {
+		if f.Value.Sign() < 0 || f.Value.BitLen() > 256 {
+			return nil, fmt.Errorf("native value must fit uint256")
+		}
+		value.Set(f.Value)
+	}
+	groups := make([][32]byte, len(ctx.Groups))
+	groupClaims := make([]uint8, len(ctx.Groups))
+	for i, g := range ctx.Groups {
+		groups[i] = GroupID(g)
+		groupClaims[i] = f.GroupClaims[g]
+	}
+	facts := policyFacts{Signer: ctx.Signer, LinkedAddresses: ctx.LinkedAddresses, Groups: groups,
+		PolicyOrg: OrgID(ctx.Org), CallerOrg: OrgID(f.CallerOrg), CodeOrg: OrgID(f.CodeOrg), StorageOrg: OrgID(f.StorageOrg),
+		Claims: ctx.Claims, CodeShared: f.CodeShared, StorageShared: f.StorageShared, CodeKind: f.CodeKind, UpgradeTargetOrg: OrgID(f.UpgradeTargetOrg), GroupClaims: groupClaims, StorageDeployer: f.StorageDeployer, StoragePending: f.StoragePending}
+	frame := policyCall{Kind: kind, Caller: f.CallerAddress, CodeAddress: f.CodeAddress, StorageAddress: f.StorageAddress,
+		Data: f.Calldata, Value: value, Depth: new(big.Int).SetUint64(f.Depth)}
+	return spec.Pack("check", facts, frame)
+}
 
 var (
 	checkFrameOnce sync.Once

@@ -18,6 +18,13 @@ var (
 	ErrExpiredToken = errors.New("token expired")
 )
 
+type PrincipalKind string
+
+const (
+	PrincipalHuman   PrincipalKind = "human"
+	PrincipalService PrincipalKind = "service"
+)
+
 // JWTService handles JWT token issuance and validation
 type JWTService struct {
 	accessSecret  []byte
@@ -36,9 +43,10 @@ type JWTService struct {
 
 // TokenClaims represents the claims in our JWT tokens
 type TokenClaims struct {
-	Subject      string        `json:"sub"`                // User DID from Privado ID
-	KYC          bool          `json:"kyc"`                // KYC status (from verified proof)
-	ZKRoleClaims *ZKRoleClaims `json:"zk_roles,omitempty"` // Optional ZK-attested role claims
+	PrincipalKind PrincipalKind `json:"principal_kind,omitempty"`
+	Subject       string        `json:"sub"`                // User DID from Privado ID
+	KYC           bool          `json:"kyc"`                // KYC status (from verified proof)
+	ZKRoleClaims  *ZKRoleClaims `json:"zk_roles,omitempty"` // Optional ZK-attested role claims
 	jwt.RegisteredClaims
 }
 
@@ -116,11 +124,21 @@ func (j *JWTService) IssueAccessToken(subject string, kyc bool) (string, error) 
 
 // IssueAccessTokenWithZKClaims issues a new access token with optional ZK role claims.
 func (j *JWTService) IssueAccessTokenWithZKClaims(subject string, kyc bool, zkClaims *ZKRoleClaims) (string, error) {
+	// Legacy issuers carry no approval authority. Login flows must explicitly
+	// supply the principal kind established by their verified authentication.
+	return j.IssueAccessTokenForPrincipal(subject, kyc, "", zkClaims)
+}
+
+func (j *JWTService) IssueAccessTokenForPrincipal(subject string, kyc bool, kind PrincipalKind, zkClaims *ZKRoleClaims) (string, error) {
+	if kind != "" && kind != PrincipalHuman && kind != PrincipalService {
+		return "", fmt.Errorf("invalid principal kind")
+	}
 	now := time.Now()
 	claims := TokenClaims{
-		Subject:      subject,
-		KYC:          kyc,
-		ZKRoleClaims: zkClaims,
+		PrincipalKind: kind,
+		Subject:       subject,
+		KYC:           kyc,
+		ZKRoleClaims:  zkClaims,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ID:        uuid.New().String(), // Unique token ID
 			ExpiresAt: jwt.NewNumericDate(now.Add(j.accessTTL)),
@@ -135,9 +153,17 @@ func (j *JWTService) IssueAccessTokenWithZKClaims(subject string, kyc bool, zkCl
 
 // IssueRefreshToken issues a new refresh token (long-lived, stored in DB)
 func (j *JWTService) IssueRefreshToken(subject string) (string, error) {
+	return j.IssueRefreshTokenForPrincipal(subject, "")
+}
+
+func (j *JWTService) IssueRefreshTokenForPrincipal(subject string, kind PrincipalKind) (string, error) {
+	if kind != "" && kind != PrincipalHuman && kind != PrincipalService {
+		return "", fmt.Errorf("invalid principal kind")
+	}
 	now := time.Now()
 	claims := TokenClaims{
-		Subject: subject,
+		PrincipalKind: kind,
+		Subject:       subject,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ID:        uuid.New().String(), // Unique token ID for refresh token rotation
 			ExpiresAt: jwt.NewNumericDate(now.Add(j.refreshTTL)),

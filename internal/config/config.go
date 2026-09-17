@@ -307,7 +307,9 @@ type Config struct {
 	BillionsCredentialQueryFile string         // env BILLIONS_CREDENTIAL_QUERY_FILE — path to JSON file with the credential query
 	BillionsCredentialQuery     map[string]any // Parsed from BillionsCredentialQueryFile at startup
 
+	NodePolicy             NodePolicyConfig
 	AdminAPIToken          string              // Shared token required for admin API access (required in production). FULL super-admin: reads + writes + platform/fleet. Held by trusted ops / MCP.
+	PlatformAdminSubjects  []string            // PLATFORM_ADMIN_SUBJECTS: exact verified external IDs with named configuration-only platform authority.
 	OperatorAPIToken       string              // RD-1132: optional restricted "operator/onboarder" token. Platform-only — create/manage orgs + mint org admins; NO per-org tenant reads or mutations. For a 3rd-party onboarder that should not see/touch tenant data.
 	ENSResolverURL         string              // Ethereum mainnet RPC URL for ENS resolution
 	CORSAllowedOrigins     string              // Comma-separated list of allowed origins, or "*" for all (default: "*" in dev)
@@ -745,6 +747,7 @@ func Load() *Config {
 	}
 
 	return &Config{
+		NodePolicy:                          loadNodePolicy(os.Getenv),
 		NodeURL:                             getEnv("NODE_URL", "http://localhost:8545"),
 		DatabaseURL:                         databaseURL,
 		DBMaxOpenConns:                      dbMaxOpen,
@@ -779,6 +782,7 @@ func Load() *Config {
 		BillionsCredentialQueryFile:         billionsQueryFile,
 		BillionsCredentialQuery:             billionsQuery,
 		AdminAPIToken:                       getEnv("ADMIN_API_TOKEN", ""),
+		PlatformAdminSubjects:               getSliceEnv("PLATFORM_ADMIN_SUBJECTS", ","),
 		OperatorAPIToken:                    getEnv("OPERATOR_API_TOKEN", ""),
 		ENSResolverURL:                      getEnv("ENS_RESOLVER_URL", "https://eth.llamarpc.com"), // Public mainnet RPC
 		CORSAllowedOrigins:                  corsOrigins,
@@ -931,6 +935,9 @@ func (c *Config) AzureADEnabled() bool {
 // When RequireProofOfHumanity is enabled, Path B configuration is validated
 // regardless of environment — misconfiguring Path B breaks login for everyone.
 func (c *Config) Validate() error {
+	if err := c.NodePolicy.Validate(); err != nil {
+		return err
+	}
 	// A configured-but-unreadable CONFIG_FILE is a fatal misconfiguration: the
 	// operator intended to use it, so fail fast instead of silently ignoring it.
 	if fileConfigErr != nil {

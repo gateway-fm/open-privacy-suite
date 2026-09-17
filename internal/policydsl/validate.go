@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"strings"
 
@@ -20,7 +21,7 @@ type Catalog struct {
 	// Org is the organisation the policy must declare.
 	Org string
 
-	// Groups holds the stable identifiers of regular groups in the organisation.
+	// Groups holds the stable identifiers of organisation groups in the organisation.
 	Groups map[string]struct{}
 
 	// Contracts maps a lowercase contract address to its registered ABI.
@@ -39,37 +40,90 @@ type argKind uint8
 const (
 	argAddress argKind = iota + 1
 	argUint
+	argRecordParty
 )
 
 // compiledArg is one argument constraint with its comparison prepared.
 type compiledArg struct {
 	index   int
+	offset  int // byte offset in calldata, including the selector
 	kind    argKind
 	bits    int // declared width for a uint argument
 	source  AddressSource
 	literal common.Address
 	max     *big.Int
+	record  *compiledRecordParty
 }
 
 // compiledRule is one frame rule with its decoder and call types prepared.
 //
-// Arguments are read as head slots rather than fully ABI-decoded. Every
-// top-level argument occupies exactly one 32-byte head slot, so a statically
-// typed argument can be read at a fixed offset whatever its neighbours are. That
-// is also all a Solidity policy contract can afford to do, and reading the same
-// bytes the same way is what lets the two implementations be proven equivalent
-// rather than merely tested side by side.
+// Scalar arguments are read at fixed offsets in the ABI head. Static arrays and
+// tuples occupy their full encoded width there; dynamic values occupy one
+// offset word. The prepared offsets account for both, without decoding tails.
 type compiledRule struct {
-	sig       string
-	headSlots int  // one per top-level argument
-	exactLen  bool // true when every argument is statically sized
-	callTypes map[CallType]struct{}
-	args      []compiledArg
+	selectorMode uint8
+	allowUpgrade bool
+	sig          string
+	headSlots    int  // total encoded head width in 32-byte words
+	exactLen     bool // true when every argument is statically sized
+	callTypes    map[CallType]struct{}
+	args         []compiledArg
+	maxValue     *big.Int
+	maxDepth     *int64
+	caller       *common.Address
+	exceptions   []DeployerException
 }
 
 // headLen is the calldata length this rule's arguments occupy, including the
 // four selector bytes.
-func (r *compiledRule) headLen() int { return 4 + 32*r.headSlots }
+func (r *compiledRule) headLen() int {
+	if r.selectorMode != selectorExact {
+		return 0
+	}
+	return 4 + 32*r.headSlots
+}
+
+const (
+	selectorExact uint8 = iota
+	selectorAny
+	selectorEmpty
+)
+
+// maxABIHeadSlots ensures both word offsets and selector-inclusive byte lengths
+// fit in an int. Malicious fixed-array dimensions must not wrap a bounds check.
+const maxABIHeadSlots = (int(^uint(0)>>1) - 4) / 32
+
+func abiHeadSlots(t abi.Type) (int, error) {
+	if isDynamicType(t) {
+		return 1, nil
+	}
+	switch t.T {
+	case abi.ArrayTy:
+		width, err := abiHeadSlots(*t.Elem)
+		if err != nil {
+			return 0, err
+		}
+		if t.Size < 0 || (width > 0 && t.Size > maxABIHeadSlots/width) {
+			return 0, fmt.Errorf("ABI head is too large")
+		}
+		return t.Size * width, nil
+	case abi.TupleTy:
+		var total int
+		for _, elem := range t.TupleElems {
+			width, err := abiHeadSlots(*elem)
+			if err != nil {
+				return 0, err
+			}
+			if width > maxABIHeadSlots-total {
+				return 0, fmt.Errorf("ABI head is too large")
+			}
+			total += width
+		}
+		return total, nil
+	default:
+		return 1, nil
+	}
+}
 
 // isDynamicType reports whether an ABI type is encoded out of line.
 //
@@ -99,9 +153,11 @@ func isDynamicType(t abi.Type) bool {
 // only for CALL and STATICCALL. Keying on one alone would let a DELEGATECALL
 // satisfy a rule written for the other account.
 type frameKey struct {
-	storage  common.Address
-	code     common.Address
-	selector [4]byte
+	targetClass  string
+	selectorMode uint8
+	storage      common.Address
+	code         common.Address
+	selector     [4]byte
 }
 
 // Validated is a policy that passed validation, together with the prepared
@@ -141,7 +197,17 @@ var defaultCallTypes = map[CallType]struct{}{
 // evaluation. Any problem is an error; there is no partial success and no
 // best-effort mode, because a half-loaded policy would silently permit frames the
 // reviewer believed were constrained.
+// A non-nil error is a *ValidationError.
 func Validate(p *Policy, cat Catalog) (*Validated, error) {
+	v0, err := validatePolicy(p, cat)
+	if err != nil {
+		return v0, validationError(err)
+	}
+	return v0, nil
+}
+
+// validatePolicy is Validate before its error is typed.
+func validatePolicy(p *Policy, cat Catalog) (*Validated, error) {
 	if p == nil {
 		return nil, fmt.Errorf("policy: document is missing")
 	}
@@ -203,6 +269,12 @@ func Validate(p *Policy, cat Catalog) (*Validated, error) {
 
 // compileRule validates one frame rule and prepares its decoder.
 func compileRule(r FrameRule, cat Catalog, parsedABIs map[string]map[string]abi.Method) (frameKey, *compiledRule, error) {
+	if r.Except != nil && r.TargetClass != "deployer" {
+		return frameKey{}, nil, fmt.Errorf("except is supported only for deployer fallback")
+	}
+	if r.TargetClass != "" || r.Selector == "*" || r.Selector == "0x" {
+		return compileClassRule(r, cat)
+	}
 	var zero frameKey
 
 	if !common.IsHexAddress(r.StorageAddress) {
@@ -264,7 +336,10 @@ func compileRule(r FrameRule, cat Catalog, parsedABIs map[string]map[string]abi.
 	if !ok {
 		parsed, perr := abi.JSON(strings.NewReader(code.ABI))
 		if perr != nil {
-			return zero, nil, fmt.Errorf("the ABI registered for %s does not parse: %w", displayAddress(r.CodeAddress, r.StorageAddress), perr)
+			// The stored ABI, not the caller's document, is at fault, and the
+			// go-ethereum parser's wording is not ours to put on the wire.
+			slog.Warn("policydsl: registered ABI does not parse", "code_address", r.CodeAddress, "err", perr)
+			return zero, nil, fmt.Errorf("the ABI registered for %s does not parse; re-register the contract ABI", displayAddress(r.CodeAddress, r.StorageAddress))
 		}
 		methods = make(map[string]abi.Method, len(parsed.Methods))
 		for _, m := range parsed.Methods {
@@ -278,17 +353,54 @@ func compileRule(r FrameRule, cat Catalog, parsedABIs map[string]map[string]abi.
 		return zero, nil, fmt.Errorf("selector %s does not appear in the ABI registered for %s", r.Selector, displayAddress(r.CodeAddress, r.StorageAddress))
 	}
 
-	args, err := compileArgs(r.Args, method)
+	args, err := compileArgs(r.Args, method, cat.Contracts[storageKey])
 	if err != nil {
 		return zero, nil, err
 	}
 
 	exact := true
-	for _, in := range method.Inputs {
+	headSlots := 0
+	offsets := make([]int, len(method.Inputs))
+	for i, in := range method.Inputs {
+		offsets[i] = 4 + 32*headSlots
+		width, err := abiHeadSlots(in.Type)
+		if err != nil || width > maxABIHeadSlots-headSlots {
+			return zero, nil, fmt.Errorf("ABI head for %s is too large", method.Sig)
+		}
+		headSlots += width
 		if isDynamicType(in.Type) {
 			exact = false
-			break
 		}
+	}
+	for i := range args {
+		args[i].offset = offsets[args[i].index]
+	}
+	var maxValue *big.Int
+	if r.MaxValue != nil {
+		if !isPlainDecimal(*r.MaxValue) {
+			return zero, nil, fmt.Errorf("maxValue must be an unsigned decimal uint256")
+		}
+		var ok bool
+		maxValue, ok = new(big.Int).SetString(*r.MaxValue, 10)
+		if !ok || maxValue.BitLen() > 256 {
+			return zero, nil, fmt.Errorf("maxValue must fit uint256")
+		}
+	}
+	var maxDepth *int64
+	if r.MaxDepth != nil {
+		if *r.MaxDepth < 0 {
+			return zero, nil, fmt.Errorf("maxDepth must be nonnegative")
+		}
+		depth := *r.MaxDepth
+		maxDepth = &depth
+	}
+	var caller *common.Address
+	if r.CallerAddress != "" {
+		if !common.IsHexAddress(r.CallerAddress) {
+			return zero, nil, fmt.Errorf("callerAddress must be an Ethereum address")
+		}
+		address := common.HexToAddress(r.CallerAddress)
+		caller = &address
 	}
 
 	return frameKey{
@@ -296,11 +408,15 @@ func compileRule(r FrameRule, cat Catalog, parsedABIs map[string]map[string]abi.
 			code:     common.HexToAddress(codeKey),
 			selector: selector,
 		}, &compiledRule{
-			sig:       method.Sig,
-			headSlots: len(method.Inputs),
-			exactLen:  exact,
-			callTypes: callTypes,
-			args:      args,
+			sig:          method.Sig,
+			allowUpgrade: r.AllowUpgrade,
+			headSlots:    headSlots,
+			exactLen:     exact,
+			callTypes:    callTypes,
+			args:         args,
+			maxValue:     maxValue,
+			maxDepth:     maxDepth,
+			caller:       caller,
 		}, nil
 }
 
@@ -335,7 +451,7 @@ func resolveCallTypes(r FrameRule) (map[CallType]struct{}, error) {
 		}
 	}
 
-	if borrowsStorage && r.CodeAddress == "" {
+	if borrowsStorage && r.CodeAddress == "" && r.TargetClass != "org" {
 		return nil, fmt.Errorf("callTypes permits delegatecall or callcode, so codeAddress must name the account whose code may run against this storage")
 	}
 	if !borrowsStorage && r.CodeAddress != "" {
@@ -399,7 +515,7 @@ func parseSelector(s string) ([4]byte, error) {
 
 // compileArgs validates argument constraints against the resolved method and
 // prepares their comparisons.
-func compileArgs(args []ArgConstraint, method abi.Method) ([]compiledArg, error) {
+func compileArgs(args []ArgConstraint, method abi.Method, storage ContractInfo) ([]compiledArg, error) {
 	if len(args) == 0 {
 		return nil, nil
 	}
@@ -418,13 +534,26 @@ func compileArgs(args []ArgConstraint, method abi.Method) ([]compiledArg, error)
 
 		hasAddr := a.AddressEquals != nil
 		hasUint := a.UintAtMost != nil
-		if hasAddr == hasUint {
-			return nil, fmt.Errorf("argument %d must set exactly one of addressEquals or uintAtMost", a.Index)
+		hasRecord := a.RecordParty != nil
+		kinds := 0
+		for _, present := range []bool{hasAddr, hasUint, hasRecord} {
+			if present {
+				kinds++
+			}
+		}
+		if kinds != 1 {
+			return nil, fmt.Errorf("argument %d must set exactly one of addressEquals, uintAtMost or recordParty", a.Index)
 		}
 
 		input := method.Inputs[a.Index]
 
 		switch {
+		case hasRecord:
+			read, err := compileRecordParty(*a.RecordParty, input.Type, storage)
+			if err != nil {
+				return nil, fmt.Errorf("argument %d: %w", a.Index, err)
+			}
+			out = append(out, compiledArg{index: a.Index, kind: argRecordParty, record: read})
 		case hasAddr:
 			if input.Type.T != abi.AddressTy {
 				return nil, fmt.Errorf("argument %d of %s has type %s, so it cannot carry an addressEquals constraint", a.Index, method.Sig, input.Type)

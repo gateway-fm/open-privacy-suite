@@ -95,6 +95,7 @@ func memberCtx() Context {
 
 func vaultCall(data []byte) Frame {
 	return Frame{
+		CodeOrg: orgID, StorageOrg: orgID,
 		CallType:       CallTypeCall,
 		StorageAddress: common.HexToAddress(vaultAddr),
 		CodeAddress:    common.HexToAddress(vaultAddr),
@@ -104,6 +105,7 @@ func vaultCall(data []byte) Frame {
 
 func delegateFrame(callType CallType, code common.Address, data []byte) Frame {
 	return Frame{
+		CodeOrg: orgID, StorageOrg: orgID,
 		CallType:       callType,
 		StorageAddress: common.HexToAddress(vaultAddr),
 		CodeAddress:    code,
@@ -413,18 +415,23 @@ func TestEvaluate(t *testing.T) {
 			wantWhy:  "occupy exactly",
 		},
 		{
-			name:     "unknown call type on the frame",
+			name:     "deployment frame is explicitly unsupported",
 			rules:    []FrameRule{plainRule(t, selTransfer)},
 			ctx:      memberCtx(),
 			frames:   []Frame{{CallType: "create", StorageAddress: common.HexToAddress(vaultAddr), CodeAddress: common.HexToAddress(vaultAddr), Calldata: transferCalldata(t, strangerAddr, big.NewInt(1))}},
 			want:     false,
-			wantCode: DenialNoMatchingRule,
-			wantWhy:  "no rule",
+			wantCode: DenialUnsupportedCreate,
+			wantWhy:  "deployment",
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			// These pre-existing selector/argument fixtures describe contracts in
+			// the test catalog. Supply their known owner facts explicitly.
+			for i := range tc.frames {
+				tc.frames[i].CodeOrg, tc.frames[i].StorageOrg = orgID, orgID
+			}
 			v := validatedWith(t, tc.rules...)
 			got := v.Evaluate(tc.ctx, tc.frames)
 
@@ -526,6 +533,7 @@ func TestEvaluate_UintBoundHoldsForNarrowWidths(t *testing.T) {
 
 	frame := func(limit uint64) Frame {
 		return Frame{
+			CodeOrg: orgID, StorageOrg: orgID,
 			CallType:       CallTypeCall,
 			StorageAddress: libraryAddr,
 			CodeAddress:    libraryAddr,
