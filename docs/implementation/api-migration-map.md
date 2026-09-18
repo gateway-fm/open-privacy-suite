@@ -357,6 +357,30 @@ choose — so the schema refuses it, the server compiles, and both digests are
 recorded. Recompiling the same source with the same compiler must reproduce the
 same artifact; that is what makes "the node runs what was reviewed" checkable.
 
+**Why the artifact is not deployed on chain.** It is a compiled contract, but it
+is never *called* like one: the node's inspector builds a private static frame
+with the bytecode supplied directly from the signed snapshot
+(`known_bytecode`, address `0x…0900`, 100 k gas, reverted afterwards). Three
+tests pin that this is deliberate — the policy account never appears in the
+state result, code deployed at that address on chain does **not** override the
+private policy, and the application cannot observe the code or its gas
+(`node/reth/tests/private_policy.rs`). Deploying it would mean:
+
+| | On chain | As today, in the signed snapshot |
+|---|---|---|
+| Who can read the organisation's access rules | everyone with chain access — the rules name groups, contracts and limits | only OPS and the node |
+| Activation | a transaction: gas, inclusion latency, and the deployment itself is gated by the policy that governs deployments | one database transaction, then a versioned push; the node pins one version per candidate block |
+| A reorg that drops the deploying block | the active policy disappears and enforcement flips | nothing changes: the version is pinned, not chain state |
+| Emergency revocation | a transaction, subject to the chain's ordering | the next block after the push |
+| Cost | a transaction per activation | none |
+| Does it remove a moving part? | no — facts (people, memberships, bans) can never be on chain, so the signed channel exists anyway; the policy rides on it | — |
+
+The one thing on-chain storage would add is third-party verifiability of which
+policy is active. That is already covered without publishing the rules: the
+revision row records the source and artifact digests, the signed snapshot
+carries the artifact digest, and the node reports the digest it applied — an
+auditor recompiles the reviewed source and compares.
+
 ```json
 {"kind": "execution-rules", "scope": {"kind": "organization", "id": "12dac85b…"},
  "baseRevision": 2,
