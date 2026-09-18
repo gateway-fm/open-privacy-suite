@@ -762,3 +762,21 @@ document and an operation is silent data loss, unless the rows carry provenance
 and the document owns only its own share (as `sanctioned_addresses.source` and
 `user_memberships.source` already allow, and `users.banned` does not).
 
+**Then why keep the mix at all — why not make every writer a document writer?**
+Because no two *decision* writers coexist by design; that is precisely what
+closing the thirty-two endpoints achieved. What remains are **event** writers,
+machines reacting in the request path: login creating the user row, directory
+auto-provision and ZK roles creating memberships, the reconciler recording a
+finalized deployment, the price fetcher, the sanctions feed. Converting them
+would mean either a human approval inside the login path, which stops the system
+working, or machines self-activating their own revisions — which removes the
+review that justified documents and **does not remove the conflict**: two
+documents each declaring a complete desired set overwrite each other exactly the
+same way, so ownership by provenance would still be required.
+
+The rule that follows: a writer that makes a decision must be the document and
+nothing else. Three places still break it and are on the list to fix — the
+explorer's separate ABI writer, the deployment auto-grant the policy can express
+with `targetClass: deployer`, and `refresh-codehash` writing an observed value
+into a document-owned field.
+
