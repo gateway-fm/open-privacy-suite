@@ -168,18 +168,47 @@ compiles `execution-rules` into EVM bytecode, stores it in
 `configuration_revisions.compiled_artifact`, and the node loads that artifact
 **privately, from the signed fact snapshot** — never from a chain address.
 
-**When a document is the wrong form.** The four tests that put a class on the
-other side of this table, each one visible in the code today:
+**When a document is the wrong form.** Four tests. Each is stated as an
+argument, then questioned: is it logical, is it a principle or merely how this
+build works today, could it be designed otherwise, and what is the evidence.
+Two of the four did not survive that and are narrowed below.
 
-| Test | Example | Why a document fails it |
-|---|---|---|
-| More than one writer | memberships: the admin API, Azure auto-provision (`auth_azure.go:298`), ZK roles (`auth.go:603`) | re-applying a reviewed snapshot silently reverts what the other writers did between revisions |
-| Must take effect now | a ban during an incident | activation refuses the author's own draft (`configuration_revision_store.go:442`, "submitter and activator must be different actors"), so the admin on duty would need a second authorised human — or a pre-configured CI approval service to sign the manifest. The operation path is one call and reaches the node at the next block. This is a property of our activation rule, not of documents in general: a stream could allow self-activation, but then that class has no review left, which is the reason to make it a document at all |
-| It is a proof or an observation, produced by someone else | an address link (the user's signature), a deployment (a finalized receipt plus the identity binding) | an author would be *asserting* what someone else proved — for links that is impersonation by configuration |
-| It changes without anyone writing | membership `expires_at`, sanctions feeds, price observations | a static text would need re-issuing on every expiry or tick |
+**Test 1 — the document is not the only writer of the same thing.**
 
-A class that passes all four is authored as a document; anything that fails one
-stays an operation, and the row below says what specifically breaks otherwise.
+- *Argument.* Re-applying a reviewed snapshot silently reverts what another writer changed in between.
+- *Logical?* Only for **field-level** conflicts. Our own registry already lives with a second writer at **object** level: a contract registered by a deployment is preserved as drift and must be adopted before it can be deleted (`groups.go:66-71`, `registry.go`). So "several writers" alone does not disqualify a document.
+- *Now, or in principle?* Object-level adoption is implemented. The field-level gap is inherent to desired-state configuration, not specific to us.
+- *Could it be otherwise?* Yes — field-level ownership, where the document owns only the fields it declares and other writers keep theirs (the managed-fields pattern from Kubernetes server-side apply). That would make a membership document technically possible. The cost is a second ownership model to implement and review, for a class whose per-person diff has little review value at 1 M users.
+- *Evidence.* Drift preservation in the diff code; no field-level ownership anywhere in this codebase.
+
+**Test 2 — it must take effect before anyone can review it.**
+
+- *Argument.* A ban during an incident cannot wait for a document to be reviewed.
+- *Logical?* The latency is real but comes from our rule: activation refuses the author's own draft (`configuration_revision_store.go:442`). The part that is not ours: **the review would carry no information** — an approver has no independent basis to judge an incident ban, so the second signature adds delay without adding safety.
+- *Now, or in principle?* Four-eyes is our implementation. "Review with nothing to review is not a control" is the principle.
+- *Could it be otherwise?* Yes — an emergency stream with self-activation, or break-glass activation with review after the fact. The first removes the review the document exists for; the second is a real pattern we have not built.
+- *Evidence.* The self-approval check; no break-glass path in the code.
+
+**Test 3 — it is a proof or an observation someone else produced.**
+
+- *Argument.* An address link is the user's signature; a deployment is a finalized receipt plus the identity binding. An author writing them into a document would be *asserting* what someone else proved — for links that is impersonation by configuration.
+- *Logical?* As stated, too strong. A document **could** carry each link together with its signature and the server could verify it; then authorship is harmless because trust still rests on the proof.
+- *Now, or in principle?* The principle is narrower than the sentence: *authenticity must be verified at the source, never trusted because a document says so.* A document that embeds verifiable evidence satisfies it; a document that merely lists addresses does not.
+- *Could it be otherwise?* Yes, and it would work for a handful of links. It fails at scale for a different reason: the facts for 1 M users are about 85 MB (DECISION §3.1) against a 1 MiB document limit, and a reviewer reading signatures approves nothing meaningful.
+- *Evidence.* `eth_link.go` verification; the sizing in DECISION §3.1; the 1 MiB limit in `configuration.MaxDocumentBytes`.
+
+**Test 4 — it changes without anyone writing it.**
+
+- *Argument (as first written, and wrong).* "A static text would need re-issuing on every expiry or tick." Expiry disproves it: a document can hold `expiresAt` once and the node evaluates it against the block it is building (`facts.rs:254` filters memberships by `expires_at > now`). A static field can describe a dynamic effect.
+- *What survives.* External feeds — sanctions lists, price observations. Each update would become a revision: a review per feed event, with nothing for the reviewer to decide.
+- *Now, or in principle?* Dynamic evaluation of a static field is implemented. "A control that fires on every external event is not a control" is the principle.
+- *Could it be otherwise?* Yes, and we already do the useful half: the compliance **document** holds the decisions (thresholds, enforcement mode, manually authored prices) while fetched rates and sanctions hits stay operational rows.
+- *Evidence.* The membership filter in the node; the compliance document schema.
+
+So the honest set of tests is: a document is the wrong form when the conflict
+with another writer is at field level, when a review would have no content,
+when the data is evidence and embedding it would not scale, or when the change
+arrives from outside on every event.
 
 | Data | Written as (all of it in Postgres unless stated) | What it is, and why in that form | If it took the other form |
 |---|---|---|---|
