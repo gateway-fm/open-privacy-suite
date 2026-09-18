@@ -5,6 +5,11 @@ examples of every document, the evidence for each argument, the table inventory
 and the log of what was checked — is in
 [api-migration-details.md](api-migration-details.md).
 
+One word used throughout: a **principal** is the authenticated OPS identity that
+acts — a person (their DID) or a service account. It is not a wallet address:
+two principals may link the same Ethereum key, and the chain cannot tell them
+apart.
+
 ## 1. In one paragraph
 
 Six classes of configuration are now authored as **reviewed documents** instead
@@ -44,7 +49,7 @@ document.
 | Bans | must take effect before anyone can review it, and a reviewer has no basis to judge an incident |
 | KYC | set by the credential the user logged in with |
 | Sanctions, and live exchange rates | external feeds. Rates land in `system_token_prices` on a timer and are resolved at check time; the document only says which feed a token uses. A revision per rate update would be a control with nothing to decide |
-| Deployment records | an observation: only OPS can bind a finalized receipt to a principal, because several principals may share one signer |
+| Deployment records | an observation: the receipt names the signing address, and two principals may share one. Only OPS knows which of them submitted the transaction, because the submission carried its authenticated identity |
 | Disclosure | every step is the other organisation's answer |
 | Secrets (group RPC credential) | must never appear in a text that is diffed, reviewed and exported |
 | Caches, sessions, permission results | recomputed or re-issued; never a source |
