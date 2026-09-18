@@ -230,6 +230,28 @@ arrives from outside on every event.
 | **[Group RPC credential](#group-rpc-credential)**<br><sub>the group's upstream API key</sub> | a secret column — `group_access.rpc_api_key` | **Secret.** a credential must not appear in a text that is diffed, reviewed, exported and kept as history — so it is written by its own route and stored encrypted (`crypto.Encrypt` with `RPCAPIKeyEncryptionKey`, `admin_group_credentials.go:55`). The stronger design is an external secrets manager with the database holding only a reference; that is a deliberate gap, not a decided end state | In the document: the secret appears in every diff, review and export |
 | **[Projections](#projections-and-runtime)**<br><sub>tables rebuilt from the active documents</sub> | derived tables, rewritten by activation<br><sub>target: in-memory document — §9</sub> | **Derived.** rebuilt from the document; they exist only because readers join configuration with facts | Nothing changes — they are rebuilt from the document; using them as a source is the transition artefact |
 | **[Runtime state](#projections-and-runtime)**<br><sub>resolved permissions, sessions, challenges</sub> | not in Postgres — Redis or replica memory<br><sub>§9</sub> | **Derived or short-lived.** permission results are recomputed from facts and configuration; sessions and challenges are issued and expire. Losing this store is an availability event (everyone signs in again), not a correctness one — with the exception noted in §9: a per-replica permission cache without a shared invalidation serves stale permissions | Nothing durable — recomputed or re-issued |
+**Argument audit.** Each argument above run through the same four questions —
+is it logical, is it a principle or only how this build works, could it be
+designed otherwise, what is the evidence. The rows that came out clean are not
+repeated; these are the ones with a qualification a reader should know:
+
+| Argument | Verdict |
+|---|---|
+| Execution rules: "single owner" | **qualified.** The deployment reconciler still inserts a grant row (`node_submission.go:213`) with `functions` NULL, which the legacy path reads as "all functions". In node mode the document decides alone; the row is drift for the registry and ignored by the node |
+| Groups: "rules and structure activate together" | **optional, not enforced.** The digest dependency exists but a rules revision may declare `dependencies: {}` — the acceptance stack did. The load-bearing reason is that a group definition confers authority |
+| Registry: drift adoption | **transition mechanism, not a design goal.** It exists because observations share `contracts` with decisions and because the legacy auto-grant writes a grant; both are to be removed (§6) |
+| Compliance: "a reviewer can judge a threshold" | **judgement.** Nothing in the code establishes that; it is the argument for why a second signature is worth its latency here and not for a ban |
+| Approvers: "cannot widen the set that approves it" | **verified.** `ConfigurationActorIsApprover` reads the active approvers revision; the proposal appears only in the diff. Note the default: with no approvers document, any full org admin may activate |
+| Users: "nobody authors a user" | **verified, with one exception**: `PLATFORM_ADMIN_SUBJECTS` is an authored list, deliberately in the environment rather than in a document |
+| Memberships: "several writers" | **narrowed** (Test 1): the disqualifier is that three writers produce the same kind of row for the same person, none of it a reviewable decision — not the bare fact that there are several |
+| Links: "a proof cannot be authored" | **narrowed** (Test 3): it can, if the signature travels with it and the server verifies. It fails on scale and on review value, not on principle |
+| Bans: "must take effect now" | **narrowed** (Test 2): the latency is our four-eyes rule; the principle is that the review would have no content |
+| Deployment observations: "must be stored" | **qualified.** They are denormalised; `node_submissions` already holds transaction → principal, so a view would do |
+| Fact stream: the outbox | **one valid design of several.** Change-data-capture on the WAL is the alternative; it removes the trigger layer and adds a replication consumer to operate |
+| Credential: "a secret is never source text" | **principle, incompletely applied.** It is encrypted in Postgres today; an external secrets manager holding the secret and the database a reference is the stronger design and an open gap |
+| Projections: "needed because readers join configuration with facts" | **verified, and the target is to remove them** (§9): only the explorer's SQL visibility filter genuinely needs a materialised form |
+| Runtime: "nothing durable is lost" | **qualified.** True for sessions (people sign in again); not true for the permission cache without shared invalidation, which serves stale permissions (§9) |
+
 The middle column says **in what form it is written**; the kind in bold says
 **why that form**. Four kinds:
 
