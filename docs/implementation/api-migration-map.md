@@ -156,7 +156,7 @@ The question this section answers: **for each kind of data, where should it
 live, and when is an OPS-held document the wrong home?** Two axes, independent
 of each other:
 
-- **Form** — a reviewed document, ordinary rows written by operations, a record of what happened, or something derived.
+- **Form** — a reviewed document, or ordinary Postgres table rows written by an API call, or a record of what happened, or something derived.
 - **Location of a document's text** — the customer's Git repository, or OPS. A document can be authored in Git and pushed in; nothing in the design requires OPS to be the authoring home.
 
 One assumption, stated so it can be overruled: **the operator must be able to
@@ -177,17 +177,17 @@ codebase, with the reference), *measured* (a number), *judgement* (mine).
 | **[Compliance settings](#compliance-settings)** | reviewed document; text in Git or OPS | a threshold or an enforce/monitor switch is something a reviewer can actually judge, and it changes rarely | judgement |
 | **[Approvers, trusted CI](#approvers-trusted-ci)** | reviewed document, human-authored only | it decides who may approve; eligibility for an activation is read from the **active** approvers revision, so a document cannot widen the set that approves it | verified (`ConfigurationActorIsApprover`) |
 | **[Platform](#platform)** | reviewed document, human-authored only | it is the deployment operator's decision, never a tenant's | principle |
-| **[Users](#facts-about-people)** | rows, written by operations | identity comes from the identity provider at login; the product does not decide who exists | verified (`EnsureUserExists`) |
-| **[Memberships](#facts-about-people)** | rows, written by operations | three writers produce the same row for the same person — admin API, Azure auto-provision, ZK roles — and none of it is a decision anyone reviews | verified (`auth_azure.go:298`, `auth.go:603`) |
-| **[Address links](#facts-about-people)** | rows, written by operations | the link is the user's signature; in a document an author would assert someone else's address and authorise its transactions | principle; verified (`eth_link.go`) |
-| **[Bans](#facts-about-people)** | rows, written by operations | it must take effect before anyone can review it, and the review would have nothing to decide | principle |
-| **[KYC](#facts-about-people)** | rows, written by operations | it is set by the credential the user logged in with | verified (`auth.go:571`) |
-| **[Sanctions](#facts-about-people)** | rows, fed externally | a revision per feed update is a control with nothing for the reviewer to decide | principle |
-| **[Deployment observations](#deployment-observations)** | rows, written by the reconciler | it is an observation, and only OPS can bind a receipt to a principal — the chain shows the signer, and several principals may share one | verified (`node_submission.go`) |
-| **[Disclosure](#disclosure-lifecycle)** | rows, written by operations | each step is the other organisation's answer | principle |
-| **[The record: what was applied, when, by whom](#the-record)** | rows in OPS, written with the activation | only the system that applied a change knows when it took effect; Git knows the merge | principle (rests on the assumption above) |
-| **[Execution bookkeeping](#execution-bookkeeping)** | rows in OPS | only OPS holds the join between a transaction, its principal and its `visibleTo` recipients | verified |
-| **[Fact version pin and cursor](#fact-stream-to-the-node)** | rows in OPS | the version the node switches to must commit in the same transaction as the change it carries | principle; verified (`node_policy_mark_dirty`) |
+| **[Users](#facts-about-people)** | Postgres rows in `users`, written at login | identity comes from the identity provider at login; the product does not decide who exists | verified (`EnsureUserExists`) |
+| **[Memberships](#facts-about-people)** | Postgres rows in `user_memberships`, written by the API and by login | three writers produce the same row for the same person — admin API, Azure auto-provision, ZK roles — and none of it is a decision anyone reviews | verified (`auth_azure.go:298`, `auth.go:603`) |
+| **[Address links](#facts-about-people)** | Postgres rows in `eth_address_links`, written after the signature is verified | the link is the user's signature; in a document an author would assert someone else's address and authorise its transactions | principle; verified (`eth_link.go`) |
+| **[Bans](#facts-about-people)** | a column of `users`, set by an admin call | it must take effect before anyone can review it, and the review would have nothing to decide | principle |
+| **[KYC](#facts-about-people)** | a column of `users`, set at login | it is set by the credential the user logged in with | verified (`auth.go:571`) |
+| **[Sanctions](#facts-about-people)** | Postgres rows in `sanctioned_addresses`, fed externally | a revision per feed update is a control with nothing for the reviewer to decide | principle |
+| **[Deployment observations](#deployment-observations)** | columns of `contracts`, written by the reconciler | it is an observation, and only OPS can bind a receipt to a principal — the chain shows the signer, and several principals may share one | verified (`node_submission.go`) |
+| **[Disclosure](#disclosure-lifecycle)** | Postgres rows in `disclosure_*`, written by both parties' actions | each step is the other organisation's answer | principle |
+| **[The record: what was applied, when, by whom](#the-record)** | Postgres rows in `configuration_revisions` and `rbac_audit_log`, written with the activation | only the system that applied a change knows when it took effect; Git knows the merge | principle (rests on the assumption above) |
+| **[Execution bookkeeping](#execution-bookkeeping)** | Postgres rows in `node_submissions`, `tx_visible_to` | only OPS holds the join between a transaction, its principal and its `visibleTo` recipients | verified |
+| **[Fact version pin and cursor](#fact-stream-to-the-node)** | Postgres rows in `node_policy_clock`, `node_policy_cursors` | the version the node switches to must commit in the same transaction as the change it carries | principle; verified (`node_policy_mark_dirty`) |
 | **[Group RPC credential](#group-rpc-credential)** | a secret store | a credential must never appear in a text that is diffed, reviewed and exported. Today it is encrypted in Postgres; an external secrets manager with only a reference in the database is the stronger design and an open gap | principle |
 | **[Projections](#projections-and-runtime)** | derived tables, rebuilt on activation | they are recomputable from the document and are never a source; the target is to drop them (§9) | verified |
 | **[Runtime state](#projections-and-runtime)** | memory or Redis | sessions are re-issued and permissions recomputed; losing them logs people out, it does not corrupt anything — with one exception, the permission cache needs a shared invalidation (§9) | measured (§9) |
