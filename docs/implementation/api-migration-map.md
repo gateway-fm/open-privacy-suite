@@ -24,7 +24,7 @@ KYC. Those are produced by events and proofs, not authored by anyone.
 | `execution-rules` | which group may call which function, argument bounds, nested-call rules, deploy rights — compiled and enforced by the node on every call frame | the function half of contract grants, plus the three RD-1287 policy endpoints |
 | `groups` | group definitions: admin flags, RPC method allowlist, claims | create, update, delete, group access, batch delete |
 | `contract-registry` | contracts, ABI, visibility flags, read grants and event rules | contract create/update/delete, ABI, visibility, claim, sync-delete, batch-move, grants |
-| `compliance` | thresholds, currency, enforce or monitor, manually authored prices | compliance config, token prices, address thresholds |
+| `compliance` | thresholds, currency, enforce or monitor, and each token's entry — symbol, decimals, and either the price-feed id to use or a fixed price | compliance config, token entries, address thresholds |
 | `approvers` | which admin groups may activate a revision, and which CI is trusted | none — new |
 | `platform` | shared infrastructure, tenants (organisations to follow) | Azure tenants, shared infrastructure |
 
@@ -43,7 +43,7 @@ document.
 | Address links | the link is the user's own signature; in a document an author would be asserting someone else's address and authorising its transactions |
 | Bans | must take effect before anyone can review it, and a reviewer has no basis to judge an incident |
 | KYC | set by the credential the user logged in with |
-| Sanctions and fetched prices | external feeds; a revision per update is a control with nothing to decide |
+| Sanctions, and live exchange rates | external feeds. Rates land in `system_token_prices` on a timer and are resolved at check time; the document only says which feed a token uses. A revision per rate update would be a control with nothing to decide |
 | Deployment records | an observation: only OPS can bind a finalized receipt to a principal, because several principals may share one signer |
 | Disclosure | every step is the other organisation's answer |
 | Secrets (group RPC credential) | must never appear in a text that is diffed, reviewed and exported |
