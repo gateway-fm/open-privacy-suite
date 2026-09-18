@@ -168,6 +168,28 @@ compiles `execution-rules` into EVM bytecode, stores it in
 `configuration_revisions.compiled_artifact`, and the node loads that artifact
 **privately, from the signed fact snapshot** — never from a chain address.
 
+**Where the text is authored, and where the applied copy lives.** These are two
+different questions and the table answers only the second one.
+
+The text may be authored and reviewed **in the customer's Git**. That is a
+supported path, not a workaround: `activate-ci` takes a signed manifest that
+names `repository`, `ref`, `commit`, the exact `candidateDigests`, and the
+`reviewerSubjects` who approved the pull request (`configuration/ci_approval.go:19`).
+The merged PR is the approval; OPS verifies the signature against a trusted
+issuer configured in the `approvers` document and records it with the
+activation.
+
+The applied copy still lives in Postgres, for four reasons that Git cannot
+cover:
+
+- activation rewrites the projection tables and writes the node's outbox row **in one transaction** — a file in a remote repository cannot take part in it;
+- enforcement must not depend on reaching a third-party service: the node and OPS must know the active rules from the database alone;
+- Git can be force-pushed, rewritten or deleted; the text that was enforced has to survive that;
+- Git records a merge, not an activation — CI can fail, the authority check can reject the document, a merged file can sit unapplied, so Git cannot answer "what was in force at T".
+
+So Postgres is not competing with Git for authorship. It holds the copy that
+was actually applied and the record of when and by whom.
+
 **When a document is the wrong form.** Four tests. Each is stated as an
 argument, then questioned: is it logical, is it a principle or merely how this
 build works today, could it be designed otherwise, and what is the evidence.
