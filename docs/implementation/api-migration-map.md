@@ -164,7 +164,7 @@ chain address and never visible to anyone reading the chain.
 
 | Data | Stored in | What it is, and why there | If it lived elsewhere |
 |---|---|---|---|
-| **[Execution rules](#execution-rules)**<br><sub>what a group may call: contract, function, argument limits</sub> | OPS document `execution-rules`<br><sub>the compiled artifact is a second column on the same revision row; the node holds a copy</sub> | **Decision.** one owner, reviewed before it decides anything, reproducible; the node executes the compiled artifact | In tables: a row is not executable — the node runs compiled policy code inside the call frame, so enforcement falls back to the proxy, which cannot see nested calls (the reason for the whole design, §2 of DECISION). On top of that a grant takes effect the moment the API call returns, with no review and no reproducible history — the state before RD-1287 |
+| **[Execution rules](#execution-rules)**<br><sub>what a group may call: contract, function, argument limits</sub> | OPS document `execution-rules`<br><sub>Postgres `configuration_revisions`: `source` is the document, `compiled_artifact` the column beside it; the node holds a copy</sub> | **Decision.** one owner, reviewed before it decides anything, reproducible; the node executes the compiled artifact | In tables: a row is not executable — the node runs compiled policy code inside the call frame, so enforcement falls back to the proxy, which cannot see nested calls (the reason for the whole design, §2 of DECISION). On top of that a grant takes effect the moment the API call returns, with no review and no reproducible history — the state before RD-1287 |
 | **[Group definitions](#group-definitions)**<br><sub>the groups of an organisation and what RPC they may use</sub> | OPS document `groups` | **Decision.** the org admin chooses the structure; deleting a group with live members needs explicit acknowledgement | In tables: structure changes with no review, and membership cascades nobody sees |
 | **[Contract configuration](#contract-configuration)**<br><sub>which contracts the org owns, their ABI and visibility</sub> | OPS document `contract-registry` | **Decision.** pipeline-registered contracts are adopted as drift, never swept | In tables: several places set the same thing — the explorer's separate ABI writer problem, generalised |
 | **[Compliance settings](#compliance-settings)**<br><sub>thresholds, currency, enforce or monitor</sub> | OPS document `compliance` | **Decision.** settings with one owner | In tables: "enforce" can be flipped to "monitor" without a second person |
@@ -359,10 +359,11 @@ binding is one group and what it may execute. The **server** compiles it to EVM
 bytecode; the node receives that artifact in the signed fact snapshot and
 executes it inside the call frame. Nothing is deployed on chain.
 
-The artifact is not a separate store and not part of the authored text: one
-revision row holds `source` (what the person wrote and reviewed, digest-pinned
-and immutable) and `compiled_artifact` next to it (what the server produced from
-that source with the pinned compiler). They are split because the source is
+The artifact is not a separate store and not part of the authored text: both are
+columns of one row in Postgres — `configuration_revisions.source` (what the
+person wrote and reviewed, digest-pinned and immutable) and
+`configuration_revisions.compiled_artifact` beside it (what the server produced
+from that source with the pinned compiler; migration 074). They are split because the source is
 **input** and the artifact is **evidence** derived from it: bytecode inside the
 authored text would be code the reviewer cannot read and the author could
 choose — so the schema refuses it, the server compiles, and both digests are
