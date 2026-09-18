@@ -154,8 +154,8 @@ declarative document.
 | Role, tables, written by | Why it stays in Postgres — and not on chain, not in a document |
 |---|---|
 | **Configuration record**<br>`configuration_revisions`<br>`execution_policy_revisions` (compiled artifacts)<br>*Written by:* revision lifecycle only | the reviewed document *is* the authoritative record (DECISION §3.1, "Why Postgres is the governance record": only Postgres writes the record in the same transaction as the change taking effect; Git knows what was merged — not what took effect, nor when). The compiled artifact is stored **next to** the revision, not inside the document: a document must contain only what a human reviews, and bytecode inside it would let an author ship code the reviewer cannot read — so uploaded policy bytecode is refused by design, the server compiles the approved source with the pinned compiler, and records source and artifact digests so every byte the node runs traces back to the reviewed text. The node receives the artifact and its digest, never the source |
-|  **Projections**<br>`organizations`, `groups`, `group_access`<br>`contracts`, `contract_grants`, `compliance_config`<br>`address_threshold_overrides`, `token_prices`, `shared_infrastructure`<br>`allowed_azure_tenants`<br>*Written by:* activation tx (`configuration_revision_*.go`); legacy stores until a stream is active; `node_submission.go` for discovered contracts; triggers 075 refuse the rest | a **materialised cache of the active documents, not a second store of configuration**. The UI does not need them: the Configuration screen renders and edits the document from `context`. What needs configuration in a joinable form next to the facts is SQL: the explorer visibility filter (`explorer_redaction.go`, transactions × grants × memberships over large row sets), effective-permission computation (`rbac_store_*`), the fact export (`node_policy_export.go`) and deployment reconciliation (`node_submission.go`). Only the explorer filter needs it in SQL; the others could read the document in memory. Two things about them are transition convenience, not design: they are still the *legacy tables with legacy writers* (refused by the 075 triggers once a stream is active), and `contracts` mixes chain observations (`deployed_by_user_id`, `deployed_at`, `metadata`) with configuration (`name`, `abi`, flags) — the observations are facts and belong in their own table, bridged to the document by drift adoption. Target: caches explicitly rebuilt from the documents on activation, kept only where SQL needs them |
-| **Facts about people**<br>`users`, `user_memberships`, `eth_address_links`<br>`preregistered_addresses`<br>*Written by:* login, onboarding, `memberships/by-did`, `eth/link/*`, ban/KYC handlers; `tx_rbac.go` bootstrap | several writers and per-person cadence; a link is a signature the user produced; a re-applied document would overwrite bans or memberships written by someone else. Sent to the node as facts through the outbox — the node holds a copy, Postgres stays the only writer |
+|   **Projections**<br>`organizations`, `groups`, `group_access`<br>`contracts`, `contract_grants`, `compliance_config`<br>`address_threshold_overrides`, `token_prices`, `shared_infrastructure`<br>`allowed_azure_tenants`<br>*Written by:* activation tx (`configuration_revision_*.go`); legacy stores until a stream is active; `node_submission.go` for discovered contracts; triggers 075 refuse the rest | a **materialised cache of the active documents, not a second store of configuration** — and, checked consumer by consumer (§9), not one of them needs configuration in SQL. The UI reads the document from `context`. The server-side readers (`explorer_redaction.go`, `rbac_store_*`, `node_policy_export.go`, `node_submission.go`, disclosure and address helpers) all join *facts* (memberships, links, disclosure grants — which stay in SQL) with *configuration* (groups, grants, contracts), and the configuration half is a map lookup against an indexed in-memory copy of the document, parsed once per activation (≤ 1 MiB, milliseconds). What keeps these tables today is transition cost, plus two things that are not configuration and need a home: chain observations mixed into `contracts` (`deployed_by_user_id`, `deployed_at`, `metadata`) and the group upstream credential in `group_access` (a secret) |
+| **Facts about people**<br>`users`, `user_memberships`, `eth_address_links`<br>`preregistered_addresses`<br>*Written by:* login, onboarding, `memberships/by-did`, `eth/link/*`, ban/KYC handlers; `tx_rbac.go` bootstrap | several writers and per-person cadence; a link is a signature the user produced; a re-applied document would overwrite bans or memberships written by someone else. The node needs these as facts and receives them from wherever their single writer is — today Postgres, because that is where the operations write. Putting them in the document instead loses concrete things, listed in §9 |
 | **Fact stream**<br>`node_policy_clock` (version)<br>`node_policy_outbox` (what changed per version)<br>`node_policy_cursors` (what the node acknowledged)<br>*Written by:* AFTER triggers → `node_policy_mark_dirty` (073); pusher writes the cursor | the clock bump commits with the change or not at all — that is what "durable in Postgres, then pushed" rests on. The pusher exports the **full fact set at the clock version** in one repeatable-read transaction and sends a delta diffed against the last acknowledged generation (a full snapshot on first publish, when accumulated deltas exceed the checkpoint budget, or when the node asks to resync). The outbox markers are not consumed by Go code today; they are the audit of what each version changed |
 | **Execution**<br>`node_submissions`<br>`pending_tx_visibility`, `tx_visible_to`<br>*Written by:* admission + reconciler (`node_submission.go`); send path enqueues visibility (`jsonrpc_processor.go`), worker promotes | the node knows the decision; only OPS knows which principal, which `visibleTo` recipients and which receipt it belongs to — that join is the product's read side |
 | **Audit**<br>`rbac_audit_log` + `audit_chain_anchor/checkpoint/reanchor` (main DB), `access_logs` + anchors in the separate `privacy_proxy_audit` database<br>*Written by:* mutating transactions (append); request path for `access_logs` | tamper-evident hash chain verified on a schedule; a separate database with a separate role so the application role cannot rewrite history |
@@ -205,4 +205,64 @@ it can be served without giving up the rest: a read of all contexts in one call
 and a "bundle" submission that fans one organisation-wide document out into
 per-stream drafts and co-activates them. That is a convenience layer over the
 streams (about a day), not a change of storage or approval model.
+
+## 9. Middle ground: if configuration lives only in documents, what must still be in Postgres — and what is lost if facts move too
+
+Asked on 2026-09-17 while looking for the position between "keep the tables" and
+"nothing but the config". Checked against the readers in the code, not argued
+from the current implementation.
+
+**Per consumer — what it computes, which part is facts (stays SQL), which part is configuration (a document lookup), and the cost of switching.**
+
+| Consumer | Computes | Facts, in SQL | Configuration, from the document | Cost of switching |
+|---|---|---|---|---|
+| Explorer visibility (`GetBatchVisibility`, `explorer_redaction.go`) | for viewer V and a page of N addresses: which are visible | V's linked addresses, memberships, disclosure grants (2–3 queries) | contracts of V's organisations and their grants → map lookup per address | one SQL statement becomes "facts query + in-memory lookups"; ~µs per address at 1 000 contracts; semantics guarded by the existing access/visibility symmetry tests |
+| Effective permissions / access checks (`rbac_store_*`, `rbac/resolver.go`) | user → allowed methods, contracts, claims | the user's memberships (1 query) | groups, allowlists, grants → lookups | the per-user result stays a computed cache of the hot set, never "all users in memory" |
+| Fact export to the node (`node_policy_export.go`) | the signed fact snapshot | users, memberships, links — the whole cost (1 M rows) | groups, contracts — microseconds | ≈ 0 |
+| Deployment reconciliation (`node_submission.go`) | records an observation | writes facts | — | untouched |
+| Disclosure, address and tx helpers | "is V an org admin", group by id | memberships | one flag lookup | trivial |
+| Group upstream credential (`group_credentials.go`) | the secret RPC key of a group | — | **not a document** | one small operational table stays |
+
+Document cost: the size limit is 1 MiB; parsing that in Go takes milliseconds
+**once per activation**, into maps keyed by id and address. The "join" is a
+facts query followed by map lookups — the pattern the node already runs in Rust
+(1.9 µs per frame for the whole fact preparation, `evidence/reth-runtime.md`).
+Not measured: the explorer filter on an organisation with thousands of contracts
+and hundreds of disclosure grants; the row above is arithmetic, not a benchmark.
+
+**Redis** holds six things today, none of them configuration:
+
+| In Redis today | Without Redis |
+|---|---|
+| `PermissionCache` — permission results shared across replicas | per-replica memory; invalidation already comes from the `rbac_cache_generation` counter in Postgres (RD-1267), so Redis is not needed for correctness, only for sharing |
+| OAuth sessions, auth sessions, Azure OAuth state, link challenges (short-lived) | Postgres tables with TTL cleanup (as `refresh_tokens` already is), or sticky sessions |
+| upstream circuit breaker | per-replica memory |
+
+**And the facts themselves — could they come from the document too?** They
+could be written into it; this is what would be lost, item by item:
+
+| If people and observations lived in the document | What is lost |
+|---|---|
+| an address link is a line `alice: 0xAAAA…` written by the author | the **proof**: today a link exists only because the user signed a challenge with that key (`eth/link/verify`); in a document the author *asserts* it, so an author can bind someone else's address to a principal and the node will treat that principal's transactions as authorised — impersonation by configuration |
+| memberships, bans, KYC flags are document fields | the **other writers**: login, IdP/HR sync, ZK self-service, compliance automation, sanctions feeds each become a revision needing a second human; a re-applied document silently undoes an incident ban set by automation in between |
+| a ban or revocation is a revision | **latency**: today a ban is one operation and reaches the node's next block; as a revision it waits for review — the wrong tool for an incident |
+| 1 M users with links and memberships in the document | **size**: ~85 MB of facts (DECISION §3.1 sizing) against a 1 MiB document limit and a human review per change; the diff of "who is in which group" at that scale is not reviewable |
+| expiry (`expires_at`) and time-dependent state | a static document either re-emits on every expiry or carries dates the node must evaluate — the node already does the latter from facts, without a revision per expiry |
+| deployment observations (who deployed what, when) | **provenance**: the observation is made by the reconciler from a finalized receipt and the identity binding; in a document it is an author's claim. The chain alone cannot supply it either: a receipt shows the signer, not the principal or the organisation, and several principals may share a signer |
+| per-operation audit ("Bob added by Alice at 14:02") | collapses into a document diff; the RBAC audit chain today records the actor of each operation |
+
+What would be gained: one artefact, Git history for people as well as rules.
+Both are already available for the *decisions* about people (group definitions,
+who may approve) — the document holds those. The facts are observations and
+proofs, and a proof cannot be authored.
+
+**The middle ground**
+
+| Stays in Postgres | Goes |
+|---|---|
+| facts about people and chain observations (single writer = the operations); the records (revisions, compiled artifacts, audit chain); `node_submissions`, outbox and clock; group secrets; short-lived runtime state (replacing Redis) | the ten projection tables as a *source* of configuration → an indexed in-memory document per organisation; the 075 trigger layer and the 32 legacy writers; Redis |
+
+Cost: rewrite ~15 readers (mostly `rbac_store_*`, `explorer_redaction.go`, the
+export), split observations out of `contracts`, keep the symmetry tests green.
+Estimate 1–2 weeks. Not started; recorded so the position is explicit.
 
