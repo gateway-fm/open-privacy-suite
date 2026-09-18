@@ -65,6 +65,16 @@ field; bans do not.
 | Secrets (group RPC credential) | must never appear in a text that is diffed, reviewed and exported |
 | Caches, sessions, permission results | recomputed or re-issued; never a source |
 
+The rule behind the table: **anything that makes a decision must be the document
+and nothing else** — that is what closing thirty-two endpoints achieved. What
+stays an operation is written by *events*: a login, a directory, a finalized
+receipt, a price feed. Making those documents too would either put an approval
+inside the login path or have machines self-activate revisions, which removes
+the review and keeps the conflict, since two documents declaring a complete
+state overwrite each other exactly as a document overwrites a row. Three places
+still break the rule and are on the list below: the explorer's ABI writer, the
+deployment auto-grant, and `refresh-codehash`.
+
 ## 4. Where the document text should live
 
 **Recommendation: the customer's Git.** The pull request is the review. This
