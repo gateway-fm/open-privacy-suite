@@ -1,7 +1,7 @@
 # Configuration revision API
 
 For the endpoint-level view of which legacy writers each stream replaces, what
-stays an operation and why, see [api-migration-map.md](api-migration-map.md).
+stays an operation and why, see [api-migration-map.md](api-migration-map.md) and its [details](api-migration-details.md).
 
 Organization stream base URL: `/api/v1/admin/orgs/{org_id}/configuration/{kind}`.
 The legacy `/api/admin` mount exposes the same routes. Organization streams are

@@ -225,7 +225,7 @@ Completion means code integrated on a clearly identified branch/worktree, review
 What is on the branch and how it was verified. Evidence files are under
 `docs/implementation/evidence/`; the runbook is `docs/implementation/ops-reth-stack.md`;
 the endpoint-level map of what moved to the DSL, what stayed an operation and
-why, and what changed for a headless client is `docs/implementation/api-migration-map.md`.
+why, and what changed for a headless client is `docs/implementation/api-migration-map.md`, with the evidence in `api-migration-details.md`.
 
 | Area | State | Evidence |
 |---|---|---|
