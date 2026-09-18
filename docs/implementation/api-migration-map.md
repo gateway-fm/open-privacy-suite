@@ -155,25 +155,24 @@ a discussion: what is lost if the class is moved to the other home.
 
 | Data | Home | Why there | If moved to the other home, we lose |
 |---|---|---|---|
-| Execution rules — who may call which function with which arguments, nested calls, deploy rights | **Document** (`execution-rules`), compiled by the server | one owner, reviewed before it decides anything, reproducible; the node executes the compiled artifact | in tables: two writers (grants API and policy), no review, no reproducible history — the situation before RD-1287 |
-| Group definitions — slug, admin flags, RPC allowlist, claims | **Document** (`groups`) | decisions of the org admin; deleting a group with live members needs explicit acknowledgement | in tables: silent structural changes with no review, membership cascades no one saw |
-| Contract configuration — name, ABI, visibility flags, read grants / event rules | **Document** (`contract-registry`) | decisions; pipeline-registered contracts are adopted as drift, never swept | in tables: the explorer's separate ABI writer problem generalised — several places to set the same thing |
-| Compliance settings and thresholds, manual prices | **Document** (`compliance`) | settings, one owner | in tables: an "enforce/monitor" flip with no second person |
-| Approver configuration, trusted CI | **Document** (`approvers`), human-only | it is the authority itself | as an operation: whoever can call the endpoint can widen who approves |
-| Platform: shared infrastructure, tenants, organisations (§6) | **Document** (`platform`), human-only | platform-owned decisions | as operations: bootstrap by API calls, unreviewable |
-| Users (existence, DID) | **Postgres — facts** | created by login; nobody authors a user | in the document: a user cannot exist before someone types them in; login would have to wait for a revision |
-| Memberships, expiry | **Postgres — facts** | several writers (admin, IdP/HR sync, ZK self-service, expiry); per-person cadence | in the document: every join/leave is a reviewed revision; a re-applied document overwrites memberships another writer changed; `expires_at` becomes a revision per expiry |
-| Address ↔ principal links | **Postgres — facts** | a link exists only because the user signed a challenge with that key (`eth/link/verify`) — it is a **proof** | in the document: an author *asserts* a link → binds someone else's address to a principal → that principal's transactions authorised. Impersonation by configuration |
-| Bans, KYC flags, sanctions | **Postgres — facts** | also written by compliance automation and feeds; an incident ban must reach the node in the next block | in the document: the ban waits for review, and the next re-applied document silently lifts it |
-| Deployment observations — who deployed which contract, when | **Postgres — facts** (today mixed into `contracts`, to be separated — §6) | recorded by the reconciler from a finalized receipt plus the identity binding; the chain alone shows the signer, not the principal or organisation (several principals may share a signer) | in the document: an author's claim instead of an observation; on chain alone: the principal is unknown |
-| Disclosure requests, grants, reports | **Postgres — facts / lifecycle** | a state machine between two organisations; each step is an answer | in the document: one side authoring the other side's consent |
-| Reviewed revisions, compiled artifacts, digests, who activated, when | **Postgres — record** | written in the same transaction as the change taking effect, with the hash-chained audit entry — the only place that can say *what was in force at T* (DECISION §3.1) | in Git: what was merged, not what took effect, nor when; in the document: a configuration cannot carry its own history of taking effect; on chain: public and a transaction per review step |
-| Execution bookkeeping — submissions, outcomes, visibility recipients | **Postgres — record** | only OPS knows which principal, which `visibleTo`, which receipt | nowhere else has the join |
-| Fact stream — clock, outbox, cursors | **Postgres — bookkeeping** | the version bump commits in the same transaction as the fact change; the cursor is the restart point | anywhere else: a fact could be durable without the node ever learning of it |
-| Group upstream RPC credential | **Postgres — secret** | a secret is never source text | in the document: the key in every diff, review and export |
-| Projections of configuration (`groups`, `contracts`, `contract_grants`, …) | **Cache** — today materialised tables, target: in-memory document per organisation (§9) | derivable; only needed because readers join configuration with facts | nothing: they are rebuilt from the document; keeping them as a source is the transition artefact |
-| Permission results, sessions, challenges, OAuth state | **Runtime** — today partly Redis, target: per-replica memory + Postgres TTL tables (§9) | computed or short-lived | nothing durable |
-
+| Execution rules | **Document** `execution-rules` <br><sub>compiled by the server</sub> | one owner, reviewed before it decides anything, reproducible; the node executes the compiled artifact | in tables: two writers (grants API and policy), no review, no reproducible history — the situation before RD-1287
+| Group definitions | **Document** `groups` | decisions of the org admin; deleting a group with live members needs explicit acknowledgement | in tables: silent structural changes with no review, membership cascades no one saw
+| Contract configuration | **Document** `contract-registry` | decisions; pipeline-registered contracts are adopted as drift, never swept | in tables: the explorer's separate ABI writer problem generalised — several places to set the same thing
+| Compliance settings | **Document** `compliance` | settings, one owner | in tables: an "enforce/monitor" flip with no second person
+| Approvers, trusted CI | **Document** `approvers` <br><sub>human-only</sub> | it is the authority itself | as an operation: whoever can call the endpoint can widen who approves
+| Shared infra, tenants, orgs (§6) | **Document** `platform` <br><sub>human-only</sub> | platform-owned decisions | as operations: bootstrap by API calls, unreviewable
+| Users (existence, DID) | **Fact** | created by login; nobody authors a user | in the document: a user cannot exist before someone types them in; login would have to wait for a revision
+| Memberships, expiry | **Fact** | several writers (admin, IdP/HR sync, ZK self-service, expiry); per-person cadence | in the document: every join/leave is a reviewed revision; a re-applied document overwrites memberships another writer changed; `expires_at` becomes a revision per expiry
+| Address ↔ principal links | **Fact** (proof) | a link exists only because the user signed a challenge with that key (`eth/link/verify`) — it is a **proof** | in the document: an author *asserts* a link → binds someone else's address to a principal → that principal's transactions authorised. Impersonation by configuration
+| Bans, KYC, sanctions | **Fact** | also written by compliance automation and feeds; an incident ban must reach the node in the next block | in the document: the ban waits for review, and the next re-applied document silently lifts it
+| Deployment observations | **Fact** <br><sub>today mixed into `contracts` — §6</sub> | recorded by the reconciler from a finalized receipt plus the identity binding; the chain alone shows the signer, not the principal or organisation (several principals may share a signer) | in the document: an author's claim instead of an observation; on chain alone: the principal is unknown
+| Disclosure lifecycle | **Fact** | a state machine between two organisations; each step is an answer | in the document: one side authoring the other side's consent
+| Revisions, artifacts, who activated | **Record** | written in the same transaction as the change taking effect, with the hash-chained audit entry — the only place that can say *what was in force at T* (DECISION §3.1) | in Git: what was merged, not what took effect, nor when; in the document: a configuration cannot carry its own history of taking effect; on chain: public and a transaction per review step
+| Submissions, outcomes, visibility | **Record** | only OPS knows which principal, which `visibleTo`, which receipt | nowhere else has the join
+| Fact stream to the node | **Bookkeeping** | the version bump commits in the same transaction as the fact change; the cursor is the restart point | anywhere else: a fact could be durable without the node ever learning of it
+| Group RPC credential | **Secret** | a secret is never source text | in the document: the key in every diff, review and export
+| Projections of configuration | **Cache** <br><sub>target: in-memory doc — §9</sub> | derivable; only needed because readers join configuration with facts | nothing: they are rebuilt from the document; keeping them as a source is the transition artefact
+| Permission results, sessions | **Runtime** <br><sub>target: no Redis — §9</sub> | computed or short-lived | nothing durable
 The homes, in one line each:
 
 | Home | What qualifies | How it changes |
@@ -220,15 +219,14 @@ from the current implementation.
 
 **Per consumer — what it computes, which part is facts (stays SQL), which part is configuration (a document lookup), and the cost of switching.**
 
-| Consumer | Computes | Facts, in SQL | Configuration, from the document | Cost of switching |
-|---|---|---|---|---|
-| Explorer visibility (`GetBatchVisibility`, `explorer_redaction.go`) | for viewer V and a page of N addresses: which are visible | V's linked addresses, memberships, disclosure grants (2–3 queries) | contracts of V's organisations and their grants → map lookup per address | one SQL statement becomes "facts query + in-memory lookups"; ~µs per address at 1 000 contracts; semantics guarded by the existing access/visibility symmetry tests |
-| Effective permissions / access checks (`rbac_store_*`, `rbac/resolver.go`) | user → allowed methods, contracts, claims | the user's memberships (1 query) | groups, allowlists, grants → lookups | the per-user result stays a computed cache of the hot set, never "all users in memory" |
-| Fact export to the node (`node_policy_export.go`) | the signed fact snapshot | users, memberships, links — the whole cost (1 M rows) | groups, contracts — microseconds | ≈ 0 |
-| Deployment reconciliation (`node_submission.go`) | records an observation | writes facts | — | untouched |
-| Disclosure, address and tx helpers | "is V an org admin", group by id | memberships | one flag lookup | trivial |
-| Group upstream credential (`group_credentials.go`) | the secret RPC key of a group | — | **not a document** | one small operational table stays |
-
+| Consumer — what it computes | Facts it needs (stays SQL) | Configuration it needs (document lookup) | Cost of switching |
+|---|---|---|---|
+| Explorer visibility (`GetBatchVisibility`, `explorer_redaction.go`)<br><sub>for viewer V and a page of N addresses: which are visible</sub> | V's linked addresses, memberships, disclosure grants (2–3 queries) | contracts of V's organisations and their grants → map lookup per address | one SQL statement becomes "facts query + in-memory lookups"; ~µs per address at 1 000 contracts; semantics guarded by the existing access/visibility symmetry tests |
+| Effective permissions / access checks (`rbac_store_*`, `rbac/resolver.go`)<br><sub>user → allowed methods, contracts, claims</sub> | the user's memberships (1 query) | groups, allowlists, grants → lookups | the per-user result stays a computed cache of the hot set, never "all users in memory" |
+| Fact export to the node (`node_policy_export.go`)<br><sub>the signed fact snapshot</sub> | users, memberships, links — the whole cost (1 M rows) | groups, contracts — microseconds | ≈ 0 |
+| Deployment reconciliation (`node_submission.go`)<br><sub>records an observation</sub> | writes facts | — | untouched |
+| Disclosure, address and tx helpers<br><sub>"is V an org admin", group by id</sub> | memberships | one flag lookup | trivial |
+| Group upstream credential (`group_credentials.go`)<br><sub>the secret RPC key of a group</sub> | — | **not a document** | one small operational table stays |
 Document cost: the size limit is 1 MiB; parsing that in Go takes milliseconds
 **once per activation**, into maps keyed by id and address. The "join" is a
 facts query followed by map lookups — the pattern the node already runs in Rust
@@ -256,11 +254,10 @@ Estimate 1–2 weeks. Not started; recorded so the position is explicit.
 
 ## 10. Appendix — the 47 tables of the live database, verified against the code
 
+The per-table evidence behind §7, kept separate so the summary stays readable.
 Verified against the live stack database after the 12-scenario acceptance
 (47 tables in `privacy_proxy`; writers found by grepping `INSERT/UPDATE/DELETE`
-in `internal/db` and the trigger functions in the migrations). "Why Postgres"
-answers two questions at once: why not on chain, and why not inside a
-declarative document.
+in `internal/db` and the trigger functions in the migrations).
 
 | Role, tables, written by | Why it stays in Postgres — and not on chain, not in a document |
 |---|---|
