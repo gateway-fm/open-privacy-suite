@@ -232,7 +232,16 @@ with another writer is at field level, when a review would have no content,
 when the data is evidence and embedding it would not scale, or when the change
 arrives from outside on every event.
 
-| Data | Written as (all of it in Postgres unless stated) | What it is, and why in that form | If it took the other form |
+**One axis, not two.** The table below compares **forms**: a reviewed document
+versus ordinary rows versus a record. It does **not** argue about where a
+document's text is stored. The second column names today's location as a fact
+about this build, nothing more — the same text could live as a file in the
+customer's Git, pushed in by CI or by an ArgoCD-style agent, exactly as the
+section above describes. What would still be written into the database at that
+moment is the version pin the node switches on, the projections for as long as
+they exist (§9), and the activation record.
+
+| Data | Form, and where it sits today | What it is, and why in that form | If it took the other form |
 |---|---|---|---|
 | **[Execution rules](#execution-rules)**<br><sub>what a group may call: contract, function, argument limits</sub> | a reviewed document — `configuration_revisions.source` + `compiled_artifact`<br><sub>projected into `execution_policy_revisions` (the RD-1287 table the node reads from); copy in node memory</sub> | **Decision.** what the node enforces must be derivable from a text a person approved: the server compiles, and both digests are recorded, so any byte the node runs traces back to the review. One qualification against "single owner": a deployment still inserts an auto-grant row (`node_submission.go:213`, `functions` NULL = all functions in the legacy path). In node mode the document is the only decider and that row is ignored; in legacy mode it still grants | As rows, the node cannot enforce them. The node enforces by running compiled policy code inside every call frame of a transaction; a database row is not code, so there is nothing for it to run. Checking would move back to OPS, which sees only the call the user sends — not the calls that contract makes to other contracts inside the same transaction. That blind spot is why the node policy exists (DECISION §2). Separately: a row takes effect the moment the API call returns — no second person, no history anyone can replay. That was the state before RD-1287 |
 | **[Group definitions](#group-definitions)**<br><sub>the groups of an organisation and what RPC they may use</sub> | a reviewed document — `configuration_revisions.source`<br><sub>projected into `groups`, `group_access`</sub> | **Changing a group changes what its members may do.** A group is not a label: `isOrgAdmin` makes every member a full org admin, `claims` grant admin/upgrade/deploy over contracts, and `allowedMethods` decides which RPC calls they may make. Editing one is a privilege change, which is what review is for. A weaker, secondary point: a rules revision *may* pin the groups revision by digest so both activate in one step, but that is optional — our own acceptance run activated rules with `dependencies: {}` | In tables: structure changes with no review, and membership cascades nobody sees |
