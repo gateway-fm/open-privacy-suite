@@ -85,4 +85,5 @@ organisation is acceptable for a small single-tenant deployment.
 3. **When does Reth policy mode become the default?** Until it does, legacy writers stay open for organisations without an active stream, and the old preflight gate still decides access.
 4. **Organisations into the platform document.** Decided in principle; needs the deletion semantics and last-administrator protection.
 5. **The explorer's separate ABI writer.** It writes a store nobody enforces from. Close it or route it through the registry.
-6. **MCP rebuild timing.** Six revision tools and role-grouped operations instead of 94 flat ones.
+6. **`refresh-codehash`.** It observes the chain and writes a field the platform document owns, so the guard now closes it entirely. Turn it into a read that returns the observed codehash; keep the write under review.
+7. **MCP rebuild timing.** Six revision tools and role-grouped operations instead of 94 flat ones.

@@ -658,3 +658,78 @@ other projection tables are rewritten by activation from the document;
 `effective_permissions_cache`, sessions and challenges are recomputed or expire.
 Both are rebuilt if lost.
 
+## 13. Field-by-field sweep: who sets each field, and how often
+
+Run on 2026-09-18 after a claim in the summary ("manually authored prices") was
+true but misleading. For every field of every stream: **how is it set, who sets
+it, how often.** Two findings came out of it; both are listed under the tables.
+
+**`groups`**
+
+| Field | Set by | How often |
+|---|---|---|
+| `slug`, `name`, `description` | an admin, in the document | rarely |
+| `isOrgAdmin`, `isOrgReadonlyAdmin` | an admin, in the document; the **platform token** is additionally required to touch an org-admin group (`denyJWTAdminTouchOrgAdminGroup`) | rarely, and it is a privilege change |
+| `allowedMethods`, `claims`, `verboseErrors` | an admin, in the document | rarely |
+| *membership of people* | **not in this document** — the admin API, directory auto-provision and ZK roles | continuously |
+
+**`contract-registry`**
+
+| Field | Set by | How often |
+|---|---|---|
+| `address`, `name` | an admin, in the document; a deployment creates the row as drift, adopted by the next revision | per contract |
+| `abi` | an admin, in the document. **Second writer today**: the explorer's own ABI endpoint writes a different store that redaction does not read — a known defect (§5) | on deployment or upgrade |
+| `allowVisibleToUnlock`, `eventsAllowDynamicPayload`, `readGrants`, `eventRules` | an admin, in the document | rarely |
+| `deployed_by_user_id`, `deployed_at`, `metadata` | **not configuration** — the reconciler, from a finalized receipt | per deployment |
+
+**`compliance`**
+
+| Field | Set by | How often |
+|---|---|---|
+| `enabled`, `thresholdFiat`, `currency`, `unknownPricePolicy`, `enforcementMode` | an admin, in the document | rarely |
+| `addressThresholds[]` | an admin, in the document | rarely |
+| `tokenPrices[]` — `symbol`, `decimals`, `coingeckoId` **or** a fixed price | an admin, in the document. This is the token's *entry*, not its price | when a token is added or corrected |
+| the live rate | **not in any document** — the price fetcher writes `system_token_prices` on a timer; the checker resolves an entry that carries a feed id to that live price (`compliance/checker.go:262`) | every interval |
+| the deployment-wide `base_currency` | a super admin, `PUT /admin/compliance/currency`; used only as a fallback when an org has no compliance config (`admin_compliance.go:91`) | almost never |
+
+**`approvers`**
+
+| Field | Set by | How often |
+|---|---|---|
+| `groupIds` | a human admin, in the document; eligibility for an activation is read from the **active** revision, so a document cannot widen its own approvers | rarely |
+| `trustedCI[]` — issuer, audience, subject, repository, ref, public key | a human admin, in the document | on key rotation |
+
+**`platform`**
+
+| Field | Set by | How often |
+|---|---|---|
+| `tenants[]` | an allowlisted human, in the document | rarely |
+| `sharedInfrastructure[].address`, `.name`, `.description` | an allowlisted human, in the document | rarely |
+| `sharedInfrastructure[].codehash` | **an observation**: `refresh-codehash` reads `eth_getCode` at latest and stores its keccak256 | whenever a tracked upstream contract is upgraded |
+
+**`execution-rules`**
+
+| Field | Set by | How often |
+|---|---|---|
+| `policy` (bindings, selectors, argument bounds, target classes) | an admin or a service, in the document | with application changes |
+| `artifact` | **the server**, by compiling the approved source; never accepted from a caller | on every submission |
+| the compiler contract (version, optimizer runs, EVM version) | the deployment's pinned build | on a compiler upgrade |
+
+### Two findings
+
+**1. `refresh-codehash` is an observation writing into a decision field, and the
+guard closed it completely.** The endpoint reads the chain and stores the hash
+in a field the platform document owns. With the platform stream active it
+returns 409 — which is right for the *write* (new bytecode should not be trusted
+without review) and wrong for the *read*, because it was the only way to compute
+the hash. After an upstream upgrade the operator now has to derive keccak256 by
+hand before editing the document. It should become a read that returns the
+observed codehash for pasting into the document.
+
+**2. A compiler upgrade invalidates open drafts.** Activation re-verifies the
+artifact against the currently pinned `SolidityVersion`, optimizer runs and EVM
+version (`verifyExecutionArtifact`). An already-active revision is unaffected —
+the node holds its artifact — but a draft compiled before the upgrade is refused
+with "approved execution artifact differs from its source or compiler contract"
+and must be resubmitted. Correct behaviour; it needs to be in the operator
+documentation, which it is not.
