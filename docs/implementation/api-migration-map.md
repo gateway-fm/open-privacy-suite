@@ -171,9 +171,9 @@ chain address and never visible to anyone reading the chain.
 | **[Approvers, trusted CI](#approvers-trusted-ci)**<br><sub>who may activate a revision, and which CI is trusted</sub> | OPS document `approvers`<br><sub>human-authored only</sub> | **Decision about authority itself.** who may approve cannot be set by an unreviewed call | As an operation: whoever can call the endpoint widens who may approve — the authority would guard itself |
 | **[Platform](#platform)**<br><sub>shared contracts, tenants, organisations (§6)</sub> | OPS document `platform`<br><sub>human-authored only</sub> | **Decision, platform-owned.** chosen by the deployment operator, not by a tenant | As operations: a customer is bootstrapped by API calls nobody reviews |
 | **[Users](#facts-about-people)**<br><sub>a person exists in OPS, identified by DID</sub> | Postgres `users`<br><sub>copy in node memory</sub> | **Event, not an authored line.** the row appears when someone logs in; nobody authors a user | In the document: a user exists only once an author types them in; login waits for a revision |
-| **[Memberships](#facts-about-people)**<br><sub>who is in which group, until when</sub> | Postgres `user_memberships`<br><sub>copy in node memory</sub> | **Relationship with several writers.** several writers (admin, IdP/HR sync, ZK self-service, expiry); per-person cadence | In the document: every join and leave is a reviewed revision; a re-applied document overwrites what another writer changed; each expiry needs its own revision |
+| **[Memberships](#facts-about-people)**<br><sub>who is in which group, until when</sub> | Postgres `user_memberships`<br><sub>copy in node memory</sub> | **Relationship with several writers.** three writers in the code today: the admin API, Azure tenant auto-provision (`auth_azure.go:298` creates the default-group membership on first login) and ZK role extraction (`auth.go:603`); plus `expires_at`, which changes the answer without anyone writing | In the document: every join and leave is a reviewed revision; a re-applied document overwrites what another writer changed; each expiry needs its own revision |
 | **[Address links](#facts-about-people)**<br><sub>this wallet belongs to this person, proven by signature</sub> | Postgres `eth_address_links`<br><sub>copy in node memory</sub> | **Proof.** a link exists only because the user signed a challenge with that key (`eth/link/verify`; the demo bypass `MOCK_SIGNATURES` is force-disabled when `ENVIRONMENT=production`, `config.go:475`) — it is a **proof** | In the document: the link is an author's assertion, not the user's signature — whoever writes the document binds someone else's address to a principal and authorises its transactions |
-| **[Bans, KYC, sanctions](#facts-about-people)**<br><sub>who is blocked or verified right now</sub> | Postgres `users`, `sanctioned_addresses`<br><sub>copy in node memory</sub> | **Safety flag, written by people and automation.** also written by compliance automation and feeds; an incident ban must reach the node in the next block | In the document: a ban waits for review instead of reaching the next block, and the next re-applied document lifts it silently |
+| **[Bans, KYC, sanctions](#facts-about-people)**<br><sub>who is blocked or verified right now</sub> | Postgres `users`, `sanctioned_addresses`<br><sub>copy in node memory</sub> | **Safety flag, written by people and automation.** three different things, none of them a decision to review: KYC is set by the login credential (`auth.go:571`), a ban is an incident action that must take effect at once (admin-written today, `rbac_store_user.go:63`), and sanctions are a per-organisation address list checked at transaction time (`compliance/checker.go:188`), never a property of a person | In the document: a ban waits for a review cycle instead of reaching the node at the next block, and the next re-applied document lifts it silently; KYC would have to be transcribed from the credential by hand; a sanctions feed would become a stream of revisions |
 | **[Deployment observations](#deployment-observations)**<br><sub>who deployed which contract, from which transaction</sub> | Postgres `contracts`<br><sub>to be split out — §6</sub> | **Observation.** recorded by the reconciler from a finalized receipt plus the identity binding; the chain alone shows the signer, not the principal or organisation (several principals may share a signer) | In the document: an author's claim, not an observation. From the chain alone: the receipt shows the signer, not the principal or the organisation |
 | **[Disclosure](#disclosure-lifecycle)**<br><sub>one org asks another to reveal data; approve, reject, revoke</sub> | Postgres `disclosure_*` | **Exchange between two parties.** a state machine between two organisations; each step is an answer | In the document: one organisation authors the other's consent |
 | **[The record](#the-record)**<br><sub>which document took effect, when, approved by whom</sub> | Postgres `configuration_revisions` + audit chain | **The record.** written in the same transaction as the change taking effect, with the hash-chained audit entry — the only place that can say *what was in force at T* (DECISION §3.1) | In Git: only what was merged, not what took effect or when. In the document: a configuration cannot carry the history of its own activation. On chain: public, and a transaction per review step |
@@ -301,39 +301,51 @@ the audit separation was confirmed in migration 058 and `audit_chain.go`. Three
 rows were corrected as a result (fact stream, execution bookkeeping, the
 `functions` column).
 
-## 11. How the claims here were checked
+## 11. How the claims here were checked, and where the checking stopped
 
-Written down because a claim in this document is only useful if it survives
-being questioned. Checked on 2026-09-18 against the branch, not against memory.
+Checked on 2026-09-18 against the branch. Read the second table first: the first
+pass verified the **mechanical** claims and left the **reasoning** cells
+unverified, which is exactly where the errors were.
 
-| Claim | How it was checked | Result |
+**Verified by reading the code or running it:**
+
+| Claim | How | Result |
 |---|---|---|
-| "32 legacy write operations move to the streams" | counted the routes carrying a stream guard in `admin_rbac.go`, `admin_compliance.go`, `admin_shared_infra.go` | exactly 32 |
-| "their `GET`s keep working" | no `GET` route of a migrated class carries a guard | confirmed |
-| "the database triggers refuse a direct write" | `configuration_guard_projection` and its eight triggers, migration 075 | confirmed, including the `contract_grants` split between registry and execution-rules |
-| every endpoint named in §3 exists | each path matched against the generated `API_ENDPOINTS.md` | all found |
-| "`approvers` and `platform` are human-only" | `configuration.RequiresHumanAuthor`, enforced on submit and on activate | confirmed |
-| "a link is a signature, not an assertion" | `eth_link.go` verification path; `MOCK_SIGNATURES` force-disabled in production (`config.go:475`) | confirmed |
-| "a ban reaches the node in the next block" | AFTER trigger on `users` → `node_policy_mark_dirty` → clock bump in the same transaction (migration 073) | confirmed |
-| "a group secret is never desired state" | the 075 trigger ignores `rpc_api_key` changes; the credential has its own route | confirmed |
-| "94 flat MCP tools today" | `AddTool` call sites in `mcp/` | 94 |
-| "≈18 µs and 6 436 gas per policy check" | `node/reth/tests/frame_cost.rs`, release build, 2 000 transactions per configuration | measured, `evidence/reth-runtime.md` |
+| "32 legacy write operations move to the streams" | counted routes carrying a stream guard in `admin_rbac.go`, `admin_compliance.go`, `admin_shared_infra.go` | exactly 32 |
+| "their `GET`s keep working" | no `GET` of a migrated class carries a guard | confirmed |
+| "the database triggers refuse a direct write" | `configuration_guard_projection` and its eight triggers (075) | confirmed, including the `contract_grants` split between registry and execution-rules |
+| every endpoint named in §3 exists | matched against the generated `API_ENDPOINTS.md` | all found |
+| "`approvers` and `platform` are human-only" | `configuration.RequiresHumanAuthor`, enforced on submit and activate | confirmed |
+| "a link is a signature, not an assertion" | `eth_link.go`; `MOCK_SIGNATURES` force-disabled in production (`config.go:475`) | confirmed |
+| "a ban reaches the node at the next block" | AFTER trigger on `users` → clock bump in the same transaction (073) | confirmed |
+| "a group secret is never desired state" | the 075 trigger ignores `rpc_api_key`; the credential has its own route | confirmed |
+| "a user row appears at login" | `EnsureUserExists` in `auth.go`, `auth_azure.go` | confirmed |
+| "memberships have several writers" | admin API, Azure auto-provision (`auth_azure.go:298`), ZK roles (`auth.go:603`) | confirmed — three, now named |
+| "deleting a group with live members needs the exact count" | `groups.go:80-86` | confirmed |
+| "pipeline-registered resources are adopted, not swept" | `PreservedDrift` in every diff | confirmed |
+| "the compiled policy is never on chain" | `known_bytecode` from the snapshot; `private_policy.rs` — no state entry, chain code at the same address does not override it, the application cannot observe it | confirmed |
+| "94 flat MCP tools today" | `AddTool` call sites | 94 |
+| "≈18 µs and 6 436 gas per policy check" | `tests/frame_cost.rs`, release, 2 000 transactions per configuration | measured |
 
-Three claims were found wrong while checking and are corrected above:
+**Found wrong while being questioned, and corrected.** All four were reasoning
+cells, not mechanical facts — the first pass did not check them:
 
 | Was written | What the code shows |
 |---|---|
-| "Redis is needed only for sharing, not correctness" | it carries correctness for the permission cache: invalidation reaches other replicas only because that cache is shared; with the in-memory fallback a revoked grant survives on another replica for the 5-minute TTL (§9) |
-| execution rules in tables give "two writers again" | in that hypothetical there is one writer; what is actually lost is executability — the node runs compiled code inside the call frame, so enforcement falls back to the proxy, which cannot see nested calls (§7) |
-| "the outbox is what makes the push transactional"; "projections exist only for legacy readers"; "`contract_grants.functions` is written only during import" | the *clock* bump is the transactional part and the outbox rows are the per-version audit; the projections are also the source of the node's fact export; the `functions` column still has legacy writers, refused by the route guard and the trigger once the stream is active (§10) |
+| "Redis is needed only for sharing, not correctness" | it carries correctness for the permission cache: with the in-memory fallback a grant revoked on one replica survives on another for the 5-minute TTL (§9) |
+| execution rules in tables give "two writers again" | in that hypothetical there is one writer; what is lost is executability — the node runs compiled code inside the frame, so enforcement falls back to the proxy, which cannot see nested calls |
+| an on-chain policy would expose "group names, contracts, limits" | no names and no people: groups are `keccak256(group id)`; what it exposes is structure — governed addresses, per-group selectors, numeric bounds. Privacy is the weakest argument; the operational ones are decisive (§12) |
+| bans are "also written by compliance automation and feeds" | `users.banned` is written only by the admin handler; KYC comes from the login credential; sanctions are a separate per-organisation address list checked at transaction time and never touch the user row |
+| "the outbox makes the push transactional"; "projections exist only for legacy readers"; "`functions` is written only during import" | the *clock* bump is the transactional part; the projections are also the source of the node's fact export; the `functions` column still has legacy writers, refused by the guard and the trigger once the stream is active (§10) |
 
-What in this document is **judgement, not verified fact**, and should be argued
-as such: the effort estimates (§6, §9); that the projection tables could be
-replaced by an in-memory document without a performance regression — the
-explorer visibility filter on a large organisation was not benchmarked (§9);
-that organisations belong in the platform document (§6) — a decision, with
-self-service organisation creation named as the case that would reopen it;
-and the shape of the deferred MCP surface (§4).
+**Judgement, not verified fact** — argue these as opinions: the effort estimates
+(§6, §9); that the projection tables can be replaced by an in-memory document
+without a performance regression (the explorer visibility filter on a large
+organisation was not benchmarked); that organisations belong in the platform
+document (§6), with self-service organisation creation named as the case that
+would reopen it; the shape of the deferred MCP surface (§4); and every sentence
+of the form "a document would be the wrong tool for X" in §7 — those are design
+arguments supported by the code's current writers, not measurements.
 
 ## 12. What each class looks like — one example each
 
