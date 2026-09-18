@@ -143,7 +143,118 @@ Two further follow-ups recorded on the same day, from the review of §7:
 | Convert the legacy admin screens (groups, contracts, grants, compliance forms) into document views: read-only from the active revision, "edit" opens the Configuration screen | today they still call the legacy endpoints and, once a stream is active, receive 409 with no path forward — the UI is not yet uniformly a viewer/editor of the documents (plan Stage 3, not done) | 2–3 days |
 | Separate chain observations from configuration in `contracts` (and the auto-grant rows in `contract_grants`): observations in their own facts table, configuration only in the `contract-registry` document, drift adoption as the bridge; then treat the remaining projection tables explicitly as caches rebuilt on activation | the mix is what makes the projections look like a second configuration store; without it only the explorer's SQL visibility filter still needs a materialised form | 2–3 days |
 
-## 7. What stays in Postgres, table by table, and why
+## 7. Why the document, why Postgres — one table
+
+Every piece of data in the product was sorted with the same four questions:
+**who writes it** (one owner, or several writers and automation), **what it is**
+(a decision someone can review, or an observation / proof that can only be
+recorded), **when it must take effect** (after a review, or in the next block),
+and **whether it changes on its own** (expiry, chain events). The answers put
+each class into one of four homes. The last column is the part that matters in
+a discussion: what is lost if the class is moved to the other home.
+
+| Data | Home | Why there | If moved to the other home, we lose |
+|---|---|---|---|
+| Execution rules — who may call which function with which arguments, nested calls, deploy rights | **Document** (`execution-rules`), compiled by the server | one owner, reviewed before it decides anything, reproducible; the node executes the compiled artifact | in tables: two writers (grants API and policy), no review, no reproducible history — the situation before RD-1287 |
+| Group definitions — slug, admin flags, RPC allowlist, claims | **Document** (`groups`) | decisions of the org admin; deleting a group with live members needs explicit acknowledgement | in tables: silent structural changes with no review, membership cascades no one saw |
+| Contract configuration — name, ABI, visibility flags, read grants / event rules | **Document** (`contract-registry`) | decisions; pipeline-registered contracts are adopted as drift, never swept | in tables: the explorer's separate ABI writer problem generalised — several places to set the same thing |
+| Compliance settings and thresholds, manual prices | **Document** (`compliance`) | settings, one owner | in tables: an "enforce/monitor" flip with no second person |
+| Approver configuration, trusted CI | **Document** (`approvers`), human-only | it is the authority itself | as an operation: whoever can call the endpoint can widen who approves |
+| Platform: shared infrastructure, tenants, organisations (§6) | **Document** (`platform`), human-only | platform-owned decisions | as operations: bootstrap by API calls, unreviewable |
+| Users (existence, DID) | **Postgres — facts** | created by login; nobody authors a user | in the document: a user cannot exist before someone types them in; login would have to wait for a revision |
+| Memberships, expiry | **Postgres — facts** | several writers (admin, IdP/HR sync, ZK self-service, expiry); per-person cadence | in the document: every join/leave is a reviewed revision; a re-applied document overwrites memberships another writer changed; `expires_at` becomes a revision per expiry |
+| Address ↔ principal links | **Postgres — facts** | a link exists only because the user signed a challenge with that key (`eth/link/verify`) — it is a **proof** | in the document: an author *asserts* a link → binds someone else's address to a principal → that principal's transactions authorised. Impersonation by configuration |
+| Bans, KYC flags, sanctions | **Postgres — facts** | also written by compliance automation and feeds; an incident ban must reach the node in the next block | in the document: the ban waits for review, and the next re-applied document silently lifts it |
+| Deployment observations — who deployed which contract, when | **Postgres — facts** (today mixed into `contracts`, to be separated — §6) | recorded by the reconciler from a finalized receipt plus the identity binding; the chain alone shows the signer, not the principal or organisation (several principals may share a signer) | in the document: an author's claim instead of an observation; on chain alone: the principal is unknown |
+| Disclosure requests, grants, reports | **Postgres — facts / lifecycle** | a state machine between two organisations; each step is an answer | in the document: one side authoring the other side's consent |
+| Reviewed revisions, compiled artifacts, digests, who activated, when | **Postgres — record** | written in the same transaction as the change taking effect, with the hash-chained audit entry — the only place that can say *what was in force at T* (DECISION §3.1) | in Git: what was merged, not what took effect, nor when; in the document: a configuration cannot carry its own history of taking effect; on chain: public and a transaction per review step |
+| Execution bookkeeping — submissions, outcomes, visibility recipients | **Postgres — record** | only OPS knows which principal, which `visibleTo`, which receipt | nowhere else has the join |
+| Fact stream — clock, outbox, cursors | **Postgres — bookkeeping** | the version bump commits in the same transaction as the fact change; the cursor is the restart point | anywhere else: a fact could be durable without the node ever learning of it |
+| Group upstream RPC credential | **Postgres — secret** | a secret is never source text | in the document: the key in every diff, review and export |
+| Projections of configuration (`groups`, `contracts`, `contract_grants`, …) | **Cache** — today materialised tables, target: in-memory document per organisation (§9) | derivable; only needed because readers join configuration with facts | nothing: they are rebuilt from the document; keeping them as a source is the transition artefact |
+| Permission results, sessions, challenges, OAuth state | **Runtime** — today partly Redis, target: per-replica memory + Postgres TTL tables (§9) | computed or short-lived | nothing durable |
+
+The homes, in one line each:
+
+| Home | What qualifies | How it changes |
+|---|---|---|
+| Document (six streams) | decisions with one owner, reproducible, reviewable, no dependency on another party's answer | revision → simulate → activate by a second person or a signed CI manifest; legacy writers return 409 |
+| Postgres — facts | observations and proofs about people and the chain, with several writers and their own cadence | operations on the existing endpoints, each audited; pushed to the node as signed facts |
+| Postgres — record | the authoritative history of what took effect, when, approved by whom | append-only, hash-chained |
+| Cache / runtime | anything derivable or short-lived | rebuilt or expired; never a source |
+
+Why the record is not in Git, on chain or in the node is spelled out in DECISION
+§3.1 ("Why Postgres is the governance record"); why six documents rather than one
+is §8; what must stay in Postgres if configuration leaves its tables entirely,
+and what Redis is for, is §9.
+
+## 8. Why six streams and not one organisation document
+
+The revision mechanics would work for a single "organisation configuration"
+document. The split into streams per `(organisation, kind)` is a deliberate
+choice about review, blast radius and ownership, not a limitation of the
+mechanics.
+
+| Concern | Six streams (built) | One document per organisation |
+|---|---|---|
+| **Different approval rules per part** | each stream has its own rules today: `approvers` and `platform` may be drafted and activated only by humans; the other four may be drafted by a service or agent and activated by a different human (or by a trusted-CI manifest). Per-stream approval *policies* — one approval for group changes, three for execution rules — are the natural extension of the `approvers` stream, not built yet | one rule set for the whole document, or section-level rules hidden inside it — the same split, harder to see and to audit |
+| **Blast radius of a mistake** | a wrong revision changes one stream; activation, rollback (a new revision of that stream) and the review diff are scoped to it; a broken execution-rules compile cannot block a compliance threshold change | every change re-applies and re-reviews everything; a mistake in one section is a revision of the whole organisation; rollback rewinds unrelated parts too |
+| **Ownership and cadence** | execution rules change with every contract deployment; groups and compliance rarely; approvers almost never — each on its owner's cadence | one owner set and one cadence for all |
+| **Parallel work** | a compliance officer and a rule author draft at the same time without touching each other's base revision | both drafts conflict on `baseRevision`; one redoes the work |
+| **Cost of activation** | the Solidity compile runs only when `execution-rules` changes | compile on every activation, or track per-section digests — the streams again, internally |
+| **Review size** | each diff is one class of objects | a diff across ~1 MB of ABIs and rules for a one-line threshold change |
+| **Cross-references** | pinned by digest between streams (`abiDigest` from registry into rules); `activate` co-activates named siblings atomically | implicit inside the document |
+| **Agent ergonomics** | one uniform API shape, six contexts | one context — genuinely simpler |
+
+The ergonomics argument is the only one that favours a single document, and
+it can be served without giving up the rest: a read of all contexts in one call
+and a "bundle" submission that fans one organisation-wide document out into
+per-stream drafts and co-activates them. That is a convenience layer over the
+streams (about a day), not a change of storage or approval model.
+
+## 9. Middle ground: if configuration lives only in documents, what must still be in Postgres
+
+Asked on 2026-09-17 while looking for the position between "keep the tables" and
+"nothing but the config". Checked against the readers in the code, not argued
+from the current implementation.
+
+**Per consumer — what it computes, which part is facts (stays SQL), which part is configuration (a document lookup), and the cost of switching.**
+
+| Consumer | Computes | Facts, in SQL | Configuration, from the document | Cost of switching |
+|---|---|---|---|---|
+| Explorer visibility (`GetBatchVisibility`, `explorer_redaction.go`) | for viewer V and a page of N addresses: which are visible | V's linked addresses, memberships, disclosure grants (2–3 queries) | contracts of V's organisations and their grants → map lookup per address | one SQL statement becomes "facts query + in-memory lookups"; ~µs per address at 1 000 contracts; semantics guarded by the existing access/visibility symmetry tests |
+| Effective permissions / access checks (`rbac_store_*`, `rbac/resolver.go`) | user → allowed methods, contracts, claims | the user's memberships (1 query) | groups, allowlists, grants → lookups | the per-user result stays a computed cache of the hot set, never "all users in memory" |
+| Fact export to the node (`node_policy_export.go`) | the signed fact snapshot | users, memberships, links — the whole cost (1 M rows) | groups, contracts — microseconds | ≈ 0 |
+| Deployment reconciliation (`node_submission.go`) | records an observation | writes facts | — | untouched |
+| Disclosure, address and tx helpers | "is V an org admin", group by id | memberships | one flag lookup | trivial |
+| Group upstream credential (`group_credentials.go`) | the secret RPC key of a group | — | **not a document** | one small operational table stays |
+
+Document cost: the size limit is 1 MiB; parsing that in Go takes milliseconds
+**once per activation**, into maps keyed by id and address. The "join" is a
+facts query followed by map lookups — the pattern the node already runs in Rust
+(1.9 µs per frame for the whole fact preparation, `evidence/reth-runtime.md`).
+Not measured: the explorer filter on an organisation with thousands of contracts
+and hundreds of disclosure grants; the row above is arithmetic, not a benchmark.
+
+**Redis** holds six things today, none of them configuration:
+
+| In Redis today | Without Redis |
+|---|---|
+| `PermissionCache` — permission results shared across replicas | per-replica memory; invalidation already comes from the `rbac_cache_generation` counter in Postgres (RD-1267), so Redis is not needed for correctness, only for sharing |
+| OAuth sessions, auth sessions, Azure OAuth state, link challenges (short-lived) | Postgres tables with TTL cleanup (as `refresh_tokens` already is), or sticky sessions |
+| upstream circuit breaker | per-replica memory |
+
+**The middle ground**
+
+| Stays in Postgres | Goes |
+|---|---|
+| facts about people and chain observations (single writer = the operations); the records (revisions, compiled artifacts, audit chain); `node_submissions`, outbox and clock; group secrets; short-lived runtime state (replacing Redis) | the ten projection tables as a *source* of configuration → an indexed in-memory document per organisation; the 075 trigger layer and the 32 legacy writers; Redis |
+
+Cost: rewrite ~15 readers (mostly `rbac_store_*`, `explorer_redaction.go`, the
+export), split observations out of `contracts`, keep the symmetry tests green.
+Estimate 1–2 weeks. Not started; recorded so the position is explicit.
+
+## 10. Appendix — the 47 tables of the live database, verified against the code
 
 Verified against the live stack database after the 12-scenario acceptance
 (47 tables in `privacy_proxy`; writers found by grepping `INSERT/UPDATE/DELETE`
@@ -181,88 +292,3 @@ or writer except the single `LEFT JOIN access_policies` in the fact export;
 the audit separation was confirmed in migration 058 and `audit_chain.go`. Three
 rows were corrected as a result (fact stream, execution bookkeeping, the
 `functions` column).
-
-## 8. Why six streams and not one organisation document
-
-The revision mechanics would work for a single "organisation configuration"
-document. The split into streams per `(organisation, kind)` is a deliberate
-choice about review, blast radius and ownership, not a limitation of the
-mechanics.
-
-| Concern | Six streams (built) | One document per organisation |
-|---|---|---|
-| **Different approval rules per part** | each stream has its own rules today: `approvers` and `platform` may be drafted and activated only by humans; the other four may be drafted by a service or agent and activated by a different human (or by a trusted-CI manifest). Per-stream approval *policies* — one approval for group changes, three for execution rules — are the natural extension of the `approvers` stream, not built yet | one rule set for the whole document, or section-level rules hidden inside it — the same split, harder to see and to audit |
-| **Blast radius of a mistake** | a wrong revision changes one stream; activation, rollback (a new revision of that stream) and the review diff are scoped to it; a broken execution-rules compile cannot block a compliance threshold change | every change re-applies and re-reviews everything; a mistake in one section is a revision of the whole organisation; rollback rewinds unrelated parts too |
-| **Ownership and cadence** | execution rules change with every contract deployment; groups and compliance rarely; approvers almost never — each on its owner's cadence | one owner set and one cadence for all |
-| **Parallel work** | a compliance officer and a rule author draft at the same time without touching each other's base revision | both drafts conflict on `baseRevision`; one redoes the work |
-| **Cost of activation** | the Solidity compile runs only when `execution-rules` changes | compile on every activation, or track per-section digests — the streams again, internally |
-| **Review size** | each diff is one class of objects | a diff across ~1 MB of ABIs and rules for a one-line threshold change |
-| **Cross-references** | pinned by digest between streams (`abiDigest` from registry into rules); `activate` co-activates named siblings atomically | implicit inside the document |
-| **Agent ergonomics** | one uniform API shape, six contexts | one context — genuinely simpler |
-
-The ergonomics argument is the only one that favours a single document, and
-it can be served without giving up the rest: a read of all contexts in one call
-and a "bundle" submission that fans one organisation-wide document out into
-per-stream drafts and co-activates them. That is a convenience layer over the
-streams (about a day), not a change of storage or approval model.
-
-## 9. Middle ground: if configuration lives only in documents, what must still be in Postgres — and what is lost if facts move too
-
-Asked on 2026-09-17 while looking for the position between "keep the tables" and
-"nothing but the config". Checked against the readers in the code, not argued
-from the current implementation.
-
-**Per consumer — what it computes, which part is facts (stays SQL), which part is configuration (a document lookup), and the cost of switching.**
-
-| Consumer | Computes | Facts, in SQL | Configuration, from the document | Cost of switching |
-|---|---|---|---|---|
-| Explorer visibility (`GetBatchVisibility`, `explorer_redaction.go`) | for viewer V and a page of N addresses: which are visible | V's linked addresses, memberships, disclosure grants (2–3 queries) | contracts of V's organisations and their grants → map lookup per address | one SQL statement becomes "facts query + in-memory lookups"; ~µs per address at 1 000 contracts; semantics guarded by the existing access/visibility symmetry tests |
-| Effective permissions / access checks (`rbac_store_*`, `rbac/resolver.go`) | user → allowed methods, contracts, claims | the user's memberships (1 query) | groups, allowlists, grants → lookups | the per-user result stays a computed cache of the hot set, never "all users in memory" |
-| Fact export to the node (`node_policy_export.go`) | the signed fact snapshot | users, memberships, links — the whole cost (1 M rows) | groups, contracts — microseconds | ≈ 0 |
-| Deployment reconciliation (`node_submission.go`) | records an observation | writes facts | — | untouched |
-| Disclosure, address and tx helpers | "is V an org admin", group by id | memberships | one flag lookup | trivial |
-| Group upstream credential (`group_credentials.go`) | the secret RPC key of a group | — | **not a document** | one small operational table stays |
-
-Document cost: the size limit is 1 MiB; parsing that in Go takes milliseconds
-**once per activation**, into maps keyed by id and address. The "join" is a
-facts query followed by map lookups — the pattern the node already runs in Rust
-(1.9 µs per frame for the whole fact preparation, `evidence/reth-runtime.md`).
-Not measured: the explorer filter on an organisation with thousands of contracts
-and hundreds of disclosure grants; the row above is arithmetic, not a benchmark.
-
-**Redis** holds six things today, none of them configuration:
-
-| In Redis today | Without Redis |
-|---|---|
-| `PermissionCache` — permission results shared across replicas | per-replica memory; invalidation already comes from the `rbac_cache_generation` counter in Postgres (RD-1267), so Redis is not needed for correctness, only for sharing |
-| OAuth sessions, auth sessions, Azure OAuth state, link challenges (short-lived) | Postgres tables with TTL cleanup (as `refresh_tokens` already is), or sticky sessions |
-| upstream circuit breaker | per-replica memory |
-
-**And the facts themselves — could they come from the document too?** They
-could be written into it; this is what would be lost, item by item:
-
-| If people and observations lived in the document | What is lost |
-|---|---|
-| an address link is a line `alice: 0xAAAA…` written by the author | the **proof**: today a link exists only because the user signed a challenge with that key (`eth/link/verify`); in a document the author *asserts* it, so an author can bind someone else's address to a principal and the node will treat that principal's transactions as authorised — impersonation by configuration |
-| memberships, bans, KYC flags are document fields | the **other writers**: login, IdP/HR sync, ZK self-service, compliance automation, sanctions feeds each become a revision needing a second human; a re-applied document silently undoes an incident ban set by automation in between |
-| a ban or revocation is a revision | **latency**: today a ban is one operation and reaches the node's next block; as a revision it waits for review — the wrong tool for an incident |
-| 1 M users with links and memberships in the document | **size**: ~85 MB of facts (DECISION §3.1 sizing) against a 1 MiB document limit and a human review per change; the diff of "who is in which group" at that scale is not reviewable |
-| expiry (`expires_at`) and time-dependent state | a static document either re-emits on every expiry or carries dates the node must evaluate — the node already does the latter from facts, without a revision per expiry |
-| deployment observations (who deployed what, when) | **provenance**: the observation is made by the reconciler from a finalized receipt and the identity binding; in a document it is an author's claim. The chain alone cannot supply it either: a receipt shows the signer, not the principal or the organisation, and several principals may share a signer |
-| per-operation audit ("Bob added by Alice at 14:02") | collapses into a document diff; the RBAC audit chain today records the actor of each operation |
-
-What would be gained: one artefact, Git history for people as well as rules.
-Both are already available for the *decisions* about people (group definitions,
-who may approve) — the document holds those. The facts are observations and
-proofs, and a proof cannot be authored.
-
-**The middle ground**
-
-| Stays in Postgres | Goes |
-|---|---|
-| facts about people and chain observations (single writer = the operations); the records (revisions, compiled artifacts, audit chain); `node_submissions`, outbox and clock; group secrets; short-lived runtime state (replacing Redis) | the ten projection tables as a *source* of configuration → an indexed in-memory document per organisation; the 075 trigger layer and the 32 legacy writers; Redis |
-
-Cost: rewrite ~15 readers (mostly `rbac_store_*`, `explorer_redaction.go`, the
-export), split observations out of `contracts`, keep the symmetry tests green.
-Estimate 1–2 weeks. Not started; recorded so the position is explicit.
-
