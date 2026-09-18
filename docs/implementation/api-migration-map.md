@@ -164,7 +164,7 @@ a document class left in tables, or a fact authored in a document.
 | Shared infra, tenants, orgs (§6) | **Document** `platform` <br><sub>human-only</sub> | platform-owned decisions | As operations: a customer is bootstrapped by API calls nobody reviews |
 | Users (existence, DID) | **Fact** | created by login; nobody authors a user | In the document: a user exists only once an author types them in; login waits for a revision |
 | Memberships, expiry | **Fact** | several writers (admin, IdP/HR sync, ZK self-service, expiry); per-person cadence | In the document: every join and leave is a reviewed revision; a re-applied document overwrites what another writer changed; each expiry needs its own revision |
-| Address ↔ principal links | **Fact** (proof) | a link exists only because the user signed a challenge with that key (`eth/link/verify`) — it is a **proof** | In the document: the link is an author's assertion, not the user's signature — whoever writes the document binds someone else's address to a principal and authorises its transactions |
+| Address ↔ principal links | **Fact** (proof) | a link exists only because the user signed a challenge with that key (`eth/link/verify`; the demo bypass `MOCK_SIGNATURES` is force-disabled when `ENVIRONMENT=production`, `config.go:475`) — it is a **proof** | In the document: the link is an author's assertion, not the user's signature — whoever writes the document binds someone else's address to a principal and authorises its transactions |
 | Bans, KYC, sanctions | **Fact** | also written by compliance automation and feeds; an incident ban must reach the node in the next block | In the document: a ban waits for review instead of reaching the next block, and the next re-applied document lifts it silently |
 | Deployment observations | **Fact** <br><sub>today mixed into `contracts` — §6</sub> | recorded by the reconciler from a finalized receipt plus the identity binding; the chain alone shows the signer, not the principal or organisation (several principals may share a signer) | In the document: an author's claim, not an observation. From the chain alone: the receipt shows the signer, not the principal or the organisation |
 | Disclosure lifecycle | **Fact** | a state machine between two organisations; each step is an answer | In the document: one organisation authors the other's consent |
@@ -291,3 +291,38 @@ or writer except the single `LEFT JOIN access_policies` in the fact export;
 the audit separation was confirmed in migration 058 and `audit_chain.go`. Three
 rows were corrected as a result (fact stream, execution bookkeeping, the
 `functions` column).
+
+## 11. How the claims here were checked
+
+Written down because a claim in this document is only useful if it survives
+being questioned. Checked on 2026-09-18 against the branch, not against memory.
+
+| Claim | How it was checked | Result |
+|---|---|---|
+| "32 legacy write operations move to the streams" | counted the routes carrying a stream guard in `admin_rbac.go`, `admin_compliance.go`, `admin_shared_infra.go` | exactly 32 |
+| "their `GET`s keep working" | no `GET` route of a migrated class carries a guard | confirmed |
+| "the database triggers refuse a direct write" | `configuration_guard_projection` and its eight triggers, migration 075 | confirmed, including the `contract_grants` split between registry and execution-rules |
+| every endpoint named in §3 exists | each path matched against the generated `API_ENDPOINTS.md` | all found |
+| "`approvers` and `platform` are human-only" | `configuration.RequiresHumanAuthor`, enforced on submit and on activate | confirmed |
+| "a link is a signature, not an assertion" | `eth_link.go` verification path; `MOCK_SIGNATURES` force-disabled in production (`config.go:475`) | confirmed |
+| "a ban reaches the node in the next block" | AFTER trigger on `users` → `node_policy_mark_dirty` → clock bump in the same transaction (migration 073) | confirmed |
+| "a group secret is never desired state" | the 075 trigger ignores `rpc_api_key` changes; the credential has its own route | confirmed |
+| "94 flat MCP tools today" | `AddTool` call sites in `mcp/` | 94 |
+| "≈18 µs and 6 436 gas per policy check" | `node/reth/tests/frame_cost.rs`, release build, 2 000 transactions per configuration | measured, `evidence/reth-runtime.md` |
+
+Three claims were found wrong while checking and are corrected above:
+
+| Was written | What the code shows |
+|---|---|
+| "Redis is needed only for sharing, not correctness" | it carries correctness for the permission cache: invalidation reaches other replicas only because that cache is shared; with the in-memory fallback a revoked grant survives on another replica for the 5-minute TTL (§9) |
+| execution rules in tables give "two writers again" | in that hypothetical there is one writer; what is actually lost is executability — the node runs compiled code inside the call frame, so enforcement falls back to the proxy, which cannot see nested calls (§7) |
+| "the outbox is what makes the push transactional"; "projections exist only for legacy readers"; "`contract_grants.functions` is written only during import" | the *clock* bump is the transactional part and the outbox rows are the per-version audit; the projections are also the source of the node's fact export; the `functions` column still has legacy writers, refused by the route guard and the trigger once the stream is active (§10) |
+
+What in this document is **judgement, not verified fact**, and should be argued
+as such: the effort estimates (§6, §9); that the projection tables could be
+replaced by an in-memory document without a performance regression — the
+explorer visibility filter on a large organisation was not benchmarked (§9);
+that organisations belong in the platform document (§6) — a decision, with
+self-service organisation creation named as the case that would reopen it;
+and the shape of the deferred MCP surface (§4).
+
