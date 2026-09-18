@@ -41,6 +41,16 @@ projection.
 One reason each. The full argument and its evidence are in the details
 document.
 
+One principle first, because it cuts across several rows: **for a control that
+blocks someone — a ban, a sanctions entry — the data class does not decide the
+approval mode, the situation does.** A curated list or a planned offboarding
+can be reviewed, because a second person can check the basis. An incident
+cannot wait for one. Both modes are legitimate and an organisation should be
+able to choose. The design consequence is the same either way: a class that
+supports both needs provenance on its rows, so re-applying a reviewed document
+never undoes what an operator did immediately. Sanctions already carry that
+field; bans do not.
+
 | Class | Why it is not a document |
 |---|---|
 | Accounts | created at login; the identity provider decides who exists, not us |
