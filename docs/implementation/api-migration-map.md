@@ -368,15 +368,18 @@ private policy, and the application cannot observe the code or its gas
 
 | | On chain | As today, in the signed snapshot |
 |---|---|---|
-| Who can read the organisation's access rules | everyone with chain access — the rules name groups, contracts and limits | only OPS and the node |
+| Who can read the organisation's access rules | everyone with chain access. Note what that is and is not: the artifact holds **no names and no people** — groups appear as `keccak256(group id)`, and without the facts (who is in which group) the code authorises nobody. What it does expose is the structure: which contract addresses are governed, which selectors each group may call, and the numeric bounds written into rules (`UintAtMost`, address equality). Moderate, not catastrophic — this is the weakest of the arguments below | only OPS and the node |
 | Activation | a transaction: gas, inclusion latency, and the deployment itself is gated by the policy that governs deployments | one database transaction, then a versioned push; the node pins one version per candidate block |
 | A reorg that drops the deploying block | the active policy disappears and enforcement flips | nothing changes: the version is pinned, not chain state |
 | Emergency revocation | a transaction, subject to the chain's ordering | the next block after the push |
 | Cost | a transaction per activation | none |
 | Does it remove a moving part? | no — facts (people, memberships, bans) can never be on chain, so the signed channel exists anyway; the policy rides on it | — |
 
-The one thing on-chain storage would add is third-party verifiability of which
-policy is active. That is already covered without publishing the rules: the
+The decisive arguments are the operational rows, not the privacy one: putting
+the artifact on chain turns activation and revocation into transactions whose
+timing the chain decides, and makes the active policy a function of chain state
+that a reorg can change. The one thing on-chain storage would add is
+third-party verifiability of which policy is active. That is already covered without publishing the rules: the
 revision row records the source and artifact digests, the signed snapshot
 carries the artifact digest, and the node reports the digest it applied — an
 auditor recompiles the reviewed source and compares.
