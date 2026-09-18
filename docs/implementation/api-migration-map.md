@@ -54,7 +54,7 @@ field; bans do not.
 | Class | Why it is not a document |
 |---|---|
 | Accounts | created at login; the identity provider decides who exists, not us |
-| Memberships | three writers produce the same row for the same person — admin API, directory auto-provision, ZK roles — and none of it is a decision anyone reviews |
+| Memberships | what is reviewed is the **rule** that produces them, not the row: the tenant mapping in the platform document for directory auto-provision, and the issuer's own process for ZK credentials. The membership row is an instance of that rule, written by three writers at per-person cadence |
 | Address links | the link is the user's own signature; in a document an author would be asserting someone else's address and authorising its transactions |
 | Bans on a principal | an incident ban must take effect before anyone can review it. A *planned* deactivation could be reviewed, but `users.banned` has no provenance field today, so a re-applied document would lift an incident ban — see the decision below |
 | KYC | set by the credential the user logged in with |
