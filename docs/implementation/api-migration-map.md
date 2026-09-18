@@ -156,24 +156,24 @@ a document class left in tables, or a fact authored in a document.
 
 | Data | Home | Why there | If it lived in the other home |
 |---|---|---|---|
-| Execution rules | **Document** `execution-rules` <br><sub>compiled by the server</sub> | one owner, reviewed before it decides anything, reproducible; the node executes the compiled artifact | In tables: a row is not executable — the node runs compiled policy code inside the call frame, so enforcement falls back to the proxy, which cannot see nested calls (the reason for the whole design, §2 of DECISION). On top of that a grant takes effect the moment the API call returns, with no review and no reproducible history — the state before RD-1287 |
-| Group definitions | **Document** `groups` | decisions of the org admin; deleting a group with live members needs explicit acknowledgement | In tables: structure changes with no review, and membership cascades nobody sees |
-| Contract configuration | **Document** `contract-registry` | decisions; pipeline-registered contracts are adopted as drift, never swept | In tables: several places set the same thing — the explorer's separate ABI writer problem, generalised |
-| Compliance settings | **Document** `compliance` | settings, one owner | In tables: "enforce" can be flipped to "monitor" without a second person |
-| Approvers, trusted CI | **Document** `approvers` <br><sub>human-only</sub> | it is the authority itself | As an operation: whoever can call the endpoint widens who may approve — the authority would guard itself |
-| Shared infra, tenants, orgs (§6) | **Document** `platform` <br><sub>human-only</sub> | platform-owned decisions | As operations: a customer is bootstrapped by API calls nobody reviews |
-| Users (existence, DID) | **Fact** | created by login; nobody authors a user | In the document: a user exists only once an author types them in; login waits for a revision |
-| Memberships, expiry | **Fact** | several writers (admin, IdP/HR sync, ZK self-service, expiry); per-person cadence | In the document: every join and leave is a reviewed revision; a re-applied document overwrites what another writer changed; each expiry needs its own revision |
-| Address ↔ principal links | **Fact** (proof) | a link exists only because the user signed a challenge with that key (`eth/link/verify`; the demo bypass `MOCK_SIGNATURES` is force-disabled when `ENVIRONMENT=production`, `config.go:475`) — it is a **proof** | In the document: the link is an author's assertion, not the user's signature — whoever writes the document binds someone else's address to a principal and authorises its transactions |
-| Bans, KYC, sanctions | **Fact** | also written by compliance automation and feeds; an incident ban must reach the node in the next block | In the document: a ban waits for review instead of reaching the next block, and the next re-applied document lifts it silently |
-| Deployment observations | **Fact** <br><sub>today mixed into `contracts` — §6</sub> | recorded by the reconciler from a finalized receipt plus the identity binding; the chain alone shows the signer, not the principal or organisation (several principals may share a signer) | In the document: an author's claim, not an observation. From the chain alone: the receipt shows the signer, not the principal or the organisation |
-| Disclosure lifecycle | **Fact** | a state machine between two organisations; each step is an answer | In the document: one organisation authors the other's consent |
-| Revisions, artifacts, who activated | **Record** | written in the same transaction as the change taking effect, with the hash-chained audit entry — the only place that can say *what was in force at T* (DECISION §3.1) | In Git: only what was merged, not what took effect or when. In the document: a configuration cannot carry the history of its own activation. On chain: public, and a transaction per review step |
-| Submissions, outcomes, visibility | **Record** | only OPS knows which principal, which `visibleTo`, which receipt | Anywhere else: nothing holds the join between a transaction, its principal and its `visibleTo` recipients |
-| Fact stream to the node | **Bookkeeping** | the version bump commits in the same transaction as the fact change; the cursor is the restart point | Anywhere else: a fact could be durable in Postgres without the node ever learning of it |
-| Group RPC credential | **Secret** | a secret is never source text | In the document: the secret appears in every diff, review and export |
-| Projections of configuration | **Cache** <br><sub>target: in-memory doc — §9</sub> | derivable; only needed because readers join configuration with facts | Nothing changes — they are rebuilt from the document; using them as a source is the transition artefact |
-| Permission results, sessions | **Runtime** <br><sub>target: no Redis — §9</sub> | computed or short-lived | Nothing durable — recomputed or re-issued |
+| **[Execution rules](#execution-rules)**<br><sub>what a group may call: contract, function, argument limits</sub> | **Document** `execution-rules` <br><sub>compiled by the server</sub> | one owner, reviewed before it decides anything, reproducible; the node executes the compiled artifact | In tables: a row is not executable — the node runs compiled policy code inside the call frame, so enforcement falls back to the proxy, which cannot see nested calls (the reason for the whole design, §2 of DECISION). On top of that a grant takes effect the moment the API call returns, with no review and no reproducible history — the state before RD-1287 |
+| **[Group definitions](#group-definitions)**<br><sub>the groups of an organisation and what RPC they may use</sub> | **Document** `groups` | decisions of the org admin; deleting a group with live members needs explicit acknowledgement | In tables: structure changes with no review, and membership cascades nobody sees |
+| **[Contract configuration](#contract-configuration)**<br><sub>which contracts the org owns, their ABI and visibility</sub> | **Document** `contract-registry` | decisions; pipeline-registered contracts are adopted as drift, never swept | In tables: several places set the same thing — the explorer's separate ABI writer problem, generalised |
+| **[Compliance settings](#compliance-settings)**<br><sub>thresholds, currency, enforce or monitor</sub> | **Document** `compliance` | settings, one owner | In tables: "enforce" can be flipped to "monitor" without a second person |
+| **[Approvers, trusted CI](#approvers-trusted-ci)**<br><sub>who may activate a revision, and which CI is trusted</sub> | **Document** `approvers` <br><sub>human-only</sub> | it is the authority itself | As an operation: whoever can call the endpoint widens who may approve — the authority would guard itself |
+| **[Platform](#platform)**<br><sub>shared contracts, tenants, organisations (§6)</sub> | **Document** `platform` <br><sub>human-only</sub> | platform-owned decisions | As operations: a customer is bootstrapped by API calls nobody reviews |
+| **[Users](#facts-about-people)**<br><sub>a person exists in OPS, identified by DID</sub> | **Fact** | created by login; nobody authors a user | In the document: a user exists only once an author types them in; login waits for a revision |
+| **[Memberships](#facts-about-people)**<br><sub>who is in which group, until when</sub> | **Fact** | several writers (admin, IdP/HR sync, ZK self-service, expiry); per-person cadence | In the document: every join and leave is a reviewed revision; a re-applied document overwrites what another writer changed; each expiry needs its own revision |
+| **[Address links](#facts-about-people)**<br><sub>this wallet belongs to this person, proven by signature</sub> | **Fact** (proof) | a link exists only because the user signed a challenge with that key (`eth/link/verify`; the demo bypass `MOCK_SIGNATURES` is force-disabled when `ENVIRONMENT=production`, `config.go:475`) — it is a **proof** | In the document: the link is an author's assertion, not the user's signature — whoever writes the document binds someone else's address to a principal and authorises its transactions |
+| **[Bans, KYC, sanctions](#facts-about-people)**<br><sub>who is blocked or verified right now</sub> | **Fact** | also written by compliance automation and feeds; an incident ban must reach the node in the next block | In the document: a ban waits for review instead of reaching the next block, and the next re-applied document lifts it silently |
+| **[Deployment observations](#deployment-observations)**<br><sub>who deployed which contract, from which transaction</sub> | **Fact** <br><sub>today mixed into `contracts` — §6</sub> | recorded by the reconciler from a finalized receipt plus the identity binding; the chain alone shows the signer, not the principal or organisation (several principals may share a signer) | In the document: an author's claim, not an observation. From the chain alone: the receipt shows the signer, not the principal or the organisation |
+| **[Disclosure](#disclosure-lifecycle)**<br><sub>one org asks another to reveal data; approve, reject, revoke</sub> | **Fact** | a state machine between two organisations; each step is an answer | In the document: one organisation authors the other's consent |
+| **[The record](#the-record)**<br><sub>which document took effect, when, approved by whom</sub> | **Record** | written in the same transaction as the change taking effect, with the hash-chained audit entry — the only place that can say *what was in force at T* (DECISION §3.1) | In Git: only what was merged, not what took effect or when. In the document: a configuration cannot carry the history of its own activation. On chain: public, and a transaction per review step |
+| **[Execution bookkeeping](#execution-bookkeeping)**<br><sub>each submitted transaction, its principal and outcome</sub> | **Record** | only OPS knows which principal, which `visibleTo`, which receipt | Anywhere else: nothing holds the join between a transaction, its principal and its `visibleTo` recipients |
+| **[Fact stream](#fact-stream-to-the-node)**<br><sub>the versioned facts the node evaluates policy against</sub> | **Bookkeeping** | the version bump commits in the same transaction as the fact change; the cursor is the restart point | Anywhere else: a fact could be durable in Postgres without the node ever learning of it |
+| **[Group RPC credential](#group-rpc-credential)**<br><sub>the group's upstream API key</sub> | **Secret** | a secret is never source text | In the document: the secret appears in every diff, review and export |
+| **[Projections](#projections-and-runtime)**<br><sub>tables rebuilt from the active documents</sub> | **Cache** <br><sub>target: in-memory doc — §9</sub> | derivable; only needed because readers join configuration with facts | Nothing changes — they are rebuilt from the document; using them as a source is the transition artefact |
+| **[Runtime state](#projections-and-runtime)**<br><sub>resolved permissions, sessions, challenges</sub> | **Runtime** <br><sub>target: no Redis — §9</sub> | computed or short-lived | Nothing durable — recomputed or re-issued |
 The homes, in one line each:
 
 | Home | What qualifies | How it changes |
@@ -325,4 +325,196 @@ explorer visibility filter on a large organisation was not benchmarked (§9);
 that organisations belong in the platform document (§6) — a decision, with
 self-service organisation creation named as the case that would reopen it;
 and the shape of the deferred MCP surface (§4).
+
+## 12. What each class looks like — one example each
+
+Taken from the live acceptance stack, trimmed. Organisation
+`12dac85b-227f-4e46-9716-be769e87f21a`.
+
+### Execution rules
+
+The policy inside the `execution-rules` document. Each binding is one group and
+what it may execute; the node compiles this and evaluates it on every call frame.
+
+```json
+{"kind": "execution-rules", "scope": {"kind": "organization", "id": "12dac85b…"},
+ "baseRevision": 2,
+ "spec": {"policy": {
+   "kind": "ContractExecutionPolicy", "nestedCalls": "requireOwnRule",
+   "bindings": [
+     {"group": "operators", "allow": [
+        {"targetClass": "contract", "storageAddress": "0xf2e246…95b",
+         "selector": "0x9f0a7e8f", "abiDigest": "a71a173c…"},
+        {"targetClass": "eoa", "selector": "0x"}]},
+     {"group": "observers", "allow": []}]}}}
+```
+
+Reads as: the `operators` group may call one function (by selector, pinned to the
+ABI it was reviewed against) on that contract and may send plain transfers;
+`observers` may execute nothing. Rules can also bound arguments
+("amount ≤ 1000") and name classes instead of addresses (`deployer` — anything
+this principal deployed, `shared` — shared infrastructure, `precompile`).
+
+### Group definitions
+
+```json
+{"kind": "groups", "spec": {"groups": [
+  {"id": "ef205082…", "slug": "reviewers", "name": "Reviewers",
+   "isOrgAdmin": true, "isOrgReadonlyAdmin": false,
+   "allowedMethods": ["eth_call", "eth_sendRawTransaction", "eth_getLogs", "…"],
+   "claims": [], "verboseErrors": true}]}}
+```
+
+The group's structure and which RPC methods it may use at all — a different
+question from *what it may execute*, which is the policy above. Membership of
+people is **not** here: that is a fact (below).
+
+### Contract configuration
+
+```json
+{"kind": "contract-registry", "spec": {"contracts": [
+  {"id": "df21d559…", "address": "0xf2e246…95b", "name": "Acceptance Counter",
+   "abi": [{"name": "complete", "type": "function", "inputs": [{"type": "uint256"}]},
+           {"name": "Changed", "type": "event", "inputs": [
+              {"name": "actor", "type": "address", "indexed": true}]}],
+   "allowVisibleToUnlock": false, "eventsAllowDynamicPayload": false,
+   "readGrants": [{"groupId": "ef205082…", "eventRules": {"mode": "allowlist",
+      "rules": [{"name": "Changed", "paramRules": [{"index": 0, "must_be": "self"}]}]}}]}]}}
+```
+
+Which contracts the organisation owns, the ABI rules are pinned to, and who may
+see which events — the read side. A contract deployed by a pipeline appears here
+as drift and is adopted by the next revision, never deleted by re-applying.
+
+### Compliance settings
+
+```json
+{"kind": "compliance", "spec": {
+  "settings": {"enabled": true, "thresholdFiat": 10000, "currency": "usd",
+               "unknownPricePolicy": "forbidden", "enforcementMode": "enforce"},
+  "addressThresholds": [{"address": "0x…", "thresholdFiat": 500, "note": "vendor"}],
+  "tokenPrices": [{"tokenAddress": "0x…", "symbol": "ACME", "decimals": 18,
+                   "pricesByCurrency": {"usd": "1.25"}, "coingeckoId": ""}]}}
+```
+
+Settings and manual prices. Fetched rates, sanctions hits and travel-rule
+records are observations and stay operational.
+
+### Approvers, trusted CI
+
+```json
+{"kind": "approvers", "spec": {
+  "groupIds": ["ef205082…"],
+  "trustedCI": [{"id": "…", "issuer": "customer-review-service",
+                 "audience": "privacy-proxy", "subject": "ops-ci",
+                 "repository": "customer/ops", "ref": "refs/heads/main",
+                 "publicKey": "base64-ed25519"}]}}
+```
+
+Which admin groups may activate revisions, and whose signed approval manifest
+CI activation will accept. Human-authored and human-activated only.
+
+### Platform
+
+```json
+{"kind": "platform", "spec": {
+  "sharedInfrastructure": [{"address": "0x…", "name": "Multicall3",
+                            "codehash": "a1b2…"}],
+  "tenants": [{"tenantId": "…", "label": "ACME", "defaultOrgId": "12dac85b…",
+               "defaultGroupId": "…", "autoProvision": true}]}}
+```
+
+Deployment-wide items. Organisations join this document (§6).
+
+### Facts about people
+
+Not authored — produced by operations, each its own endpoint:
+
+```
+POST /api/v1/auth/verify                     → the user row exists (login)
+POST /api/v1/admin/orgs/{org}/memberships/by-did
+     {"did": "did:test:…user", "group_id": "0670f22a…", "expires_at": null}
+POST /api/v1/eth/link/challenge → wallet signs → POST /api/v1/eth/link/verify
+     {"address": "0x7e5f…bdf", "signature": "0x…"}     ← the proof
+PUT  /api/v1/admin/users/{id}   {"banned": true}       ← reaches the node's next block
+```
+
+What the node then receives as facts:
+
+```json
+{"principals": [{"id": "user-a", "banned": false,
+                 "linked_addresses": ["0x7e5f…bdf"],
+                 "memberships": [{"group_id": "0670f22a…", "expires_at": 0}]}],
+ "groups":     [{"id": "0670f22a…", "org_id": "12dac85b…", "claims": 4}],
+ "contracts":  [{"address": "0xf2e246…95b", "org_id": "12dac85b…"}]}
+```
+
+### Deployment observations
+
+Written by the reconciler after a finalized receipt, not by an author:
+
+```
+contracts.deployed_by_user_id = 6d382311…   (the principal, not just the signer)
+contracts.deployed_at         = 2026-09-17T10:30:12Z
+contracts.metadata            = {"deployment_tx": "0x03e987…", "block": 12}
+```
+
+The chain shows the signer; several principals may share one signer, so only
+OPS knows which principal deployed it.
+
+### Disclosure lifecycle
+
+```
+POST /api/v1/admin/disclosure/requests        org A asks to see org B's user data
+POST /api/v1/me/disclosure/requests/{id}/approve   the subject answers
+POST /api/v1/admin/disclosure/grants/{id}/revoke   either side ends it
+```
+
+Each step is an answer from another party, so it cannot be a document.
+
+### The record
+
+One row per reviewed revision — this is what answers "what was in force at T":
+
+```
+kind=execution-rules  revision=3  status=active   base=2
+digest=sha256:172c3970494…      source=<the exact submitted text>
+created_by=2775b9e3… (author, human)   activated_by=b522a114… (a different human)
+activated_at=2026-09-17T10:30:05Z      compiled_artifact={bytecode, digests}
+```
+
+Plus the hash-chained audit entry written in the same transaction.
+
+### Execution bookkeeping
+
+```
+node_submissions: tx 0x59988c…  principal 6d382311…  org 12dac85b…
+                  state=expired  outcome=POLICY_DENIED  (the revoked-rule case)
+                  tx 0xf5c2e3…  state=included  reconciled_at=…
+```
+
+The node knows the verdict; only OPS knows whose transaction it was and who may
+see it.
+
+### Fact stream to the node
+
+```
+node_policy_clock   version = 27                    ← bumped in the same transaction as the fact change
+node_policy_outbox  27 → {"policy": {"12dac85b…": true}}   ← what changed in that version
+node_policy_cursors producer → version 27, digest 82adb36e…, expires 1789646009
+```
+
+### Group RPC credential
+
+```
+PUT /api/v1/admin/orgs/{org}/groups/{group}/rpc-credential
+    {"rpc_api_key": "<secret>"}        ← never source text, never in a diff or audit value
+```
+
+### Projections and runtime
+
+Not authored and not a source: `groups`, `contracts`, `contract_grants` and the
+other projection tables are rewritten by activation from the document;
+`effective_permissions_cache`, sessions and challenges are recomputed or expire.
+Both are rebuilt if lost.
 
