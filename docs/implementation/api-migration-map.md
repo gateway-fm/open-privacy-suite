@@ -156,7 +156,7 @@ a document class left in tables, or a fact authored in a document.
 
 | Data | Home | Why there | If it lived in the other home |
 |---|---|---|---|
-| Execution rules | **Document** `execution-rules` <br><sub>compiled by the server</sub> | one owner, reviewed before it decides anything, reproducible; the node executes the compiled artifact | In tables: two writers again (the grants API and the policy), no review step, no reproducible history — the state before RD-1287 |
+| Execution rules | **Document** `execution-rules` <br><sub>compiled by the server</sub> | one owner, reviewed before it decides anything, reproducible; the node executes the compiled artifact | In tables: a row is not executable — the node runs compiled policy code inside the call frame, so enforcement falls back to the proxy, which cannot see nested calls (the reason for the whole design, §2 of DECISION). On top of that a grant takes effect the moment the API call returns, with no review and no reproducible history — the state before RD-1287 |
 | Group definitions | **Document** `groups` | decisions of the org admin; deleting a group with live members needs explicit acknowledgement | In tables: structure changes with no review, and membership cascades nobody sees |
 | Contract configuration | **Document** `contract-registry` | decisions; pipeline-registered contracts are adopted as drift, never swept | In tables: several places set the same thing — the explorer's separate ABI writer problem, generalised |
 | Compliance settings | **Document** `compliance` | settings, one owner | In tables: "enforce" can be flipped to "monitor" without a second person |
