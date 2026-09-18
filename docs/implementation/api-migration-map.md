@@ -235,13 +235,14 @@ facts query followed by map lookups — the pattern the node already runs in Rus
 Not measured: the explorer filter on an organisation with thousands of contracts
 and hundreds of disclosure grants; the row above is arithmetic, not a benchmark.
 
-**Redis** holds six things today, none of them configuration:
+**Redis** holds no configuration, but removing it is not free — checked in
+`server.go:560-581`, `rbac/access.go`, `rbac/resolver.go`:
 
-| In Redis today | Without Redis |
-|---|---|
-| `PermissionCache` — permission results shared across replicas | per-replica memory; invalidation already comes from the `rbac_cache_generation` counter in Postgres (RD-1267), so Redis is not needed for correctness, only for sharing |
-| OAuth sessions, auth sessions, Azure OAuth state, link challenges (short-lived) | Postgres tables with TTL cleanup (as `refresh_tokens` already is), or sticky sessions |
-| upstream circuit breaker | per-replica memory |
+| In Redis today | What it actually does | To remove it |
+|---|---|---|
+| `PermissionCache` — resolved permissions, TTL 5 min (`RBACCacheTTL`) | **correctness, not just sharing**: `InvalidateUser/InvalidateOrg` deletes the shared row in `effective_permissions_cache` *and* the upper cache entry. With Redis that deletion reaches every replica. Without it each replica keeps its own in-memory copy, so a grant revoked on replica B stays usable on replica A for up to 5 minutes. The `rbac_cache_generation` counter (RD-1267) guards *publication* races, not cross-replica invalidation, and the read path does not revalidate it | change the cache, do not just drop it: either serve only from the shared SQL `effective_permissions_cache` (one DB round trip per resolution, invalidation already correct), or have each replica compare `rbac_cache_generation` before serving from memory (one cheap read, itself cacheable for about a second) |
+| OAuth sessions, auth sessions, Azure OAuth state, link challenges | shared short-lived state; the in-memory fallback today is **single-replica only** — a login started on one replica cannot complete on another | Postgres tables with TTL cleanup (as `refresh_tokens` already is), or sticky sessions |
+| upstream circuit breaker | per-replica view of the upstream | nothing to do — per-replica memory is correct |
 
 **The middle ground**
 
