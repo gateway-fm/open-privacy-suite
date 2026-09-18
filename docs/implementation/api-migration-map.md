@@ -112,6 +112,13 @@ lost. The 4 September research and DECISION §3.5 fixed the target shape:
 3. Scoped admin roles and quotas for standing agent automation ("add up to N
    members a day") — an RBAC extension, not a DSL question; not built.
 4. MCP rebuild timing (table above).
+5. **Where the configuration text is authored.** The recommendation is the
+   customer's Git with CI or an ArgoCD-style agent pushing it in (§7). The
+   decision to confirm is the layout — one file per `(organisation, stream)` is
+   recommended — and whether OPS keeps a copy of the applied text. Keeping it is
+   what lets the operator answer "what was in force at T" without the customer's
+   repository; dropping it is a data-sovereignty choice, and a deliberate loss of
+   that answer.
 
 ## 6. Decided follow-up: organisations become part of the platform document
 
@@ -143,167 +150,123 @@ Two further follow-ups recorded on the same day, from the review of §7:
 | Convert the legacy admin screens (groups, contracts, grants, compliance forms) into document views: read-only from the active revision, "edit" opens the Configuration screen | today they still call the legacy endpoints and, once a stream is active, receive 409 with no path forward — the UI is not yet uniformly a viewer/editor of the documents (plan Stage 3, not done) | 2–3 days |
 | Separate chain observations from configuration in `contracts` (and the auto-grant rows in `contract_grants`): observations in their own facts table, configuration only in the `contract-registry` document, drift adoption as the bridge; then treat the remaining projection tables explicitly as caches rebuilt on activation | the mix is what makes the projections look like a second configuration store; without it only the explorer's SQL visibility filter still needs a materialised form | 2–3 days |
 
-## 7. What is written as a document, what as rows — and when a document is the wrong form
+## 7. Where each class of data should live
 
-Everything durable is in Postgres; what differs is the form. Every piece of data
-was sorted with the same four questions:
-**who writes it** (one owner, or several writers and automation), **what it is**
-(a decision someone can review, or an observation / proof that can only be
-recorded), **when it must take effect** (after a review, or in the next block),
-and **whether it changes on its own** (expiry, chain events). The answers put
-each class into one of four homes. The last column is the part that matters in
-a discussion: what the world looks like if that class lived in the other home —
-a document class left in tables, or a fact authored in a document.
+The question this section answers: **for each kind of data, where should it
+live, and when is an OPS-held document the wrong home?** Two axes, independent
+of each other:
 
-**Everything durable below is in Postgres.** The question this table answers is
-not *which database* but **in what form the data is written and who may write
-it** — because that is what decides whether a change can be reviewed before it
-takes effect, and what happens when it must not wait for a review.
+- **Form** — a reviewed document, ordinary rows written by operations, a record of what happened, or something derived.
+- **Location of a document's text** — the customer's Git repository, or OPS. A document can be authored in Git and pushed in; nothing in the design requires OPS to be the authoring home.
 
-A "document" is a JSON configuration text (`ops.configuration/v1`) written by a
-person or an agent and stored as `configuration_revisions.source`; activating it
-rewrites the projection tables in the same transaction. It is not a smart
-contract and nothing about it is on chain. One stream goes further: the server
-compiles `execution-rules` into EVM bytecode, stores it in
-`configuration_revisions.compiled_artifact`, and the node loads that artifact
-**privately, from the signed fact snapshot** — never from a chain address.
+One assumption, stated so it can be overruled: **the operator must be able to
+answer "what was in force at T" without access to the customer's repository.**
+That is what keeps a copy of an applied document in OPS. Decide otherwise and
+exactly one row below changes.
 
-**Where the text is authored, and where the applied copy lives.** These are two
-different questions and the table answers only the second one.
+Each row carries **one** argument — the one that decides it. The type column
+says what kind of claim it is, so you know which ones survive a challenge:
+*principle* (true of any system built this way), *verified* (checked in this
+codebase, with the reference), *measured* (a number), *judgement* (mine).
 
-The text may be authored and reviewed **in the customer's Git**. That is a
-supported path, not a workaround: `activate-ci` takes a signed manifest that
-names `repository`, `ref`, `commit`, the exact `candidateDigests`, and the
-`reviewerSubjects` who approved the pull request (`configuration/ci_approval.go:19`).
-The merged PR is the approval; OPS verifies the signature against a trusted
-issuer configured in the `approvers` document and records it with the
-activation.
-
-The applied copy still lives in Postgres, for four reasons that Git cannot
-cover:
-
-- activation rewrites the projection tables and writes the node's outbox row **in one transaction** — a file in a remote repository cannot take part in it;
-- enforcement must not depend on reaching a third-party service: the node and OPS must know the active rules from the database alone;
-- Git can be force-pushed, rewritten or deleted; the text that was enforced has to survive that;
-- Git records a merge, not an activation — CI can fail, the authority check can reject the document, a merged file can sit unapplied, so Git cannot answer "what was in force at T".
-
-So Postgres is not competing with Git for authorship. It holds the copy that
-was actually applied and the record of when and by whom.
-
-**When a document is the wrong form.** Four tests. Each is stated as an
-argument, then questioned: is it logical, is it a principle or merely how this
-build works today, could it be designed otherwise, and what is the evidence.
-Two of the four did not survive that and are narrowed below.
-
-**Test 1 — the document is not the only writer of the same thing.**
-
-- *Argument.* Re-applying a reviewed snapshot silently reverts what another writer changed in between.
-- *Logical?* Yes, but the first version of this argument leaned on drift adoption ("the registry already lives with a second writer"), and that is a symptom, not a principle. Drift today covers two things that should not be drift at all: a contract row created by a deployment, which is an **observation** sitting in a table full of **decisions** (`contracts` mixes `deployed_by_user_id`/`deployed_at`/`metadata` with `name`/`abi`/visibility), and the deploy-group auto-grant, which the policy already expresses declaratively — the live stack's own policy contains `{"targetClass": "deployer", "selector": "*"}`. Split the observation from the decision (§6) and retire the auto-grant with the legacy path, and the registry has one writer again.
-- *Now, or in principle?* The right principle is stronger than "several writers": several writers disqualify a document **unless they are writing different kinds of thing that history merged into one table** — and then the fix is to separate them, not to tolerate drift. For memberships separation does not help: the admin API, Azure auto-provision and ZK roles all write the *same* kind of row for the same person, and none of them is a decision anyone reviews.
-- *Could it be otherwise?* Field-level or provenance-based ownership (memberships already carry `source` = `admin` / `zk_attested`, `rbac/models.go:61-66`) would let a document own one writer's share. Worth it only where review has content — privileged membership, see §6 — not for a population of a million.
-- *Evidence.* The mixed columns of `contracts`; `targetClass: deployer` in the active policy of the acceptance stack; the membership `source` enum; drift preservation in `groups.go:66-71`.
-
-**Test 2 — it must take effect before anyone can review it.**
-
-- *Argument.* A ban during an incident cannot wait for a document to be reviewed.
-- *Logical?* The latency is real but comes from our rule: activation refuses the author's own draft (`configuration_revision_store.go:442`). The part that is not ours: **the review would carry no information** — an approver has no independent basis to judge an incident ban, so the second signature adds delay without adding safety.
-- *Now, or in principle?* Four-eyes is our implementation. "Review with nothing to review is not a control" is the principle.
-- *Could it be otherwise?* Yes — an emergency stream with self-activation, or break-glass activation with review after the fact. The first removes the review the document exists for; the second is a real pattern we have not built.
-- *Evidence.* The self-approval check; no break-glass path in the code.
-
-**Test 3 — it is a proof or an observation someone else produced.**
-
-- *Argument.* An address link is the user's signature; a deployment is a finalized receipt plus the identity binding. An author writing them into a document would be *asserting* what someone else proved — for links that is impersonation by configuration.
-- *Logical?* As stated, too strong. A document **could** carry each link together with its signature and the server could verify it; then authorship is harmless because trust still rests on the proof.
-- *Now, or in principle?* The principle is narrower than the sentence: *authenticity must be verified at the source, never trusted because a document says so.* A document that embeds verifiable evidence satisfies it; a document that merely lists addresses does not.
-- *Could it be otherwise?* Yes, and it would work for a handful of links. It fails at scale for a different reason: the facts for 1 M users are about 85 MB (DECISION §3.1) against a 1 MiB document limit, and a reviewer reading signatures approves nothing meaningful.
-- *Evidence.* `eth_link.go` verification; the sizing in DECISION §3.1; the 1 MiB limit in `configuration.MaxDocumentBytes`.
-
-**Test 4 — it changes without anyone writing it.**
-
-- *Argument (as first written, and wrong).* "A static text would need re-issuing on every expiry or tick." Expiry disproves it: a document can hold `expiresAt` once and the node evaluates it against the block it is building (`facts.rs:254` filters memberships by `expires_at > now`). A static field can describe a dynamic effect.
-- *What survives.* External feeds — sanctions lists, price observations. Each update would become a revision: a review per feed event, with nothing for the reviewer to decide.
-- *Now, or in principle?* Dynamic evaluation of a static field is implemented. "A control that fires on every external event is not a control" is the principle.
-- *Could it be otherwise?* Yes, and we already do the useful half: the compliance **document** holds the decisions (thresholds, enforcement mode, manually authored prices) while fetched rates and sanctions hits stay operational rows.
-- *Evidence.* The membership filter in the node; the compliance document schema.
-
-So the honest set of tests is: a document is the wrong form when the conflict
-with another writer is at field level, when a review would have no content,
-when the data is evidence and embedding it would not scale, or when the change
-arrives from outside on every event.
-
-**One axis, not two.** The table below compares **forms**: a reviewed document
-versus ordinary rows versus a record. It does **not** argue about where a
-document's text is stored. The second column names today's location as a fact
-about this build, nothing more — the same text could live as a file in the
-customer's Git, pushed in by CI or by an ArgoCD-style agent, exactly as the
-section above describes. What would still be written into the database at that
-moment is the version pin the node switches on, the projections for as long as
-they exist (§9), and the activation record.
-
-| Data | Form, and where it sits today | What it is, and why in that form | If it took the other form |
+| Data | Should live as | The argument that decides it | Type |
 |---|---|---|---|
-| **[Execution rules](#execution-rules)**<br><sub>what a group may call: contract, function, argument limits</sub> | a reviewed document — `configuration_revisions.source` + `compiled_artifact`<br><sub>projected into `execution_policy_revisions` (the RD-1287 table the node reads from); copy in node memory</sub> | **Decision.** what the node enforces must be derivable from a text a person approved: the server compiles, and both digests are recorded, so any byte the node runs traces back to the review. One qualification against "single owner": a deployment still inserts an auto-grant row (`node_submission.go:213`, `functions` NULL = all functions in the legacy path). In node mode the document is the only decider and that row is ignored; in legacy mode it still grants | As rows, the node cannot enforce them. The node enforces by running compiled policy code inside every call frame of a transaction; a database row is not code, so there is nothing for it to run. Checking would move back to OPS, which sees only the call the user sends — not the calls that contract makes to other contracts inside the same transaction. That blind spot is why the node policy exists (DECISION §2). Separately: a row takes effect the moment the API call returns — no second person, no history anyone can replay. That was the state before RD-1287 |
-| **[Group definitions](#group-definitions)**<br><sub>the groups of an organisation and what RPC they may use</sub> | a reviewed document — `configuration_revisions.source`<br><sub>projected into `groups`, `group_access`</sub> | **Changing a group changes what its members may do.** A group is not a label: `isOrgAdmin` makes every member a full org admin, `claims` grant admin/upgrade/deploy over contracts, and `allowedMethods` decides which RPC calls they may make. Editing one is a privilege change, which is what review is for. A weaker, secondary point: a rules revision *may* pin the groups revision by digest so both activate in one step, but that is optional — our own acceptance run activated rules with `dependencies: {}` | In tables: structure changes with no review, and membership cascades nobody sees |
-| **[Contract configuration](#contract-configuration)**<br><sub>which contracts the org owns, their ABI and visibility</sub> | a reviewed document — `configuration_revisions.source`<br><sub>projected into `contracts`, `contract_grants`</sub> | **Decision.** the rules pin a contract's ABI by digest, so an ABI change and the rules that depend on it must be reviewed and activated in one step; a registry edited outside review would silently invalidate rules. Drift adoption here is a transition mechanism, not a design goal: it exists because chain observations share the `contracts` table with decisions and because the legacy deploy auto-grant still writes a grant row. Split the first (§6) and retire the second with the legacy path, and this stream has a single writer. | In tables: several places set the same thing — the explorer's separate ABI writer problem, generalised |
-| **[Compliance settings](#compliance-settings)**<br><sub>thresholds, currency, enforce or monitor</sub> | a reviewed document — `configuration_revisions.source`<br><sub>projected into `compliance_config`, `token_prices`, `address_threshold_overrides`</sub> | **Decision.** a threshold or an enforce/monitor switch is something a reviewer can actually judge, and it changes rarely — the two conditions that make a second signature worth its latency | In tables: "enforce" can be flipped to "monitor" without a second person |
-| **[Approvers, trusted CI](#approvers-trusted-ci)**<br><sub>who may activate a revision, and which CI is trusted</sub> | a reviewed document — `configuration_revisions.source`<br><sub>no projection: read from the active document; human-authored only</sub> | **Decision about authority itself.** eligibility for *this* activation is read from the **active** approvers revision, never from the one being activated (`ConfigurationActorIsApprover` uses `view.Approvers`, the active document; the proposal only appears in the diff) — so a document cannot widen the set that approves it. Default when no approvers document exists: any full org admin may activate | As an operation: whoever can call the endpoint widens who may approve — the authority would guard itself |
-| **[Platform](#platform)**<br><sub>shared contracts, tenants, organisations (§6)</sub> | a reviewed document — `configuration_revisions.source`<br><sub>projected into `shared_infrastructure`, `allowed_azure_tenants`</sub> | **Decision, platform-owned.** chosen by the deployment operator, not by a tenant | As operations: a customer is bootstrapped by API calls nobody reviews |
-| **[Users](#facts-about-people)**<br><sub>a person exists in OPS, identified by DID</sub> | operational rows — `users`<br><sub>sent to the node as facts</sub> | **Event, not an authored line.** the row appears when someone logs in (`EnsureUserExists`); the product does not decide who exists — the identity provider does. The one authored list is the deployment's `PLATFORM_ADMIN_SUBJECTS` allowlist, and it lives in the environment, deliberately outside any document | In the document: a user exists only once an author types them in; login waits for a revision |
-| **[Memberships](#facts-about-people)**<br><sub>who is in which group, until when</sub> | operational rows — `user_memberships`<br><sub>sent to the node as facts</sub> | **Relationship with several writers, conflicting at field level.** three writers today — the admin API, Azure tenant auto-provision (`auth_azure.go:298`), ZK role extraction (`auth.go:603`). Object-level drift adoption, which lets the registry live with a second writer, does not help here: the conflict is over the same field of the same person. Field-level ownership (server-side-apply style) would make a document possible; at 1 M people the per-person diff is not something a reviewer can weigh anyway (Test 1) | In the document: every join and leave becomes a reviewed revision, and a re-applied document overwrites what another writer changed in between. Expiry is *not* an argument here — a static `expiresAt` is evaluated dynamically by the node (Test 4) |
-| **[Address links](#facts-about-people)**<br><sub>this wallet belongs to this person, proven by signature</sub> | operational rows — `eth_address_links`<br><sub>sent to the node as facts</sub> | **Proof, verified at the source.** the link exists because the user signed a challenge with that key (`eth_link.go`; the demo bypass `MOCK_SIGNATURES` is force-disabled in production, `config.go:475`). A document could carry each signature and have the server verify it — authenticity would survive — but the facts for 1 M users are ~85 MB against a 1 MiB document limit, and a reviewer reading signatures approves nothing (Test 3) | In the document: the link is an author's assertion, not the user's signature — whoever writes the document binds someone else's address to a principal and authorises its transactions |
-| **[Bans, KYC, sanctions](#facts-about-people)**<br><sub>who is blocked or verified right now</sub> | operational rows — `users.banned`, `users.kyc`, `sanctioned_addresses`<br><sub>bans and sanctions are sent to the node; KYC is used by OPS</sub> | **Safety flag, written by people and automation.** three different things, none of them a decision to review: KYC is set by the login credential (`auth.go:571`), a ban is an incident action that must take effect at once (admin-written today, `rbac_store_user.go:63`), and sanctions are a per-organisation address list checked at transaction time (`compliance/checker.go:188`), never a property of a person | In the document: a ban waits for a review cycle instead of reaching the node at the next block, and the next re-applied document lifts it silently; KYC would have to be transcribed from the credential by hand; a sanctions feed would become a stream of revisions |
-| **[Deployment observations](#deployment-observations)**<br><sub>who deployed which contract, from which transaction</sub> | operational rows — columns of `contracts`<br><sub>to be split into their own table — §6</sub> | **Observation.** recorded by the reconciler from a finalized receipt plus the identity binding; the chain alone shows the signer, not the principal or organisation (several principals may share a signer). It is stored denormalised: `node_submissions` already holds transaction → principal, so these columns could be a view over it instead of fields on `contracts` — that is the cleaner split §6 proposes | In the document: an author's claim, not an observation. From the chain alone: the receipt shows the signer, not the principal or the organisation |
-| **[Disclosure](#disclosure-lifecycle)**<br><sub>one org asks another to reveal data; approve, reject, revoke</sub> | operational rows — `disclosure_requests`, `disclosure_grants`, `disclosure_events`<br><sub>OPS read side only, never sent to the node</sub> | **Exchange between two parties.** a state machine between two organisations; each step is an answer | In the document: one organisation authors the other's consent |
-| **[The record](#the-record)**<br><sub>which document took effect, when, approved by whom</sub> | immutable source and digest, mutable status — `configuration_revisions` (a trigger refuses any edit of `source`/`digest`; `status`, `activated_by`, `activated_at` are set once on activation), plus the append-only `rbac_audit_log` | **The record.** written in the same transaction as the change taking effect, with the hash-chained audit entry — the only place that can say *what was in force at T* (DECISION §3.1) | In Git: only what was merged, not what took effect or when. In the document: a configuration cannot carry the history of its own activation. On chain: public, and a transaction per review step |
-| **[Execution bookkeeping](#execution-bookkeeping)**<br><sub>each submitted transaction, its principal and outcome</sub> | mutable rows tracking one transaction to its end state — `node_submissions` (`state`, `outcome`, `reconciled_at`), `tx_visible_to` | **Record of execution.** only OPS knows which principal, which `visibleTo`, which receipt | Anywhere else: nothing holds the join between a transaction, its principal and its `visibleTo` recipients |
-| **[Fact stream](#fact-stream-to-the-node)**<br><sub>the versioned facts the node evaluates policy against</sub> | counters and markers — `node_policy_clock`, `node_policy_outbox`, `node_policy_cursors` | **Bookkeeping of the push.** a change and the promise to deliver it must commit together, or a fact can be durable while the node never hears of it — the clock bump happens inside the writing transaction (`node_policy_mark_dirty`, migration 073) and the cursor is the restart point. The alternative to an outbox is logical replication or change-data-capture reading the WAL; that removes the trigger layer but adds a replication consumer to operate, and was not chosen | Anywhere else: a fact could be durable in Postgres without the node ever learning of it |
-| **[Group RPC credential](#group-rpc-credential)**<br><sub>the group's upstream API key</sub> | a secret column — `group_access.rpc_api_key` | **Secret.** a credential must not appear in a text that is diffed, reviewed, exported and kept as history — so it is written by its own route and stored encrypted (`crypto.Encrypt` with `RPCAPIKeyEncryptionKey`, `admin_group_credentials.go:55`). The stronger design is an external secrets manager with the database holding only a reference; that is a deliberate gap, not a decided end state | In the document: the secret appears in every diff, review and export |
-| **[Projections](#projections-and-runtime)**<br><sub>tables rebuilt from the active documents</sub> | derived tables, rewritten by activation<br><sub>target: in-memory document — §9</sub> | **Derived.** rebuilt from the document; they exist only because readers join configuration with facts | Nothing changes — they are rebuilt from the document; using them as a source is the transition artefact |
-| **[Runtime state](#projections-and-runtime)**<br><sub>resolved permissions, sessions, challenges</sub> | not in Postgres — Redis or replica memory<br><sub>§9</sub> | **Derived or short-lived.** permission results are recomputed from facts and configuration; sessions and challenges are issued and expire. Losing this store is an availability event (everyone signs in again), not a correctness one — with the exception noted in §9: a per-replica permission cache without a shared invalidation serves stale permissions | Nothing durable — recomputed or re-issued |
-**Argument audit.** Each argument above run through the same four questions —
-is it logical, is it a principle or only how this build works, could it be
-designed otherwise, what is the evidence. The rows that came out clean are not
-repeated; these are the ones with a qualification a reader should know:
+| **[Execution rules](#execution-rules)** | reviewed document; text in Git or OPS | what the node enforces must be derived from a text a human approved, byte for byte — the server compiles with a pinned compiler and records both digests | principle; verified (`policydsl`, digests on the revision) |
+| **[Group definitions](#group-definitions)** | reviewed document; text in Git or OPS | a group is a bundle of powers (`isOrgAdmin`, `claims`, `allowedMethods`), so editing one changes what people may do | principle |
+| **[Contract configuration](#contract-configuration)** | reviewed document; text in Git or OPS | it decides what other organisations can see (event rules, visibility flags) and what the execution rules are pinned to (`abiDigest`) — a security decision, not an observation | principle |
+| **[Compliance settings](#compliance-settings)** | reviewed document; text in Git or OPS | a threshold or an enforce/monitor switch is something a reviewer can actually judge, and it changes rarely | judgement |
+| **[Approvers, trusted CI](#approvers-trusted-ci)** | reviewed document, human-authored only | it decides who may approve; eligibility for an activation is read from the **active** approvers revision, so a document cannot widen the set that approves it | verified (`ConfigurationActorIsApprover`) |
+| **[Platform](#platform)** | reviewed document, human-authored only | it is the deployment operator's decision, never a tenant's | principle |
+| **[Users](#facts-about-people)** | rows, written by operations | identity comes from the identity provider at login; the product does not decide who exists | verified (`EnsureUserExists`) |
+| **[Memberships](#facts-about-people)** | rows, written by operations | three writers produce the same row for the same person — admin API, Azure auto-provision, ZK roles — and none of it is a decision anyone reviews | verified (`auth_azure.go:298`, `auth.go:603`) |
+| **[Address links](#facts-about-people)** | rows, written by operations | the link is the user's signature; in a document an author would assert someone else's address and authorise its transactions | principle; verified (`eth_link.go`) |
+| **[Bans](#facts-about-people)** | rows, written by operations | it must take effect before anyone can review it, and the review would have nothing to decide | principle |
+| **[KYC](#facts-about-people)** | rows, written by operations | it is set by the credential the user logged in with | verified (`auth.go:571`) |
+| **[Sanctions](#facts-about-people)** | rows, fed externally | a revision per feed update is a control with nothing for the reviewer to decide | principle |
+| **[Deployment observations](#deployment-observations)** | rows, written by the reconciler | it is an observation, and only OPS can bind a receipt to a principal — the chain shows the signer, and several principals may share one | verified (`node_submission.go`) |
+| **[Disclosure](#disclosure-lifecycle)** | rows, written by operations | each step is the other organisation's answer | principle |
+| **[The record: what was applied, when, by whom](#the-record)** | rows in OPS, written with the activation | only the system that applied a change knows when it took effect; Git knows the merge | principle (rests on the assumption above) |
+| **[Execution bookkeeping](#execution-bookkeeping)** | rows in OPS | only OPS holds the join between a transaction, its principal and its `visibleTo` recipients | verified |
+| **[Fact version pin and cursor](#fact-stream-to-the-node)** | rows in OPS | the version the node switches to must commit in the same transaction as the change it carries | principle; verified (`node_policy_mark_dirty`) |
+| **[Group RPC credential](#group-rpc-credential)** | a secret store | a credential must never appear in a text that is diffed, reviewed and exported. Today it is encrypted in Postgres; an external secrets manager with only a reference in the database is the stronger design and an open gap | principle |
+| **[Projections](#projections-and-runtime)** | derived tables, rebuilt on activation | they are recomputable from the document and are never a source; the target is to drop them (§9) | verified |
+| **[Runtime state](#projections-and-runtime)** | memory or Redis | sessions are re-issued and permissions recomputed; losing them logs people out, it does not corrupt anything — with one exception, the permission cache needs a shared invalidation (§9) | measured (§9) |
 
-| Argument | Verdict |
-|---|---|
-| Execution rules: "single owner" | **qualified.** The deployment reconciler still inserts a grant row (`node_submission.go:213`) with `functions` NULL, which the legacy path reads as "all functions". In node mode the document decides alone; the row is drift for the registry and ignored by the node |
-| Groups: "rules and structure activate together" | **optional, not enforced.** The digest dependency exists but a rules revision may declare `dependencies: {}` — the acceptance stack did. The load-bearing reason is that a group definition confers authority |
-| Registry: drift adoption | **transition mechanism, not a design goal.** It exists because observations share `contracts` with decisions and because the legacy auto-grant writes a grant; both are to be removed (§6) |
-| Compliance: "a reviewer can judge a threshold" | **judgement.** Nothing in the code establishes that; it is the argument for why a second signature is worth its latency here and not for a ban |
-| Approvers: "cannot widen the set that approves it" | **verified.** `ConfigurationActorIsApprover` reads the active approvers revision; the proposal appears only in the diff. Note the default: with no approvers document, any full org admin may activate |
-| Users: "nobody authors a user" | **verified, with one exception**: `PLATFORM_ADMIN_SUBJECTS` is an authored list, deliberately in the environment rather than in a document |
-| Memberships: "several writers" | **narrowed** (Test 1): the disqualifier is that three writers produce the same kind of row for the same person, none of it a reviewable decision — not the bare fact that there are several |
-| Links: "a proof cannot be authored" | **narrowed** (Test 3): it can, if the signature travels with it and the server verifies. It fails on scale and on review value, not on principle |
-| Bans: "must take effect now" | **narrowed** (Test 2): the latency is our four-eyes rule; the principle is that the review would have no content |
-| Deployment observations: "must be stored" | **qualified.** They are denormalised; `node_submissions` already holds transaction → principal, so a view would do |
-| Fact stream: the outbox | **one valid design of several.** Change-data-capture on the WAL is the alternative; it removes the trigger layer and adds a replication consumer to operate |
-| Credential: "a secret is never source text" | **principle, incompletely applied.** It is encrypted in Postgres today; an external secrets manager holding the secret and the database a reference is the stronger design and an open gap |
-| Projections: "needed because readers join configuration with facts" | **verified, and the target is to remove them** (§9): only the explorer's SQL visibility filter genuinely needs a materialised form |
-| Runtime: "nothing durable is lost" | **qualified.** True for sessions (people sign in again); not true for the permission cache without shared invalidation, which serves stale permissions (§9) |
+### Why not a plain DSL file in Git?
 
-The middle column says **in what form it is written**; the kind in bold says
-**why that form**. Four kinds:
+You can, for all six configuration streams, and it is the better authoring
+model. The recommendation:
 
-| Kind | Meaning | Written as | How it changes |
-|---|---|---|---|
-| Decision | someone chose it and someone else can review it before it takes effect | a document (`ops.configuration/v1`) in `configuration_revisions.source`, one per `(organisation, kind)`; activation rewrites its projection tables | draft → simulate → activate by a second person or a signed CI manifest; the old write endpoints return 409 |
-| Fact — event, proof, observation | it happened, or someone proved it; it cannot be authored, and it usually has several writers | ordinary rows written by the operations; copied to the node as a signed snapshot | one endpoint call, audited, in force at once |
-| Record | the history of what took effect, when and by whose approval | rows whose content is frozen (`source`, `digest`) with a status set once on activation, plus the hash-chained `rbac_audit_log` written in the same transaction | the text is never rewritten; the audit entry never changes |
-| Derived | recomputable from a decision or a fact | tables, Redis or memory — wherever it is fastest | rebuilt, invalidated or expired; never a source |
+- **Git holds the text and its history.** Review is the pull request. This is already supported: `activate-ci` accepts a signed manifest binding `repository`, `ref`, `commit`, the candidate digests and the reviewer subjects (`configuration/ci_approval.go:19`).
+- **CI, or an ArgoCD-style agent, pushes it in.** Push rather than pull: no read credentials into the customer's repository, and enforcement never waits on Git being reachable. An external agent watching Git and calling the API gives the same GitOps loop.
+- **OPS writes three things at that moment**, and these are the only reasons the database is involved at all: the version pin the node switches to, the activation record (who, when, which digest), and the projection tables for as long as they exist (§9 proposes removing them).
+- **Facts never come from Git.** People, memberships, address links, bans. A reconcile loop over them would delete memberships the identity provider created and lift bans set during an incident.
 
-Why the record is not in Git, on chain or in the node is spelled out in DECISION
-§3.1 ("Why Postgres is the governance record"); why six documents rather than one
-is §8; what must stay in Postgres if configuration leaves its tables entirely,
-and what Redis is for, is §9.
+The comparison people reach for is ArgoCD, and it supports this split rather
+than contradicting it: in GitOps, Git holds desired state, the **target system**
+holds applied state (Kubernetes in etcd, OPS in Postgres), and the agent syncs
+between them. Nobody keeps applied state only in Git.
+
+### If the text lives in Git, in how many files?
+
+| Layout | Blast radius of a bad merge | Review ownership | Tenant isolation | Compile cost |
+|---|---|---|---|---|
+| **A. One global file** | every tenant at once | everyone reviews everything | none — one repository exposes every customer's configuration to every reviewer | every merge recompiles unless digests are compared |
+| **B. One file per `(organisation, stream)`** | one stream of one tenant | natural: compliance owners review compliance, rule authors review rules, `approvers`/`platform` stay human-only | a repository per customer is possible | only the rules file triggers a compile |
+| **C. One file per organisation** | one tenant | one owner set for everything in that tenant | a repository per customer is possible | needs digest comparison to skip unchanged streams |
+
+Recommendation: **B**, with C acceptable for a small single-tenant deployment.
+Two reasons. Review ownership genuinely differs per stream — `approvers` and
+`platform` may only be authored by humans, while rules and registry may be
+drafted by a service. And B maps one-to-one onto the activation unit, so a
+change to one stream cannot force a review of the others. Cross-stream changes
+(an ABI and the rules that pin it) stay one pull request and one activation:
+the API already co-activates named sibling drafts.
+
+A is disqualified for a multi-tenant deployment: one repository would put every
+customer's configuration in front of every reviewer.
+
+### The four tests behind the table
+
+Each is an argument, then questioned: is it logical, is it a principle or only
+how this build works, could it be designed otherwise, what is the evidence.
+Two of the four were narrowed by that questioning.
+
+**Test 1 — the document is not the only writer.** Several writers disqualify a
+document **unless they write different kinds of thing that history merged into
+one table** — then the fix is to separate them, not to tolerate drift. Drift
+adoption today covers exactly two such cases: a chain observation stored in the
+`contracts` table alongside decisions, and the legacy deploy auto-grant, which
+the policy already expresses declaratively (`targetClass: deployer`). Both are
+to be removed. For memberships separation does not help: three writers produce
+the same row for the same person.
+
+**Test 2 — it must take effect before anyone can review it.** The latency of a
+document is our four-eyes rule (`configuration_revision_store.go:442`). The part
+that is not ours: an approver has no independent basis to judge an incident ban,
+so the second signature adds delay without adding safety. A stream could allow
+self-activation, but then that class has no review left, which is the reason to
+make it a document at all.
+
+**Test 3 — it is a proof or an observation someone else produced.** "A proof
+cannot be authored" is too strong: a document could carry each signature and the
+server could verify it. It fails on scale, not on principle — the facts for a
+million users are about 85 MB against a 1 MiB document limit, and a reviewer
+reading signatures approves nothing.
+
+**Test 4 — it changes without anyone writing it.** Expiry is *not* an example:
+a static `expiresAt` is evaluated dynamically by the node against the block it
+is building (`facts.rs:254`). What survives is external feeds — sanctions,
+prices — where each update would become a revision with nothing to decide.
 
 ## 8. Why six streams and not one organisation document
 
 The revision mechanics would work for a single "organisation configuration"
 document. The split into streams per `(organisation, kind)` is a deliberate
 choice about review, blast radius and ownership, not a limitation of the
-mechanics.
+mechanics. (This is about the **activation unit**. How many *files* the text is
+kept in is a separate question, answered in §7 — the recommendation there is one
+file per stream, which lines up with this split.)
 
 | Concern | Six streams (built) | One document per organisation |
 |---|---|---|
@@ -442,6 +405,21 @@ check those, and the section above overstated what "verified" meant:
 | "`execution-rules` has no projection table" | it projects into `execution_policy_revisions` — the RD-1287 table, with the previous revision marked `superseded` in the same transaction (`configuration_revision_execution.go:485`) |
 | the record and the execution bookkeeping are "append-only rows" | only `rbac_audit_log` is. `configuration_revisions` freezes `source` and `digest` by trigger but sets `status`, `activated_by`, `activated_at` on activation; `node_submissions` rows are updated repeatedly until the transaction reaches an end state |
 | the table's column read "Stored in", with "OPS document" beside "Postgres" | a document *is* a Postgres row (`configuration_revisions.source`); the column now says the **form** the data is written in, and the section leads with the four tests that decide that form |
+
+Verified while rebuilding §7 on 2026-09-18: the CI approval manifest binds
+`repository`, `ref`, `commit`, `candidateDigests` and `reviewerSubjects`
+(`configuration/ci_approval.go:19`), so a Git pull request can carry the
+approval; approver eligibility is read from the **active** approvers revision,
+so a document cannot widen the set that approves it
+(`ConfigurationActorIsApprover`); there is no Git client anywhere in the product
+or in `go.mod`, so any Git-authored flow today is push, not pull.
+
+The comparison with ArgoCD in §7 is design knowledge, not a claim about this
+codebase: nothing here integrates with it.
+
+**One standing assumption**, stated in §7 and reversible: the operator must be
+able to answer "what was in force at T" without the customer's repository. It is
+the only reason a copy of an applied document stays in OPS.
 
 **Judgement, not verified fact** — argue these as opinions: the effort estimates
 (§6, §9); that the projection tables can be replaced by an in-memory document
