@@ -733,3 +733,32 @@ the node holds its artifact — but a draft compiled before the upgrade is refus
 with "approved execution artifact differs from its source or compiler contract"
 and must be resubmitted. Correct behaviour; it needs to be in the operator
 documentation, which it is not.
+
+## 14. Two kinds of concurrency, and why only one of them is a problem
+
+**Two people or agents editing the same document.** Detected and recoverable.
+A submission must name the currently active revision as its `baseRevision`; a
+stale one is rejected with 409 (`configuration_revision_store.go:107`), and
+activation re-checks the base inside the transaction under a scope lock
+(`pg_advisory_xact_lock` for platform, `SELECT … FOR UPDATE` on the
+organisation row, migration 075), so simultaneous activations serialise instead
+of interleaving. The loser re-reads the context, re-applies the change and
+resubmits — the same loop as a rejected `git push`.
+
+Two caveats. There is no three-way merge: the loser redoes the edit by hand,
+which is trivial for a one-line change and tedious for two large ones. And this
+is why per-stream documents matter: a compliance edit and a rules edit never
+collide, because they are different documents.
+
+**A document and an operational writer touching the same data.** Not detected,
+and that is inherent. The document declares the complete desired state, so
+re-applying it removes anything the other writer did — no stale base, no
+conflict, no error. A membership the directory created between two revisions
+simply disappears at the next activation.
+
+The difference decides where a class belongs. Concurrency between document
+authors is a detected collision with a known recovery. Concurrency between a
+document and an operation is silent data loss, unless the rows carry provenance
+and the document owns only its own share (as `sanctioned_addresses.source` and
+`user_memberships.source` already allow, and `users.banned` does not).
+
