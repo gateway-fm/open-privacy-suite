@@ -154,6 +154,14 @@ each class into one of four homes. The last column is the part that matters in
 a discussion: what the world looks like if that class lived in the other home —
 a document class left in tables, or a fact authored in a document.
 
+**"Document" here always means the JSON configuration document** —
+`ops.configuration/v1`, written by a person or an agent, stored in OPS as a
+revision row and reviewed there. It is not a smart contract and nothing about it
+is on chain. One stream goes further: the server compiles `execution-rules` into
+EVM bytecode, and the node loads that artifact **privately, from the signed fact
+snapshot**, to run it inside the call frame — the policy is never deployed to a
+chain address and never visible to anyone reading the chain.
+
 | Data | Home | Why there | If it lived in the other home |
 |---|---|---|---|
 | **[Execution rules](#execution-rules)**<br><sub>what a group may call: contract, function, argument limits</sub> | **Document** `execution-rules` <br><sub>compiled by the server</sub> | one owner, reviewed before it decides anything, reproducible; the node executes the compiled artifact | In tables: a row is not executable — the node runs compiled policy code inside the call frame, so enforcement falls back to the proxy, which cannot see nested calls (the reason for the whole design, §2 of DECISION). On top of that a grant takes effect the moment the API call returns, with no review and no reproducible history — the state before RD-1287 |
@@ -178,7 +186,7 @@ The homes, in one line each:
 
 | Home | What qualifies | How it changes |
 |---|---|---|
-| Document (six streams) | decisions with one owner, reproducible, reviewable, no dependency on another party's answer | revision → simulate → activate by a second person or a signed CI manifest; legacy writers return 409 |
+| Document (six streams) — **a JSON configuration document (`ops.configuration/v1`) authored by people and stored in OPS as a revision, not a smart contract** | decisions with one owner, reproducible, reviewable, no dependency on another party's answer | revision → simulate → activate by a second person or a signed CI manifest; legacy writers return 409 |
 | Postgres — facts | observations and proofs about people and the chain, with several writers and their own cadence | operations on the existing endpoints, each audited; pushed to the node as signed facts |
 | Postgres — record | the authoritative history of what took effect, when, approved by whom | append-only, hash-chained |
 | Cache / runtime | anything derivable or short-lived | rebuilt or expired; never a source |
@@ -333,8 +341,10 @@ Taken from the live acceptance stack, trimmed. Organisation
 
 ### Execution rules
 
-The policy inside the `execution-rules` document. Each binding is one group and
-what it may execute; the node compiles this and evaluates it on every call frame.
+The policy inside the `execution-rules` document — JSON, stored in OPS. Each
+binding is one group and what it may execute. The **server** compiles it to EVM
+bytecode; the node receives that artifact in the signed fact snapshot and
+executes it inside the call frame. Nothing is deployed on chain.
 
 ```json
 {"kind": "execution-rules", "scope": {"kind": "organization", "id": "12dac85b…"},
