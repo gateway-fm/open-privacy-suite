@@ -151,28 +151,28 @@ Every piece of data in the product was sorted with the same four questions:
 recorded), **when it must take effect** (after a review, or in the next block),
 and **whether it changes on its own** (expiry, chain events). The answers put
 each class into one of four homes. The last column is the part that matters in
-a discussion: the concrete thing that would break if that class lived in the
-other home — a document class kept in tables, or a fact authored in a document.
+a discussion: what the world looks like if that class lived in the other home —
+a document class left in tables, or a fact authored in a document.
 
-| Data | Home | Why there | What would break in the other home |
+| Data | Home | Why there | If it lived in the other home |
 |---|---|---|---|
-| Execution rules | **Document** `execution-rules` <br><sub>compiled by the server</sub> | one owner, reviewed before it decides anything, reproducible; the node executes the compiled artifact | Back in tables: two writers (the grants API and the policy), no review step, no reproducible history — the state before RD-1287 |
-| Group definitions | **Document** `groups` | decisions of the org admin; deleting a group with live members needs explicit acknowledgement | Back in tables: structure changes with no review, and membership cascades nobody saw |
-| Contract configuration | **Document** `contract-registry` | decisions; pipeline-registered contracts are adopted as drift, never swept | Back in tables: several places set the same thing — the explorer's separate ABI writer problem, generalised |
-| Compliance settings | **Document** `compliance` | settings, one owner | Back in tables: "enforce" can be flipped to "monitor" without a second person |
-| Approvers, trusted CI | **Document** `approvers` <br><sub>human-only</sub> | it is the authority itself | As an operation: whoever can call the endpoint widens who may approve — the authority guards itself |
-| Shared infra, tenants, orgs (§6) | **Document** `platform` <br><sub>human-only</sub> | platform-owned decisions | As operations: a customer is bootstrapped by API calls that no one reviews |
-| Users (existence, DID) | **Fact** | created by login; nobody authors a user | In the document: a user could not exist until an author typed them in; login would wait for a revision |
-| Memberships, expiry | **Fact** | several writers (admin, IdP/HR sync, ZK self-service, expiry); per-person cadence | In the document: every join and leave becomes a reviewed revision; a re-applied document overwrites what another writer changed; each expiry needs its own revision |
-| Address ↔ principal links | **Fact** (proof) | a link exists only because the user signed a challenge with that key (`eth/link/verify`) — it is a **proof** | In the document: the link is an author's assertion instead of the user's signature — anyone who can write the document binds someone else's address to a principal and authorises its transactions |
+| Execution rules | **Document** `execution-rules` <br><sub>compiled by the server</sub> | one owner, reviewed before it decides anything, reproducible; the node executes the compiled artifact | In tables: two writers again (the grants API and the policy), no review step, no reproducible history — the state before RD-1287 |
+| Group definitions | **Document** `groups` | decisions of the org admin; deleting a group with live members needs explicit acknowledgement | In tables: structure changes with no review, and membership cascades nobody sees |
+| Contract configuration | **Document** `contract-registry` | decisions; pipeline-registered contracts are adopted as drift, never swept | In tables: several places set the same thing — the explorer's separate ABI writer problem, generalised |
+| Compliance settings | **Document** `compliance` | settings, one owner | In tables: "enforce" can be flipped to "monitor" without a second person |
+| Approvers, trusted CI | **Document** `approvers` <br><sub>human-only</sub> | it is the authority itself | As an operation: whoever can call the endpoint widens who may approve — the authority would guard itself |
+| Shared infra, tenants, orgs (§6) | **Document** `platform` <br><sub>human-only</sub> | platform-owned decisions | As operations: a customer is bootstrapped by API calls nobody reviews |
+| Users (existence, DID) | **Fact** | created by login; nobody authors a user | In the document: a user exists only once an author types them in; login waits for a revision |
+| Memberships, expiry | **Fact** | several writers (admin, IdP/HR sync, ZK self-service, expiry); per-person cadence | In the document: every join and leave is a reviewed revision; a re-applied document overwrites what another writer changed; each expiry needs its own revision |
+| Address ↔ principal links | **Fact** (proof) | a link exists only because the user signed a challenge with that key (`eth/link/verify`) — it is a **proof** | In the document: the link is an author's assertion, not the user's signature — whoever writes the document binds someone else's address to a principal and authorises its transactions |
 | Bans, KYC, sanctions | **Fact** | also written by compliance automation and feeds; an incident ban must reach the node in the next block | In the document: a ban waits for review instead of reaching the next block, and the next re-applied document lifts it silently |
-| Deployment observations | **Fact** <br><sub>today mixed into `contracts` — §6</sub> | recorded by the reconciler from a finalized receipt plus the identity binding; the chain alone shows the signer, not the principal or organisation (several principals may share a signer) | In the document: an author's claim instead of an observation. From the chain alone: the receipt shows the signer, not the principal or the organisation |
-| Disclosure lifecycle | **Fact** | a state machine between two organisations; each step is an answer | In the document: one organisation would author the other's consent |
+| Deployment observations | **Fact** <br><sub>today mixed into `contracts` — §6</sub> | recorded by the reconciler from a finalized receipt plus the identity binding; the chain alone shows the signer, not the principal or organisation (several principals may share a signer) | In the document: an author's claim, not an observation. From the chain alone: the receipt shows the signer, not the principal or the organisation |
+| Disclosure lifecycle | **Fact** | a state machine between two organisations; each step is an answer | In the document: one organisation authors the other's consent |
 | Revisions, artifacts, who activated | **Record** | written in the same transaction as the change taking effect, with the hash-chained audit entry — the only place that can say *what was in force at T* (DECISION §3.1) | In Git: only what was merged, not what took effect or when. In the document: a configuration cannot carry the history of its own activation. On chain: public, and a transaction per review step |
 | Submissions, outcomes, visibility | **Record** | only OPS knows which principal, which `visibleTo`, which receipt | Anywhere else: nothing holds the join between a transaction, its principal and its `visibleTo` recipients |
 | Fact stream to the node | **Bookkeeping** | the version bump commits in the same transaction as the fact change; the cursor is the restart point | Anywhere else: a fact could be durable in Postgres without the node ever learning of it |
 | Group RPC credential | **Secret** | a secret is never source text | In the document: the secret appears in every diff, review and export |
-| Projections of configuration | **Cache** <br><sub>target: in-memory doc — §9</sub> | derivable; only needed because readers join configuration with facts | Nothing — they are rebuilt from the document; using them as a source is the transition artefact |
+| Projections of configuration | **Cache** <br><sub>target: in-memory doc — §9</sub> | derivable; only needed because readers join configuration with facts | Nothing changes — they are rebuilt from the document; using them as a source is the transition artefact |
 | Permission results, sessions | **Runtime** <br><sub>target: no Redis — §9</sub> | computed or short-lived | Nothing durable — recomputed or re-issued |
 The homes, in one line each:
 
