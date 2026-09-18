@@ -174,7 +174,7 @@ other side of this table, each one visible in the code today:
 | Test | Example | Why a document fails it |
 |---|---|---|
 | More than one writer | memberships: the admin API, Azure auto-provision (`auth_azure.go:298`), ZK roles (`auth.go:603`) | re-applying a reviewed snapshot silently reverts what the other writers did between revisions |
-| Must take effect now | a ban during an incident | a document waits for a second person; the operation reaches the node at the next block |
+| Must take effect now | a ban during an incident | activation refuses the author's own draft (`configuration_revision_store.go:442`, "submitter and activator must be different actors"), so the admin on duty would need a second authorised human — or a pre-configured CI approval service to sign the manifest. The operation path is one call and reaches the node at the next block. This is a property of our activation rule, not of documents in general: a stream could allow self-activation, but then that class has no review left, which is the reason to make it a document at all |
 | It is a proof or an observation, produced by someone else | an address link (the user's signature), a deployment (a finalized receipt plus the identity binding) | an author would be *asserting* what someone else proved — for links that is impersonation by configuration |
 | It changes without anyone writing | membership `expires_at`, sanctions feeds, price observations | a static text would need re-issuing on every expiry or tick |
 
