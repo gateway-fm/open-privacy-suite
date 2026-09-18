@@ -46,9 +46,10 @@ document.
 | Accounts | created at login; the identity provider decides who exists, not us |
 | Memberships | three writers produce the same row for the same person — admin API, directory auto-provision, ZK roles — and none of it is a decision anyone reviews |
 | Address links | the link is the user's own signature; in a document an author would be asserting someone else's address and authorising its transactions |
-| Bans | must take effect before anyone can review it, and a reviewer has no basis to judge an incident |
+| Bans on a principal | an incident ban must take effect before anyone can review it. A *planned* deactivation could be reviewed, but `users.banned` has no provenance field today, so a re-applied document would lift an incident ban — see the decision below |
 | KYC | set by the credential the user logged in with |
-| Sanctions, and live exchange rates | external feeds. Rates land in `system_token_prices` on a timer and are resolved at check time; the document only says which feed a token uses. A revision per rate update would be a control with nothing to decide |
+| Live exchange rates | a feed: rates land in `system_token_prices` on a timer and are resolved at check time; the document only says which feed a token uses |
+| Sanctions list | operational **today**, but this depends on who produces it: a list the customer curates from OFAC designations is a decision and belongs in a document; a vendor feed is not. `sanctioned_addresses` already records `source`, so both can coexist — see the decision below |
 | Deployment records | an observation: the receipt names the signing address, and two principals may share one. Only OPS knows which of them submitted the transaction, because the submission carried its authenticated identity |
 | Disclosure | every step is the other organisation's answer |
 | Secrets (group RPC credential) | must never appear in a text that is diffed, reviewed and exported |
@@ -91,4 +92,5 @@ organisation is acceptable for a small single-tenant deployment.
 4. **Organisations into the platform document.** Decided in principle; needs the deletion semantics and last-administrator protection.
 5. **The explorer's separate ABI writer.** It writes a store nobody enforces from. Close it or route it through the registry.
 6. **`refresh-codehash`.** It observes the chain and writes a field the platform document owns, so the guard now closes it entirely. Turn it into a read that returns the observed codehash; keep the write under review.
-7. **MCP rebuild timing.** Six revision tools and role-grouped operations instead of 94 flat ones.
+7. **Should a curated sanctions list be a document?** It depends on who produces it. A list the customer's compliance team maintains from OFAC designations is a decision, and Git review fits it; a vendor feed is not, and a revision per update would be theatre. Both can coexist — `sanctioned_addresses` already records `source` — with two caveats: a document is capped at 1 MiB, about ten thousand addresses with reasons, and `users.banned` has no provenance field, so reviewed deactivations cannot be separated from incident bans until it does.
+8. **MCP rebuild timing.** Six revision tools and role-grouped operations instead of 94 flat ones.
