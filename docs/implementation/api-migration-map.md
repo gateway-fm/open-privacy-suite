@@ -89,6 +89,21 @@ This is the split GitOps already uses: Git holds desired state, the target
 system holds applied state. Kubernetes keeps it in etcd; OPS keeps it in
 Postgres.
 
+**A document can pin an observed value, but something must produce it.** This
+is the real limit of "put everything in the configuration", and we already have
+it in three places. A rule pins `abiDigest`, the sha256 of the exact registered
+ABI text — and no endpoint returns that digest, so the author computes it by
+hand and gets "re-derive the policy against the current ABI" when it is wrong.
+A platform entry pins `codehash`, and the endpoint that computed it is now
+closed by the stream guard (below). By contrast `legacyRestrictionDigest` is
+done correctly: the context hands the author the value to paste
+(`migration.legacyRestriction.policyDigest`).
+
+The rule to follow when moving anything else into a document: **moving a field
+into a document does not remove the observation, it moves the duty to the
+author.** If the API does not publish the observed value, configuration-first
+turns into hand-computed hashes and silent mismatches.
+
 **File layout: one file per `(organisation, stream)`.** It matches the
 activation unit, keeps review ownership where it belongs (approvers and
 platform are human-only, rules and registry may be drafted by a service), and a
@@ -138,25 +153,34 @@ Two ways out: close the endpoint, or make it write through the registry so the
 ABI lands in the product's table and shows up as drift for the next revision to
 adopt.
 
-**5. `refresh-codehash` mixes an observation with a decision.**
+**5. `refresh-codehash`: we closed the write and lost the read with it.**
 
-A shared-infrastructure entry carries a codehash pin, which says "this address
-is trusted shared infrastructure only while its bytecode hashes to this value".
-`POST /admin/shared-infrastructure/{address}/refresh-codehash` reads the code
-from the chain, hashes it, and stores the result. It exists because upstream
-contracts get upgraded: the bytecode rotates, the pin stops matching, and calls
-to that address are no longer treated as shared infrastructure.
+A shared-infrastructure entry carries a `codehash` pin. The address counts as
+trusted shared infrastructure only while the bytecode living there hashes to
+that value. It exists because of a real bypass: before the pin, an operator
+could tag any address, and if a proxy contract sat behind it, an upgrade
+rotated the bytecode while the trust stayed (migration 052).
 
-That field now belongs to the platform document, so the stream guard closes the
-whole endpoint with 409 once the platform stream is active. Half of that is
-right: writing a newly observed hash into a trust pin without review is exactly
-what the pin exists to prevent — a hostile upgrade would be trusted
-automatically. The other half is wrong: this endpoint was also the only way to
-*compute* the hash, so after an upgrade the operator now has to fetch the code
-and hash it by hand before editing the document.
+Both the old trace validator and the node read it. The node receives the pin
+with the facts and only sets the "shared infrastructure" fact when the actual
+code in the frame hashes to it, which is what a `targetClass: shared` rule
+depends on.
 
-The fix is to split it: keep a read that returns the observed codehash, for
-pasting into the document, and drop the write.
+Until now the workflow after an upstream upgrade was one click:
+`POST /admin/shared-infrastructure/{address}/refresh-codehash` fetched
+`eth_getCode`, hashed it, stored it. That endpoint writes a field the platform
+document owns, so the stream guard now answers 409 for the whole call.
+
+Refusing the **write** is correct: a freshly observed hash must not become a
+trust anchor without review, or a hostile upgrade is trusted automatically.
+Refusing the **read** is the mistake: that call was the only thing that
+produced the value. The operator now has to fetch the code and hash it exactly
+the way we do — raw `eth_getCode` output, not deployment bytecode, not the
+metadata-stripped variant — and a wrong guess silently drops the address out of
+shared infrastructure.
+
+Fix: keep the endpoint as a read that returns the observed codehash for pasting
+into the document, and drop the write.
 
 **6. Should a curated sanctions list be a document?** It depends on who
 produces it. A list the customer's compliance team maintains from OFAC
