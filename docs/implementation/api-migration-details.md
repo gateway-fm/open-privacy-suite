@@ -798,3 +798,68 @@ mentions the same group. That matters for any design where a document owns
 `source=admin` rows: a credential could move a row out of the document's
 ownership without anyone noticing.
 
+## 16. The two endpoint defects, in full
+
+**4. One endpoint writes a dead column in another product's database.**
+
+`POST /api/v1/explorer/addresses/{address}/abi` lives in OPS and runs
+`UPDATE contracts SET abi` against the **indexer's** database — OPS connects to
+it read-only for explorer pages, and this is the single place where it writes
+there.
+
+That column is used by nobody. The indexer never reads or writes it: its own
+interface says so ("NOT INCLUDED here and never served by the indexer: ABI,
+source code, verification status… privacy mode does not expose contract
+verification"), and there is no call site for its `UpdateContractABI`. The
+standalone explorer does have source verification, but it keeps it in its own
+table in its own database, and those routes are compiled out of the privacy
+build.
+
+Meanwhile the ABI that decides anything is ours:
+`privacy_proxy.contracts.abi`, owned by the `contract-registry` document and
+read by the policy compiler, by log redaction and by the admin screens.
+
+So an operator who uploads an ABI through that endpoint changes nothing at all
+— not access, not what the explorer shows — while the call is named as if it
+registered the contract's ABI. Nothing in the product calls it: not the
+frontend, not the end-to-end tests, only the generated SDK types list it.
+
+Remove it. If verified ABIs for display are wanted later, that is the
+standalone explorer's own feature in its own database, and a properly designed
+verification feature belongs in the registry document (see the note below).
+
+**5. `refresh-codehash`: we closed the write and lost the read with it.**
+
+A shared-infrastructure entry carries a `codehash` pin. The address counts as
+trusted shared infrastructure only while the bytecode living there hashes to
+that value. It exists because of a real bypass: before the pin, an operator
+could tag any address, and if a proxy contract sat behind it, an upgrade
+rotated the bytecode while the trust stayed (migration 052).
+
+Both the old trace validator and the node read it. The node receives the pin
+with the facts and only sets the "shared infrastructure" fact when the actual
+code in the frame hashes to it, which is what a `targetClass: shared` rule
+depends on.
+
+Until now the workflow after an upstream upgrade was one click:
+`POST /admin/shared-infrastructure/{address}/refresh-codehash` fetched
+`eth_getCode`, hashed it, stored it. That endpoint writes a field the platform
+document owns, so the stream guard now answers 409 for the whole call.
+
+Refusing the **write** is correct: a freshly observed hash must not become a
+trust anchor without review, or a hostile upgrade is trusted automatically.
+Refusing the **read** is the mistake: that call was the only thing that
+produced the value. The operator now has to fetch the code and hash it exactly
+the way we do — raw `eth_getCode` output, not deployment bytecode, not the
+metadata-stripped variant — and a wrong guess silently drops the address out of
+shared infrastructure.
+
+Fix: keep the endpoint as a read that returns the observed codehash for pasting
+into the document, and drop the write.
+
+## 17. What an agent or a headless client sees
+
+- One shape for all six streams instead of thirty-two setters: read context, edit the whole document, submit, simulate, and have someone else activate.
+- Every context reports the deployment's capabilities: the streams, which are human-only, the approval modes, the document size limit, and whether the pinned compiler is installed.
+- A returned transaction hash is no longer the end: `GET /me/transactions/{hash}/execution` reports queued, accepted, included, reverted, denied by policy, or expired, with finality.
+- A TypeScript SDK generated from the OpenAPI document covers login and refresh, prepare and review, activation by a human or by CI, operations, RPC and status tracking. MCP is deferred; the planned shape is in the details document.

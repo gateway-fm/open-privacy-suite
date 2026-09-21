@@ -53,11 +53,8 @@ field; bans do not.
 
 | Class | Why it is not a document |
 |---|---|
-| Accounts | created at login; the identity provider decides who exists, not us |
-| Memberships | what is reviewed is the **rule** that produces them, not the row: for directory auto-provision that rule is the tenant mapping in the platform document. The membership row is an instance of it, written by three writers at per-person cadence. (The ZK credential path is meant to rest on the issuer's process, but today it acts on claims the proof never covers — RD-1291) |
-| Address links | the link is the user's own signature; in a document an author would be asserting someone else's address and authorising its transactions |
-| Bans on a principal | an incident ban must take effect before anyone can review it. A *planned* deactivation could be reviewed, but `users.banned` has no provenance field today, so a re-applied document would lift an incident ban — see the decision below |
-| KYC | set by the credential the user logged in with |
+| People: accounts, memberships, address links, KYC | none of it is authored. An account appears at login, KYC comes from the credential, a link is the user's own signature, and a membership is an instance of a rule reviewed elsewhere — the tenant mapping in the platform document — written by three writers at per-person cadence. (The credential path for memberships acts on claims the proof never covers: RD-1291) |
+| Bans on a principal | an incident ban must take effect before anyone can review it. A planned deactivation could be reviewed, but `users.banned` has no provenance field, so a re-applied document would lift an incident ban |
 | Live exchange rates | a feed: rates land in `system_token_prices` on a timer and are resolved at check time; the document only says which feed a token uses |
 | Sanctions list | operational **today**, but this depends on who produces it: a list the customer curates from OFAC designations is a decision and belongs in a document; a vendor feed is not. `sanctioned_addresses` already records `source`, so both can coexist — see the decision below |
 | Deployment records | an observation: the receipt names the signing address, and two principals may share one. Only OPS knows which of them submitted the transaction, because the submission carried its authenticated identity |
@@ -115,21 +112,13 @@ author.** If the API does not publish the observed value, configuration-first
 turns into hand-computed hashes and silent mismatches.
 
 **File layout: one file per `(organisation, stream)`.** It matches the
-activation unit, keeps review ownership where it belongs (approvers and
-platform are human-only, rules and registry may be drafted by a service), and a
-change to one stream does not force a review of the others. A single global
-file is disqualified for a multi-tenant deployment: one repository would put
-every customer's configuration in front of every reviewer. One file per
-organisation is acceptable for a small single-tenant deployment.
+activation unit, keeps review ownership where it belongs, and a change to one
+stream does not force a review of the others. A single global file is
+disqualified for a multi-tenant deployment: one repository would put every
+customer's configuration in front of every reviewer. The full comparison is in
+details §8.
 
-## 5. What an agent or a headless client sees
-
-- One shape for all six streams instead of thirty-two setters: read context, edit the whole document, submit, simulate, and have someone else activate.
-- Every context reports the deployment's capabilities: the streams, which are human-only, the approval modes, the document size limit, and whether the pinned compiler is installed.
-- A returned transaction hash is no longer the end: `GET /me/transactions/{hash}/execution` reports queued, accepted, included, reverted, denied by policy, or expired, with finality.
-- A TypeScript SDK generated from the OpenAPI document covers login and refresh, prepare and review, activation by a human or by CI, operations, RPC and status tracking. MCP is deferred; the planned shape is in the details document.
-
-## 6. Decisions this needs
+## 5. Decisions this needs
 
 **1. Git as the authoring home, and the file layout.** Recommended above: the
 text in the customer's Git, pushed in by CI, one file per
@@ -144,61 +133,22 @@ is a data-sovereignty choice with those two consequences.
 the deletion semantics and last-administrator protection.
 
 **4. One endpoint writes a dead column in another product's database.**
+`POST /api/v1/explorer/addresses/{address}/abi` is the only place where OPS
+writes into the indexer's database, and the column it writes is used by nobody:
+the indexer never reads it, and the standalone explorer keeps verification in
+its own table, compiled out of the privacy build. The ABI that decides anything
+is ours, owned by the `contract-registry` document. The endpoint has no callers
+and should be removed. Detail: details §16.
 
-`POST /api/v1/explorer/addresses/{address}/abi` lives in OPS and runs
-`UPDATE contracts SET abi` against the **indexer's** database — OPS connects to
-it read-only for explorer pages, and this is the single place where it writes
-there.
-
-That column is used by nobody. The indexer never reads or writes it: its own
-interface says so ("NOT INCLUDED here and never served by the indexer: ABI,
-source code, verification status… privacy mode does not expose contract
-verification"), and there is no call site for its `UpdateContractABI`. The
-standalone explorer does have source verification, but it keeps it in its own
-table in its own database, and those routes are compiled out of the privacy
-build.
-
-Meanwhile the ABI that decides anything is ours:
-`privacy_proxy.contracts.abi`, owned by the `contract-registry` document and
-read by the policy compiler, by log redaction and by the admin screens.
-
-So an operator who uploads an ABI through that endpoint changes nothing at all
-— not access, not what the explorer shows — while the call is named as if it
-registered the contract's ABI. Nothing in the product calls it: not the
-frontend, not the end-to-end tests, only the generated SDK types list it.
-
-Remove it. If verified ABIs for display are wanted later, that is the
-standalone explorer's own feature in its own database, and a properly designed
-verification feature belongs in the registry document (see the note below).
-
-**5. `refresh-codehash`: we closed the write and lost the read with it.**
-
-A shared-infrastructure entry carries a `codehash` pin. The address counts as
-trusted shared infrastructure only while the bytecode living there hashes to
-that value. It exists because of a real bypass: before the pin, an operator
-could tag any address, and if a proxy contract sat behind it, an upgrade
-rotated the bytecode while the trust stayed (migration 052).
-
-Both the old trace validator and the node read it. The node receives the pin
-with the facts and only sets the "shared infrastructure" fact when the actual
-code in the frame hashes to it, which is what a `targetClass: shared` rule
-depends on.
-
-Until now the workflow after an upstream upgrade was one click:
-`POST /admin/shared-infrastructure/{address}/refresh-codehash` fetched
-`eth_getCode`, hashed it, stored it. That endpoint writes a field the platform
-document owns, so the stream guard now answers 409 for the whole call.
-
-Refusing the **write** is correct: a freshly observed hash must not become a
-trust anchor without review, or a hostile upgrade is trusted automatically.
-Refusing the **read** is the mistake: that call was the only thing that
-produced the value. The operator now has to fetch the code and hash it exactly
-the way we do — raw `eth_getCode` output, not deployment bytecode, not the
-metadata-stripped variant — and a wrong guess silently drops the address out of
-shared infrastructure.
-
-Fix: keep the endpoint as a read that returns the observed codehash for pasting
-into the document, and drop the write.
+**5. `refresh-codehash` lost its read along with its write.** A
+shared-infrastructure entry is trusted only while the bytecode at that address
+hashes to the pinned value, and this endpoint both observed the chain and wrote
+the pin. The pin now belongs to the platform document, so the stream guard
+closes the whole call. Refusing the write is right — a freshly observed hash
+must not become a trust anchor without review. Refusing the read is not: it was
+the only thing that produced the value, and hand-computing it wrongly drops the
+address out of shared infrastructure silently. Keep it as a read, drop the
+write. Detail: details §16.
 
 **6. Should a curated sanctions list be a document?** It depends on who
 produces it. A list the customer's compliance team maintains from OFAC
