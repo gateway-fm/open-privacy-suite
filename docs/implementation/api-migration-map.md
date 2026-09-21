@@ -36,6 +36,19 @@ KYC. Those are produced by events and proofs, not authored by anyone.
 Thirty-two write endpoints in total. Their `GET`s keep working, as reads of the
 projection.
 
+**What this means for the admin UI.** Activation projects into the same tables
+the admin screens already read. So Groups, Contracts and Compliance keep
+listing real rows and need no rewrite; only their write controls must turn
+read-only once a stream is managed. Today they do not, and the refusal reaches
+the administrator as an unrelated error (RD-1295).
+
+Worth saying out loud, because "it all lives in Git" reads as "the UI can go
+away": the configuration screen is not just a text editor. Approving a
+revision, co-activating siblings across streams, reading the server-computed
+diff, previewing a candidate against the node and watching publication
+readiness are API operations. None of them can be a field in the document
+being approved.
+
 ## 3. What did not move, and why
 
 One reason each. The full argument and its evidence are in the details
@@ -80,6 +93,7 @@ ref, commit, the exact candidate digests and the reviewers who approved.
 
 - **Push, not pull.** CI or an ArgoCD-style agent calls the API. No read credentials into the customer's repository, and enforcement never waits for Git to be reachable.
 - **OPS writes three things at activation**, and they are the only reason the database is involved: the fact-version pin the node switches to, the activation record (who, when, which digest), and the projection tables for as long as they exist.
+- **Activation is not yet enforcement.** A publisher pushes the compiled policy, and the facts it needs, to the node — signed, on a thirty-second lease renewed every second. A reviewed change takes effect within a tick. If publication stops, the node's facts expire and it refuses execution rather than running stale rules.
 - **Facts never come from Git.** A reconcile loop over people would delete memberships the directory created and lift bans set during an incident.
 - **Two streams stay human.** `approvers` and `platform` refuse a service principal at both submit and activate (`configuration_revision_store.go:85,439`): they decide who may approve and what the platform trusts, so CI must not be able to widen its own authority there. Their text can live in Git; a person has to push and activate it.
 
