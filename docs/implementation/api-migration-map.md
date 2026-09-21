@@ -106,11 +106,63 @@ organisation is acceptable for a small single-tenant deployment.
 
 ## 6. Decisions this needs
 
-1. **Git as the authoring home, and the file layout.** Recommended above.
-2. **Does OPS keep a copy of the applied text?** Assumed yes. It is the only way the operator can answer "what was in force at T" without the customer's repository, and the only way projections can be rebuilt from history. Saying no is a data-sovereignty choice with those two consequences.
-3. **When does Reth policy mode become the default?** Until it does, legacy writers stay open for organisations without an active stream, and the old preflight gate still decides access.
-4. **Organisations into the platform document.** Decided in principle; needs the deletion semantics and last-administrator protection.
-5. **The explorer's separate ABI writer.** It writes a store nobody enforces from. Close it or route it through the registry.
-6. **`refresh-codehash`.** It observes the chain and writes a field the platform document owns, so the guard now closes it entirely. Turn it into a read that returns the observed codehash; keep the write under review.
-7. **Should a curated sanctions list be a document?** It depends on who produces it. A list the customer's compliance team maintains from OFAC designations is a decision, and Git review fits it; a vendor feed is not, and a revision per update would be theatre. Both can coexist — `sanctioned_addresses` already records `source` — with two caveats: a document is capped at 1 MiB, about ten thousand addresses with reasons, and `users.banned` has no provenance field, so reviewed deactivations cannot be separated from incident bans until it does.
-8. **MCP rebuild timing.** Six revision tools and role-grouped operations instead of 94 flat ones.
+**1. Git as the authoring home, and the file layout.** Recommended above: the
+text in the customer's Git, pushed in by CI, one file per
+`(organisation, stream)`.
+
+**2. Does OPS keep a copy of the applied text?** Assumed yes. It is the only
+way the operator can answer "what was in force at T" without the customer's
+repository, and the only way projections can be rebuilt from history. Saying no
+is a data-sovereignty choice with those two consequences.
+
+**3. Organisations into the platform document.** Decided in principle; needs
+the deletion semantics and last-administrator protection.
+
+**4. The explorer keeps its own copy of every contract ABI, and writes to it.**
+
+There are two tables called `contracts`, in two different databases: the
+product's own, and the explorer's (`EXPLORER_DATABASE_URL`). The endpoint
+`POST /api/v1/explorer/addresses/{address}/abi` updates the explorer's copy.
+Everything that enforces anything reads the product's copy: the event rules and
+redaction that decide who sees which log, and the policy catalogue that
+`abiDigest` pins and argument rules are compiled against.
+
+The consequence is that uploading an ABI through the explorer changes what the
+explorer can decode and display, and changes nothing about access — while
+looking to the operator exactly like registering the contract's ABI. Under the
+documents it is worse: the `contract-registry` document is supposed to own the
+ABI, and a second endpoint writing a different copy means the reviewed document
+is no longer the only ABI in the system.
+
+Two ways out: close the endpoint, or make it write through the registry so the
+ABI lands in the product's table and shows up as drift for the next revision to
+adopt.
+
+**5. `refresh-codehash` mixes an observation with a decision.**
+
+A shared-infrastructure entry carries a codehash pin, which says "this address
+is trusted shared infrastructure only while its bytecode hashes to this value".
+`POST /admin/shared-infrastructure/{address}/refresh-codehash` reads the code
+from the chain, hashes it, and stores the result. It exists because upstream
+contracts get upgraded: the bytecode rotates, the pin stops matching, and calls
+to that address are no longer treated as shared infrastructure.
+
+That field now belongs to the platform document, so the stream guard closes the
+whole endpoint with 409 once the platform stream is active. Half of that is
+right: writing a newly observed hash into a trust pin without review is exactly
+what the pin exists to prevent — a hostile upgrade would be trusted
+automatically. The other half is wrong: this endpoint was also the only way to
+*compute* the hash, so after an upgrade the operator now has to fetch the code
+and hash it by hand before editing the document.
+
+The fix is to split it: keep a read that returns the observed codehash, for
+pasting into the document, and drop the write.
+
+**6. Should a curated sanctions list be a document?** It depends on who
+produces it. A list the customer's compliance team maintains from OFAC
+designations is a decision, and Git review fits it; a vendor feed is not, and a
+revision per update would be theatre. Both can coexist —
+`sanctioned_addresses` already records `source` — with two caveats: a document
+is capped at 1 MiB, about ten thousand addresses with reasons, and
+`users.banned` has no provenance field, so reviewed deactivations cannot be
+separated from incident bans until it does.
