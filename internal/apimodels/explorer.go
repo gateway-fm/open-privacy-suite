@@ -30,12 +30,6 @@ type ExplorerIsContractResponse struct {
 	IsContract bool `json:"is_contract" example:"true"`
 }
 
-// ExplorerABIUpdateResponse is the POST /api/v1/explorer/addresses/{address}/abi success body.
-type ExplorerABIUpdateResponse struct {
-	Success bool   `json:"success" example:"true"`
-	Address string `json:"address" example:"0x0000000000000000000000000000000000000001"`
-}
-
 // ExplorerListResponse is the generic "data + total" envelope returned by the
 // list endpoints that never expose a raw DB total (transactions/paginated,
 // address internal/logs, tokens, token holders/transfers, all transfers,

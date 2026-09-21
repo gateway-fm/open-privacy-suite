@@ -4,7 +4,6 @@
 // Not yet ported (still delegated to embedded *Store via method fallthrough):
 //   - *Filtered variants — they require post-fetch visibility filtering,
 //     coming in stage 2b.
-//   - SetContractABI — write path; explicitly not exposed by the indexer.
 //   - GetIndexerProgress — indexer-internal state; no gRPC surface for it.
 
 package indexerclient
@@ -323,9 +322,8 @@ func (b *Backend) GetTokenBalances(ctx context.Context, address string) ([]explo
 func (b *Backend) GetContract(ctx context.Context, address string) (*explorer.Contract, error) {
 	// The indexer returns chain-facts-only contract data. If the caller needs
 	// verification metadata (ABI, source, compiler version), the SQL store
-	// provides it — and SetContractABI (the write path) still hits SQL. This
-	// handler returns the indexer's lean view; consumers can merge the SQL
-	// fields on top if they need the full shape.
+	// provides it. This handler returns the indexer's lean view; consumers can
+	// merge the SQL fields on top if they need the full shape.
 	resp, err := b.client.GetContract(ctx, &indexerv1.GetContractRequest{Address: address})
 	if err != nil {
 		if isNotFound(err) {

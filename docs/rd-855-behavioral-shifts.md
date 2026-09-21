@@ -72,6 +72,7 @@ or degrades it acceptably; **"Open"** items still need attention.
 - **Why**: Indexer is read-only. ABI is derived metadata, not chain data.
 - **User impact**: Privacy-mode frontend cannot upload / overwrite ABIs (which is fine given #5 — verification isn't a privacy-mode feature).
 - **Suggestion**: remove the `POST /contract/{addr}/abi` route from the privacy-mode API surface entirely. In standalone mode it keeps working.
+- **Resolved**: the route (`POST /api/v1/explorer/addresses/{address}/abi`), its handler and `Store.SetContractABI` are deleted. The standalone explorer keeps verification in its own database.
 
 ### 7. `GetIndexerProgress` stays on SQL
 

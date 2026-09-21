@@ -3,7 +3,6 @@ package explorer
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -1220,13 +1219,6 @@ func (s *Store) IsContract(ctx context.Context, address string) (bool, error) {
 		return false, nil
 	}
 	return exists, err
-}
-
-// SetContractABI updates the ABI for an existing contract.
-func (s *Store) SetContractABI(ctx context.Context, address string, abi json.RawMessage) error {
-	address = strings.ToLower(address)
-	_, err := s.db.ExecContext(ctx, `UPDATE contracts SET abi = $1 WHERE LOWER(address) = $2`, abi, address)
-	return err
 }
 
 // GetTokens returns tokens with pagination and optional type filter.

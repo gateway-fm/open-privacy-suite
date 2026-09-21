@@ -66,7 +66,7 @@ stays as a dormant column under the expand-only migration policy.
 | Sessions and tokens | `POST /auth/request|verify|callback`, `/auth/azure/*`, `/auth/azure/service-principal`, `POST /refresh`, `/revoke`, `/introspect`, `GET /admin/sessions`, `DELETE /admin/sessions/{s}`, `/oauth/*` | runtime authentication, no desired state |
 | Diagnostics and reads | `POST /orgs/{o}/dry-run`, `POST /admin/access/check`, `POST …/contracts/sync-check`, `POST …/groups/batch-delete-preview`, `GET …/contracts/grant-summary`, `GET …/contracts/{a}/events`, `GET /admin/contracts/by-address/{a}`, `GET /admin/audit-logs`, `GET /admin/logs`, `GET /admin/cache/stats`, `GET /admin/status`, `GET /admin/system/version`, `GET/POST /admin/system/eth-call-tracing`, `GET/POST /admin/system/intra-org-grant-tracing` | reads, previews and runtime switches |
 | Chain reads and RPC | `GET /explorer/*` (~40 reads), `POST /rpc`, `POST /rpc/{org}` | the product's read side; visibility is decided per viewer at read time |
-| Explorer ABI upload | `POST /explorer/addresses/{a}/abi`, `POST /explorer/index/block/{n}` | **known defect, parked by decision**: this writes a separate explorer store, not the registry the node and redaction read; it must close or route into the registry stream before `contract-registry` is the single ABI writer |
+| Explorer reindex | `POST /explorer/index/block/{n}` | an operator command against the read side; re-reads a block that the indexer already owns |
 | Development only | `GET /dev/test-identities`, `POST /admin/dev/deploy-demo-erc20`, `POST /admin/test-request`, `/oauth/session/{id}/mock-complete` | mock-auth builds |
 
 Reads of every migrated class (`GET /orgs/{o}/groups`, `GET …/contracts`,
@@ -103,12 +103,10 @@ lost. The 4 September research and DECISION §3.5 fixed the target shape:
 1. When does Reth policy mode become the default? Until then the legacy
    writers stay open for organisations without active streams, and the old
    preflight gate still decides access in legacy mode.
-2. The explorer ABI upload writes a store nobody enforces from. Close it, or
-   route it into the registry stream?
-3. Scoped admin roles and quotas for standing agent automation ("add up to N
+2. Scoped admin roles and quotas for standing agent automation ("add up to N
    members a day") — an RBAC extension, not a DSL question; not built.
-4. MCP rebuild timing (table above).
-5. **Where the configuration text is authored.** The recommendation is the
+3. MCP rebuild timing (table above).
+4. **Where the configuration text is authored.** The recommendation is the
    customer's Git with CI or an ArgoCD-style agent pushing it in (§7). The
    decision to confirm is the layout — one file per `(organisation, stream)` is
    recommended — and whether OPS keeps a copy of the applied text. Keeping it is
@@ -678,7 +676,7 @@ it, how often.** Two findings came out of it; both are listed under the tables.
 | Field | Set by | How often |
 |---|---|---|
 | `address`, `name` | an admin, in the document; a deployment creates the row as drift, adopted by the next revision | per contract |
-| `abi` | an admin, in the document. **Second writer today**: the explorer's own ABI endpoint writes a different store that redaction does not read — a known defect (§5) | on deployment or upgrade |
+| `abi` | an admin, in the document — single writer since the explorer's own ABI endpoint was removed (§16) | on deployment or upgrade |
 | `allowVisibleToUnlock`, `eventsAllowDynamicPayload`, `readGrants`, `eventRules` | an admin, in the document | rarely |
 | `deployed_by_user_id`, `deployed_at`, `metadata` | **not configuration** — the reconciler, from a finalized receipt | per deployment |
 
@@ -775,10 +773,9 @@ documents each declaring a complete desired set overwrite each other exactly the
 same way, so ownership by provenance would still be required.
 
 The rule that follows: a writer that makes a decision must be the document and
-nothing else. Three places still break it and are on the list to fix — the
-explorer's separate ABI writer, the deployment auto-grant the policy can express
-with `targetClass: deployer`, and `refresh-codehash` writing an observed value
-into a document-owned field.
+nothing else. Two places still break it and are on the list to fix — the
+deployment auto-grant the policy can express with `targetClass: deployer`, and
+`refresh-codehash` writing an observed value into a document-owned field.
 
 ## 15. Two findings from the membership path (2026-09-18)
 
@@ -798,34 +795,30 @@ mentions the same group. That matters for any design where a document owns
 `source=admin` rows: a credential could move a row out of the document's
 ownership without anyone noticing.
 
-## 16. The two endpoint defects, in full
+## 16. Two endpoint defects: one removed, one open
 
-**4. One endpoint writes a dead column in another product's database.**
+**Removed: the endpoint that wrote a dead column in another product's
+database.** `POST /api/v1/explorer/addresses/{address}/abi` lived in OPS and
+ran `UPDATE contracts SET abi` against the **indexer's** database — OPS
+connects to it read-only for explorer pages, and this was the single place
+where it wrote there.
 
-`POST /api/v1/explorer/addresses/{address}/abi` lives in OPS and runs
-`UPDATE contracts SET abi` against the **indexer's** database — OPS connects to
-it read-only for explorer pages, and this is the single place where it writes
-there.
-
-That column is used by nobody. The indexer never reads or writes it: its own
+The column was used by nobody. The indexer never reads or writes it: its own
 interface says so ("NOT INCLUDED here and never served by the indexer: ABI,
 source code, verification status… privacy mode does not expose contract
-verification"), and there is no call site for its `UpdateContractABI`. The
+verification"), and there was no call site for its `UpdateContractABI`. The
 standalone explorer does have source verification, but it keeps it in its own
 table in its own database, and those routes are compiled out of the privacy
-build.
+build. Nothing called the endpoint: not the frontend, not the end-to-end
+tests, only the generated SDK types listed it.
 
-Meanwhile the ABI that decides anything is ours:
-`privacy_proxy.contracts.abi`, owned by the `contract-registry` document and
-read by the policy compiler, by log redaction and by the admin screens.
+Meanwhile the ABI that decides anything is ours: `privacy_proxy.contracts.abi`,
+owned by the `contract-registry` document and read by the policy compiler, by
+log redaction and by the admin screens.
 
-So an operator who uploads an ABI through that endpoint changes nothing at all
-— not access, not what the explorer shows — while the call is named as if it
-registered the contract's ABI. Nothing in the product calls it: not the
-frontend, not the end-to-end tests, only the generated SDK types list it.
-
-Remove it. If verified ABIs for display are wanted later, that is the
-standalone explorer's own feature in its own database, and a properly designed
+The endpoint, its handler, the response model and `Store.SetContractABI` are
+deleted. If verified ABIs for display are wanted later, that is the standalone
+explorer's own feature in its own database, and a properly designed
 verification feature belongs in the registry document (see the note below).
 
 **5. `refresh-codehash`: we closed the write and lost the read with it.**

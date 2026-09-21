@@ -118,7 +118,6 @@ func (s *Server) bindExplorerEndpoints(rg *gin.RouterGroup) {
 	rg.GET("/addresses/:address/logs", s.getExplorerAddressLogs)
 	rg.GET("/addresses/:address/contract", s.getExplorerAddressContract)
 	rg.GET("/addresses/:address/is-contract", s.getExplorerAddressIsContract)
-	rg.POST("/addresses/:address/abi", s.updateExplorerAddressABI)
 
 	// Logs
 	rg.GET("/logs", s.getExplorerLogs)
@@ -2214,54 +2213,6 @@ func (s *Server) getExplorerAddressIsContract(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"is_contract": isContract})
-}
-
-// updateExplorerAddressABI stores a contract ABI for an address.
-//
-// @Summary      Set the ABI for a contract
-// @Description  Stores the ABI JSON for a contract address. Private network only (serves the explorer backend); not reachable through the public ingress. This is privacy-gated: the write requires FULL visibility of the address for the resolved viewer, so only members of the owning org (or a public contract) may update the ABI; other viewers get 404 (indistinguishable from a missing address). The request body is the raw ABI JSON.
-// @Tags         Explorer
-// @Accept       json
-// @Produce      json
-// @Param        address path string true "Contract address (0x-prefixed hex)"
-// @Param        request body object true "Raw contract ABI JSON (array of ABI entries)"
-// @Success      200 {object} apimodels.ExplorerABIUpdateResponse
-// @Failure      400 {object} apimodels.APIError "invalid request body"
-// @Failure      404 {object} apimodels.APIError "address not found (also returned when the viewer lacks full visibility)"
-// @Failure      500 {object} apimodels.APIError "failed to set contract ABI"
-// @Failure      503 {object} apimodels.APIError "explorer store not configured"
-// @Router       /api/v1/explorer/addresses/{address}/abi [post]
-func (s *Server) updateExplorerAddressABI(c *gin.Context) {
-	if s.explorerStore == nil {
-		respondServiceUnavailable(c, "explorer store not configured")
-		return
-	}
-	address := strings.ToLower(c.Param("address"))
-
-	// Require full visibility: only org members (or public contracts) may update ABI.
-	// This prevents unauthorized writes to private org contracts.
-	viewerDID := s.getViewerDIDFromRequest(c)
-	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), viewerDID, address)
-	if visibility.Level != VisibilityFull {
-		respondNotFound(c, "address not found")
-		return
-	}
-
-	var body json.RawMessage
-	if err := c.ShouldBindJSON(&body); err != nil {
-		respondBadRequestAndLog(c, "invalid request body",
-			"explorer: updateExplorerAddressABI invalid body",
-			"address", address, "err", err)
-		return
-	}
-
-	if err := s.explorerStore.SetContractABI(c.Request.Context(), address, body); err != nil {
-		respondInternalErrorAndLog(c, "failed to set contract ABI",
-			"explorer: SetContractABI failed",
-			"address", address, "err", err)
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "address": address})
 }
 
 // --- Logs ---

@@ -68,9 +68,9 @@ stays an operation is written by *events*: a login, a directory, a finalized
 receipt, a price feed. Making those documents too would either put an approval
 inside the login path or have machines self-activate revisions, which removes
 the review and keeps the conflict, since two documents declaring a complete
-state overwrite each other exactly as a document overwrites a row. Three places
-still break the rule and are on the list below: the explorer's ABI writer, the
-deployment auto-grant, and `refresh-codehash`.
+state overwrite each other exactly as a document overwrites a row. Two places
+still break the rule and are on the list below: the deployment auto-grant and
+`refresh-codehash`.
 
 ## 4. Where the document text should live
 
@@ -132,15 +132,7 @@ is a data-sovereignty choice with those two consequences.
 **3. Organisations into the platform document.** Decided in principle; needs
 the deletion semantics and last-administrator protection.
 
-**4. One endpoint writes a dead column in another product's database.**
-`POST /api/v1/explorer/addresses/{address}/abi` is the only place where OPS
-writes into the indexer's database, and the column it writes is used by nobody:
-the indexer never reads it, and the standalone explorer keeps verification in
-its own table, compiled out of the privacy build. The ABI that decides anything
-is ours, owned by the `contract-registry` document. The endpoint has no callers
-and should be removed. Detail: details §16.
-
-**5. `refresh-codehash` lost its read along with its write.** A
+**4. `refresh-codehash` lost its read along with its write.** A
 shared-infrastructure entry is trusted only while the bytecode at that address
 hashes to the pinned value, and this endpoint both observed the chain and wrote
 the pin. The pin now belongs to the platform document, so the stream guard
@@ -150,7 +142,7 @@ the only thing that produced the value, and hand-computing it wrongly drops the
 address out of shared infrastructure silently. Keep it as a read, drop the
 write. Detail: details §16.
 
-**6. Should a curated sanctions list be a document?** It depends on who
+**5. Should a curated sanctions list be a document?** It depends on who
 produces it. A list the customer's compliance team maintains from OFAC
 designations is a decision, and Git review fits it; a vendor feed is not, and a
 revision per update would be theatre. Both can coexist —

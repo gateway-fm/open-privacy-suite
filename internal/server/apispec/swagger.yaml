@@ -1359,15 +1359,6 @@ components:
         reason:
           type: string
       type: object
-    privacy-proxy_internal_apimodels.ExplorerABIUpdateResponse:
-      properties:
-        address:
-          example: "0x0000000000000000000000000000000000000001"
-          type: string
-        success:
-          example: true
-          type: boolean
-      type: object
     privacy-proxy_internal_apimodels.ExplorerBlockNumberResponse:
       properties:
         number:
@@ -12465,67 +12456,6 @@ paths:
                 $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
           description: explorer store not configured
       summary: List accounts
-      tags:
-      - Explorer
-  /api/v1/explorer/addresses/{address}/abi:
-    post:
-      description: 'Stores the ABI JSON for a contract address. Private network only
-        (serves the explorer backend); not reachable through the public ingress. This
-        is privacy-gated: the write requires FULL visibility of the address for the
-        resolved viewer, so only members of the owning org (or a public contract)
-        may update the ABI; other viewers get 404 (indistinguishable from a missing
-        address). The request body is the raw ABI JSON.'
-      parameters:
-      - description: Contract address (0x-prefixed hex)
-        in: path
-        name: address
-        required: true
-        schema:
-          type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              type: object
-          text/plain:
-            schema:
-              title: request
-              type: object
-        description: Raw contract ABI JSON (array of ABI entries)
-        required: true
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/privacy-proxy_internal_apimodels.ExplorerABIUpdateResponse'
-          description: OK
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
-          description: invalid request body
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
-          description: address not found (also returned when the viewer lacks full
-            visibility)
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
-          description: failed to set contract ABI
-        "503":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
-          description: explorer store not configured
-      summary: Set the ABI for a contract
       tags:
       - Explorer
   /api/v1/explorer/addresses/{address}/balance:

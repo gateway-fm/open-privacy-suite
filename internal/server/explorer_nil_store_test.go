@@ -59,7 +59,6 @@ func buildNilStoreRouter() *gin.Engine {
 	g.GET("/addresses/:address/logs", srv.getExplorerAddressLogs)
 	g.GET("/addresses/:address/contract", srv.getExplorerAddressContract)
 	g.GET("/addresses/:address/is-contract", srv.getExplorerAddressIsContract)
-	g.POST("/addresses/:address/abi", srv.updateExplorerAddressABI)
 
 	g.GET("/logs", srv.getExplorerLogs)
 
@@ -137,7 +136,6 @@ func TestExplorerHandlers_NilStore_Returns503(t *testing.T) {
 		{http.MethodGet, "/api/v1/explorer/addresses/" + addr + "/logs"},
 		{http.MethodGet, "/api/v1/explorer/addresses/" + addr + "/contract"},
 		{http.MethodGet, "/api/v1/explorer/addresses/" + addr + "/is-contract"},
-		{http.MethodPost, "/api/v1/explorer/addresses/" + addr + "/abi"},
 		{http.MethodGet, "/api/v1/explorer/logs"},
 		{http.MethodGet, "/api/v1/explorer/tokens"},
 		{http.MethodGet, "/api/v1/explorer/tokens/" + addr},

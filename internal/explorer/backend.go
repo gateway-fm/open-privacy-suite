@@ -2,7 +2,6 @@ package explorer
 
 import (
 	"context"
-	"encoding/json"
 )
 
 // ExplorerBackend is the abstract surface the explorer API handlers and
@@ -103,7 +102,6 @@ type ExplorerBackend interface {
 	// Contracts
 	GetContract(ctx context.Context, address string) (*Contract, error)
 	IsContract(ctx context.Context, address string) (bool, error)
-	SetContractABI(ctx context.Context, address string, abi json.RawMessage) error
 
 	// Tokens
 	GetToken(ctx context.Context, address string) (*Token, error)
