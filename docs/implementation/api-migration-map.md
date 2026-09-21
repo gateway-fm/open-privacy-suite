@@ -81,6 +81,7 @@ ref, commit, the exact candidate digests and the reviewers who approved.
 - **Push, not pull.** CI or an ArgoCD-style agent calls the API. No read credentials into the customer's repository, and enforcement never waits for Git to be reachable.
 - **OPS writes three things at activation**, and they are the only reason the database is involved: the fact-version pin the node switches to, the activation record (who, when, which digest), and the projection tables for as long as they exist.
 - **Facts never come from Git.** A reconcile loop over people would delete memberships the directory created and lift bans set during an incident.
+- **Two streams stay human.** `approvers` and `platform` refuse a service principal at both submit and activate (`configuration_revision_store.go:85,439`): they decide who may approve and what the platform trusts, so CI must not be able to widen its own authority there. Their text can live in Git; a person has to push and activate it.
 
 This is the split GitOps already uses: Git holds desired state, the target
 system holds applied state. Kubernetes keeps it in etcd; OPS keeps it in
