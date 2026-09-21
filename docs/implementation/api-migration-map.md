@@ -89,6 +89,16 @@ This is the split GitOps already uses: Git holds desired state, the target
 system holds applied state. Kubernetes keeps it in etcd; OPS keeps it in
 Postgres.
 
+**Where each piece physically sits.** The document text is
+`configuration_revisions.source` in the `privacy_proxy` database, with its
+`digest` in the column beside it; a trigger forbids changing either after the
+row is created. What the server derives from that text — for execution rules,
+the generated contract, its bytecode and hashes — goes into
+`compiled_artifact`, another column of the same row. Nothing derived is ever
+written back into the document text, and nothing is ever pushed back to Git.
+The reviewed text and the derived evidence sit side by side and are
+re-checked against each other at activation.
+
 **A document can pin an observed value, but something must produce it.** This
 is the real limit of "put everything in the configuration", and we already have
 it in three places. A rule pins `abiDigest`, the sha256 of the exact registered
@@ -133,25 +143,33 @@ is a data-sovereignty choice with those two consequences.
 **3. Organisations into the platform document.** Decided in principle; needs
 the deletion semantics and last-administrator protection.
 
-**4. The explorer keeps its own copy of every contract ABI, and writes to it.**
+**4. One endpoint writes a dead column in another product's database.**
 
-There are two tables called `contracts`, in two different databases: the
-product's own, and the explorer's (`EXPLORER_DATABASE_URL`). The endpoint
-`POST /api/v1/explorer/addresses/{address}/abi` updates the explorer's copy.
-Everything that enforces anything reads the product's copy: the event rules and
-redaction that decide who sees which log, and the policy catalogue that
-`abiDigest` pins and argument rules are compiled against.
+`POST /api/v1/explorer/addresses/{address}/abi` lives in OPS and runs
+`UPDATE contracts SET abi` against the **indexer's** database — OPS connects to
+it read-only for explorer pages, and this is the single place where it writes
+there.
 
-The consequence is that uploading an ABI through the explorer changes what the
-explorer can decode and display, and changes nothing about access — while
-looking to the operator exactly like registering the contract's ABI. Under the
-documents it is worse: the `contract-registry` document is supposed to own the
-ABI, and a second endpoint writing a different copy means the reviewed document
-is no longer the only ABI in the system.
+That column is used by nobody. The indexer never reads or writes it: its own
+interface says so ("NOT INCLUDED here and never served by the indexer: ABI,
+source code, verification status… privacy mode does not expose contract
+verification"), and there is no call site for its `UpdateContractABI`. The
+standalone explorer does have source verification, but it keeps it in its own
+table in its own database, and those routes are compiled out of the privacy
+build.
 
-Two ways out: close the endpoint, or make it write through the registry so the
-ABI lands in the product's table and shows up as drift for the next revision to
-adopt.
+Meanwhile the ABI that decides anything is ours:
+`privacy_proxy.contracts.abi`, owned by the `contract-registry` document and
+read by the policy compiler, by log redaction and by the admin screens.
+
+So an operator who uploads an ABI through that endpoint changes nothing at all
+— not access, not what the explorer shows — while the call is named as if it
+registered the contract's ABI. Nothing in the product calls it: not the
+frontend, not the end-to-end tests, only the generated SDK types list it.
+
+Remove it. If verified ABIs for display are wanted later, that is the
+standalone explorer's own feature in its own database, and a properly designed
+verification feature belongs in the registry document (see the note below).
 
 **5. `refresh-codehash`: we closed the write and lost the read with it.**
 
