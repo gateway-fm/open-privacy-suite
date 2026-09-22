@@ -1,0 +1,238 @@
+# Envelope V2 (key id + key set) for the Reth PoC, UNFINISHED.
+# Starting point only: `cargo check --tests` still reports 4 E0308 mismatched-types errors
+# (remaining call sites passing a single VerifyingKey where a KeySet is now expected).
+# Kept as a patch because the Reth branch's Go side still emits V1 and whether Reth stays a
+# shipped target is decision 0.5 in docs/implementation/approvals-production-plan.md.
+# Apply with: git -C <reth worktree> apply poc/besu-signed-approvals/patches/reth-poc-envelope-v2.patch
+
+diff --git a/poc/reth-signed-approvals/src/approvals.rs b/poc/reth-signed-approvals/src/approvals.rs
+index 6e6aece..469a8df 100644
+--- a/poc/reth-signed-approvals/src/approvals.rs
++++ b/poc/reth-signed-approvals/src/approvals.rs
+@@ -469,7 +469,7 @@ mod tests {
+         let store = Arc::new(Store::new(Duration::from_secs(5), 100));
+         let verifier = crate::verification::Verifier::new(
+             store.clone(),
+-            SigningKey::from_bytes(&[7; 32]).verifying_key(),
++            crate::batch::KeySet::from([("default".to_string(), SigningKey::from_bytes(&[7; 32]).verifying_key())]),
+             31337,
+             2,
+             64,
+@@ -517,7 +517,7 @@ mod tests {
+             signature: String::new(),
+         };
+         a.signature = alloy_primitives::hex::encode(key.sign(&a.message()).to_bytes());
+-        assert!(a.verify(&key.verifying_key(), 31337).is_ok());
++        assert!(a.verify(&crate::batch::KeySet::from([("default".to_string(), key.verifying_key())]), 31337).is_ok());
+         for field in 0..4 {
+             let mut b = a.clone();
+             match field {
+@@ -526,7 +526,7 @@ mod tests {
+                 2 => b.principal = B256::ZERO,
+                 _ => b.chain_id = 1,
+             };
+-            assert!(b.verify(&key.verifying_key(), 31337).is_err());
++            assert!(b.verify(&crate::batch::KeySet::from([("default".to_string(), key.verifying_key())]), 31337).is_err());
+         }
+     }
+     #[test]
+diff --git a/poc/reth-signed-approvals/src/batch.rs b/poc/reth-signed-approvals/src/batch.rs
+index 5134061..528cca5 100644
+--- a/poc/reth-signed-approvals/src/batch.rs
++++ b/poc/reth-signed-approvals/src/batch.rs
+@@ -5,13 +5,26 @@ use serde::{Deserialize, Serialize};
+ 
+ pub const MAX_APPROVALS: usize = 32;
+ pub const MAX_FRAME: usize = 16_384;
+-pub const DOMAIN: &[u8] = b"OPS_APPROVAL_BATCH_V1\0";
++pub const DOMAIN: &[u8] = b"OPS_APPROVAL_BATCH_V2\0";
++pub const MAX_KEY_ID: usize = 64;
++
++/// Trusted OPS signing keys by the id a batch names. Rotation is add-then-switch.
++pub type KeySet = std::collections::BTreeMap<String, VerifyingKey>;
++
++pub fn valid_key_id(id: &str) -> bool {
++    !id.is_empty()
++        && id.len() <= MAX_KEY_ID
++        && id
++            .bytes()
++            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b':' | b'-'))
++}
+ 
+ // The binary frame carries the exact bytes OPS signed, followed by the raw
+ // signature. No JSON/hex decoding or reconstruction of the signed message.
+ pub enum Packet<'a> {
+     Json(Incoming),
+     Binary {
++        key_id: String,
+         message: &'a [u8],
+         signature: Signature,
+         approvals: Vec<Approval>,
+@@ -27,11 +40,22 @@ impl<'a> Packet<'a> {
+                 .map(Self::Json)
+                 .map_err(|e| e.to_string());
+         }
+-        let header = DOMAIN.len() + 4;
++        // OPS_APPROVAL_BATCH_V2\0 | u8 key id length | key id | u32 count | items | signature
++        let key_len = *bytes.get(DOMAIN.len()).ok_or("truncated frame")? as usize;
++        if !(1..=MAX_KEY_ID).contains(&key_len) {
++            return Err("invalid key id length".into());
++        }
++        let key_end = DOMAIN.len() + 1 + key_len;
++        let header = key_end + 4;
+         if bytes.len() < header + 64 {
+             return Err("truncated frame".into());
+         }
+-        let count = u32::from_be_bytes(bytes[DOMAIN.len()..header].try_into().unwrap()) as usize;
++        let key_id = std::str::from_utf8(&bytes[DOMAIN.len() + 1..key_end])
++            .ok()
++            .filter(|id| valid_key_id(id))
++            .ok_or("invalid key id")?
++            .to_string();
++        let count = u32::from_be_bytes(bytes[key_end..header].try_into().unwrap()) as usize;
+         if !(1..=MAX_APPROVALS).contains(&count) || bytes.len() != header + count * 120 + 64 {
+             return Err("invalid frame count or length".into());
+         }
+@@ -54,15 +78,19 @@ impl<'a> Packet<'a> {
+             });
+         }
+         Ok(Self::Binary {
++            key_id,
+             message: &bytes[..end],
+             signature,
+             approvals,
+         })
+     }
+-    pub fn verify(self, key: &VerifyingKey, chain: u64) -> Result<Vec<Approval>, String> {
++    /// An unknown key id fails: refusal is the safe outcome for a key the operator has not
++    /// (or no longer) trusted.
++    pub fn verify(self, keys: &KeySet, chain: u64) -> Result<Vec<Approval>, String> {
+         match self {
+-            Self::Json(incoming) => incoming.verify(key, chain),
++            Self::Json(incoming) => incoming.verify(keys, chain),
+             Self::Binary {
++                key_id,
+                 message,
+                 signature,
+                 approvals,
+@@ -70,6 +98,7 @@ impl<'a> Packet<'a> {
+                 if approvals.iter().any(|a| a.chain_id != chain) {
+                     return Err("wrong chain".into());
+                 }
++                let key = keys.get(&key_id).ok_or("untrusted key id")?;
+                 key.verify_strict(message, &signature)
+                     .map_err(|e| e.to_string())?;
+                 Ok(approvals)
+@@ -82,15 +111,22 @@ impl<'a> Packet<'a> {
+ #[serde(deny_unknown_fields)]
+ pub struct Batch {
+     pub version: u32,
++    pub key_id: String,
+     pub approvals: Vec<Approval>,
+     pub signature: String,
+ }
+ impl Batch {
+     pub fn message(&self) -> Result<Vec<u8>, String> {
+-        if self.version != 1 || self.approvals.is_empty() || self.approvals.len() > MAX_APPROVALS {
++        if self.version != 2
++            || self.approvals.is_empty()
++            || self.approvals.len() > MAX_APPROVALS
++            || !valid_key_id(&self.key_id)
++        {
+             return Err("unsupported or invalid approval batch".into());
+         }
+-        let mut message = b"OPS_APPROVAL_BATCH_V1\0".to_vec();
++        let mut message = DOMAIN.to_vec();
++        message.push(self.key_id.len() as u8);
++        message.extend_from_slice(self.key_id.as_bytes());
+         message.extend_from_slice(&(self.approvals.len() as u32).to_be_bytes());
+         for a in &self.approvals {
+             if !a.valid_mode() {
+@@ -112,13 +148,16 @@ pub enum Incoming {
+     Batch(Batch),
+ }
+ impl Incoming {
+-    pub fn verify(self, key: &VerifyingKey, chain: u64) -> Result<Vec<Approval>, String> {
++    pub fn verify(self, keys: &KeySet, chain: u64) -> Result<Vec<Approval>, String> {
+         match self {
+             Self::Single(a) => {
++                // A single JSON approval predates key ids; it verifies under "default".
++                let key = keys.get("default").ok_or("untrusted key id")?;
+                 a.verify(key, chain)?;
+                 Ok(vec![a])
+             }
+             Self::Batch(b) => {
++                let key = keys.get(&b.key_id).ok_or("untrusted key id")?;
+                 let message = b.message()?;
+                 if b.approvals.iter().any(|a| a.chain_id != chain) {
+                     return Err("wrong chain".into());
+diff --git a/poc/reth-signed-approvals/src/main.rs b/poc/reth-signed-approvals/src/main.rs
+index 43076f0..2add3eb 100644
+--- a/poc/reth-signed-approvals/src/main.rs
++++ b/poc/reth-signed-approvals/src/main.rs
+@@ -32,8 +32,32 @@ fn main() -> eyre::Result<()> {
+                 .unwrap_or("100000".into())
+                 .parse()?;
+             let store = Arc::new(approvals::Store::new(Duration::from_millis(wait), capacity));
+-            let key = alloy_primitives::hex::decode(std::env::var("OPS_APPROVAL_PUBLIC_KEY")?)?;
+-            let key = ed25519_dalek::VerifyingKey::from_bytes(key.as_slice().try_into()?)?;
++            // Trusted OPS keys by id: OPS_APPROVAL_PUBLIC_KEYS=id=hex,id=hex; the single-key
++            // OPS_APPROVAL_PUBLIC_KEY is trusted under "default". Rotation is add-then-switch.
++            let mut keys = batch::KeySet::new();
++            if let Ok(single) = std::env::var("OPS_APPROVAL_PUBLIC_KEY") {
++                let raw = alloy_primitives::hex::decode(single)?;
++                keys.insert(
++                    "default".into(),
++                    ed25519_dalek::VerifyingKey::from_bytes(raw.as_slice().try_into()?)?,
++                );
++            }
++            if let Ok(spec) = std::env::var("OPS_APPROVAL_PUBLIC_KEYS") {
++                for entry in spec.split(',') {
++                    let (id, hex) = entry.split_once('=').ok_or("expected id=hex")?;
++                    if !batch::valid_key_id(id.trim()) {
++                        return Err(format!("invalid key id {id:?}").into());
++                    }
++                    let raw = alloy_primitives::hex::decode(hex.trim())?;
++                    keys.insert(
++                        id.trim().to_string(),
++                        ed25519_dalek::VerifyingKey::from_bytes(raw.as_slice().try_into()?)?,
++                    );
++                }
++            }
++            if keys.is_empty() {
++                return Err("no trusted OPS public key configured".into());
++            }
+             let chain = std::env::var("OPS_APPROVAL_CHAIN_ID")?.parse()?;
+             let listener =
+                 tokio::net::TcpListener::bind(std::env::var("OPS_APPROVAL_LISTEN")?).await?;
+@@ -45,7 +69,7 @@ fn main() -> eyre::Result<()> {
+                 .parse()?;
+             let verifier = verification::Verifier::new(
+                 store.clone(),
+-                key,
++                keys,
+                 chain,
+                 workers,
+                 capacity,
+diff --git a/poc/reth-signed-approvals/src/verification.rs b/poc/reth-signed-approvals/src/verification.rs
+index 3fec7ed..b179027 100644
+--- a/poc/reth-signed-approvals/src/verification.rs
++++ b/poc/reth-signed-approvals/src/verification.rs
+@@ -27,7 +27,7 @@ pub struct Verifier {
+ impl Verifier {
+     pub fn new(
+         store: Arc<Store>,
+-        key: VerifyingKey,
++        keys: crate::batch::KeySet,
+         chain: u64,
+         workers: usize,
+         capacity: usize,
+@@ -48,7 +48,7 @@ impl Verifier {
+                 stages.parsed = crate::hops::now();
+             }
+             let start = Instant::now();
+-            match incoming.verify(&key, chain) {
++            match incoming.verify(&keys, chain) {
+                 Ok(approvals) => {
+                     let elapsed = start.elapsed();
+                     if profile {
