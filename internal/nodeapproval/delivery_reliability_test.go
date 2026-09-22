@@ -7,8 +7,10 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"math/big"
 	"net"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -116,5 +118,73 @@ func TestApprovalSurvivesAFailedWrite(t *testing.T) {
 	}
 	if !seen[hash] {
 		t.Fatalf("approval %s was lost with the failed write: it never reached the reconnected producer", hash)
+	}
+}
+
+// A peer that accepts and immediately closes (the plugin at its connection limit, a
+// half-started plugin, a proxy) must not turn OPS into a dial storm.
+func TestLostConnectionBacksOffBeforeRedialing(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	var accepts atomic.Int64
+	go func() {
+		for {
+			c, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			accepts.Add(1)
+			c.Close()
+		}
+	}()
+	ctx, cancel := context.WithCancel(context.Background())
+	s := &Service{key: ed25519.NewKeyFromSeed(bytes.Repeat([]byte{7}, 32)), address: listener.Addr().String(),
+		queue: make(chan Approval, 4096), signed: make(chan Batch, 128), maxBatch: MaxBatchApprovals,
+		sign: SignBatch, cancel: cancel, done: make(chan struct{}), signDone: make(chan struct{})}
+	first := newBrokenConn()
+	go s.signLoop(ctx)
+	go s.deliver(ctx, first)
+	defer s.Close()
+	first.Close() // the live connection drops: OPS must reconnect, but not in a storm
+	time.Sleep(700 * time.Millisecond)
+	if n := accepts.Load(); n > 10 {
+		t.Fatalf("%d connections in 700 ms: reconnecting without backoff", n)
+	} else if n == 0 {
+		t.Fatal("never reconnected")
+	}
+}
+
+// Every approval accepted by Enqueue belongs to a transaction that is about to be forwarded.
+// A graceful stop (a rolling restart) must deliver what it has already accepted.
+func TestCloseDeliversEverythingAlreadyAccepted(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	seed := bytes.Repeat([]byte{7}, 32)
+	s, err := New("http://127.0.0.1:1", listener.Addr().String(), seed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := listener.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	const count = 200
+	for i := 0; i < count; i++ {
+		p := &Prepared{Approval: Approval{ChainID: 31337, TxHash: common.BigToHash(big.NewInt(int64(i + 1))), Fingerprint: common.HexToHash("0x5678")}}
+		if err := s.Enqueue(p, "did:fixture"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.Close() // immediately: nothing has necessarily been signed yet
+	seen := readApprovalHashes(t, conn, count, time.Now().Add(3*time.Second))
+	if len(seen) != count {
+		t.Fatalf("close delivered %d of %d accepted approvals", len(seen), count)
 	}
 }

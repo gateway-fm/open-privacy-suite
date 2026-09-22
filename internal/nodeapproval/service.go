@@ -68,6 +68,7 @@ type Service struct {
 	hashMode    uint8
 	node        nodeKind
 	connections atomic.Uint64
+	closing     atomic.Bool
 	hops        *hops
 	rpc         *rpc.Client
 	rpcHTTP     *http.Client
@@ -154,6 +155,7 @@ func dialPreflightRPC(url string, tc nodehttp.TransportConfig) (*rpc.Client, *ht
 }
 func (s *Service) Close() {
 	s.once.Do(func() {
+		s.closing.Store(true) // Enqueue refuses from here; what was accepted is drained
 		if s.cancel != nil {
 			s.cancel()
 		}
@@ -262,6 +264,9 @@ func (s *Service) Enqueue(p *Prepared, principal string) error {
 	a := p.Approval
 	a.Principal = crypto.Keccak256Hash([]byte(principal))
 	a.Signature = ""
+	if s.closing.Load() {
+		return errors.New("approval sender closed")
+	}
 	select {
 	case <-s.done:
 		return errors.New("approval sender closed")
@@ -289,27 +294,51 @@ func (s *Service) takeBatch(first Approval) []Approval {
 
 func (s *Service) signLoop(ctx context.Context) {
 	defer close(s.signDone)
+	defer close(s.signed) // tells the sender the drain is complete
 	for {
 		select {
 		case <-ctx.Done():
+			// Stop: sign whatever Enqueue already accepted, so the sender can drain
+			// it. Nothing new arrives — Enqueue refuses once closing is set.
+			for len(s.queue) > 0 {
+				s.signOne(<-s.queue, true)
+			}
 			return
 		case first := <-s.queue:
-			approvals := s.takeBatch(first)
-			mark(approvals, func(h *Hop, n int64) { h.SignStart = n })
-			batch, err := s.sign(s.key, approvals)
-			mark(approvals, func(h *Hop, n int64) { h.SignEnd = n })
-			if err != nil {
-				slog.Error("approval batch signing failed", "error", err)
-				continue
-			}
-			// The sender owns transport. Backpressure here is bounded and never
-			// makes the request goroutine wait for signing or network delivery.
-			select {
-			case s.signed <- batch:
-			case <-ctx.Done():
+			if !s.signOne(first, false) {
 				return
 			}
 		}
+	}
+}
+
+// signOne signs one batch starting with first and hands it to the sender. It
+// returns false when the service is stopping and the batch could not be handed
+// over; during a drain the handover waits, bounded by the sender's own deadline.
+func (s *Service) signOne(first Approval, draining bool) bool {
+	approvals := s.takeBatch(first)
+	mark(approvals, func(h *Hop, n int64) { h.SignStart = n })
+	batch, err := s.sign(s.key, approvals)
+	mark(approvals, func(h *Hop, n int64) { h.SignEnd = n })
+	if err != nil {
+		slog.Error("approval batch signing failed", "error", err)
+		return true
+	}
+	// The sender owns transport. Backpressure here is bounded and never makes
+	// the request goroutine wait for signing or network delivery.
+	if draining {
+		select {
+		case s.signed <- batch:
+		case <-s.done:
+			return false
+		}
+		return true
+	}
+	select {
+	case s.signed <- batch:
+		return true
+	case <-s.done:
+		return false
 	}
 }
 

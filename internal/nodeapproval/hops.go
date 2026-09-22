@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -26,16 +27,28 @@ type Hop struct {
 	ForwardStart  int64       `json:"forward_start"`
 }
 type hops struct {
-	path string
-	mu   sync.Mutex
-	rows []*Hop
+	path  string
+	limit int
+	mu    sync.Mutex
+	rows  []*Hop
 }
 
+// defaultHopLimit bounds memory when the recorder is on; OPS_APPROVAL_HOPS_LIMIT
+// raises it for a load run, so a sample covers the whole run and not its start.
+const defaultHopLimit = 8192
+
 func newHops() *hops {
-	if path := os.Getenv("OPS_APPROVAL_HOPS_FILE"); path != "" {
-		return &hops{path: path}
+	path := os.Getenv("OPS_APPROVAL_HOPS_FILE")
+	if path == "" {
+		return nil
 	}
-	return nil
+	limit := defaultHopLimit
+	if value := os.Getenv("OPS_APPROVAL_HOPS_LIMIT"); value != "" {
+		if n, err := strconv.Atoi(value); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	return &hops{path: path, limit: limit}
 }
 func (h *hops) add(hash common.Hash) *Hop {
 	if h == nil {
@@ -43,7 +56,7 @@ func (h *hops) add(hash common.Hash) *Hop {
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if len(h.rows) >= 8192 {
+	if len(h.rows) >= h.limit {
 		return nil
 	}
 	r := &Hop{Hash: hash, Queued: time.Now().UnixNano()}
