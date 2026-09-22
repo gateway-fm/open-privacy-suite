@@ -1,0 +1,28 @@
+{
+  "peers": {
+    "producer": 1,
+    "follower": 1
+  },
+  "gossip": {
+    "tx": "0xfaccda17eec627016562e41d0f83fd2b492c48320599ecec0ef39b430f0a26eb",
+    "reached_producer_pool": true,
+    "gossip_ms": 81.3
+  },
+  "import": {
+    "topo-producer": {
+      "newPayload": "VALID",
+      "fcu": "VALID"
+    },
+    "topo-follower": {
+      "newPayload": "VALID",
+      "fcu": "VALID"
+    }
+  },
+  "follower_head": 1,
+  "producer_head": 1,
+  "decisions_in_producer_log": [
+    "wait tx=0xfaccda17eec627016562e41d0f83fd2b492c48320599ecec0e",
+    "wait tx=0xfaccda17eec627016562e41d0f83fd2b492c48320599ecec0e",
+    "wait tx=0xfaccda17eec627016562e41d0f83fd2b492c48320599ecec0e"
+  ]
+}
