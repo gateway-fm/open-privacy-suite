@@ -34,7 +34,7 @@ class ApprovalBatchTest {
 
   private static byte[] frame(final List<Approval> approvals, final byte[] signature) throws Exception {
     final ByteArrayOutputStream out = new ByteArrayOutputStream();
-    out.write(ApprovalBatch.message(approvals));
+    out.write(ApprovalBatch.message("default", approvals));
     out.write(signature);
     return out.toByteArray();
   }
@@ -54,7 +54,7 @@ class ApprovalBatchTest {
       final Golden g = golden(name);
       final ApprovalBatch.Decoded decoded = ApprovalBatch.decode(frame(g.approvals(), g.signature()));
       assertEquals(g.approvals(), decoded.approvals(), name);
-      final ApprovalVerifier verifier = new ApprovalVerifier(Fixtures.FIXTURE_PUBLIC_KEY);
+      final ApprovalVerifier verifier = new ApprovalVerifier(java.util.Map.of("default", Fixtures.FIXTURE_PUBLIC_KEY));
       assertTrue(verifier.verify(decoded), name);
     }
   }
@@ -62,7 +62,7 @@ class ApprovalBatchTest {
   @Test
   void rejectsTamperingUnknownModesAndBadSizes() throws Exception {
     final Golden g = golden("call-batch.json");
-    final ApprovalVerifier verifier = new ApprovalVerifier(Fixtures.FIXTURE_PUBLIC_KEY);
+    final ApprovalVerifier verifier = new ApprovalVerifier(java.util.Map.of("default", Fixtures.FIXTURE_PUBLIC_KEY));
     final byte[] ok = frame(g.approvals(), g.signature());
 
     final byte[] flipped = ok.clone();
@@ -75,7 +75,7 @@ class ApprovalBatchTest {
 
     final byte[] otherKey = new byte[32];
     otherKey[0] = 1;
-    assertFalse(new ApprovalVerifier(otherKey).verify(ApprovalBatch.decode(ok)));
+    assertFalse(new ApprovalVerifier(java.util.Map.of("default", otherKey)).verify(ApprovalBatch.decode(ok)));
 
     final byte[] unknownMode = ok.clone();
     unknownMode[ApprovalBatch.DOMAIN.length + 4 + 14] = '9'; // "OPS_APPROVAL_V9"

@@ -31,7 +31,7 @@ class ApprovalListenerTest {
     }
     final byte[] signature = Bytes.fromHexString(v.get("signature").asText()).toArrayUnsafe();
     final ByteArrayOutputStream body = new ByteArrayOutputStream();
-    body.write(ApprovalBatch.message(approvals));
+    body.write(ApprovalBatch.message("default", approvals));
     body.write(signature);
 
     final ApprovalStore store = new ApprovalStore(10, 60_000, 0, new AtomicLong(1)::get);
@@ -40,7 +40,7 @@ class ApprovalListenerTest {
             new InetSocketAddress("127.0.0.1", 0),
             1,
             300,
-            new ApprovalVerifier(Fixtures.FIXTURE_PUBLIC_KEY),
+            new ApprovalVerifier(java.util.Map.of("default", Fixtures.FIXTURE_PUBLIC_KEY)),
             31337,
             store,
             ApprovalListener.Metrics.NONE)) {

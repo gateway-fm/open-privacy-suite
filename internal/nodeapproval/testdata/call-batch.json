@@ -1,5 +1,6 @@
 {
-  "version": 1,
+  "version": 2,
+  "key_id": "default",
   "approvals": [
     {
       "hash_mode": 3,
@@ -15,5 +16,5 @@
       "principal": "0x0000000000000000000000000000000000000000000000000000000000000000"
     }
   ],
-  "signature": "d9d210e491f7efe1784e2e852f258da91458247ae7d6e7e0bd0be6da9709371bc8c5c0ebdecab0df596083950ce0fcbad78af6175baa7f16fc1c376888ccd90f"
+  "signature": "786b8601d91c7c8ffd3e26d926251e2ce0b618caac6dce1b9edaf9a3304a11d8d3a47dca83d67e566a303fa176fc2d719a24c4f3559e6217362754b6847c3f07"
 }

@@ -61,11 +61,12 @@ func readApprovalHashes(t *testing.T, c net.Conn, want int, deadline time.Time) 
 			return seen
 		}
 		message := frame[:len(frame)-ed25519.SignatureSize]
-		if !bytes.HasPrefix(message, []byte("OPS_APPROVAL_BATCH_V1\x00")) {
+		if !bytes.HasPrefix(message, []byte("OPS_APPROVAL_BATCH_V2\x00")) {
 			t.Fatalf("unexpected frame %q", message[:min(len(message), 24)])
 		}
-		count := binary.BigEndian.Uint32(message[22:26])
-		body := message[26:]
+		header := 22 + 1 + int(message[22]) // domain, key id length, key id
+		count := binary.BigEndian.Uint32(message[header : header+4])
+		body := message[header+4:]
 		for i := uint32(0); i < count; i++ {
 			// Each item: domain (16) | chain (8) | tx hash (32) | fingerprint (32) | principal (32) = 120 bytes.
 			item := body[i*120 : (i+1)*120]
@@ -87,9 +88,9 @@ func TestApprovalSurvivesAFailedWrite(t *testing.T) {
 	defer listener.Close()
 	seed := bytes.Repeat([]byte{7}, 32)
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &Service{key: ed25519.NewKeyFromSeed(seed), address: listener.Addr().String(),
+	s := &Service{signer: NewEd25519Signer("default", seed), address: listener.Addr().String(),
 		queue: make(chan Approval, 4096), signed: make(chan Batch, 128), maxBatch: MaxBatchApprovals,
-		sign: SignBatch, cancel: cancel, done: make(chan struct{}), signDone: make(chan struct{})}
+		cancel: cancel, done: make(chan struct{}), signDone: make(chan struct{})}
 	first := newBrokenConn()
 	go s.signLoop(ctx)
 	go s.deliver(ctx, first)
@@ -141,9 +142,9 @@ func TestLostConnectionBacksOffBeforeRedialing(t *testing.T) {
 		}
 	}()
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &Service{key: ed25519.NewKeyFromSeed(bytes.Repeat([]byte{7}, 32)), address: listener.Addr().String(),
+	s := &Service{signer: NewEd25519Signer("default", bytes.Repeat([]byte{7}, 32)), address: listener.Addr().String(),
 		queue: make(chan Approval, 4096), signed: make(chan Batch, 128), maxBatch: MaxBatchApprovals,
-		sign: SignBatch, cancel: cancel, done: make(chan struct{}), signDone: make(chan struct{})}
+		cancel: cancel, done: make(chan struct{}), signDone: make(chan struct{})}
 	first := newBrokenConn()
 	go s.signLoop(ctx)
 	go s.deliver(ctx, first)

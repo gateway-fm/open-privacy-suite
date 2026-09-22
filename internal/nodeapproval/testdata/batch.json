@@ -1,5 +1,6 @@
 {
-  "version": 1,
+  "version": 2,
+  "key_id": "default",
   "approvals": [
     {
       "chain_id": 31337,
@@ -20,5 +21,5 @@
       "principal": "0x0000000000000000000000000000000000000000000000000000000000000003"
     }
   ],
-  "signature": "110b8715ade0943cd997800bd2cad055005ffa3822eb82dedc08e5fc573d91eb7af9fbc550cb8382e5d1019251868f3a4a46c0484c8bd709dbd7f859ce830e0e"
+  "signature": "094b2853f21ce511fd6eb5bc1379a7d075cfff6bd1d208e5cefa589cc927ace0816def48fce690aca06d963259e30663a622551b087d967e620444b076f8f101"
 }

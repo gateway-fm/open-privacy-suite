@@ -27,9 +27,20 @@ Numbers are measured unless marked *estimate*. File references are to
    `finalizedBlockHash` and how far it lags. Nobody has checked. Until it is known, the store must
    be sized for rate × retention and its overflow path must be cheap (§2, blocker row). First item
    of any Lineth work: confirm Maru's finalized/safe semantics and the candidate-build cadence.
-2. **Key custody and signature scheme.** AWS KMS does not offer Ed25519: either a software
-   Ed25519 key in Secrets Manager (IRSA), or ECDSA P-256 for HSM-backed signing. Changes the
-   envelope and both verifiers.
+2. ~~Key custody and signature scheme~~ — **decided and implemented (22 September).** Keep Ed25519
+   as a **software key delivered like every other OPS secret** — environment or a Secrets
+   Manager–mounted file (IRSA/CSI), never a config file, exactly the policy `internal/config/file.go`
+   states and the pattern the audit chain already follows (`internal/audit/checkpoint.go`: a
+   `Signer` with a key id and an explicit "KMS later" seam). Not ECDSA via KMS: a KMS signature per
+   batch would put a network call and ~10 ms into the delivery path for no gain over a rotatable
+   software key. What changed: the signed batch names its key (`OPS_APPROVAL_BATCH_V2`,
+   `key_id` inside the signed bytes, `OPS_APPROVAL_KEY_ID` on OPS, default `default`); the plugin
+   holds a **set** of trusted keys (`--plugin-ops-approval-public-keys id=hex,…`; the old single
+   `--public-key` is the `default` id); OPS signs through a `Signer` interface so a KMS/HSM-backed
+   ECDSA signer can be added without touching the wire. Rotation is add-then-switch: add the new
+   key to the plugin, switch OPS's `OPS_APPROVAL_KEY_ID`/seed, remove the old key — no
+   simultaneous restart. Still open: expiry (`issued_at`/`expires_at`), which needs the same
+   transport-independent envelope work and is scheduled with the `.proto`.
 3. **TLS termination**: mesh/sidecar in front of the plugin listener, or in-process.
 4. **Where the plugin lives and ships**: inside this repository, or its own repository with
    releases the Lineth operator pulls (Lineth loads plugin JARs from `besu/plugins/`).
@@ -67,7 +78,7 @@ Not corners: the fingerprint encoders, the selector's veto semantics, the metric
 | **Nothing durable.** OPS queue is a channel (4096); plugin store is a `ConcurrentHashMap` | `service.go`; `ApprovalStore` | OPS crash after enqueue, or a Besu restart, loses approvals for forwarded transactions (scenario `restart_drops_approvals…`) | OPS outbox in Postgres; the node asks for redelivery of its pooled hashes on (re)connect |
 | ~~**Approvals deleted on inclusion**~~ — changed in `c5b626c` to **release on finality** (`InclusionTracker`, `BlockchainService.getFinalizedBlock()`). **Open, blocker-grade:** correctness now depends on finality *advancing* on the target network, which is unverified (decision 1b). If finality lags or is absent, every included approval is retained until the 4,096-block cut-off (~68 min at 1 s blocks) or the orphan sweep (5–10 min); at 700 tx/s that is 210k–420k approvals against a 100k capacity | `OpsApprovalPlugin.onBlockAdded`; `ApprovalStore.put` | once full, every `put` iterates the whole pool into a set and sorts all entries under the lock — on the single ingress thread; OPS's 1 s write deadline then fails and transactions go `PENDING`/`TIMEOUT`. The eviction victims are exactly the included-not-final approvals the fix keeps, so reorg protection degrades to zero under load. ~~The suite finalizes every block immediately, so no test exercises a reorg or lagging finality~~ — `reorg_keeps_approvals` now does (finality lags one block, a rival replaces the head, the returned transactions are included again with **no new approval**) | confirm Maru finality; size capacity/TTL to rate × retention; ~~cheap overflow path~~ (`8186d3d`: event-driven liveness, no scan, no sort); **finding from the scenario:** Besu 26.8.1 re-adds a reorganised block's transactions to its pool unreliably (one run returned nonce 1 and dropped nonce 0, another returned neither) — see the new row below |
 | **Nobody resubmits a reorganised transaction.** Besu's pool re-add after a reorg is partial (above); OPS keeps no record of what it forwarded, so it cannot detect that a forwarded transaction vanished from the canonical chain, let alone resubmit it | `jsonrpc_processor.go` forward path; no submission table on this branch | the approval survives (`c5b626c`), the transaction does not: the client sees a receipt disappear and must resubmit the same signed bytes itself — which does work without a new approval | a submissions record with reconciliation (the v2 branch's `node_submissions` + reconciler is the shape); belongs with the decision-feedback row |
-| **One key, no `key_id`, no expiry** | `Approval.Message()`; `node_approvals.go:18` (seed file); `ApprovalVerifier` (one key) | rotation = simultaneous restart of every producer and OPS; an approval never expires while pooled, so an RBAC change after approval does not revoke it | envelope v2: `key_id`, `issued_at`, `expires_at`; trusted key *set* on the plugin with validity windows |
+| ~~**One key, no `key_id`**~~ — **fixed (envelope v2)**: the batch names its key inside the signed bytes; the plugin (and the Reth PoC) hold a key set; unknown or swapped id fails closed. **Still open: no expiry** — an approval never expires while pooled, so an RBAC change after approval does not revoke it | `batch.go` `Ed25519Signer`; `ApprovalBatch`/`ApprovalVerifier`/`PluginOptions`; `batch.rs` | — | `issued_at`/`expires_at` with the `.proto` (phase 3) |
 | **Plain TCP, no TLS, no peer authentication** | `dialApproval`; `ApprovalListener` | the signature protects content only; anyone reaching the port can flood the store | §3 |
 | **Single delivery target**, one connection, one goroutine | `Service.address` | no standby sequencer, no second OPS instance | §4 |
 | **`ops_prepareApproval` unauthenticated at the node** | `PrepareApprovalRpc` | simulation only, but compute on the producer; reachable by anyone on the RPC port | network policy or Besu RPC authentication — **documented as a deployment requirement in `16010c9`**; enforcement is the operator's network policy until mTLS |
@@ -327,8 +338,9 @@ Independently shippable; each ends with the 22-scenario suite green.
    `expires_at` — one wire migration, not two); gRPC bidi with mTLS at Besu's grpc version; OPS
    dials the sequencer; acks, capacity nack, decision feedback; Postgres outbox (expand-only, with
    the `privacy_proxy_app` GRANT block); redelivery on connect and periodic; certificate lifecycle.
-4. **Keys**: key set on the plugin; Secrets Manager via IRSA scoped to the one secret ARN;
-   rotation procedure; per-instance keys.
+4. **Keys**: ~~key set on the plugin~~ (done, envelope v2); Secrets Manager via IRSA scoped to the
+   one secret ARN (deployment); rotation procedure documented in the plugin README; per-instance
+   keys are now one `OPS_APPROVAL_KEY_ID` per instance plus one entry in the plugin's key set.
 5. **Lifecycle**: ~~release on finality~~ (done, `c5b626c`); expiry honoured by the selector;
    global rate limit on preflight; `ops_prepareApproval` behind network policy or Besu RPC auth
    (documented, `16010c9`; enforcement is deployment).

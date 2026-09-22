@@ -197,7 +197,7 @@ public final class ApprovalListener implements AutoCloseable {
       return;
     }
     if (!verifier.verify(batch)) {
-      LOG.warn("OPS approval batch rejected: bad signature ({} approvals)", batch.approvals().size());
+      LOG.warn("OPS approval batch rejected: bad signature or untrusted key id {} ({} approvals)", batch.keyId(), batch.approvals().size());
       metrics.rejected("signature");
       return;
     }

@@ -78,16 +78,8 @@ func TestSignerSnapshotIndependentOfDelivery(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	entered := make(chan []Approval, 4)
 	release := make(chan struct{})
-	s := &Service{key: ed25519.NewKeyFromSeed(make([]byte, 32)), queue: make(chan Approval, 64), signed: make(chan Batch, 4), maxBatch: 32, signDone: make(chan struct{}), done: make(chan struct{})}
-	calls := 0
-	s.sign = func(k ed25519.PrivateKey, a []Approval) (Batch, error) {
-		calls++
-		entered <- a
-		if calls == 1 {
-			<-release
-		}
-		return SignBatch(k, a)
-	}
+	hook := &hookSigner{Signer: NewEd25519Signer("default", make([]byte, 32)), entered: entered, release: release}
+	s := &Service{signer: hook, queue: make(chan Approval, 64), signed: make(chan Batch, 4), maxBatch: 32, signDone: make(chan struct{}), done: make(chan struct{})}
 	s.queue <- batchFixtures(1)[0]
 	go s.signLoop(ctx)
 	defer func() { cancel(); <-s.signDone }()
@@ -126,4 +118,22 @@ func BenchmarkBatchSigning(b *testing.B) {
 			}
 		})
 	}
+}
+
+// hookSigner reports each batch it is asked to sign and blocks the first one until released,
+// so a test can observe what the signer snapshotted while crypto is "slow".
+type hookSigner struct {
+	Signer
+	entered chan []Approval
+	release chan struct{}
+	calls   int
+}
+
+func (h *hookSigner) SignBatch(a []Approval) (Batch, error) {
+	h.calls++
+	h.entered <- a
+	if h.calls == 1 {
+		<-h.release
+	}
+	return h.Signer.SignBatch(a)
 }

@@ -10,7 +10,6 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
-import org.apache.tuweni.bytes.Bytes;
 import org.hyperledger.besu.datatypes.Hash;
 import org.hyperledger.besu.datatypes.PendingTransaction;
 import org.hyperledger.besu.plugin.BesuPlugin;
@@ -108,9 +107,9 @@ public class OpsApprovalPlugin implements BesuPlugin {
   }
 
   private void doStart() throws Exception {
-    if (options.listen == null || options.publicKey == null || options.chainId == null) {
+    if (options.listen == null || options.chainId == null || options.trustedKeys().isEmpty()) {
       throw new IllegalArgumentException(
-          "--plugin-ops-approval-listen, --plugin-ops-approval-public-key and --plugin-ops-approval-chain-id are required");
+          "--plugin-ops-approval-listen, --plugin-ops-approval-chain-id and at least one trusted key (--plugin-ops-approval-public-key or --plugin-ops-approval-public-keys) are required");
     }
     if (options.waitMs < 0 || options.capacity < 1 || options.maxConnections < 1 || options.orphanTtlMs < 1) {
       throw new IllegalArgumentException("wait-ms >= 0, capacity/max-connections/orphan-ttl-ms >= 1 required");
@@ -121,7 +120,7 @@ public class OpsApprovalPlugin implements BesuPlugin {
         .getChainId()
         .filter(id -> id.longValueExact() == chainId)
         .orElseThrow(() -> new IllegalArgumentException("--plugin-ops-approval-chain-id does not match the node's chain id"));
-    final ApprovalVerifier verifier = new ApprovalVerifier(Bytes.fromHexString(options.publicKey).toArrayUnsafe());
+    final ApprovalVerifier verifier = new ApprovalVerifier(options.trustedKeys());
     final TransactionPoolService pool = require(TransactionPoolService.class);
     // When full, drop the oldest approval whose transaction is not live in the pool and is old
     // enough that its transaction is not merely still on its way; refuse only if nothing can go.
@@ -199,9 +198,10 @@ public class OpsApprovalPlugin implements BesuPlugin {
             });
     listener.start();
     LOG.info(
-        "OPS approval gate active: listen={} chain={} wait_ms={} capacity={}",
+        "OPS approval gate active: listen={} chain={} trusted_keys={} wait_ms={} capacity={}",
         options.listen,
         chainId,
+        options.trustedKeys().keySet(),
         options.waitMs,
         options.capacity);
   }
