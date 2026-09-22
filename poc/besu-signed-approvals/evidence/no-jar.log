@@ -1,4 +1,4 @@
-[2m2026-09-15 09:07:08.755+0200[m[2m | [m[2mmain[m[2m | [m[33mWARN [m[2m | [m[2mPluginVerifier[m[2m | [m[33mPlugin artifact <repo>/.tmp/besu-dist/besu-26.8.1/plugins/linea-tracer-linea-8bb72b4.jar is built against Besu version 26.8.0-f2557d7 while current running Besu version is 26.8.1
+[2m2026-09-22 16:04:53.881+0200[m[2m | [m[2mmain[m[2m | [m[33mWARN [m[2m | [m[2mPluginVerifier[m[2m | [m[33mPlugin artifact <repo>/.tmp/besu-dist/besu-26.8.1/plugins/linea-tracer-linea-8bb72b4.jar is built against Besu version 26.8.0-f2557d7 while current running Besu version is 26.8.1
 [mjava.util.NoSuchElementException: The following requested plugins were not found: OpsApprovalPlugin
 	at org.hyperledger.besu.services.BesuPluginContextImpl.matchAndValidateRequestedPlugins(BesuPluginContextImpl.java:187)
 	at org.hyperledger.besu.services.BesuPluginContextImpl.registerPlugins(BesuPluginContextImpl.java:156)
