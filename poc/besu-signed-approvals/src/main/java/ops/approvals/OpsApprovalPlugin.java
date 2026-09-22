@@ -16,6 +16,7 @@ import org.hyperledger.besu.datatypes.PendingTransaction;
 import org.hyperledger.besu.plugin.BesuPlugin;
 import org.hyperledger.besu.plugin.ServiceManager;
 import org.hyperledger.besu.plugin.data.AddedBlockContext;
+import org.hyperledger.besu.plugin.data.BlockHeader;
 import org.hyperledger.besu.plugin.services.BesuEvents;
 import org.hyperledger.besu.plugin.services.BesuService;
 import org.hyperledger.besu.plugin.services.BlockchainService;
@@ -53,9 +54,14 @@ public class OpsApprovalPlugin implements BesuPlugin {
         }
       };
 
+  /** Blocks whose approvals are still needed: tracked from inclusion until finality. */
+  static final long TRACKED_BLOCK_DEPTH = 4_096;
+
   private final PluginOptions options = new PluginOptions();
   private final AtomicReference<PrepareApprovalRpc> prepare = new AtomicReference<>();
+  private final InclusionTracker inclusions = new InclusionTracker();
   private ServiceManager services;
+  private BlockchainService blockchain;
   private ApprovalStore store;
   private ApprovalListener listener;
   private ScheduledExecutorService sweeper;
@@ -104,7 +110,7 @@ public class OpsApprovalPlugin implements BesuPlugin {
       throw new IllegalArgumentException("wait-ms >= 0, capacity/max-connections/orphan-ttl-ms >= 1 required");
     }
     final long chainId = options.chainId;
-    final BlockchainService blockchain = require(BlockchainService.class);
+    blockchain = require(BlockchainService.class);
     blockchain
         .getChainId()
         .filter(id -> id.longValueExact() == chainId)
@@ -192,14 +198,36 @@ public class OpsApprovalPlugin implements BesuPlugin {
   }
 
   private void onBlockAdded(final AddedBlockContext block) {
-    // Only canonical inclusion releases an approval; a forked/stored-only block does not.
+    // Inclusion is not the end of an approval's life: a reorganisation returns the block's
+    // transactions to the pool, and they must still find their approvals there. Track the block
+    // and release along the finalized chain instead.
     if (block.getEventType() != AddedBlockContext.EventType.HEAD_ADVANCED
         && block.getEventType() != AddedBlockContext.EventType.CHAIN_REORG) {
       return;
     }
+    final BlockHeader header = block.getBlockHeader();
     final List<Hash> included =
         block.getBlockBody().getTransactions().stream().map(org.hyperledger.besu.datatypes.Transaction::getHash).toList();
-    store.removeAll(included);
+    inclusions.recordIncluded(header.getBlockHash(), header.getParentHash(), header.getNumber(), included);
+    releaseFinalized();
+    // Blocks far below the head are no longer reorg candidates in practice; stop tracking them
+    // and let the orphan sweep reclaim their approvals like any other unpooled approval.
+    inclusions.forgetBelow(header.getNumber() - TRACKED_BLOCK_DEPTH);
+  }
+
+  private void releaseFinalized() {
+    try {
+      final Set<Hash> released =
+          inclusions.finalizedUpTo(
+              blockchain.getFinalizedBlock(),
+              hash -> blockchain.getBlockHeaderByHash(hash).map(BlockHeader::getParentHash).orElse(null));
+      if (!released.isEmpty()) {
+        store.removeAll(released);
+      }
+    } catch (final RuntimeException e) {
+      // Releasing is memory hygiene; failing to release never lets a transaction through.
+      LOG.warn("OPS approval release on finality failed", e);
+    }
   }
 
   private static Set<Hash> pendingHashes(final TransactionPoolService pool) {
