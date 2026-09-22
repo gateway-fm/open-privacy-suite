@@ -72,12 +72,11 @@ type Service struct {
 	hops        *hops
 	rpc         *rpc.Client
 	rpcHTTP     *http.Client
-	key         ed25519.PrivateKey
+	signer      Signer
 	address     string
 	queue       chan Approval
 	signed      chan Batch
 	maxBatch    int
-	sign        func(ed25519.PrivateKey, []Approval) (Batch, error)
 	cancel      context.CancelFunc
 	done        chan struct{}
 	signDone    chan struct{}
@@ -93,6 +92,13 @@ func New(url, address string, seed []byte) (*Service, error) {
 func NewWithTransport(url, address string, seed []byte, tc nodehttp.TransportConfig) (*Service, error) {
 	if len(seed) != ed25519.SeedSize {
 		return nil, errors.New("approval key must be a 32-byte Ed25519 seed")
+	}
+	keyID := os.Getenv("OPS_APPROVAL_KEY_ID")
+	if keyID == "" {
+		keyID = "default"
+	}
+	if !ValidKeyID(keyID) {
+		return nil, errors.New("OPS_APPROVAL_KEY_ID must be 1-64 characters of [A-Za-z0-9._:-]")
 	}
 	mode, err := configuredHashMode()
 	if err != nil {
@@ -121,7 +127,7 @@ func NewWithTransport(url, address string, seed []byte, tc nodehttp.TransportCon
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &Service{hashMode: mode, node: node, hops: newHops(), rpc: client, rpcHTTP: httpClient, key: ed25519.NewKeyFromSeed(seed), address: address, queue: make(chan Approval, 4096), signed: make(chan Batch, 128), maxBatch: maxBatch, sign: SignBatch, cancel: cancel, done: make(chan struct{}), signDone: make(chan struct{})}
+	s := &Service{hashMode: mode, node: node, hops: newHops(), rpc: client, rpcHTTP: httpClient, signer: NewEd25519Signer(keyID, seed), address: address, queue: make(chan Approval, 4096), signed: make(chan Batch, 128), maxBatch: maxBatch, cancel: cancel, done: make(chan struct{}), signDone: make(chan struct{})}
 	s.connections.Store(1)
 	go s.signLoop(ctx)
 	go s.deliver(ctx, conn)
@@ -318,7 +324,7 @@ func (s *Service) signLoop(ctx context.Context) {
 func (s *Service) signOne(first Approval, draining bool) bool {
 	approvals := s.takeBatch(first)
 	mark(approvals, func(h *Hop, n int64) { h.SignStart = n })
-	batch, err := s.sign(s.key, approvals)
+	batch, err := s.signer.SignBatch(approvals)
 	mark(approvals, func(h *Hop, n int64) { h.SignEnd = n })
 	if err != nil {
 		slog.Error("approval batch signing failed", "error", err)

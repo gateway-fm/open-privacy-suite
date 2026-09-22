@@ -202,7 +202,7 @@ client over the Engine API. Plugin options:
 
 ```
 --plugins=OpsApprovalPlugin
---plugin-ops-approval-listen=127.0.0.1:PORT     --plugin-ops-approval-public-key=HEX32
+--plugin-ops-approval-listen=127.0.0.1:PORT     --plugin-ops-approval-public-keys=default=HEX32[,next=HEX32]
 --plugin-ops-approval-chain-id=31337            --plugin-ops-approval-wait-ms=5000
 --plugin-ops-approval-capacity=100000           --plugin-ops-approval-max-connections=32
 --plugin-ops-approval-orphan-ttl-ms=300000
@@ -210,6 +210,15 @@ client over the Engine API. Plugin options:
 
 OPS: `OPS_APPROVAL_NODE=besu`, `OPS_APPROVAL_TARGET=host:port` (the plugin's listen address),
 `OPS_APPROVAL_SEED_FILE` as before; the node's `--rpc-http-api` must include `OPS`.
+
+**Keys and rotation.** A batch names the key that signed it, inside the signed bytes, and the
+plugin holds a *set* of trusted keys (`--plugin-ops-approval-public-keys id=hex,id=hex`;
+`--plugin-ops-approval-public-key` alone means the id `default`). OPS signs under
+`OPS_APPROVAL_KEY_ID` (default `default`) with the Ed25519 seed from `OPS_APPROVAL_SEED_FILE` — a
+file because that is how a Secrets Manager–mounted secret (CSI) arrives; never from a config file.
+To rotate: add the new key to the plugin's set, switch OPS's key id and seed, remove the old id.
+No node restart has to coincide with an OPS restart. A batch under an unknown id is refused and
+logged with the id.
 
 The `OPS` namespace (`ops_prepareApproval`) only simulates, but it simulates on the block producer and
 has no authentication of its own. Expose it on an RPC listener that only OPS can reach — network

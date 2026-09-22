@@ -8,13 +8,28 @@ import java.security.Signature;
 import java.security.spec.EdECPoint;
 import java.security.spec.EdECPublicKeySpec;
 import java.security.spec.NamedParameterSpec;
+import java.util.HashMap;
+import java.util.Map;
 
-/** Ed25519 batch signature check against the single configured OPS public key (JDK provider). */
+/**
+ * Ed25519 batch signature check against the producer's set of trusted OPS keys, selected by the
+ * key id the batch names (JDK provider). A batch under an unknown id verifies as false: refusal is
+ * the safe outcome for a key the operator has not (or no longer) trusted.
+ */
 public final class ApprovalVerifier {
-  private final PublicKey key;
+  private final Map<String, PublicKey> keys;
 
-  /** @param rawPublicKey the 32-byte RFC 8032 encoding, as OPS prints it */
-  public ApprovalVerifier(final byte[] rawPublicKey) {
+  /** @param rawPublicKeys key id → 32-byte RFC 8032 public key encoding, as OPS prints it */
+  public ApprovalVerifier(final Map<String, byte[]> rawPublicKeys) {
+    if (rawPublicKeys.isEmpty()) {
+      throw new IllegalArgumentException("at least one trusted OPS public key is required");
+    }
+    final Map<String, PublicKey> parsed = new HashMap<>();
+    rawPublicKeys.forEach((id, raw) -> parsed.put(id, parse(raw)));
+    keys = Map.copyOf(parsed);
+  }
+
+  private static PublicKey parse(final byte[] rawPublicKey) {
     if (rawPublicKey.length != 32) {
       throw new IllegalArgumentException("Ed25519 public key must be 32 bytes");
     }
@@ -26,22 +41,22 @@ public final class ApprovalVerifier {
       bigEndian[i] = littleEndian[31 - i];
     }
     try {
-      key =
-          KeyFactory.getInstance("Ed25519")
-              .generatePublic(
-                  new EdECPublicKeySpec(
-                      NamedParameterSpec.ED25519,
-                      new EdECPoint(xOdd, new BigInteger(1, bigEndian))));
+      return KeyFactory.getInstance("Ed25519")
+          .generatePublic(
+              new EdECPublicKeySpec(
+                  NamedParameterSpec.ED25519,
+                  new EdECPoint(xOdd, new BigInteger(1, bigEndian))));
     } catch (final GeneralSecurityException e) {
       throw new IllegalArgumentException("invalid Ed25519 public key", e);
     }
   }
 
   public boolean verify(final ApprovalBatch.Decoded batch) {
-    return verify(batch.message(), batch.signature());
+    final PublicKey key = keys.get(batch.keyId());
+    return key != null && verify(key, batch.message(), batch.signature());
   }
 
-  public boolean verify(final byte[] message, final byte[] signature) {
+  private static boolean verify(final PublicKey key, final byte[] message, final byte[] signature) {
     try {
       final Signature s = Signature.getInstance("Ed25519"); // instances are not thread-safe
       s.initVerify(key);

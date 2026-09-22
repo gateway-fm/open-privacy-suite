@@ -110,7 +110,7 @@ func TestDeliveryUsesPersistentConnectionWithoutAck(t *testing.T) {
 				received <- e
 				return
 			}
-			if len(data) < 64 || !bytes.HasPrefix(data, []byte("OPS_APPROVAL_BATCH_V1\x00")) {
+			if len(data) < 64 || !bytes.HasPrefix(data, []byte("OPS_APPROVAL_BATCH_V2\x00")) {
 				received <- io.ErrUnexpectedEOF
 				return
 			}
@@ -139,7 +139,7 @@ func TestDeliveryUsesPersistentConnectionWithoutAck(t *testing.T) {
 	}
 }
 func TestQueueIsBounded(t *testing.T) {
-	s := &Service{key: ed25519.NewKeyFromSeed(make([]byte, 32)), queue: make(chan Approval, 1), done: make(chan struct{})}
+	s := &Service{signer: NewEd25519Signer("default", make([]byte, 32)), queue: make(chan Approval, 1), done: make(chan struct{})}
 	p := &Prepared{}
 	if e := s.Enqueue(p, "x"); e != nil {
 		t.Fatal(e)
