@@ -65,7 +65,10 @@ interface ContractGrantsManagerProps {
   onContractUpdated?: (contract: Contract) => void;
   // RD-1295: grants and the contract-level toggles close once a reviewed
   // contract-registry or execution-rules document owns the organisation. The
-  // parent knows both streams' state and passes the verdict down.
+  // parent knows both streams' state: `managed` says a document owns them (the
+  // notice is shown), `readOnly` says this viewer may not edit for any other
+  // reason, including "the stream state is not known yet".
+  managed?: boolean;
   readOnly?: boolean;
 }
 
@@ -79,10 +82,11 @@ export default function ContractGrantsManager({
   orgId,
   contract,
   onContractUpdated,
+  managed = false,
   readOnly = false,
 }: ContractGrantsManagerProps) {
   const { isReadonlyAdmin } = useAdmin();
-  const canEdit = !isReadonlyAdmin && !readOnly;
+  const canEdit = !isReadonlyAdmin && !readOnly && !managed;
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [grants, setGrants] = useState<GrantWithGroup[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
@@ -325,7 +329,7 @@ export default function ContractGrantsManager({
         </p>
       </div>
 
-      {readOnly && <ManagedStreamNotice subject="Contract grants and access settings" />}
+      {managed && <ManagedStreamNotice subject="Contract grants and access settings" />}
 
       {/* RD-874: per-contract visibleTo unlock toggle */}
       {canEdit && (

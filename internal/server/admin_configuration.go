@@ -63,6 +63,7 @@ func (s *Server) getPlatformConfigurationContext(c *gin.Context) { s.getConfigur
 // @Tags Admin: Configuration
 // @Produce json
 // @Success 200 {object} apimodels.ConfigurationManaged
+// @Failure 401 {object} apimodels.APIError
 // @Failure 403 {object} apimodels.APIError
 // @Security BearerAuth
 // @Security AdminToken
@@ -175,14 +176,6 @@ func (s *Server) isConfigurationPlatformActor(c *gin.Context) bool {
 	return kind == auth.PrincipalHuman && s.configurationPlatformSubject(c.GetString("admin_subject")) && c.GetString("admin_user_id") != ""
 }
 
-// isFullAdminToken reports the unrestricted X-Admin-Token (or the dev
-// no-auth mode), the same principal requireSuperAdmin admits — as a predicate
-// that writes nothing, for routes that accept more than one kind of caller.
-func isFullAdminToken(c *gin.Context) bool {
-	method := c.GetString("auth_method")
-	return method == "admin_token" || method == ""
-}
-
 func configurationRoute(c *gin.Context) (configuration.Scope, configuration.Kind, bool) {
 	if c.Param("org_id") == "" {
 		return configuration.Scope{Kind: "platform"}, configuration.Platform, true
@@ -263,6 +256,7 @@ func configurationError(c *gin.Context, err error) {
 // @Success 200 {object} apimodels.ConfigurationManaged
 // @Failure 400 {object} apimodels.APIError "malformed organisation id or unknown stream"
 // @Failure 401 {object} apimodels.APIError
+// @Failure 403 {object} apimodels.APIError "no admin authority for this organisation, or the restricted operator token on a tenant organisation"
 // @Security BearerAuth
 // @Security AdminToken
 // @Router /api/v1/admin/orgs/{org_id}/configuration/{kind}/managed [get]

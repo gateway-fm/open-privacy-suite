@@ -5,6 +5,7 @@ import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
 import { renderWithRBACContext } from './test-utils';
 import { TooltipProvider } from '@/components/ui/tooltip';
+import { useAdmin } from '@/components/auth/RequireAdmin';
 import type { AllowedAzureTenant } from '@/types/rbac';
 
 vi.mock('../RBACManager', async () => {
@@ -164,6 +165,46 @@ describe('Managed configuration streams in the RBAC screens (RD-1295)', () => {
       await waitFor(() => {
         expect(screen.getByTestId('managed-stream-notice')).toBeInTheDocument();
       });
+      expect(screen.queryByRole('button', { name: /add (a )?group/i })).not.toBeInTheDocument();
+    });
+  });
+
+  describe('ContractGrantsManager for a read-only admin', () => {
+    beforeEach(() => {
+      vi.mocked(useAdmin).mockReturnValue({
+        isAdmin: true,
+        isReadonlyAdmin: true,
+        adminOrgIds: [],
+        readonlyAdminOrgIds: ['org-1'],
+      });
+    });
+
+    afterEach(() => {
+      vi.mocked(useAdmin).mockReturnValue({
+        isAdmin: true,
+        isReadonlyAdmin: false,
+        adminOrgIds: [],
+        readonlyAdminOrgIds: [],
+      });
+    });
+
+    it('sees no edit controls and, with nothing managed, no managed-stream notice', async () => {
+      const user = userEvent.setup();
+      renderWithRBACContext(
+        <TooltipProvider>
+          <ContractList />
+        </TooltipProvider>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('Test Contract')).toBeInTheDocument();
+      });
+      await user.click(await screen.findByTitle('View permissions'));
+      await screen.findByText(/Groups define claims/);
+
+      // Read-only is a property of the viewer, not of the stream: telling this
+      // admin the stream is managed by a document would be untrue.
+      expect(screen.queryByTestId('managed-stream-notice')).not.toBeInTheDocument();
       expect(screen.queryByRole('button', { name: /add (a )?group/i })).not.toBeInTheDocument();
     });
   });

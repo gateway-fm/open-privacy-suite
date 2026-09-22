@@ -22,6 +22,10 @@ type configurationAPIFixture struct {
 	orgID                              string
 	readonly, admin, reviewer, service string
 	readonlyUserID                     string
+	// platform is a verified human with no membership anywhere: the shape of a
+	// platform operator who is not an organisation admin. Tests that need it
+	// allowlisted append platformSubject to PlatformAdminSubjects.
+	platform, platformSubject string
 }
 
 func configurationAPI(t *testing.T) configurationAPIFixture {
@@ -50,6 +54,11 @@ func configurationAPI(t *testing.T) configurationAPIFixture {
 	f.admin, _ = principal(false, auth.PrincipalHuman)
 	f.reviewer, _ = principal(false, auth.PrincipalHuman)
 	f.service, _ = principal(false, auth.PrincipalService)
+	platformUser := &rbac.User{ID: uuid.NewString(), ExternalID: "did:test:platform-" + uuid.NewString()}
+	require.NoError(t, s.db.CreateUser(t.Context(), platformUser))
+	platformToken, err := s.jwtService.IssueAccessTokenForPrincipal(platformUser.ExternalID, true, auth.PrincipalHuman, nil)
+	require.NoError(t, err)
+	f.platform, f.platformSubject = platformToken, platformUser.ExternalID
 	gin.SetMode(gin.TestMode)
 	f.router = gin.New()
 	s.registerRBACRoutes(f.router.Group("/api/v1/admin", s.adminAuthMiddleware(), s.orgScopingMiddleware()))

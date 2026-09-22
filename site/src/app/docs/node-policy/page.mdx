@@ -107,13 +107,20 @@ facts and reconciles submissions at a time. Each instance campaigns for a
 database lease (a session-level advisory lock); the others stand by and take
 over within one publication interval once the holder's database session ends.
 A clean stop or a process crash ends the session at once. A host that vanishes
-mid-session keeps the lock until Postgres notices the dead connection, so set
-`tcp_keepalives_idle`, `tcp_keepalives_interval` and `tcp_keepalives_count`
-(or `client_connection_check_interval`) on the database to bound that to well
-under the fact lifetime; until then the node's facts expire and execution stops
-rather than running stale. Keep `OPS_NODE_POLICY_CONSUMER_ID` identical across
-instances — it names the node's acknowledgement cursor, not the instance — or
-leave it at its default. Configure named platform operators through
+mid-session keeps the lock until Postgres notices the dead connection; the lease
+session sets its own TCP keepalives, so that takes about ten seconds and the
+next instance takes over before the facts expire. At the default lifetime only
+an outage longer than the lifetime stops execution, and then it stops rather
+than running stale; a lifetime under about fifteen seconds leaves no room for
+that takeover.
+The lease needs a direct database connection or a session-pooling proxy;
+transaction pooling (PgBouncer in transaction mode) breaks session-level
+advisory locks and would leave the lease orphaned. With a pooler on another
+host the database's keepalives only reach the pooler, so give the pooler client
+keepalives of a similar bound, or a vanished OPS host holds the lease until the
+pooler notices on its own. Keep
+`OPS_NODE_POLICY_CONSUMER_ID` identical across instances — it names the node's
+acknowledgement cursor, not the instance — or leave it at its default. Configure named platform operators through
 `PLATFORM_ADMIN_SUBJECTS`. Supply the pinned Solidity compiler through
 `POLICY_SOLC` or the executable search path. `GET /ready` returns 503 until the
 node has fresh matching facts and required capabilities.

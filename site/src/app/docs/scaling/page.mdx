@@ -47,9 +47,11 @@ All other environment variables (`JWT_SECRET`, `ADMIN_API_TOKEN`, etc.) must be 
 In Reth policy mode (`OPS_NODE_POLICY_MODE=reth`) only one instance at a time
 publishes facts to the node and reconciles submissions. Instances elect that
 publisher through a database lease and fail over within one publication
-interval of the holder's database session ending. Set Postgres TCP keepalives
-(see [Node policy](/docs/node-policy)) so a vanished host is noticed well
-inside the fact lifetime. `OPS_NODE_POLICY_*`
+interval of the holder's database session ending; a vanished host is noticed
+within about ten seconds through the lease session's own TCP keepalives. The
+lease needs a direct connection or session pooling, not transaction pooling,
+and a pooler on another host needs client keepalives of its own (see
+[Node policy](/docs/node-policy)). `OPS_NODE_POLICY_*`
 values, including `OPS_NODE_POLICY_CONSUMER_ID`, must be identical across
 instances. See [Node policy](/docs/node-policy) for the variables.
 

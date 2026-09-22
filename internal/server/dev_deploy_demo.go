@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -233,24 +232,25 @@ func (s *Server) handleDeployDemoERC20(c *gin.Context) {
 			Metadata: map[string]any{"source": "dev-deploy"},
 		}
 
-		if err := s.db.CreateContract(ctx, contract); err != nil {
+		deployerID := ""
+		if subject, exists := c.Get("admin_subject"); exists {
+			if userDID, ok := subject.(string); ok && userDID != "" {
+				if user, err := s.db.GetUserByExternalID(ctx, userDID); err == nil && user != nil {
+					deployerID = user.ID
+				}
+			}
+		}
+		// One authorised registration, like every other deployment path: a
+		// reviewed document owning the registry or rules admits it as drift
+		// instead of the projection guard refusing a bare insert. The deployer
+		// grant inside it is best-effort.
+		if _, err := s.db.RegisterDeployedContract(ctx, contract, deployerID); err != nil {
 			respondInternalErrorAndLog(c, "failed to register contract",
-				"dev_deploy_demo: CreateContract failed",
+				"dev_deploy_demo: RegisterDeployedContract failed",
 				"org_id", req.OrgID, "address", contract.Address, "err", err)
 			return
 		}
 		registered = true
-
-		// Grant contract to deployer's existing deploy group (best-effort, non-fatal)
-		if subject, exists := c.Get("admin_subject"); exists {
-			if userDID, ok := subject.(string); ok && userDID != "" {
-				if user, err := s.db.GetUserByExternalID(ctx, userDID); err == nil && user != nil {
-					if err := s.db.GrantContractToDeployerGroup(ctx, req.OrgID, contract.ID, user.ID); err != nil {
-						fmt.Printf("warning: failed to grant contract to deployer group: %v\n", err)
-					}
-				}
-			}
-		}
 	}
 
 	c.JSON(http.StatusOK, apimodels.DeployDemoERC20Response{

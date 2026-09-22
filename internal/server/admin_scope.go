@@ -95,12 +95,19 @@ func requireFullAdminInScope(c *gin.Context, targetOrgID string) bool {
 // dev mode. Use for genuinely global mutations (Azure tenant CRUD,
 // system base-currency switch, global sanction add, …).
 func requireSuperAdmin(c *gin.Context) bool {
-	authMethod := c.GetString("auth_method")
-	if authMethod == "admin_token" || authMethod == "" {
+	if isFullAdminToken(c) {
 		return true
 	}
 	c.JSON(http.StatusForbidden, gin.H{"error": "super-admin required"})
 	return false
+}
+
+// isFullAdminToken reports the unrestricted X-Admin-Token (or the dev no-auth
+// mode) — the principal requireSuperAdmin admits — as a predicate that writes
+// nothing, for routes that accept more than one kind of caller.
+func isFullAdminToken(c *gin.Context) bool {
+	method := c.GetString("auth_method")
+	return method == "admin_token" || method == ""
 }
 
 // RD-1107 / RD-1132 — the OPERATOR token (auth_method=="operator_token").

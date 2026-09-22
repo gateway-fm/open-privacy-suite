@@ -10,12 +10,15 @@ import (
 	"github.com/stretchr/testify/require"
 	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/configuration"
+	"privacy-proxy/internal/rbac"
 )
 
 // The admin screens need one cheap, honest answer before they offer an edit
 // control: is this stream owned by a reviewed document right now? The answer
-// must be readable with the same credentials the screens already use — a named
-// login or the operator token — and must flip the moment a revision activates.
+// must be readable with the credentials the screens already use — a named
+// login or the full admin token — refused to the restricted operator token for
+// tenant organisations like every other per-tenant read, and must flip the
+// moment a revision activates.
 func TestConfigurationManagedReadFollowsActivation(t *testing.T) {
 	f := configurationAPI(t)
 	managedPath := f.base() + "/managed"
@@ -42,6 +45,16 @@ func TestConfigurationManagedReadFollowsActivation(t *testing.T) {
 	// as every other per-tenant read refuses it.
 	f.server.config.OperatorAPIToken = "operator-managed-read-test"
 	response := orgAdminGateReq(t, f.router, http.MethodGet, managedPath, "", f.server.config.OperatorAPIToken, nil)
+	require.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
+	// The default organisation is platform infrastructure, so the operator may
+	// read its stream state, as with every other default-org read.
+	response = orgAdminGateReq(t, f.router, http.MethodGet, "/api/v1/admin/orgs/"+rbac.DefaultOrgID+"/configuration/groups/managed", "", f.server.config.OperatorAPIToken, nil)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+
+	// An admin of one organisation learns nothing about another's streams.
+	other := &rbac.Organization{ID: uuid.NewString(), Slug: "other-" + uuid.NewString(), Name: "Other"}
+	require.NoError(t, f.server.db.CreateOrganization(t.Context(), other))
+	response = orgAdminGateReq(t, f.router, http.MethodGet, "/api/v1/admin/orgs/"+other.ID+"/configuration/groups/managed", f.admin, "", nil)
 	require.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
 
 	// Draft and activate a groups revision through the normal path.
@@ -128,4 +141,39 @@ func TestPlatformConfigurationManagedReadFollowsPlatformActivation(t *testing.T)
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	require.True(t, decode(t, read(t, f.admin, "")).Managed)
 	require.True(t, decode(t, read(t, "", f.server.config.AdminAPIToken)).Managed)
+}
+
+// A platform operator is often not an organisation admin at all. The auth
+// middleware admits such a principal only on the routes it recognises as
+// platform configuration, so the managed read must be on that list — or a pure
+// platform human gets 403 from the middleware while the sibling context read
+// works. This is the regression test for exactly that omission.
+func TestPlatformConfigurationManagedReadAdmitsPurePlatformHuman(t *testing.T) {
+	f := configurationAPI(t)
+	base := "/api/v1/admin/configuration/platform"
+
+	// Not allowlisted yet: a human with no memberships is nobody here.
+	response := orgAdminGateReq(t, f.router, http.MethodGet, base+"/managed", f.platform, "", nil)
+	require.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
+
+	f.server.config.PlatformAdminSubjects = append(f.server.config.PlatformAdminSubjects, f.platformSubject)
+	for _, path := range []string{base + "/managed", base + "/context"} {
+		response = orgAdminGateReq(t, f.router, http.MethodGet, path, f.platform, "", nil)
+		require.Equal(t, http.StatusOK, response.Code, "%s: %s", path, response.Body.String())
+	}
+	var out apimodels.ConfigurationManaged
+	response = orgAdminGateReq(t, f.router, http.MethodGet, base+"/managed", f.platform, "", nil)
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &out))
+	require.Equal(t, "platform", out.Kind)
+	require.False(t, out.Managed)
+
+	// Platform authority does not leak into tenant streams.
+	response = orgAdminGateReq(t, f.router, http.MethodGet, f.base()+"/managed", f.platform, "", nil)
+	require.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
+
+	// The restricted operator token is neither a platform human nor the full
+	// admin token, so it is refused here as it is on the tenant writers.
+	f.server.config.OperatorAPIToken = "operator-platform-managed-test"
+	response = orgAdminGateReq(t, f.router, http.MethodGet, base+"/managed", "", f.server.config.OperatorAPIToken, nil)
+	require.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
 }

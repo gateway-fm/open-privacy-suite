@@ -51,7 +51,7 @@ export default function ContractList() {
   const canEdit = !isReadonlyAdmin && checked && !managed;
   // Grants close under either document: the registry owns read grants and
   // event rules, the execution rules own the function half.
-  const { managed: executionManaged } = useManagedStream('execution-rules', orgId);
+  const { managed: executionManaged, checked: executionChecked } = useManagedStream('execution-rules', orgId);
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [loading, setLoading] = useState(true);
   const [total, setTotal] = useState(0);
@@ -598,7 +598,8 @@ export default function ContractList() {
             <ContractGrantsManager
               key={managingGrants.id}
               orgId={orgId}
-              readOnly={!canEdit || executionManaged}
+              managed={managed || executionManaged}
+              readOnly={!canEdit || !executionChecked}
               contract={managingGrants}
               onContractUpdated={updated => {
                 // RD-1075: reflect the saved visibleTo-unlock flag without a full

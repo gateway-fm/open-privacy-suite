@@ -28,6 +28,9 @@ type NodePolicyLease struct {
 	pool *sql.DB
 	mu   sync.Mutex
 	conn *sql.Conn
+	// tuned records that this session carries the holder's keepalive settings,
+	// so they are reset before the connection goes back to the shared pool.
+	tuned bool
 }
 
 // NodePolicyLease returns a lease bound to this database. Each caller that
@@ -55,8 +58,24 @@ func (l *NodePolicyLease) Acquire(ctx context.Context) (bool, error) {
 	}
 	if !got {
 		l.drop()
+		return false, nil
 	}
-	return got, nil
+	// Holder only. A holder that vanishes mid-session keeps the lock until the
+	// server notices the dead socket. Postgres inherits the OS defaults (about
+	// two hours of idle keepalive on Linux, about fifteen minutes of
+	// retransmits when a response was in flight) while facts expire after the
+	// configured lifetime (thirty seconds by default), so the holder's session
+	// asks for its own: about ten seconds either way — five idle, then three
+	// probes two seconds apart, and the same bound on unacknowledged data.
+	// Campaigners never carry these settings and Release resets them before
+	// the pool sees the session again. Over a Unix socket they are accepted
+	// and have no effect.
+	if _, err := l.conn.ExecContext(ctx, `SELECT set_config('tcp_keepalives_idle', '5', false), set_config('tcp_keepalives_interval', '2', false), set_config('tcp_keepalives_count', '3', false), set_config('tcp_user_timeout', '11000', false)`); err != nil {
+		l.discard()
+		return false, err
+	}
+	l.tuned = true
+	return true, nil
 }
 
 // Held asks the database, not memory, whether this session still holds the
@@ -109,8 +128,16 @@ func (l *NodePolicyLease) dropWithContext(ctx context.Context) {
 		l.discard()
 		return
 	}
+	if l.tuned {
+		// Do not hand the holder's socket settings to the next pool user.
+		if _, err := l.conn.ExecContext(ctx, `RESET tcp_keepalives_idle; RESET tcp_keepalives_interval; RESET tcp_keepalives_count; RESET tcp_user_timeout`); err != nil {
+			l.discard()
+			return
+		}
+	}
 	_ = l.conn.Close()
 	l.conn = nil
+	l.tuned = false
 }
 
 // discard makes sure a connection in an unknown state is never reused: it is
@@ -123,4 +150,5 @@ func (l *NodePolicyLease) discard() {
 	_ = l.conn.Raw(func(any) error { return driver.ErrBadConn })
 	_ = l.conn.Close()
 	l.conn = nil
+	l.tuned = false
 }

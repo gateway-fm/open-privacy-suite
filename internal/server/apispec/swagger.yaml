@@ -5518,6 +5518,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/privacy-proxy_internal_apimodels.ConfigurationManaged'
           description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
+          description: Unauthorized
         "403":
           content:
             application/json:
@@ -7880,6 +7886,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
           description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
+          description: no admin authority for this organisation, or the restricted
+            operator token on a tenant organisation
       security:
       - BearerAuth: []
       - AdminToken: []
