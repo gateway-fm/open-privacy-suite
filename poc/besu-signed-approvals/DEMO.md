@@ -160,6 +160,23 @@ python3 poc/besu-signed-approvals/gasstorm.py --rates 300,500 --duration 20 --on
 python3 poc/besu-signed-approvals/analyze_hops.py evidence/gasstorm/gate-on-hops.json
 ```
 
+### Does the transport matter? Raw TCP against gRPC, measured
+
+`bench/run.sh` sends the same signed batches over today's raw TCP, over a gRPC bidirectional stream,
+and over the same stream with mTLS — from Go (grpc-go) to a Java receiver at the grpc/Netty
+versions Besu 26.8.1 ships, since a plugin inside Besu is bound to those. 500 batches/s × 32
+approvals, 10,000 batches, one host.
+
+| Transport | one-way p50 | p90 | p99 | max | ack round trip p50 / p99 |
+|---|---:|---:|---:|---:|---:|
+| raw TCP (today) | **102 µs** | 224 µs | 568 µs | 18.7 ms | — |
+| gRPC, plaintext | **123 µs** | 262 µs | 615 µs | 29.2 ms | 232 µs / 1.15 ms |
+| gRPC, mTLS | **109 µs** | 245 µs | 645 µs | 28.6 ms | 211 µs / 1.18 ms |
+
+Twenty microseconds at the median, under a hundred at p99, and mTLS for free — against a producer
+that re-evaluates a waiting transaction every ~500 ms. Raw TCP is faster by an amount that cannot
+matter; what the stream buys is the acknowledgement in the last column.
+
 ### Constant-rate runs, headless
 
 `gasstorm.py` drives the same generator without the dashboard, at fixed rates, and counts receipts

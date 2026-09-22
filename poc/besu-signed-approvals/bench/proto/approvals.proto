@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+// Delivery benchmark only: the same signed OPS_APPROVAL_BATCH frame the raw-TCP path carries,
+// wrapped in a gRPC bidirectional stream so the receiver can acknowledge each batch.
+package ops.approvals.bench;
+
+option go_package = "privacy-proxy/poc/besu-signed-approvals/bench/gen;gen";
+option java_package = "ops.approvals.bench";
+option java_multiple_files = true;
+
+service ApprovalDelivery {
+  rpc Deliver(stream Batch) returns (stream Ack);
+}
+
+message Batch {
+  string id = 1;        // correlation id, echoed in the Ack
+  bytes frame = 2;      // the signed batch bytes, exactly as on raw TCP (without the length prefix)
+  int64 sent_ns = 3;    // sender wall clock, nanoseconds; same host in the benchmark
+}
+
+message Ack {
+  string id = 1;
+  bool stored = 2;
+  string reason = 3;    // empty when stored; "capacity" etc. otherwise
+}

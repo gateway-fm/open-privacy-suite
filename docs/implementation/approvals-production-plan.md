@@ -12,9 +12,10 @@ Numbers are measured unless marked *estimate*. File references are to
 1. **Transport** for approval delivery — §3 recommends gRPC bidirectional streaming with mTLS,
    **OPS dialling the sequencer** (one inbound mTLS port on the sequencer, one stream per OPS
    instance), one acknowledgement per batch plus a capacity nack, the Ed25519 payload signature
-   kept. The baseline (§3.5) shows delivery is not a latency cost and the race does not occur, so
-   the case rests on reliability, TLS, peer authentication and operability; §3.4′ is the reduced
-   check before code is written. *(Critic: the earlier "node dials OPS" was inconsistent — the
+   kept. Measured (§3.4′ item 2): gRPC is ~20 µs slower at the median than raw TCP and mTLS adds
+   nothing measurable, against a ~500 ms candidate cadence; the baseline (§3.5) shows the race
+   does not occur. So the decision is not about speed — it is whether to build acks, TLS and peer
+   authentication on raw TCP ourselves or take gRPC's. *(Critic: the earlier "node dials OPS" was inconsistent — the
    sequencer keeps inbound `ops_prepareApproval` and the forward path anyway, and N OPS instances
    behind one address turn a node-initiated stream into a fan-in problem or put Postgres into the
    delivery path. §3.3 weighs both directions.)*
@@ -222,10 +223,21 @@ Replacing §3.4. Effort *estimate* 0.5–1 day.
    sever the OPS → producer connection for 1 s, and separately fill the store to capacity;
    count transactions that reach `TIMEOUT` or lose their approval. Expected today: losses equal
    to the batches in flight; expected after acks + redelivery + outbox: zero.
-2. **One gRPC implementation, measured once** at 500 tx/s with the same instrumentation and an
-   uncapped hop sample, to show no regression against the baseline (pass criterion: enqueue →
-   stored p99 < 5 ms, race rate 0). Also the first honest delivery-latency figure *at* 500 tx/s
-   (§3.5 caveat).
+2. ~~One gRPC implementation, measured once~~ — **done** (`bench/`): the same signed frames, the
+   same host, 500 batches/s × 32 approvals for 10,000 batches, sender in Go (grpc-go 1.82),
+   receiver in Java at **Besu's grpc 1.79.0 / Netty 4.2.17** — the versions a plugin inside Besu
+   is bound to. One-way delivery, sender wall clock to receiver wall clock:
+
+   | Transport | p50 | p90 | p99 | max | ack round trip p50 / p99 |
+   |---|---:|---:|---:|---:|---:|
+   | raw TCP, length prefix (today) | **102 µs** | 224 µs | 568 µs | 18.7 ms | — |
+   | gRPC bidi stream, plaintext | **123 µs** | 262 µs | 615 µs | 29.2 ms | 232 µs / 1.15 ms |
+   | gRPC bidi stream, **mTLS** (TLS 1.3, P-256) | **109 µs** | 245 µs | 645 µs | 28.6 ms | 211 µs / 1.18 ms |
+
+   gRPC costs ~20 µs at the median and ~50–80 µs at p99 over raw TCP; mTLS costs nothing
+   measurable on 3.9 KB frames; an acknowledgement returns in ~0.2 ms. Against a ~500 ms
+   candidate cadence none of this is a factor, which is the measured answer to "is raw TCP
+   faster": yes, by an amount that cannot matter. Reproduce with `bench/run.sh`.
 3. ~~Gossip topology check~~ — **done** (`4573e40`, `topology.py`, `--topology follower`): race
    0 of 16,013; see §3.5. Repeat once with Reth/Erigon as the follower when that stack exists.
 3a. **Capacity red test**: fill the store to capacity under load and count approvals refused and
