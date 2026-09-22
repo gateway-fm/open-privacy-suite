@@ -22,6 +22,17 @@ activate, activate through CI, withdraw. Everything about **people** stays an
 operation on its existing endpoint: accounts, memberships, address links, bans,
 KYC. Those are produced by events and proofs, not authored by anyone.
 
+**What "reviewed" means mechanically.** Writing a draft and putting it into
+force are separate acts by separate people. OPS refuses an activation by the
+person who submitted the draft. Whoever activates must be a full organisation
+administrator, not banned, and a current member of an admin group named in that
+organisation's active approvers document. Until that document exists, any full
+administrator qualifies. The check runs inside the activation transaction, so
+authority is read at the moment of activation rather than taken from the
+request. Trusted continuous integration is the one exception: a signed manifest
+naming the repository, the commit, the exact drafts and the approvers stands in
+for the second person, because the pull request was the review.
+
 ## 2. What moved
 
 | Stream | What the document holds | Endpoints it replaces |
@@ -36,18 +47,27 @@ KYC. Those are produced by events and proofs, not authored by anyone.
 Thirty-two write endpoints in total. Their `GET`s keep working, as reads of the
 projection.
 
-**What this means for the admin UI.** Activation projects into the same tables
-the admin screens already read. So Groups, Contracts and Compliance keep
-listing real rows and need no rewrite; only their write controls must turn
-read-only once a stream is managed. Today they do not, and the refusal reaches
-the administrator as an unrelated error (RD-1295).
+**What happens to the admin screens.** When a revision is activated, the
+server writes its contents into the same database tables the admin screens have
+always read. Groups, Contracts and Compliance therefore keep working as they
+are. New groups and contracts show up as normal rows. Nobody has to rebuild
+those screens.
 
-Worth saying out loud, because "it all lives in Git" reads as "the UI can go
-away": the configuration screen is not just a text editor. Approving a
-revision, co-activating siblings across streams, reading the server-computed
-diff, previewing a candidate against the node and watching publication
-readiness are API operations. None of them can be a field in the document
-being approved.
+Editing is what changes. Once a stream is managed by a document, the old edit
+and delete calls are refused. The screens do not know that yet. The buttons are
+still there, the call fails, and the administrator is told something untrue:
+deleting a group reports that the group may still have members. Those screens
+need to go read-only for a managed stream and point the administrator at the
+configuration screen (RD-1295).
+
+One caution about "if it all lives in Git, we can drop the admin UI". The
+configuration screen is not a text box. Someone other than the author has to
+press activate, and that screen is where they do it. Drafts that belong
+together, in different streams, have to be activated in one go. Before
+approving, that person needs to see the diff the server computed, try the
+candidate against the node, and check whether the node has picked up the last
+change. All of that is work the server does on request. None of it can be
+written into the document being approved.
 
 ## 3. What did not move, and why
 
@@ -93,7 +113,7 @@ ref, commit, the exact candidate digests and the reviewers who approved.
 
 - **Push, not pull.** CI or an ArgoCD-style agent calls the API. No read credentials into the customer's repository, and enforcement never waits for Git to be reachable.
 - **OPS writes three things at activation**, and they are the only reason the database is involved: the fact-version pin the node switches to, the activation record (who, when, which digest), and the projection tables for as long as they exist.
-- **Activation is not yet enforcement.** A publisher pushes the compiled policy, and the facts it needs, to the node — signed, on a thirty-second lease renewed every second. A reviewed change takes effect within a tick. If publication stops, the node's facts expire and it refuses execution rather than running stale rules.
+- **Activation is not the same as enforcement.** This is how the branch implements it today, not a decision anyone has signed off. After activation, OPS sends the compiled policy and the facts it is evaluated against to the node, signed. The node trusts what it was sent for the fact lifetime, thirty seconds by default (`OPS_NODE_POLICY_FACT_TTL`), and OPS re-sends every second by default (`OPS_NODE_POLICY_PUBLISH_INTERVAL`). So a reviewed change is live about a second after approval. If OPS stops sending, the node's copy goes stale and it refuses transactions rather than enforcing old rules.
 - **Facts never come from Git.** A reconcile loop over people would delete memberships the directory created and lift bans set during an incident.
 - **Two streams stay human.** `approvers` and `platform` refuse a service principal at both submit and activate (`configuration_revision_store.go:85,439`): they decide who may approve and what the platform trusts, so CI must not be able to widen its own authority there. Their text can live in Git; a person has to push and activate it.
 
