@@ -225,16 +225,27 @@ func (s *Server) initNodePolicy() error {
 	s.nodeExecution = bridge
 	s.nodePolicyCancel = cancel
 	s.nodePolicyDone = make(chan struct{})
+	report := func(err error) {
+		if ctx.Err() == nil {
+			slog.Warn("node policy publication pending", "error", err)
+		}
+	}
+	// Exactly one OPS instance publishes facts and reconciles submissions at a
+	// time. Every instance campaigns for the database lease; the others stand
+	// by and take over within a publish interval if the holder disappears.
+	// The shared acknowledgement cursor therefore keeps describing the node,
+	// and deltas stay deltas instead of collapsing into full snapshots from
+	// several publishers at once.
 	go func() {
 		defer close(s.nodePolicyDone)
-		reconcilerDone := make(chan struct{})
-		go func() { defer close(reconcilerDone); runNodeReconciler(ctx, s.db, client, network) }()
-		_ = publisher.Run(ctx, c.PublishInterval, func(err error) {
-			if ctx.Err() == nil {
-				slog.Warn("node policy publication pending", "error", err)
-			}
-		})
-		<-reconcilerDone
+		_ = nodepolicy.RunElected(ctx, s.db.NodePolicyLease(), c.PublishInterval, func(term context.Context) {
+			slog.Info("node policy publisher elected", "consumer_id", c.ConsumerID)
+			defer slog.Info("node policy publisher term ended", "consumer_id", c.ConsumerID)
+			reconcilerDone := make(chan struct{})
+			go func() { defer close(reconcilerDone); runNodeReconciler(term, s.db, client, network) }()
+			_ = publisher.Run(term, c.PublishInterval, report)
+			<-reconcilerDone
+		}, report)
 	}()
 	return nil
 }
