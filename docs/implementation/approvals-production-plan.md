@@ -1,6 +1,6 @@
 # Signed approvals: from PoC to production
 
-**Status:** plan, for critic review. **Date:** 22 September 2026. **Owner:** Ivan Beliakov.
+**Status:** plan, for critic review; items marked *fixed* landed on this branch on 22 September. **Date:** 22 September 2026. **Owner:** Ivan Beliakov.
 **Scope:** the signed-approvals gate (preflight in OPS, fingerprint check in the block producer)
 for the current OPS version. The in-node policy runtime is OPS v2 and is not discussed here.
 
@@ -46,14 +46,14 @@ Not corners: the fingerprint encoders, the selector's veto semantics, the metric
 
 | Corner | Where | Consequence | Fix |
 |---|---|---|---|
-| **Delivery is fire-and-forget.** A batch whose write fails is dropped; a batch the plugin cannot store is logged and dropped. OPS never learns. | `internal/nodeapproval/transport.go` `deliver()`; plugin `ApprovalListener.accept()` | the transaction was already forwarded (`jsonrpc_processor.go:1684` enqueues, then forwards): it waits `waitMs` = 5 s, is evicted `TIMEOUT`, the client holds a hash and never gets a receipt, nothing is told | acknowledgements per batch; redelivery; durable outbox (next row) |
+| **Delivery is fire-and-forget.** ~~A batch whose write fails is dropped~~ — **fixed in `f98c440`**: the signed frame is resent on the next connection. Still open: a batch the plugin receives but cannot store (capacity) is logged and dropped, and a batch lost in a peer-closed socket buffer is never noticed. OPS learns nothing either way. | `internal/nodeapproval/transport.go` `deliver()`; plugin `ApprovalListener.accept()` | the transaction was already forwarded (`jsonrpc_processor.go:1684` enqueues, then forwards): it waits `waitMs` = 5 s, is evicted `TIMEOUT`, the client holds a hash and never gets a receipt, nothing is told | acknowledgements per batch (and a negative one for capacity); redelivery; durable outbox (next row) |
 | **Nothing durable.** OPS queue is a channel (4096); plugin store is a `ConcurrentHashMap` | `service.go`; `ApprovalStore` | OPS crash after enqueue, or a Besu restart, loses approvals for forwarded transactions (scenario `restart_drops_approvals…`) | OPS outbox in Postgres; the node asks for redelivery of its pooled hashes on (re)connect |
-| **Approvals deleted on inclusion** | `OpsApprovalPlugin.onBlockAdded` on `HEAD_ADVANCED` / `CHAIN_REORG` | a transaction reorged back into the pool has no approval → timeout | delete on finality, or never (orphan TTL already bounds memory) |
+| ~~**Approvals deleted on inclusion**~~ — **fixed in `c5b626c`**: `InclusionTracker` releases along the finalized chain (`BlockchainService.getFinalizedBlock()`, parent walk); blocks > 4,096 below head fall to the orphan sweep | `OpsApprovalPlugin.onBlockAdded` | a reorged transaction now finds its approval still in the store | — (done; verified by 3 unit tests + the 22-scenario suite) |
 | **One key, no `key_id`, no expiry** | `Approval.Message()`; `node_approvals.go:18` (seed file); `ApprovalVerifier` (one key) | rotation = simultaneous restart of every producer and OPS; an approval never expires while pooled, so an RBAC change after approval does not revoke it | envelope v2: `key_id`, `issued_at`, `expires_at`; trusted key *set* on the plugin with validity windows |
 | **Plain TCP, no TLS, no peer authentication** | `dialApproval`; `ApprovalListener` | the signature protects content only; anyone reaching the port can flood the store | §3 |
 | **Single delivery target**, one connection, one goroutine | `Service.address` | no standby sequencer, no second OPS instance | §4 |
-| **`ops_prepareApproval` unauthenticated at the node** | `PrepareApprovalRpc` | simulation only, but compute on the producer; reachable by anyone on the RPC port | network policy or Besu RPC authentication; documented requirement |
-| **Diagnostics in the live path** | `OPS_APPROVAL_ENCODING=json`; `hops.go` | dead switches in production code | remove, or keep hops behind a build tag (it is the delivery benchmark, §3.5) |
+| **`ops_prepareApproval` unauthenticated at the node** | `PrepareApprovalRpc` | simulation only, but compute on the producer; reachable by anyone on the RPC port | network policy or Besu RPC authentication — **documented as a deployment requirement in `16010c9`**; enforcement is the operator's network policy until mTLS |
+| **Diagnostics in the live path** | ~~`OPS_APPROVAL_ENCODING=json`~~ removed in `9abebc2`; `hops.go` remains, opt-in by env | a second wire format in production code | hops: keep behind a build tag (it is the delivery benchmark, §3.5) |
 | **No health signal** | — | OPS disconnected = every transaction times out; nothing pages | connected-producers gauge on OPS, OPS-connected gauge on the plugin; alerts on both; readiness reflects delivery connectivity |
 | **Fixed 100 ms reconnect, no jitter; frame limits hard-coded** | `deliver()`; `MaxBatchApprovals` 32, `MaxBatchFrame` 16 KiB | thundering reconnects; limits undocumented | backoff with jitter; limits in the protocol document |
 | **Rate limiting deferred to OPS** | README | any authorised client can fill the store (100 k) for the TTL | global (Redis) rate limit on preflight per principal |
@@ -218,15 +218,17 @@ does not consult approvals. Every producer must run the plugin.
 Independently shippable; each ends with the 22-scenario suite green.
 
 1. **Baseline** (§3.5) — done: 62 µs median delivery, race rate 0 at 300 and 500 tx/s.
-2. **Reduced benchmark** (§3.4′): failure injection red test, one gRPC no-regression run,
-   gossip-topology race check → decision 0.1.
-3. **Transport + durability**: `.proto`; gRPC bidi with mTLS; node dials OPS; acks; Postgres
-   outbox; redelivery on connect; forward-after-ack; strip `OPS_APPROVAL_ENCODING`, gate `hops`
-   behind a build tag; backoff with jitter.
+2. **Reduced benchmark** (§3.4′): failure injection red test — **done for the write-failure case**
+   (`delivery_reliability_test.go`, red → green with `f98c440`); still to do: the capacity case,
+   one gRPC no-regression run, the gossip-topology race check → decision 0.1.
+3. **Transport + durability**: `.proto`; gRPC bidi with mTLS; node dials OPS; acks and a capacity
+   nack; Postgres outbox; redelivery on connect; forward-after-ack; gate `hops` behind a build
+   tag; backoff with jitter. (`OPS_APPROVAL_ENCODING` removed in `9abebc2`.)
 4. **Envelope v2 + keys**: `key_id`, `issued_at`, `expires_at`; key set on the plugin;
    Secrets Manager via IRSA; rotation procedure; per-instance keys.
-5. **Lifecycle**: release on finality; expiry honoured by the selector; global rate limit on
-   preflight; `ops_prepareApproval` behind network policy or Besu RPC auth.
+5. **Lifecycle**: ~~release on finality~~ (done, `c5b626c`); expiry honoured by the selector;
+   global rate limit on preflight; `ops_prepareApproval` behind network policy or Besu RPC auth
+   (documented, `16010c9`; enforcement is deployment).
 6. **Observability**: connected-producers and OPS-connected gauges; delivery lag; race rate;
    alerts; readiness reflects delivery.
 7. **Packaging and CI**: plugin build and release (decision 0.4); per-Besu-version scenario
