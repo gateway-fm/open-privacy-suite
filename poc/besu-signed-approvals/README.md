@@ -137,8 +137,10 @@ table and what each number does and does not cover.
   gate, nothing failed, every confirmation checked against a receipt. That is the ceiling of one
   machine running the generator, OPS, PostgreSQL, Redis and Besu together, not of the design — and
   most of it is Besu's, not the gate's. Screenshots and per-run evidence in [DEMO.md](DEMO.md).
-- **Single-producer assumptions**: approvals are released on `HEAD_ADVANCED`/`CHAIN_REORG`; a reorg that
-  returns transactions to the pool leaves them waiting for a new approval, which OPS does not re-send.
+- **Single-producer assumptions**: approvals are released when the including block is **final**
+  (`BlockchainService.getFinalizedBlock()`, walked along parent links), not when it is added, so a
+  reorganisation that returns transactions to the pool finds their approvals still there. Blocks more
+  than 4,096 below the head stop being tracked and their approvals fall to the orphan sweep.
   Every producer must run the plugin; a plugin that calls `BlockTransactionSelectionService.commit()`
   itself (bundle-style) must be checked before coexistence.
 - **Approvals are final once issued** (until inclusion or TTL); there is no revocation path, as in the
@@ -204,6 +206,12 @@ client over the Engine API. Plugin options:
 
 OPS: `OPS_APPROVAL_NODE=besu`, `OPS_APPROVAL_TARGET=host:port` (the plugin's listen address),
 `OPS_APPROVAL_SEED_FILE` as before; the node's `--rpc-http-api` must include `OPS`.
+
+The `OPS` namespace (`ops_prepareApproval`) only simulates, but it simulates on the block producer and
+has no authentication of its own. Expose it on an RPC listener that only OPS can reach — network
+policy, or Besu's own RPC authentication (`--rpc-http-authentication-enabled`) — never on a listener
+that serves users. The same applies to `--plugin-ops-approval-listen`: it verifies signatures, not
+peers, so it belongs inside the perimeter until the transport carries mTLS.
 
 Demo and benchmarks: [demo.py](demo.py), headless load [gasstorm.py](gasstorm.py), the dashboard
 session [gasstorm_ui.py](gasstorm_ui.py) + [run_ui_case.sh](run_ui_case.sh) (see [DEMO.md](DEMO.md)).
