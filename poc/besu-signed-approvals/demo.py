@@ -49,11 +49,12 @@ class Stack:
 
     ADMIN_TOKEN = "ops-besu-local-demo-only"
 
-    def __init__(self, name, plugin=True, linea=False):
+    def __init__(self, name, plugin=True, linea=False, node_factory=None):
         self.name = name
         self.plugin = plugin
         self.containers = []
         self.node = None
+        self.nodes = None  # set when a factory provides more than one node (topology runs)
         self.ops = None
         self.tokens = {}
         self.directory = h.SCRATCH / f"{name}-{time.time_ns()}"
@@ -81,8 +82,16 @@ class Stack:
             self.containers.append(redis)
             redisport = docker("port", redis, "6379/tcp").rsplit(":", 1)[1]
 
-            self.node = h.Node(name, plugin=plugin, wait_ms=5000,
-                               linea_plugins=[h.LINEA_POOL_PLUGIN] if linea else ())
+            if node_factory is not None:
+                # A topology (e.g. producer + follower). Transactions and preflight go to the
+                # forward node; approvals go to the producer; decisions are read from the producer.
+                self.nodes = node_factory(name, plugin)
+                self.node = self.nodes.node
+                forward_url = self.nodes.followers()[0].rpc_url
+            else:
+                self.node = h.Node(name, plugin=plugin, wait_ms=5000,
+                                   linea_plugins=[h.LINEA_POOL_PLUGIN] if linea else ())
+                forward_url = self.node.rpc_url
             port = h.unused_port()
             self.url = f"http://127.0.0.1:{port}"
             seed = self.directory / "approval-seed.hex"
@@ -92,7 +101,7 @@ class Stack:
             env = {k: v for k, v in os.environ.items() if k in ("PATH", "HOME", "TMPDIR", "LANG")}
             env.update(
                 ENVIRONMENT="development", GIN_MODE="release", PORT=str(port), BASE_URL=self.url,
-                NODE_URL=self.node.rpc_url,
+                NODE_URL=forward_url,
                 DATABASE_URL=f"postgres://postgres:postgres@127.0.0.1:{pgport}/ops_approvals_demo?sslmode=disable",
                 AUDIT_DATABASE_URL=f"postgres://privacy_proxy_app:audit-demo-only@127.0.0.1:{pgport}/ops_approvals_demo_audit?sslmode=disable",
                 REDIS_URL=f"redis://:redis-demo-only@127.0.0.1:{redisport}/0",
@@ -188,7 +197,9 @@ class Stack:
                 self.ops.wait(timeout=5)
             self.opslog.close()
             shutil.copy2(self.directory / "ops.log", h.EVIDENCE / (self.name + "-ops.log"))
-        if self.node is not None:
+        if self.nodes is not None:
+            self.nodes.close()
+        elif self.node is not None:
             self.node.close()
         for container in reversed(self.containers):
             subprocess.run(["docker", "stop", "-t", "3", container],

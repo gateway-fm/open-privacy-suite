@@ -1,0 +1,81 @@
+{
+  "machine": "Darwin arm64",
+  "block_interval_s": 1.0,
+  "workload": "eth-transfer",
+  "rates": [
+    300,
+    500
+  ],
+  "duration_s": 20,
+  "results": [
+    {
+      "gate": true,
+      "topology": "follower",
+      "workload": "eth-transfer",
+      "requested_rate": 300,
+      "duration_s": 20,
+      "submitted": 6011,
+      "confirmed": 6002,
+      "reverted": 0,
+      "no_receipt": 9,
+      "confirmed_tps": 188.5,
+      "blocks": 34,
+      "generator_report": {
+        "txSent": 6011,
+        "txConfirmed": 6002,
+        "txFailed": 0,
+        "txDiscarded": 9,
+        "averageTps": 225.5274199635486,
+        "peakTps": 247,
+        "onChainTps": 281.6,
+        "onChainTxCount": 5632
+      },
+      "window_s": 31.8,
+      "gate_us_per_tx_median": 9.9,
+      "race": {
+        "transactions_evaluated": 6002,
+        "allowed": 6002,
+        "allowed_after_waiting": 0,
+        "pending_rate": 0.0,
+        "max_waits_before_allow": 0,
+        "dropped_timeout": 0,
+        "denied": 0
+      }
+    },
+    {
+      "gate": true,
+      "topology": "follower",
+      "workload": "eth-transfer",
+      "requested_rate": 500,
+      "duration_s": 20,
+      "submitted": 10011,
+      "confirmed": 10011,
+      "reverted": 0,
+      "no_receipt": 0,
+      "confirmed_tps": 308.9,
+      "blocks": 39,
+      "generator_report": {
+        "txSent": 10011,
+        "txConfirmed": 10011,
+        "txFailed": 0,
+        "txDiscarded": null,
+        "averageTps": 372.9480192801385,
+        "peakTps": 474,
+        "onChainTps": 477,
+        "onChainTxCount": 9540
+      },
+      "window_s": 32.4,
+      "gate_us_per_tx_median": 8.3,
+      "race": {
+        "transactions_evaluated": 10011,
+        "allowed": 10011,
+        "allowed_after_waiting": 0,
+        "pending_rate": 0.0,
+        "max_waits_before_allow": 0,
+        "dropped_timeout": 0,
+        "denied": 0
+      }
+    }
+  ],
+  "note": "confirmed = successful receipts on chain; the generator, OPS, PostgreSQL, Redis and Besu all run on this one machine"
+}
