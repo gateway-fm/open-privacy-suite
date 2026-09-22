@@ -2,13 +2,10 @@ package nodeapproval
 
 import (
 	"context"
-	"encoding/binary"
-	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
 	"net"
-	"os"
 	"time"
 )
 
@@ -57,7 +54,6 @@ func (s *Service) deliver(ctx context.Context, conn net.Conn) {
 		}
 	}()
 	broken := watchConnection(conn)
-	jsonMode := os.Getenv("OPS_APPROVAL_ENCODING") == "json" // comparison only
 	// A batch whose write failed is kept and sent first on the next connection.
 	// The frame is already signed, so it is resent byte for byte; the producer's
 	// store is keyed by transaction hash, so a duplicate is harmless. Without
@@ -97,14 +93,6 @@ func (s *Service) deliver(ctx context.Context, conn net.Conn) {
 		}
 		mark(batch.Approvals, func(h *Hop, n int64) { h.DeliveryStart = n })
 		frame := batch.frame
-		if jsonMode {
-			data, err := json.Marshal(batch)
-			if err != nil {
-				continue
-			}
-			frame = binary.BigEndian.AppendUint32(nil, uint32(len(data)))
-			frame = append(frame, data...)
-		}
 		if len(frame) < 4 || len(frame) > MaxBatchFrame+4 {
 			slog.Error("invalid approval frame", "error", errors.New("frame size"))
 			continue
