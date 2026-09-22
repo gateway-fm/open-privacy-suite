@@ -58,6 +58,7 @@ class LoadStack(Stack):
             # OPS-side delivery timings (enqueue -> sign -> write), flushed when OPS exits.
             self.hops_file = h.EVIDENCE / "gasstorm" / (name + "-hops.json")
             self.extra_env["OPS_APPROVAL_HOPS_FILE"] = str(self.hops_file)
+            self.extra_env["OPS_APPROVAL_HOPS_LIMIT"] = "200000"  # the whole run, not its first 8,192
         factory = None
         if topology == "follower":
             from topology import Pair
