@@ -1,0 +1,215 @@
+{
+  "id": "test-1790099954834936000",
+  "startedAt": "2026-09-22T19:59:14.834929+02:00",
+  "completedAt": "2026-09-22T19:59:42.648689+02:00",
+  "pattern": "constant",
+  "transactionType": "eth-transfer",
+  "durationMs": 20000,
+  "txSent": 6011,
+  "txConfirmed": 6002,
+  "txFailed": 0,
+  "txDiscarded": 9,
+  "averageTps": 225.5274199635486,
+  "peakTps": 247,
+  "latencyStats": {
+    "count": 6002,
+    "min": 453,
+    "max": 7455,
+    "avg": 1403.8077307564145,
+    "p50": 1081,
+    "p75": 1349,
+    "p90": 1533,
+    "p95": 6384.849999999999,
+    "p99": 7184.969999999999,
+    "buckets": [
+      {
+        "label": "0-250ms",
+        "count": 0
+      },
+      {
+        "label": "250-500ms",
+        "count": 43
+      },
+      {
+        "label": "500-1s",
+        "count": 2494
+      },
+      {
+        "label": "1-2s",
+        "count": 3095
+      },
+      {
+        "label": "2s+",
+        "count": 370
+      }
+    ]
+  },
+  "preconfLatency": {
+    "count": 0,
+    "min": 0,
+    "max": 0,
+    "avg": 0,
+    "p50": 0,
+    "p75": 0,
+    "p90": 0,
+    "p95": 0,
+    "p99": 0,
+    "buckets": null
+  },
+  "config": {
+    "pattern": "constant",
+    "durationSec": 20,
+    "numAccounts": 10,
+    "transactionType": "eth-transfer",
+    "constantRate": 300,
+    "privacyMode": true
+  },
+  "status": "completed",
+  "txLoggingEnabled": true,
+  "executionLayer": "gravity-reth",
+  "privacyMode": true,
+  "blockCount": 38,
+  "isFavorite": false,
+  "onChainFirstBlock": 1,
+  "onChainLastBlock": 20,
+  "onChainTxCount": 5632,
+  "onChainTps": 281.6,
+  "onChainDurationSecs": 20,
+  "pendingLatency": {
+    "count": 0,
+    "min": 0,
+    "max": 0,
+    "avg": 0,
+    "p50": 0,
+    "p75": 0,
+    "p90": 0,
+    "p95": 0,
+    "p99": 0,
+    "buckets": null
+  },
+  "environment": {
+    "builderBlockTimeMs": 0,
+    "builderGasLimit": 0,
+    "builderMaxTxsPerBlock": 0,
+    "builderTxOrdering": "",
+    "builderEnablePreconfs": false,
+    "builderSkipEmptyBlocks": false,
+    "builderIncludeDepositTx": false,
+    "builderBlockAttestationEnabled": false,
+    "builderHsmFailoverEnabled": false,
+    "loadGenGasTipCapGwei": 0.001,
+    "loadGenGasFeeCapGwei": 3,
+    "loadGenExecutionLayer": "gravity-reth",
+    "nodeName": "gravity-reth",
+    "nodeVersion": "besu/v26.8.1/osx-aarch_64/openjdk-java-25",
+    "nodeImage": "",
+    "chainId": 31337,
+    "useBlockBuilder": false
+  },
+  "verification": {
+    "metricsMatch": false,
+    "txCountDelta": -370,
+    "gasUsedDelta": 0,
+    "txReceipts": {
+      "sampleSize": 0,
+      "successCount": 0,
+      "revertCount": 0,
+      "avgGasUsed": 0,
+      "minGasUsed": 0,
+      "maxGasUsed": 0,
+      "totalGasVerified": 0
+    },
+    "allChecksPass": false,
+    "warnings": [
+      "Confirmed 370 more TXs than on-chain - possible double counting"
+    ],
+    "incrementalMode": true,
+    "snapshots": [
+      {
+        "timestamp": "2026-09-22T19:59:34.870612+02:00",
+        "firstBlock": 0,
+        "lastBlock": 0,
+        "blocksSampled": 0,
+        "blocksOrdered": 0,
+        "receiptsSampled": 0,
+        "receiptsSuccess": 0,
+        "receiptsReverted": 0,
+        "totalGasUsed": 0,
+        "minGasUsed": 0,
+        "maxGasUsed": 0,
+        "violations": 0
+      }
+    ],
+    "snapshotCount": 1
+  },
+  "testAccounts": {
+    "totalCount": 10,
+    "dynamicCount": 0,
+    "fundedCount": 0,
+    "funderAddress": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+    "accounts": [
+      "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+      "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+      "0x90F79bf6EB2c4f870365E785982E1f101E93b906",
+      "0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65",
+      "0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc",
+      "0x976EA74026E726554dB657fA54763abd0C3a0aa9",
+      "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955",
+      "0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f",
+      "0xa0Ee7A142d267C1f36714E4a8F75612F20a79720"
+    ],
+    "allAccounts": [
+      {
+        "address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "role": "deployer",
+        "index": 0
+      },
+      {
+        "address": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "role": "funder",
+        "index": 1
+      },
+      {
+        "address": "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+        "role": "funder",
+        "index": 2
+      },
+      {
+        "address": "0x90F79bf6EB2c4f870365E785982E1f101E93b906",
+        "role": "funder",
+        "index": 3
+      },
+      {
+        "address": "0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65",
+        "role": "funder",
+        "index": 4
+      },
+      {
+        "address": "0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc",
+        "role": "funder",
+        "index": 5
+      },
+      {
+        "address": "0x976EA74026E726554dB657fA54763abd0C3a0aa9",
+        "role": "funder",
+        "index": 6
+      },
+      {
+        "address": "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955",
+        "role": "funder",
+        "index": 7
+      },
+      {
+        "address": "0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f",
+        "role": "funder",
+        "index": 8
+      },
+      {
+        "address": "0xa0Ee7A142d267C1f36714E4a8F75612F20a79720",
+        "role": "funder",
+        "index": 9
+      }
+    ]
+  }
+}

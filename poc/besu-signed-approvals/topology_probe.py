@@ -9,77 +9,13 @@ when driven over its own Engine API (post-merge nodes do not propagate blocks ov
 """
 import contextlib
 import json
-import os
 import subprocess
 import sys
 import time
 
 import harness as h
 
-# The producer keeps the harness's node key; the follower needs its own or devp2p refuses.
-FOLLOWER_KEY = "22" * 32
-
-
-class PeeredNode(h.Node):
-    """harness.Node with devp2p on. Duplicates the argument list on purpose: the harness is being
-    reviewed and must not change under the reviewer; fold this back in afterwards."""
-
-    def __init__(self, name, *, plugin, node_key, bootnodes=(), wait_ms=5000):
-        self.name, self.plugin, self.fork = name, plugin, "shanghai"
-        self.directory = h.SCRATCH / f"{name}-{os.getpid()}-{int(time.time())}"
-        self.directory.mkdir(parents=True, exist_ok=True)
-        self.rpc_port, self.engine_port, self.approval_port, self.p2p_port = (h.unused_port() for _ in range(4))
-        self.rpc_url = f"http://127.0.0.1:{self.rpc_port}"
-        self.engine_url = f"http://127.0.0.1:{self.engine_port}"
-        self.log_path = self.directory / "node.log"
-        self.records, self.connections = [], []
-        import threading
-        self.local, self.connections_lock = threading.local(), threading.Lock()
-        self.secret = bytes.fromhex("11" * 32)
-        (self.directory / "jwt.hex").write_text(self.secret.hex())
-        (self.directory / "key").write_text("0x" + node_key)
-        args = [str(h.BESU_HOME / "bin/besu"), "--data-path", str(self.directory / "data"),
-                "--genesis-file", str(h.EVIDENCE / "genesis.json"), "--node-private-key-file", str(self.directory / "key"),
-                "--min-gas-price", "0",
-                "--rpc-http-enabled", "--rpc-http-host", "127.0.0.1", "--rpc-http-port", str(self.rpc_port),
-                "--rpc-http-api", "ETH,NET,WEB3,DEBUG,TXPOOL,ADMIN" + (",OPS" if plugin else ""),
-                "--engine-rpc-enabled", "--engine-rpc-port", str(self.engine_port),
-                "--engine-jwt-secret", str(self.directory / "jwt.hex"), "--engine-host-allowlist", "*",
-                "--rpc-tx-feecap", "0",
-                "--p2p-enabled=true", "--discovery-enabled=false", "--p2p-host", "127.0.0.1", "--p2p-port", str(self.p2p_port),
-                "--tx-pool-max-future-by-sender", "2000", "--tx-pool-max-prioritized", "20000",
-                "--tx-pool-max-prioritized-by-type", "FRONTIER=20000", "--rpc-http-max-active-connections", "4096",
-                "--logging", os.environ.get("OPS_BESU_LOG_LEVEL", "INFO")]
-        if bootnodes:
-            # Discovery is off, so peers are static: Besu refuses --bootnodes without discovery.
-            static = self.directory / "static-nodes.json"
-            static.write_text(json.dumps([b.split("?")[0] for b in bootnodes]))
-            args += ["--static-nodes-file", str(static)]
-        if plugin:
-            args += ["--plugins", "OpsApprovalPlugin",
-                     "--plugin-ops-approval-listen", f"127.0.0.1:{self.approval_port}",
-                     "--plugin-ops-approval-public-key", h.APPROVAL_PUBLIC_KEY,
-                     "--plugin-ops-approval-chain-id", str(h.CHAIN_ID),
-                     "--plugin-ops-approval-wait-ms", str(wait_ms)]
-        else:
-            args += ["--Xplugins-external-enabled=false"]
-        env = dict(os.environ, JAVA_HOME=str(h.JAVA_HOME), PATH=f"{h.JAVA_HOME}/bin:" + os.environ["PATH"], JAVA_OPTS="-Xmx2g")
-        self.log = open(self.log_path, "ab")
-        self.process = subprocess.Popen(args, stdout=self.log, stderr=subprocess.STDOUT, env=env, cwd=self.directory)
-        deadline = time.time() + 90
-        while True:
-            if self.process.poll() is not None:
-                raise RuntimeError(f"{name}: Besu exited early\n" + self.log_path.read_text(errors="replace")[-3000:])
-            try:
-                self.head = self.rpc("eth_getBlockByNumber", "latest", False)
-                break
-            except Exception:
-                if time.time() > deadline:
-                    raise RuntimeError(f"{name}: Besu did not become ready\n" + self.log_path.read_text(errors="replace")[-3000:])
-                time.sleep(0.5)
-
-    def enode(self):
-        return self.rpc("admin_nodeInfo")["enode"]
+from topology import FOLLOWER_KEY, PeeredNode  # the shared two-node harness
 
 
 def main():
@@ -87,7 +23,7 @@ def main():
     with contextlib.ExitStack() as stack:
         producer = PeeredNode("topo-producer", plugin=True, node_key=h.KEYS[h.ADMIN])
         stack.callback(producer.close)
-        follower = PeeredNode("topo-follower", plugin=False, node_key=FOLLOWER_KEY, bootnodes=[producer.enode()])
+        follower = PeeredNode("topo-follower", plugin=False, node_key=FOLLOWER_KEY, static_peers=[producer.enode()])
         stack.callback(follower.close)
         # 1. Peering.
         for _ in range(60):

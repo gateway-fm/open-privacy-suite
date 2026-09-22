@@ -51,13 +51,18 @@ def prepare():
 class LoadStack(Stack):
     """The demo stack, seeded for ten wallets under one identity and a higher request ceiling."""
 
-    def __init__(self, name, plugin=True):
+    def __init__(self, name, plugin=True, topology="single"):
         self.extra_env = {"MAX_CONCURRENT_REQUESTS": "5000"}
+        self.topology = topology
         if plugin:
             # OPS-side delivery timings (enqueue -> sign -> write), flushed when OPS exits.
             self.hops_file = h.EVIDENCE / "gasstorm" / (name + "-hops.json")
             self.extra_env["OPS_APPROVAL_HOPS_FILE"] = str(self.hops_file)
-        super().__init__(name, plugin=plugin)
+        factory = None
+        if topology == "follower":
+            from topology import Pair
+            factory = lambda n, p: Pair(n, plugin=p)
+        super().__init__(name, plugin=plugin, node_factory=factory)
 
     def seed(self):
         self.org = self.admin("POST", "/orgs", {"slug": "loadtest", "name": "Load test"})["id"]
@@ -103,8 +108,9 @@ class LoadStack(Stack):
 class Miner:
     """Builds a block every `interval` seconds through the Engine API, like a consensus client."""
 
-    def __init__(self, node, interval=1.0):
+    def __init__(self, node, interval=1.0, followers=()):
         self.node = node
+        self.followers = list(followers)  # post-merge followers only learn blocks from the CL
         self.interval = interval
         self.stop = threading.Event()
         self.error = None
@@ -131,6 +137,11 @@ class Miner:
                 answer = n.engine("engine_forkchoiceUpdatedV2",
                                   dict.fromkeys(state, payload["blockHash"]), None)
                 assert answer["payloadStatus"]["status"] == "VALID", answer
+                for f in self.followers:
+                    imported = f.engine("engine_newPayloadV2", payload)
+                    assert imported["status"] == "VALID", imported
+                    fc = f.engine("engine_forkchoiceUpdatedV2", dict.fromkeys(state, payload["blockHash"]), None)
+                    assert fc["payloadStatus"]["status"] == "VALID", fc
                 n.head = n.rpc("eth_getBlockByNumber", payload["blockNumber"], False)
                 self.blocks.append({"at": time.time(), "number": int(payload["blockNumber"], 16),
                                     "transactions": len(payload["transactions"]),
@@ -270,12 +281,13 @@ def race_summary(before, after):
             "denied": len([k for k, v in new.items() if "deny" in v or "unsupported" in v])}
 
 
-def compare(workload, rates, duration, interval, only_gate=False):
+def compare(workload, rates, duration, interval, only_gate=False, topology="single"):
     results = []
     for plugin in ((True,) if only_gate else (False, True)):
-        name = ("gate-on" if plugin else "gate-off")
-        with contextlib.closing(LoadStack(name, plugin=plugin)) as stack:
-            miner = Miner(stack.node, interval=interval)
+        name = ("gate-on" if plugin else "gate-off") + ("" if topology == "single" else "-" + topology)
+        with contextlib.closing(LoadStack(name, plugin=plugin, topology=topology)) as stack:
+            miner = Miner(stack.node, interval=interval,
+                          followers=stack.nodes.followers() if stack.nodes else ())
             loadgen = Loadgen(stack)
             try:
                 for rate in rates:
@@ -289,7 +301,7 @@ def compare(workload, rates, duration, interval, only_gate=False):
                     time.sleep(interval * 3)
                     window = time.time() - started
                     ok, failed, missing = confirmed(stack.node, hashes)
-                    row = {"gate": plugin, "workload": workload, "requested_rate": rate,
+                    row = {"gate": plugin, "topology": topology, "workload": workload, "requested_rate": rate,
                            "duration_s": duration, "submitted": len(hashes),
                            "confirmed": ok, "reverted": failed, "no_receipt": missing,
                            # Over the whole window, from the first submission to the last block,
@@ -310,11 +322,13 @@ def compare(workload, rates, duration, interval, only_gate=False):
                 loadgen.close()
                 miner.close(name)
     summary = {"machine": subprocess.check_output(["uname", "-sm"], text=True).strip(),
+               "topology": topology,
                "block_interval_s": interval, "workload": workload, "rates": rates,
                "duration_s": duration, "results": results,
                "note": "confirmed = successful receipts on chain; the generator, OPS, PostgreSQL, "
                        "Redis and Besu all run on this one machine"}
-    save("summary.json", summary)
+    # One summary per layout, so a topology run never overwrites the direct baseline.
+    save("summary.json" if topology == "single" else f"summary-{topology}.json", summary)
     print("\nSUMMARY", json.dumps(summary["results"], indent=2), flush=True)
 
 
@@ -325,10 +339,12 @@ def main():
     parser.add_argument("--duration", type=int, default=20)
     parser.add_argument("--block-interval", type=float, default=1.0)
     parser.add_argument("--only-gate", action="store_true", help="skip the gate-off baseline")
+    parser.add_argument("--topology", choices=("single", "follower"), default="single",
+                        help="single: OPS forwards to the producer; follower: to a peered RPC node that gossips")
     args = parser.parse_args()
     prepare()
     compare(args.workload, [int(r) for r in args.rates.split(",")], args.duration, args.block_interval,
-            only_gate=args.only_gate)
+            only_gate=args.only_gate, topology=args.topology)
 
 
 if __name__ == "__main__":

@@ -125,6 +125,34 @@ record, every status sample, the WebSocket frames, and the gzipped receipt list,
 `evidence/gasstorm/browser-direct/`, `browser-gate-on/` and `browser-gate-off/`.
 
 
+### Does the approval ever lose the race to its transaction?
+
+The transaction and its approval travel on different paths, and a transaction the producer sees
+before its approval waits for the next candidate build (~500 ms on Besu). `gasstorm.py` now records
+OPS's own delivery marks (`OPS_APPROVAL_HOPS_FILE`, reduced by `analyze_hops.py`) and, from the
+producer's decision log, how many approved transactions were first evaluated before their approval
+arrived. Two layouts, gate on, 20 s per rate:
+
+| Layout | Rate | Approvals delivered | enqueue → written p50 / p99 | Allowed after ≥1 wait | Dropped |
+|---|---:|---:|---:|---:|---:|
+| OPS forwards to the producer | 300 | 6 003 | 62 µs / 1.17 ms | **0** | 0 |
+| | 500 | 10 011 | (same sample) | **0** | 0 |
+| OPS forwards to a **follower RPC node**, gossip to the producer (`--topology follower`) | 300 | 6 002 | 64 µs / 0.71 ms | **0** | 0 |
+| | 500 | 10 011 | | **0** | 0 |
+
+The second layout is the deployment's: one Besu sequencer with the plugin, ordinary RPC nodes as
+the submission channel, approvals delivered to the sequencer directly. `topology_probe.py` measured
+gossip from follower to producer pool at ~80 ms, against a 62 µs approval delivery — the approval's
+lead only grows. Delivery is not a latency cost on either layout; what can still cost a candidate
+build or the 5 s timeout is a *failed* delivery, which is why the production plan treats
+acknowledgements and redelivery as the transport requirement rather than wire speed.
+
+```sh
+python3 poc/besu-signed-approvals/gasstorm.py --rates 300,500 --duration 20 --only-gate                      # direct
+python3 poc/besu-signed-approvals/gasstorm.py --rates 300,500 --duration 20 --only-gate --topology follower  # via RPC node
+python3 poc/besu-signed-approvals/analyze_hops.py evidence/gasstorm/gate-on-hops.json
+```
+
 ### Constant-rate runs, headless
 
 `gasstorm.py` drives the same generator without the dashboard, at fixed rates, and counts receipts
