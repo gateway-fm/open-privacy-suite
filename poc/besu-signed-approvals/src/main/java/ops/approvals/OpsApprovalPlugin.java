@@ -54,7 +54,13 @@ public class OpsApprovalPlugin implements BesuPlugin {
         }
       };
 
-  /** Blocks whose approvals are still needed: tracked from inclusion until finality. */
+  /**
+   * Blocks whose approvals are still needed are tracked from inclusion until finality. Below this
+   * depth behind the head they stop being tracked and their approvals fall to the orphan sweep:
+   * about 68 minutes at one-second blocks, chosen as several times any finality lag a healthy
+   * consensus client should show; if the target network's finality lags more, raise it and size
+   * the store's capacity to rate × retention.
+   */
   static final long TRACKED_BLOCK_DEPTH = 4_096;
 
   private final PluginOptions options = new PluginOptions();
@@ -117,10 +123,11 @@ public class OpsApprovalPlugin implements BesuPlugin {
         .orElseThrow(() -> new IllegalArgumentException("--plugin-ops-approval-chain-id does not match the node's chain id"));
     final ApprovalVerifier verifier = new ApprovalVerifier(Bytes.fromHexString(options.publicKey).toArrayUnsafe());
     final TransactionPoolService pool = require(TransactionPoolService.class);
-    // When full, first drop approvals whose transaction is no longer in the pool; only if that frees
-    // nothing is the newest approval refused. Flooding OPS with preflights is rate-limited at OPS.
-    store =
-        new ApprovalStore(options.capacity, options.orphanTtlMs, System::currentTimeMillis, () -> pendingHashes(pool));
+    // When full, drop the oldest approval whose transaction is not live in the pool and is old
+    // enough that its transaction is not merely still on its way; refuse only if nothing can go.
+    // Liveness comes from the pool's own events, so overflow never scans the pool. Flooding OPS
+    // with preflights is rate-limited at OPS.
+    store = new ApprovalStore(options.capacity, options.orphanTtlMs, options.waitMs, System::currentTimeMillis);
 
     final MetricsSystem metrics = require(MetricsSystem.class);
     final LabelledMetric<Counter> decisions =
@@ -162,6 +169,8 @@ public class OpsApprovalPlugin implements BesuPlugin {
 
     final BesuEvents events = require(BesuEvents.class);
     events.addBlockAddedListener(this::onBlockAdded);
+    events.addTransactionAddedListener(tx -> store.pooled(tx.getHash()));
+    events.addTransactionDroppedListener((tx, reason) -> store.unpooled(tx.getHash()));
 
     sweeper = Executors.newSingleThreadScheduledExecutor(r -> Thread.ofPlatform().name("ops-approval-sweeper").daemon(true).unstarted(r));
     sweeper.scheduleAtFixedRate(() -> sweep(pool), options.orphanTtlMs, options.orphanTtlMs, TimeUnit.MILLISECONDS);
@@ -201,14 +210,17 @@ public class OpsApprovalPlugin implements BesuPlugin {
     // Inclusion is not the end of an approval's life: a reorganisation returns the block's
     // transactions to the pool, and they must still find their approvals there. Track the block
     // and release along the finalized chain instead.
-    if (block.getEventType() != AddedBlockContext.EventType.HEAD_ADVANCED
-        && block.getEventType() != AddedBlockContext.EventType.CHAIN_REORG) {
+    // FORK blocks are recorded too: a reorganisation onto that fork later needs their parents.
+    if (block.getEventType() == AddedBlockContext.EventType.STORED_ONLY) {
       return;
     }
     final BlockHeader header = block.getBlockHeader();
     final List<Hash> included =
         block.getBlockBody().getTransactions().stream().map(org.hyperledger.besu.datatypes.Transaction::getHash).toList();
     inclusions.recordIncluded(header.getBlockHash(), header.getParentHash(), header.getNumber(), included);
+    // Included transactions left the pool; their approvals stay (until finality) but are no
+    // longer live, so they are the first to go if the store overflows.
+    included.forEach(store::unpooled);
     releaseFinalized();
     // Blocks far below the head are no longer reorg candidates in practice; stop tracking them
     // and let the orphan sweep reclaim their approvals like any other unpooled approval.
@@ -217,10 +229,7 @@ public class OpsApprovalPlugin implements BesuPlugin {
 
   private void releaseFinalized() {
     try {
-      final Set<Hash> released =
-          inclusions.finalizedUpTo(
-              blockchain.getFinalizedBlock(),
-              hash -> blockchain.getBlockHeaderByHash(hash).map(BlockHeader::getParentHash).orElse(null));
+      final Set<Hash> released = inclusions.finalizedUpTo(blockchain.getFinalizedBlock());
       if (!released.isEmpty()) {
         store.removeAll(released);
       }

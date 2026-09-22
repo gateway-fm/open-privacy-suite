@@ -42,7 +42,7 @@ class ApprovalSelectorTest {
 
   @BeforeEach
   void setUp() throws Exception {
-    store = new ApprovalStore(100, 60_000, clock::get);
+    store = new ApprovalStore(100, 60_000, 0, clock::get);
     tracer = new ApprovalTracer();
     selector = new ApprovalSelector(store, CHAIN, WAIT, clock::get, tracer);
     final KeyPair keys = SignatureAlgorithmFactory.getInstance().generateKeyPair();

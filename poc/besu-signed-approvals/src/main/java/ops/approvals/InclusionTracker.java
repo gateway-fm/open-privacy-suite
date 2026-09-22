@@ -7,7 +7,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.function.Function;
 import org.hyperledger.besu.datatypes.Hash;
 
 /**
@@ -29,13 +28,14 @@ public final class InclusionTracker {
   }
 
   /**
-   * Releases every tracked block on the chain ending at {@code finalizedBlock}, walking parents
-   * through {@code parentOf} until an untracked block or the previously finalized head.
+   * Releases every tracked block on the chain ending at {@code finalizedBlock}, walking the
+   * recorded parent links until an untracked block or the previously finalized head. A block the
+   * node never reported (it was added before the plugin started) ends the walk; older tracked
+   * blocks then wait for {@link #forgetBelow}.
    *
    * @return the transaction hashes whose approvals are no longer needed
    */
-  public synchronized Set<Hash> finalizedUpTo(
-      final Optional<Hash> finalizedBlock, final Function<Hash, Hash> parentOf) {
+  public synchronized Set<Hash> finalizedUpTo(final Optional<Hash> finalizedBlock) {
     final Set<Hash> released = new HashSet<>();
     if (finalizedBlock.isEmpty()) {
       return released;
@@ -53,7 +53,7 @@ public final class InclusionTracker {
         break;
       }
       released.addAll(included.transactions());
-      cursor = included.parent() != null ? included.parent() : parentOf.apply(cursor);
+      cursor = included.parent();
     }
     lastFinalized = finalizedBlock.get();
     return released;
