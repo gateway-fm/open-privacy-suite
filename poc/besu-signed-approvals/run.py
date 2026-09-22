@@ -531,12 +531,53 @@ def precompile_and_value_paths():
         record("precompile_staticcall_and_plain_value_transfer_included", precompile=inner["to"])
 
 
+def reorg_keeps_approvals():
+    """A block that is added is not final. When the chain reorganises past it, its transactions go
+    back to the pool — and they must still find their approvals there, or they wait out the
+    timeout for an approval OPS will never resend. Finality lags one block so the head can be
+    replaced, as it can on any real network."""
+    with node("reorg") as n, contextlib.closing(Client(n)) as c:
+        # Explicit nonces: both are built before either is submitted, and raw() reads the nonce from
+        # the chain — with the default both would carry nonce 0 and the second would replace the first.
+        txs = [n.raw(h.ALICE, h.ROUTER, "run(uint256)", 7, nonce=0), n.raw(h.ALICE, h.ROUTER, "run(uint256)", 8, nonce=1)]
+        for tx in txs:
+            c.approve(tx)
+        time.sleep(0.2)
+        for tx in txs:
+            n.submit(tx)
+        n.make_block(txs, finality_lag=1)  # included at height N, not final
+        included_at = int(n.head["number"], 16)
+        assert n.storage(h.VAULT_A) == 15  # the vault accumulates: 7 + 8
+        orphaned = n.reorg_to_rival(finality_lag=1)  # rival at height N with no transactions
+        assert orphaned["transactions"] == [tx["hash"] for tx in txs]
+        assert n.storage(h.VAULT_A) == 0, "the reorganised block's writes must be gone"
+        # Besu re-adds a reorganised block's transactions to its pool, but on 26.8.1 not reliably
+        # for a sender's whole sequence (observed: nonce 1 back, nonce 0 dropped). What this
+        # scenario promises is ours: the approvals are still there, so whatever returns to the pool
+        # — by Besu or by the client resubmitting — is included with no new approval from OPS.
+        time.sleep(1.0)
+        readded = [tx["hash"] for tx in txs if n.in_pool(tx["hash"])]
+        for tx in txs:
+            if tx["hash"] not in readded:
+                n.submit(tx)  # the same signed transaction; the Client sends nothing new
+        n.make_block(txs, finality_lag=1)
+        assert int(n.head["number"], 16) == included_at + 1
+        assert n.storage(h.VAULT_A) == 15
+        allows = {tx["hash"]: sum(1 for d in n.decisions() if f"allow tx={tx['hash']}" in d) for tx in txs}
+        assert all(count >= 2 for count in allows.values()), allows  # once before the reorg, once after
+        record("reorg_returns_transactions_to_the_pool_with_their_approvals_intact",
+               orphaned=orphaned["hash"], reincluded_at=n.head["hash"], readded_by_besu=readded,
+               resubmitted=[tx["hash"] for tx in txs if tx["hash"] not in readded])
+
+
+
+
 SCENARIOS = {f.__name__: f for f in (
     approval_first, transaction_first, no_approval_timeout, same_block_target_change, caught_inner_failure,
     delegatecall_path, wrong_fingerprint, bad_deliveries, shared_counter, deployment_included,
     runtime_lifecycle_included, snapshot_matches_the_node_state, strict_mode_binds_state, state_change_turns_call_into_lifecycle,
     resubmission_after_mismatch,
-    restart_loses_approvals, coexists_with_lineth_plugins, fail_closed_startup,
+    restart_loses_approvals, reorg_keeps_approvals, coexists_with_lineth_plugins, fail_closed_startup,
     precompile_and_value_paths)}
 
 

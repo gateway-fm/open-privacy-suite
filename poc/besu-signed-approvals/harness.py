@@ -220,16 +220,35 @@ class Node:
     def engine(self, method, *params):
         return self.request(method, list(params), engine=True)
 
-    def make_block(self, expected, denied=None, timeout=15):
+    def ancestor_of(self, block_hash, depth):
+        """Hash of the block `depth` parents behind `block_hash`, walking by hash so it works for a
+        block that is not (yet) canonical; stops at genesis."""
+        h = block_hash
+        for _ in range(depth):
+            block = self.rpc("eth_getBlockByHash", h, False)
+            if block is None or int(block["number"], 16) == 0:
+                break
+            h = block["parentHash"]
+        return h
+
+    def forkchoice(self, head_hash, finality_lag=0):
+        """Engine forkchoice state: finalized (and safe) lag `finality_lag` blocks behind the head,
+        the way a consensus client finalizes with a delay; 0 finalizes the head itself."""
+        final = self.ancestor_of(head_hash, finality_lag) if finality_lag else head_hash
+        return {"headBlockHash": head_hash, "safeBlockHash": final, "finalizedBlockHash": final}
+
+    def make_block(self, expected, denied=None, timeout=15, finality_lag=0, parent=None, randao=ZERO):
         """Build one block through the Engine API.
 
         Besu rebuilds the candidate every ~500 ms until engine_getPayload, which *finalizes* the
         proposal, so getPayload may only be called once. The selector's decision log tells us when
         a candidate containing every expected transaction (and the expected denial) has been built.
+        `finality_lag` keeps finality that many blocks behind the head; `parent` builds on another
+        block than the current head (a rival, for a reorganisation).
         """
-        state = {"headBlockHash": self.head["hash"], "safeBlockHash": self.head["hash"],
-                 "finalizedBlockHash": self.head["hash"]}
-        attrs = {"timestamp": hex(int(self.head["timestamp"], 16) + 1), "prevRandao": ZERO,
+        base = parent or self.head
+        state = self.forkchoice(base["hash"], finality_lag)
+        attrs = {"timestamp": hex(int(base["timestamp"], 16) + 1), "prevRandao": randao,
                  "suggestedFeeRecipient": ADMIN, "withdrawals": []}
         fcu, get_payload, new_payload = "V2", "V2", "V2"
         if self.fork == "osaka":
@@ -265,7 +284,9 @@ class Node:
         else:
             result = self.engine("engine_newPayload" + new_payload, payload)
         assert result["status"] == "VALID", result
-        result = self.engine("engine_forkchoiceUpdated" + fcu, dict.fromkeys(state, payload["blockHash"]), None)
+        # Make the new block the head; finality follows it at the requested lag (the previous
+        # behaviour — finalizing every block at once — is lag 0).
+        result = self.engine("engine_forkchoiceUpdated" + fcu, self.forkchoice(payload["blockHash"], finality_lag), None)
         assert result["payloadStatus"]["status"] == "VALID", result
         for _ in range(100):
             self.head = self.rpc("eth_getBlockByNumber", "latest", False)
@@ -276,6 +297,18 @@ class Node:
             raise AssertionError("block did not become canonical")
         assert self.head["transactions"] == [tx["hash"] for tx in expected], (self.head["transactions"], expected)
         return payload
+
+    def reorg_to_rival(self, finality_lag=1, expected=()):
+        """Replace the head with a rival block on the same parent, as a consensus client does when
+        it switches forks: the head's transactions return to the pool. Finality must lag at least
+        one block, or the head could not be replaced at all."""
+        assert finality_lag >= 1, "a finalized head cannot be reorganised"
+        orphaned = self.head
+        parent = self.rpc("eth_getBlockByHash", orphaned["parentHash"], False)
+        rival = self.make_block(list(expected), finality_lag=finality_lag, parent=parent, randao="0x" + "11" * 32)
+        assert rival["blockHash"] != orphaned["hash"]
+        assert rival["parentHash"] == orphaned["parentHash"]
+        return orphaned
 
     def request(self, method, params, engine=False):
         headers = {"Content-Type": "application/json"}
