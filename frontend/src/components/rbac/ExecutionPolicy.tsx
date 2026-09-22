@@ -21,6 +21,8 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { useAdmin } from '@/components/auth/RequireAdmin';
+import { useManagedStream } from '@/hooks/useManagedStream';
+import ManagedStreamNotice from './ManagedStreamNotice';
 import { executionPolicyApi } from '@/api/executionPolicy';
 import {
   extractApiError,
@@ -67,6 +69,11 @@ export default function ExecutionPolicy() {
   const { selectedOrg } = useOrgContext();
   const { isReadonlyAdmin } = useAdmin();
   const orgId = selectedOrg?.id || '';
+  // Once a reviewed execution-rules document owns this organisation, the
+  // legacy draft/activate/withdraw calls answer 409: the screen keeps showing
+  // the revisions but stops offering those controls.
+  const { managed, checked } = useManagedStream('execution-rules', orgId);
+  const canEdit = !isReadonlyAdmin && checked && !managed;
 
   const [context, setContext] = useState<ExecutionPolicyContext | null>(null);
   const [revisions, setRevisions] = useState<ExecutionPolicyRevision[]>([]);
@@ -197,6 +204,8 @@ export default function ExecutionPolicy() {
           Reload
         </Button>
       </div>
+
+      {managed && <ManagedStreamNotice subject="Execution rules" />}
 
       {loadError && (
         <div
@@ -431,7 +440,7 @@ export default function ExecutionPolicy() {
             </pre>
           </details>
 
-          {!isReadonlyAdmin && selected.status === 'draft' && (
+          {canEdit && selected.status === 'draft' && (
             <div className="flex flex-wrap items-center gap-3 rounded-lg border border-warning/30 bg-warning-light p-3">
               <div className="flex-1 min-w-[240px] text-xs text-warning-dark">
                 This draft enforces nothing. <strong>Activating it puts it in force</strong> for
@@ -467,7 +476,7 @@ export default function ExecutionPolicy() {
             key={orgId}
             orgId={orgId}
             context={context}
-            disabled={isReadonlyAdmin}
+            disabled={!canEdit}
             onSubmitted={handleSubmitted}
             onReloadContext={load}
           />
