@@ -69,10 +69,10 @@ Not corners: the fingerprint encoders, the selector's veto semantics, the metric
 | **Plain TCP, no TLS, no peer authentication** | `dialApproval`; `ApprovalListener` | the signature protects content only; anyone reaching the port can flood the store | §3 |
 | **Single delivery target**, one connection, one goroutine | `Service.address` | no standby sequencer, no second OPS instance | §4 |
 | **`ops_prepareApproval` unauthenticated at the node** | `PrepareApprovalRpc` | simulation only, but compute on the producer; reachable by anyone on the RPC port | network policy or Besu RPC authentication — **documented as a deployment requirement in `16010c9`**; enforcement is the operator's network policy until mTLS |
-| **Diagnostics in the live path** | ~~`OPS_APPROVAL_ENCODING=json`~~ removed in `9abebc2`; `hops.go` remains, opt-in by env (nil when unset; `mark` returns at its first check) | — | keep `hops` as is; its 8,192-row cap made the 500 tx/s delivery sample meaningless (§3.5) — make the cap configurable |
+| **Diagnostics in the live path** | ~~`OPS_APPROVAL_ENCODING=json`~~ removed in `9abebc2`; `hops.go` remains, opt-in by env (nil when unset) | — | ~~cap~~ `OPS_APPROVAL_HOPS_LIMIT` (`0ee3167`); the load harness records whole runs now |
 | **No health signal** | — | while OPS is disconnected the first ~8k transactions (128 batches + 4,096 queued approvals) are forwarded and time out; after that `Enqueue` fails and requests get 503 without forwarding (`jsonrpc_processor.go:1684`) — fail-closed, but late and unannounced | connected-producers gauge on OPS, OPS-connected gauge on the plugin; the 503 rate as a signal; alerts; readiness reflects delivery connectivity |
-| **Reconnect backs off only on dial failure** — a peer that accepts and then resets (the plugin at `maxConnections` closes right after `accept`, a proxy, a half-started plugin) gives a tight dial/write/close loop, one Java reader thread per iteration; and a write that lands in the kernel buffer before the RST is marked written and lost | `deliver()` after `f98c440` | CPU spin on both sides; silent loss of the first batch after a refused connect | backoff with jitter on write failure too; the kernel-buffer case is only closed by acknowledgements |
-| **Graceful shutdown drops in-flight approvals** — on `Close()` (every rolling restart) the retry batch, up to 128 signed batches and up to 4,096 queued approvals are discarded, all for transactions already forwarded | `service.go` `Close()`, `deliver()`, `signLoop()` | a deploy loses the last seconds of approvals; their transactions time out | drain on close with a bounded deadline (cheap; predates the outbox) |
+| ~~**Reconnect backs off only on dial failure**~~ — **fixed in `0ee3167`**: every connection loss (dial, write, peer close) is followed by one jittered pause; the test saw 11,023 connections in 700 ms before. Still open: a write that lands in the kernel buffer before the RST is marked written and lost | `deliver()` | — | the kernel-buffer case is only closed by acknowledgements |
+| ~~**Graceful shutdown drops in-flight approvals**~~ — **fixed in `0ee3167`**: the signer drains the queue on stop, the sender delivers until the batch channel closes or 2 s pass, `Enqueue` refuses once closing; 45 of 200 delivered before, 200 after | `Close()`, `deliver()`, `signLoop()` | — | — |
 | **Frame limits hard-coded** | `MaxBatchApprovals` 32, `MaxBatchFrame` 16 KiB | undocumented | limits in the protocol document |
 | **Rate limiting deferred to OPS** | README | any authorised client can fill the store (100 k) for the TTL — and a full store is a **DoS lever**: every further `put` is a full pool scan plus an O(n log n) sort under the lock (see the finality row) | global (Redis) rate limit on preflight per principal; cheap overflow path |
 | **No feedback path for producer decisions** | `ApprovalSelector.reject()` logs `OPS_APPROVAL_DECISION` on the sequencer only | a transaction denied `MISMATCH` or dropped `TIMEOUT` vanishes: the user holds a hash and no receipt, OPS cannot say why, the explorer shows nothing, audit attribution stops at "forwarded" | a decision stream from the plugin back to OPS (the bidi stream carries it); surfaced in transaction status and the explorer; recorded for audit |
@@ -187,9 +187,12 @@ hops (the recorder's cap); every transaction counted for the race.
 delivery sample is the whole 300 run plus the first ~2,200 approvals of the 500 run: **delivery
 latency at 500 tx/s is not yet measured**, only the race count is. Nothing yet shows the race at
 the 671 tx/s of §1. Fix: configurable cap, one sample per rate (§3.4′ item 2).
-² Nine transactions of the follower 300 run were discarded by the generator (`txDiscarded: 9`),
-coinciding with five `signed preflight failed … context canceled` in the OPS log — client-side
-cancellations during a brief OPS stall, not a delivery race; unexplained and tracked.
+² Nine transactions of the follower 300 run were discarded by the generator (`txDiscarded: 9`).
+The OPS log explains it: at 19:59:34.874 `context canceled` hit unrelated operations in the same
+millisecond — preflight `POST`s, address linking, a compliance-config read — so the *client*
+cancelled its requests during a brief OPS latency spike (~80 ms requests just before, against
+~12 ms). OPS answered 403 and forwarded nothing. Fail-closed; not a delivery race. The spike is an
+OPS latency item, outside this plan.
 
 Reading: **the race does not occur, on either layout.** The approval leaves OPS tens of
 microseconds after the forward begins, but the forward is an HTTP round trip to Besu and pool
@@ -299,9 +302,14 @@ Independently shippable; each ends with the 22-scenario suite green.
 2. **Reduced benchmark** (§3.4′): write-failure red test **done** (`f98c440`); gossip layout
    **done** (`4573e40`); still to do: capacity red test, reorg-with-lagging-finality scenario, one
    gRPC no-regression run with an uncapped sample → decision 0.1.
-2a. **Cheap, safe fixes that need no transport decision**: backoff with jitter on write failure;
-   drain on close; configurable hop cap; cheap overflow path in `ApprovalStore` (insertion order,
-   cached pooled set); record `FORK` blocks in the tracker; state the basis for the tracked depth.
+2a. **Cheap, safe fixes that need no transport decision**: ~~backoff with jitter; drain on close;
+   configurable hop cap~~ (`0ee3167`); **cheap overflow path** in `ApprovalStore` — event-driven
+   liveness from the pool's `TransactionAdded`/`Dropped` listeners, insertion order, a grace period
+   for approvals whose transaction may still be on its way, no pool scan and no sort on overflow
+   (a cached pool *query* was tried first and rejected by its own test: a stale view can evict a
+   live approval); `FORK` blocks recorded in the tracker; tracked depth given a basis; a
+   reorg-with-lagging-finality scenario (`reorg_keeps_approvals`) — in the working tree, suite
+   pending.
 3. **Transport + durability**: `.proto` **including envelope v2** (`key_id`, `issued_at`,
    `expires_at` — one wire migration, not two); gRPC bidi with mTLS at Besu's grpc version; OPS
    dials the sequencer; acks, capacity nack, decision feedback; Postgres outbox (expand-only, with

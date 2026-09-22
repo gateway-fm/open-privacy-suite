@@ -137,8 +137,15 @@ arrived. Two layouts, gate on, 20 s per rate:
 |---|---:|---:|---:|---:|---:|
 | OPS forwards to the producer | 300 | 6 003 | 62 µs / 1.17 ms | **0** | 0 |
 | | 500 | 10 011 | (same sample) | **0** | 0 |
-| OPS forwards to a **follower RPC node**, gossip to the producer (`--topology follower`) | 300 | 6 002 | 64 µs / 0.71 ms | **0** | 0 |
+| OPS forwards to a **follower RPC node**, gossip to the producer (`--topology follower`) | 300 | 6 002 ¹ | 64 µs / 0.71 ms | **0** | 0 |
 | | 500 | 10 011 | | **0** | 0 |
+
+¹ 6,011 submitted; the generator discarded 9. The OPS log shows why: at 19:59:34.874 a burst of
+`context canceled` hit unrelated operations in the same millisecond — preflight `POST`s, address
+linking, a compliance-config read — i.e. the *client* cancelled its requests during a brief OPS
+latency spike (requests just before took ~80 ms instead of ~12). OPS answered 403 and forwarded
+nothing: fail-closed, and not a delivery race. The spike itself is an OPS latency question, not an
+approvals one.
 
 The second layout is the deployment's: one Besu sequencer with the plugin, ordinary RPC nodes as
 the submission channel, approvals delivered to the sequencer directly. `topology_probe.py` measured
