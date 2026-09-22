@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { rbacApi } from '@/api/rbac';
+import { extractApiError } from '@/lib/executionPolicy';
 import type { BatchDeletePreviewGroup } from '@/types/rbac';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
@@ -69,7 +70,7 @@ export function BatchDeleteConfirmDialog({
       onSuccess();
       onOpenChange(false);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to delete groups');
+      setError(extractApiError(err, 'Failed to delete groups').message);
     } finally {
       setDeleting(false);
     }

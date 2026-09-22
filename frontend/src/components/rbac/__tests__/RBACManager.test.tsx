@@ -723,7 +723,8 @@ describe('RBACManager Integration Tests', () => {
       await waitFor(() => {
         expect(screen.getByText('Delete Failed')).toBeInTheDocument();
       });
-      expect(screen.getByText(/Failed to delete group/)).toBeInTheDocument();
+      // The server's own reason is shown, not a fixed guess (RD-1295).
+      expect(screen.getByText('Cannot delete group with children')).toBeInTheDocument();
     });
   });
 

@@ -21,6 +21,7 @@ func (s *Server) registerConfigurationRoutes(api *gin.RouterGroup) {
 	api.POST("/orgs/:org_id/execution/simulate", s.simulateNodeExecution)
 	base := "/orgs/:org_id/configuration/:kind"
 	api.GET(base+"/context", s.getConfigurationContext)
+	api.GET(base+"/managed", s.getConfigurationManaged)
 	api.GET(base+"/revisions", s.listConfigurationRevisions)
 	api.POST(base+"/revisions", s.submitConfigurationRevision)
 	api.GET(base+"/revisions/:revision_id", s.getConfigurationRevision)
@@ -28,6 +29,10 @@ func (s *Server) registerConfigurationRoutes(api *gin.RouterGroup) {
 	api.POST(base+"/revisions/:revision_id/activate", s.activateConfigurationRevision)
 	api.POST(base+"/revisions/:revision_id/activate-ci", s.activateConfigurationCI)
 	api.POST(base+"/revisions/:revision_id/withdraw", s.withdrawConfigurationRevision)
+	// The managed read sits outside the platform group: the screens that edit
+	// tenants and shared infrastructure run on the full admin token, which the
+	// human-only platform gate refuses, so the read admits either principal.
+	api.GET("/configuration/platform/managed", s.getPlatformConfigurationManaged)
 	platform := api.Group("/configuration/platform", s.requireConfigurationPlatform)
 	platform.GET("/context", s.getPlatformConfigurationContext)
 	platform.GET("/revisions", s.listPlatformConfigurationRevisions)
@@ -52,6 +57,23 @@ func (s *Server) registerConfigurationRoutes(api *gin.RouterGroup) {
 // @Security BearerAuth
 // @Router /api/v1/admin/configuration/platform/context [get]
 func (s *Server) getPlatformConfigurationContext(c *gin.Context) { s.getConfigurationContext(c) }
+
+// @Summary Report whether the platform configuration stream is managed
+// @Description Readable by a named human principal on the deployment's platform allowlist or by the full admin token, the two principals that manage tenants and shared infrastructure. True once a platform revision is active: the shared-infrastructure and tenant write endpoints then answer 409 and edits go through a platform revision.
+// @Tags Admin: Configuration
+// @Produce json
+// @Success 200 {object} apimodels.ConfigurationManaged
+// @Failure 403 {object} apimodels.APIError
+// @Security BearerAuth
+// @Security AdminToken
+// @Router /api/v1/admin/configuration/platform/managed [get]
+func (s *Server) getPlatformConfigurationManaged(c *gin.Context) {
+	if !s.isConfigurationPlatformActor(c) && !isFullAdminToken(c) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "named platform configuration authority is required"})
+		return
+	}
+	s.getConfigurationManaged(c)
+}
 
 // @Summary List platform configuration revisions
 // @Tags Admin: Configuration
@@ -139,12 +161,26 @@ func (s *Server) withdrawPlatformConfigurationRevision(c *gin.Context) {
 }
 
 func (s *Server) requireConfigurationPlatform(c *gin.Context) {
-	kind, _ := c.Get("admin_principal_kind")
-	if kind != auth.PrincipalHuman || !s.configurationPlatformSubject(c.GetString("admin_subject")) || c.GetString("admin_user_id") == "" {
+	if !s.isConfigurationPlatformActor(c) {
 		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "named platform configuration authority is required"})
 		return
 	}
 	c.Next()
+}
+
+// isConfigurationPlatformActor is the platform gate as a predicate: a named,
+// verified human on the deployment's platform allowlist.
+func (s *Server) isConfigurationPlatformActor(c *gin.Context) bool {
+	kind, _ := c.Get("admin_principal_kind")
+	return kind == auth.PrincipalHuman && s.configurationPlatformSubject(c.GetString("admin_subject")) && c.GetString("admin_user_id") != ""
+}
+
+// isFullAdminToken reports the unrestricted X-Admin-Token (or the dev
+// no-auth mode), the same principal requireSuperAdmin admits — as a predicate
+// that writes nothing, for routes that accept more than one kind of caller.
+func isFullAdminToken(c *gin.Context) bool {
+	method := c.GetString("auth_method")
+	return method == "admin_token" || method == ""
 }
 
 func configurationRoute(c *gin.Context) (configuration.Scope, configuration.Kind, bool) {
@@ -208,6 +244,42 @@ func configurationError(c *gin.Context, err error) {
 	default:
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "configuration operation failed"})
 	}
+}
+
+// getConfigurationManaged answers the one question an admin screen asks before
+// it offers an edit control: does an active reviewed document own this stream?
+// It is a read of one boolean and accepts the same credentials as the stream's
+// legacy GET endpoints: named admins and the full admin token, while the
+// restricted operator token is refused for tenant organisations exactly as
+// every other per-tenant read refuses it. Nothing is authored, so no named
+// principal is required. The same lookup gates the legacy writers
+// (configurationWriterGuard), so the answer and the 409 can never disagree.
+// @Summary Report whether a configuration stream is managed by an active revision
+// @Description True once a revision of this stream is active: the stream's legacy write endpoints then answer 409 and the database refuses direct writes, so changes go through a configuration revision. False while the legacy setters are still the writer.
+// @Tags Admin: Configuration
+// @Produce json
+// @Param org_id path string true "Organization UUID"
+// @Param kind path string true "Configuration stream"
+// @Success 200 {object} apimodels.ConfigurationManaged
+// @Failure 400 {object} apimodels.APIError "malformed organisation id or unknown stream"
+// @Failure 401 {object} apimodels.APIError
+// @Security BearerAuth
+// @Security AdminToken
+// @Router /api/v1/admin/orgs/{org_id}/configuration/{kind}/managed [get]
+func (s *Server) getConfigurationManaged(c *gin.Context) {
+	scope, kind, ok := configurationRoute(c)
+	if !ok {
+		return
+	}
+	if scope.Kind == "organization" && denyOperatorTenantRead(c) {
+		return
+	}
+	managed, err := s.db.IsConfigurationManaged(c.Request.Context(), scope, kind)
+	if err != nil {
+		configurationError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, apimodels.ConfigurationManaged{Kind: string(kind), Managed: managed})
 }
 
 // getConfigurationContext returns the complete editable source and live review metadata.

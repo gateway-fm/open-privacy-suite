@@ -780,6 +780,17 @@
                 },
                 "type": "object"
             },
+            "privacy-proxy_internal_apimodels.ConfigurationManaged": {
+                "properties": {
+                    "kind": {
+                        "type": "string"
+                    },
+                    "managed": {
+                        "type": "boolean"
+                    }
+                },
+                "type": "object"
+            },
             "privacy-proxy_internal_apimodels.ConfigurationReview": {
                 "properties": {
                     "approvers": {
@@ -7803,6 +7814,45 @@
                 ]
             }
         },
+        "/api/v1/admin/configuration/platform/managed": {
+            "get": {
+                "description": "Readable by a named human principal on the deployment's platform allowlist or by the full admin token, the two principals that manage tenants and shared infrastructure. True once a platform revision is active: the shared-infrastructure and tenant write endpoints then answer 409 and edits go through a platform revision.",
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.ConfigurationManaged"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "403": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "Forbidden"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    },
+                    {
+                        "AdminToken": []
+                    }
+                ],
+                "summary": "Report whether the platform configuration stream is managed",
+                "tags": [
+                    "Admin: Configuration"
+                ]
+            }
+        },
         "/api/v1/admin/configuration/platform/revisions": {
             "get": {
                 "responses": {
@@ -11365,6 +11415,75 @@
                     }
                 ],
                 "summary": "Read configuration editing context",
+                "tags": [
+                    "Admin: Configuration"
+                ]
+            }
+        },
+        "/api/v1/admin/orgs/{org_id}/configuration/{kind}/managed": {
+            "get": {
+                "description": "True once a revision of this stream is active: the stream's legacy write endpoints then answer 409 and the database refuses direct writes, so changes go through a configuration revision. False while the legacy setters are still the writer.",
+                "parameters": [
+                    {
+                        "description": "Organization UUID",
+                        "in": "path",
+                        "name": "org_id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Configuration stream",
+                        "in": "path",
+                        "name": "kind",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.ConfigurationManaged"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "malformed organisation id or unknown stream"
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "Unauthorized"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    },
+                    {
+                        "AdminToken": []
+                    }
+                ],
+                "summary": "Report whether a configuration stream is managed by an active revision",
                 "tags": [
                     "Admin: Configuration"
                 ]

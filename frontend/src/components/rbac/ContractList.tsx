@@ -36,6 +36,9 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { useAdmin } from '@/components/auth/RequireAdmin';
+import { useManagedStream } from '@/hooks/useManagedStream';
+import ManagedStreamNotice from './ManagedStreamNotice';
+import { extractApiError } from '@/lib/executionPolicy';
 
 const PAGE_SIZE = 25;
 
@@ -43,6 +46,12 @@ export default function ContractList() {
   const { selectedOrg } = useOrgContext();
   const { isReadonlyAdmin } = useAdmin();
   const orgId = selectedOrg?.id || '';
+  // A reviewed contract-registry document, once active, owns this stream.
+  const { managed, checked } = useManagedStream('contract-registry', orgId);
+  const canEdit = !isReadonlyAdmin && checked && !managed;
+  // Grants close under either document: the registry owns read grants and
+  // event rules, the execution rules own the function half.
+  const { managed: executionManaged } = useManagedStream('execution-rules', orgId);
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [loading, setLoading] = useState(true);
   const [total, setTotal] = useState(0);
@@ -50,7 +59,7 @@ export default function ContractList() {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Contract | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Contract | null>(null);
-  const [showDeleteError, setShowDeleteError] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [managingGrants, setManagingGrants] = useState<Contract | null>(null);
   const [grantSummary, setGrantSummary] = useState<Record<string, { count: number; groups: Array<{id: string; name: string}> }>>({});
@@ -158,7 +167,7 @@ export default function ContractList() {
     } catch (error) {
       console.error('Failed to delete contract:', error);
       setDeleteTarget(null);
-      setShowDeleteError(true);
+      setDeleteError(extractApiError(error, 'Failed to delete contract.').message);
     }
   };
 
@@ -242,7 +251,7 @@ export default function ContractList() {
           </p>
         </div>
         <div className="flex gap-2">
-          {!isReadonlyAdmin && (
+          {canEdit && (
             <>
               <Button
                 onClick={handleSyncCheck}
@@ -262,6 +271,8 @@ export default function ContractList() {
           )}
         </div>
       </div>
+
+      {managed && <ManagedStreamNotice subject="Contracts" />}
 
       {/* Search + Date Filters */}
       <div className="flex items-center gap-3 flex-wrap">
@@ -309,7 +320,7 @@ export default function ContractList() {
           <span className="text-sm font-medium text-primary">
             {selectedIds.size} selected
           </span>
-          {!isReadonlyAdmin && (
+          {canEdit && (
             <Button
               data-testid="move-to-group-btn"
               size="sm"
@@ -344,7 +355,7 @@ export default function ContractList() {
             <FileCode2 className="w-8 h-8 text-neutral-400" />
           </div>
           <p className="text-neutral-500 mb-4">No contracts registered</p>
-          {!isReadonlyAdmin && (
+          {canEdit && (
             <Button
               variant="outline"
               onClick={() => setShowForm(true)}
@@ -475,12 +486,12 @@ export default function ContractList() {
                       variant="ghost"
                       size="sm"
                       onClick={() => setManagingGrants(contract)}
-                      title={isReadonlyAdmin ? "View permissions" : "Manage permissions"}
+                      title={canEdit ? "Manage permissions" : "View permissions"}
                       className="text-primary hover:text-primary-600 hover:bg-primary-50"
                     >
                       <Shield className="w-4 h-4" />
                     </Button>
-                    {!isReadonlyAdmin && (
+                    {canEdit && (
                       <>
                         <Button
                           variant="ghost"
@@ -557,10 +568,12 @@ export default function ContractList() {
 
       {/* Delete Error Alert */}
       <AlertDialog
-        open={showDeleteError}
-        onOpenChange={setShowDeleteError}
+        open={deleteError !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeleteError(null);
+        }}
         title="Delete Failed"
-        description="Failed to delete contract."
+        description={deleteError ?? ''}
         buttonLabel="OK"
         variant="error"
       />
@@ -585,6 +598,7 @@ export default function ContractList() {
             <ContractGrantsManager
               key={managingGrants.id}
               orgId={orgId}
+              readOnly={!canEdit || executionManaged}
               contract={managingGrants}
               onContractUpdated={updated => {
                 // RD-1075: reflect the saved visibleTo-unlock flag without a full

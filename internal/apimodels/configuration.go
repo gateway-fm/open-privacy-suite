@@ -97,3 +97,13 @@ type ConfigurationReview struct {
 	PlatformDiff    *configuration.PlatformDiff          `json:"platformDiff"`
 	ExecutionDiff   *configuration.ExecutionDiff         `json:"executionDiff"`
 }
+
+// ConfigurationManaged answers the one question an admin screen asks before
+// it offers an edit control: is this stream owned by an active reviewed
+// document right now? While Managed is true the legacy write endpoints for
+// the stream answer 409 and the database refuses direct writes; the screen
+// should switch to read-only and point at the configuration screen.
+type ConfigurationManaged struct {
+	Kind    string `json:"kind"`
+	Managed bool   `json:"managed"`
+}

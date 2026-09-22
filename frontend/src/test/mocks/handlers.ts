@@ -887,6 +887,15 @@ export const handlers = [
     });
   }),
 
+  // Configuration streams are unmanaged by default, so the legacy screens keep
+  // their edit controls. Managed-stream tests override this per kind.
+  http.get('/api/v1/admin/orgs/:orgId/configuration/:kind/managed', ({ params }) => {
+    return HttpResponse.json({ kind: params.kind, managed: false });
+  }),
+  http.get('/api/v1/admin/configuration/platform/managed', () => {
+    return HttpResponse.json({ kind: 'platform', managed: false });
+  }),
+
   // Default: the signed-in user is NOT an admin, so user-facing pages render
   // without the admin entry point. Tests covering the admin case override this.
   http.get('/api/v1/me/admin-status', () => {

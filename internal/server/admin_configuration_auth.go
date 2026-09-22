@@ -34,7 +34,7 @@ func isPlatformConfigurationRoute(c *gin.Context) bool {
 	for _, mount := range []string{"/api/v1/admin", "/api/admin"} {
 		for _, base := range []string{mount + "/configuration/platform"} {
 			switch c.FullPath() {
-			case base + "/context", base + "/revisions", base + "/revisions/:revision_id", base + "/revisions/:revision_id/simulate", base + "/revisions/:revision_id/activate", base + "/revisions/:revision_id/withdraw":
+			case base + "/context", base + "/managed", base + "/revisions", base + "/revisions/:revision_id", base + "/revisions/:revision_id/simulate", base + "/revisions/:revision_id/activate", base + "/revisions/:revision_id/withdraw":
 				return true
 			}
 		}

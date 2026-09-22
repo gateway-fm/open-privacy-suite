@@ -21,6 +21,8 @@ import { complianceApi } from '@/api/compliance';
 import { useComplianceOrgContext } from './ComplianceManager';
 import { useCurrency } from './CurrencyContext';
 import { useAdmin } from '@/components/auth/RequireAdmin';
+import { useManagedStream } from '@/hooks/useManagedStream';
+import ManagedStreamNotice from '@/components/rbac/ManagedStreamNotice';
 import type { TokenPrice, UpsertTokenPriceInput, SystemTokenPrice } from '@/types/compliance';
 
 // CoinGecko source options
@@ -45,6 +47,9 @@ export default function TokenPriceList() {
   const { isReadonlyAdmin } = useAdmin();
   const { formatAmount, currencyLabel, coingeckoEnabled, currency } = useCurrency();
   const orgId = selectedOrg?.id;
+  // Token entries belong to the compliance document once one is active.
+  const { managed, checked } = useManagedStream('compliance', orgId);
+  const canEdit = !isReadonlyAdmin && checked && !managed;
 
   const [tokens, setTokens] = useState<TokenPrice[]>([]);
   const [systemPrices, setSystemPrices] = useState<SystemTokenPrice[]>([]);
@@ -330,13 +335,15 @@ export default function TokenPriceList() {
 
         <div className="flex items-center justify-between">
           <h3 className="text-base font-medium text-neutral-700">Per-Organization Token Prices</h3>
-          {!isReadonlyAdmin && orgId && (
+          {canEdit && orgId && (
             <Button size="sm" onClick={openCreateForm}>
               <Plus className="w-4 h-4 mr-1" />
               Add Token
             </Button>
           )}
         </div>
+
+        {managed && <ManagedStreamNotice subject="Token prices" />}
 
         {!orgId ? (
           <div className="text-center py-8 text-neutral-500 text-sm">
@@ -372,7 +379,7 @@ export default function TokenPriceList() {
                 <TableHead>Source</TableHead>
                 <TableHead>Price ({currencyLabel})</TableHead>
                 <TableHead>Updated</TableHead>
-                {!isReadonlyAdmin && <TableHead className="w-[80px]"></TableHead>}
+                {canEdit && <TableHead className="w-[80px]"></TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -421,7 +428,7 @@ export default function TokenPriceList() {
                         '—'
                       )}
                     </TableCell>
-                    {!isReadonlyAdmin && (
+                    {canEdit && (
                       <TableCell>
                         <div className="flex items-center gap-1">
                           <Button variant="ghost" size="icon" onClick={() => openEditForm(token)}>

@@ -31,6 +31,9 @@ import {
   Search,
 } from 'lucide-react';
 import { useAdmin } from '@/components/auth/RequireAdmin';
+import { useManagedStream } from '@/hooks/useManagedStream';
+import ManagedStreamNotice from './ManagedStreamNotice';
+import { extractApiError } from '@/lib/executionPolicy';
 
 const PAGE_SIZE = 50;
 
@@ -38,6 +41,10 @@ export default function GroupList() {
   const { selectedOrg } = useOrgContext();
   const { isReadonlyAdmin } = useAdmin();
   const orgId = selectedOrg?.id || '';
+  // A reviewed groups document, once active, owns this stream: the server
+  // refuses direct edits, so the screen does not offer them.
+  const { managed, checked } = useManagedStream('groups', orgId);
+  const canEdit = !isReadonlyAdmin && checked && !managed;
   const [groups, setGroups] = useState<GroupWithAccess[]>([]);
   const [loading, setLoading] = useState(true);
   const [total, setTotal] = useState(0);
@@ -46,7 +53,7 @@ export default function GroupList() {
   const [editing, setEditing] = useState<Group | null>(null);
   const [editingAccess, setEditingAccess] = useState<Group | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Group | null>(null);
-  const [showDeleteError, setShowDeleteError] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   // Search state
   const [searchQuery, setSearchQuery] = useState('');
@@ -123,7 +130,9 @@ export default function GroupList() {
     } catch (error) {
       console.error('Failed to delete group:', error);
       setDeleteTarget(null);
-      setShowDeleteError(true);
+      // Show the server's own reason. A managed stream says so; the old fixed
+      // text sent administrators looking for members that did not exist.
+      setDeleteError(extractApiError(error, 'Failed to delete group. It may have members that need to be removed first.').message);
     }
   };
 
@@ -147,13 +156,15 @@ export default function GroupList() {
             Groups define what methods and addresses users can access
           </p>
         </div>
-        {!isReadonlyAdmin && (
+        {canEdit && (
           <Button onClick={() => setShowForm(true)} size="sm" className="gap-2">
             <Plus className="w-4 h-4" />
             Add Group
           </Button>
         )}
       </div>
+
+      {managed && <ManagedStreamNotice subject="Groups" />}
 
       {/* Search + Filter bar */}
       <div className="flex items-center gap-3">
@@ -180,7 +191,7 @@ export default function GroupList() {
           <span className="text-sm font-medium text-error-dark">
             {selectedIds.size} selected
           </span>
-          {!isReadonlyAdmin && (
+          {canEdit && (
             <Button
               data-testid="batch-delete-btn"
               size="sm"
@@ -230,7 +241,7 @@ export default function GroupList() {
           </div>
           <>
             <p className="text-neutral-500 mb-4">No groups found</p>
-            {!isReadonlyAdmin && (
+            {canEdit && (
               <Button
                 variant="outline"
                 onClick={() => setShowForm(true)}
@@ -299,7 +310,7 @@ export default function GroupList() {
                   </div>
 
                   <div className="flex items-center gap-1 flex-shrink-0">
-                    {!isReadonlyAdmin && (
+                    {canEdit && (
                       <>
                         <Button
                           variant="ghost"
@@ -416,10 +427,12 @@ export default function GroupList() {
 
       {/* Delete Error Alert */}
       <AlertDialog
-        open={showDeleteError}
-        onOpenChange={setShowDeleteError}
+        open={deleteError !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeleteError(null);
+        }}
         title="Delete Failed"
-        description="Failed to delete group. It may have members that need to be removed first."
+        description={deleteError ?? ''}
         buttonLabel="OK"
         variant="error"
       />

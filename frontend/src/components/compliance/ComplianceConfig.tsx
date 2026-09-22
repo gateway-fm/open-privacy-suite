@@ -14,6 +14,8 @@ import { complianceApi } from '@/api/compliance';
 import { useComplianceOrgContext } from './ComplianceManager';
 import { useCurrency } from './CurrencyContext';
 import { useAdmin } from '@/components/auth/RequireAdmin';
+import { useManagedStream } from '@/hooks/useManagedStream';
+import ManagedStreamNotice from '@/components/rbac/ManagedStreamNotice';
 import type { ComplianceConfig as ComplianceConfigType } from '@/types/compliance';
 
 export default function ComplianceConfig() {
@@ -21,6 +23,9 @@ export default function ComplianceConfig() {
   const { currencyLabel } = useCurrency();
   const { isReadonlyAdmin } = useAdmin();
   const orgId = selectedOrg?.id;
+  // A reviewed compliance document, once active, owns these settings.
+  const { managed, checked } = useManagedStream('compliance', orgId);
+  const canEdit = !isReadonlyAdmin && checked && !managed;
 
   const [config, setConfig] = useState<ComplianceConfigType | null>(null);
   const [loading, setLoading] = useState(true);
@@ -108,14 +113,14 @@ export default function ComplianceConfig() {
   // compliance enablement is security-relevant and silently losing a toggle
   // gives a false sense of enforcement.
   useEffect(() => {
-    if (!isDirty || isReadonlyAdmin) return;
+    if (!isDirty || !canEdit) return;
     const handler = (e: BeforeUnloadEvent) => {
       e.preventDefault();
       e.returnValue = '';
     };
     window.addEventListener('beforeunload', handler);
     return () => window.removeEventListener('beforeunload', handler);
-  }, [isDirty, isReadonlyAdmin]);
+  }, [isDirty, canEdit]);
 
   if (loading) {
     return (
@@ -130,7 +135,7 @@ export default function ComplianceConfig() {
       <div className="flex items-center justify-between">
         <h3 className="text-base font-medium text-neutral-700">Compliance Configuration</h3>
         <div className="flex items-center gap-2">
-          {isDirty && !isReadonlyAdmin && (
+          {isDirty && canEdit && (
             <Badge variant="warning">Unsaved changes</Badge>
           )}
           <Badge variant={enabled ? 'success' : 'secondary'}>
@@ -138,6 +143,8 @@ export default function ComplianceConfig() {
           </Badge>
         </div>
       </div>
+
+      {managed && <ManagedStreamNotice subject="Compliance settings" />}
 
       {error && (
         <div className="flex items-center gap-2 p-3 rounded-lg bg-error-light border border-error/30 text-error-dark text-sm">
@@ -161,10 +168,10 @@ export default function ComplianceConfig() {
           <Button
             variant={enabled ? 'default' : 'outline'}
             size="sm"
-            disabled={isReadonlyAdmin}
+            disabled={!canEdit}
             onClick={() => setEnabled(!enabled)}
           >
-            {enabled ? 'Enabled' : 'Disabled'} {isReadonlyAdmin ? '' : `— Click to ${enabled ? 'disable' : 'enable'}`}
+            {enabled ? 'Enabled' : 'Disabled'} {canEdit ? `— Click to ${enabled ? 'disable' : 'enable'}` : ''}
           </Button>
           <p className="text-xs text-neutral-400 mt-1">
             When enabled, transfers above the threshold require a travel rule record
@@ -179,7 +186,7 @@ export default function ComplianceConfig() {
             type="number"
             value={thresholdFiat}
             onChange={e => setThresholdFiat(e.target.value)}
-            disabled={isReadonlyAdmin}
+            disabled={!canEdit}
             placeholder="1000"
             min="0"
             step="0.01"
@@ -196,7 +203,7 @@ export default function ComplianceConfig() {
           <Select
             value={unknownPricePolicy}
             onValueChange={(val: 'allowed' | 'forbidden') => setUnknownPricePolicy(val)}
-            disabled={isReadonlyAdmin}
+            disabled={!canEdit}
           >
             <SelectTrigger>
               <SelectValue placeholder="Select policy" />
@@ -218,7 +225,7 @@ export default function ComplianceConfig() {
           <Select
             value={enforcementMode}
             onValueChange={(val: 'enforce' | 'monitor') => setEnforcementMode(val)}
-            disabled={isReadonlyAdmin}
+            disabled={!canEdit}
           >
             <SelectTrigger>
               <SelectValue placeholder="Select mode" />
@@ -239,7 +246,7 @@ export default function ComplianceConfig() {
           )}
         </div>
 
-        {!isReadonlyAdmin && (
+        {canEdit && (
           <div className="flex items-center gap-3">
             <Button onClick={handleSave} disabled={saving || !isDirty}>
               {saving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}

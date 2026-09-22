@@ -263,11 +263,12 @@ describe('GroupList', () => {
       const deleteConfirmButton = screen.getByRole('button', { name: /^delete$/i });
       await user.click(deleteConfirmButton);
 
-      // Error dialog should appear
+      // Error dialog should appear, carrying the server's own reason rather
+      // than a guess (RD-1295).
       await waitFor(() => {
         expect(screen.getByText('Delete Failed')).toBeInTheDocument();
       });
-      expect(screen.getByText(/Failed to delete group/)).toBeInTheDocument();
+      expect(screen.getByText('Cannot delete group with members')).toBeInTheDocument();
     });
   });
 

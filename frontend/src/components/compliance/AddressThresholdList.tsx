@@ -14,6 +14,8 @@ import { complianceApi } from '@/api/compliance';
 import { useComplianceOrgContext } from './ComplianceManager';
 import { useCurrency } from './CurrencyContext';
 import { useAdmin } from '@/components/auth/RequireAdmin';
+import { useManagedStream } from '@/hooks/useManagedStream';
+import ManagedStreamNotice from '@/components/rbac/ManagedStreamNotice';
 import type { AddressThresholdOverride } from '@/types/compliance';
 
 const PAGE_SIZE = 25;
@@ -23,6 +25,9 @@ export default function AddressThresholdList() {
   const { isReadonlyAdmin } = useAdmin();
   const { formatAmount, currencyLabel } = useCurrency();
   const orgId = selectedOrg?.id;
+  // Address thresholds belong to the compliance document once one is active.
+  const { managed, checked } = useManagedStream('compliance', orgId);
+  const canEdit = !isReadonlyAdmin && checked && !managed;
 
   const [overrides, setOverrides] = useState<AddressThresholdOverride[]>([]);
   const [loading, setLoading] = useState(true);
@@ -161,13 +166,15 @@ export default function AddressThresholdList() {
             over the org-level threshold. Use {formatAmount(0)} to require travel rule data for every transfer involving this address.
           </p>
         </div>
-        {!isReadonlyAdmin && (
+        {canEdit && (
           <Button onClick={openCreateForm} size="sm" className="gap-2 shrink-0">
             <Plus className="w-4 h-4" />
             Add Override
           </Button>
         )}
       </div>
+
+      {managed && <ManagedStreamNotice subject="Address thresholds" />}
 
       {error && (
         <div className="p-3 rounded-lg bg-error-light border border-error/30 flex items-start gap-2">
@@ -197,7 +204,7 @@ export default function AddressThresholdList() {
                 <TableHead>Threshold ({currencyLabel})</TableHead>
                 <TableHead>Note</TableHead>
                 <TableHead>Updated</TableHead>
-                {!isReadonlyAdmin && <TableHead className="w-[80px]"></TableHead>}
+                {canEdit && <TableHead className="w-[80px]"></TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -232,7 +239,7 @@ export default function AddressThresholdList() {
                   <TableCell className="text-xs text-neutral-500">
                     {new Date(o.updated_at).toLocaleDateString()}
                   </TableCell>
-                  {!isReadonlyAdmin && (
+                  {canEdit && (
                     <TableCell>
                       <div className="flex gap-1">
                         <Button

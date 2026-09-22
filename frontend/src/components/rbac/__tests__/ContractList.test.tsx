@@ -443,7 +443,8 @@ describe('ContractList', () => {
       await waitFor(() => {
         expect(screen.getByText('Delete Failed')).toBeInTheDocument();
       });
-      expect(screen.getByText('Failed to delete contract.')).toBeInTheDocument();
+      // The server's own reason is shown, not a fixed guess (RD-1295).
+      expect(screen.getByText('Cannot delete contract')).toBeInTheDocument();
     });
 
     it('Empty state button opens ContractForm dialog', async () => {

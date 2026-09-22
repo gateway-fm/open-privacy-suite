@@ -37,15 +37,21 @@ import {
   X,
 } from 'lucide-react';
 import { useAdmin } from '@/components/auth/RequireAdmin';
+import { useManagedStream } from '@/hooks/useManagedStream';
+import ManagedStreamNotice from './ManagedStreamNotice';
+import { extractApiError } from '@/lib/executionPolicy';
 
 export default function AzureTenantList() {
   const { isReadonlyAdmin } = useAdmin();
+  // Tenants belong to the platform document once one is active.
+  const { managed, checked } = useManagedStream('platform');
+  const canEdit = !isReadonlyAdmin && checked && !managed;
   const [tenants, setTenants] = useState<AllowedAzureTenant[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<AllowedAzureTenant | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AllowedAzureTenant | null>(null);
-  const [showDeleteError, setShowDeleteError] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   useEffect(() => {
     loadTenants();
@@ -79,7 +85,7 @@ export default function AzureTenantList() {
     } catch (error) {
       console.error('Failed to delete Azure tenant:', error);
       setDeleteTarget(null);
-      setShowDeleteError(true);
+      setDeleteError(extractApiError(error, 'Failed to remove Azure AD tenant. Please try again.').message);
     }
   };
 
@@ -100,13 +106,15 @@ export default function AzureTenantList() {
             Control which Azure AD tenants can authenticate
           </p>
         </div>
-        {!isReadonlyAdmin && (
+        {canEdit && (
           <Button onClick={() => setShowForm(true)} size="sm" className="gap-2">
             <Plus className="w-4 h-4" />
             Add Tenant
           </Button>
         )}
       </div>
+
+      {managed && <ManagedStreamNotice subject="Azure AD tenants" to="/admin/rbac/platform-configuration" />}
 
       {loading ? (
         <div className="flex items-center justify-center py-12">
@@ -121,7 +129,7 @@ export default function AzureTenantList() {
           <p className="text-neutral-400 text-xs mb-4">
             Azure AD authentication will be blocked until you add at least one tenant.
           </p>
-          {!isReadonlyAdmin && (
+          {canEdit && (
             <Button
               variant="outline"
               onClick={() => setShowForm(true)}
@@ -171,7 +179,7 @@ export default function AzureTenantList() {
                 </TableCell>
                 <TableCell>
                   <div className="flex items-center justify-end gap-2">
-                    {!isReadonlyAdmin && (
+                    {canEdit && (
                       <>
                         <Button
                           variant="ghost"
@@ -244,10 +252,12 @@ export default function AzureTenantList() {
 
       {/* Delete Error Alert */}
       <AlertDialog
-        open={showDeleteError}
-        onOpenChange={setShowDeleteError}
+        open={deleteError !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeleteError(null);
+        }}
         title="Remove Failed"
-        description="Failed to remove Azure AD tenant. Please try again."
+        description={deleteError ?? ''}
         buttonLabel="OK"
         variant="error"
       />
