@@ -5,7 +5,7 @@ and the [Besu/Lineth research](../../docs/research/dsl-policy-and-node-enforceme
 Plan and decisions: [PLAN.md](PLAN.md).
 
 **Result: the signed-approval gate runs as one plugin JAR on unmodified Besu 26.8.1 — the version
-Lineth pins — and passed all 20 integration scenarios (22 checks) on a real node, including the same-block target
+Lineth pins — and passed all 21 integration scenarios (23 checks) on a real node, including the same-block target
 change, caught inner failures, delegatecall, forged fingerprints, a call that turns into a CREATE after
 approval, contract deployment and self-destruction, restart, resubmission after a drop, fail-closed
 start-up, and running beside Lineth's own sequencer plugins (pool validator, and the transaction
@@ -139,9 +139,13 @@ table and what each number does and does not cover.
   most of it is Besu's, not the gate's. Screenshots and per-run evidence in [DEMO.md](DEMO.md).
 - **Single-producer assumptions**: approvals are released when the including block is **final**
   (`BlockchainService.getFinalizedBlock()`, walked along parent links), not when it is added, so a
-  reorganisation that returns transactions to the pool finds their approvals still there. Blocks more
-  than 4,096 below the head stop being tracked and their approvals fall to the orphan sweep.
-  Every producer must run the plugin; a plugin that calls `BlockTransactionSelectionService.commit()`
+  transaction that returns to the pool after a reorganisation finds its approval still there
+  (scenario `reorg_keeps_approvals`). What does *not* return by itself is the transaction: Besu
+  26.8.1 re-adds a reorganised block's transactions to its pool unreliably (observed: a sender's
+  nonce 1 back and nonce 0 dropped; another run, neither), so the client — or a future OPS
+  reconciler — resubmits the same signed bytes, and no new approval is needed. Blocks more than
+  4,096 below the head stop being tracked and their approvals fall to the orphan sweep. Every
+  producer must run the plugin; a plugin that calls `BlockTransactionSelectionService.commit()`
   itself (bundle-style) must be checked before coexistence.
 - **Approvals are final once issued** (until inclusion or TTL); there is no revocation path, as in the
   Reth PoC.
@@ -183,7 +187,7 @@ Go from `go.mod`, Python 3, Foundry `cast`, solc 0.8.35, the Besu 26.8.1 release
 export JAVA_HOME=$PWD/.tmp/jdk25/jdk-25.0.4.1+1/Contents/Home
 (cd poc/besu-signed-approvals && gradle --no-daemon build)      # unit tests + JAR
 go test ./internal/nodeapproval/
-python3 poc/besu-signed-approvals/run.py                         # all 20 scenarios (22 checks), ~10 min
+python3 poc/besu-signed-approvals/run.py                         # all 21 scenarios (23 checks), ~12 min
 python3 poc/besu-signed-approvals/run.py same_block_target_change
 ```
 

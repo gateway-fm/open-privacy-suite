@@ -99,6 +99,17 @@
     "passed": true
   },
   {
+    "test": "reorg_returns_transactions_to_the_pool_with_their_approvals_intact",
+    "passed": true,
+    "orphaned": "0x43d0ba8e380df73fabf91c2eb3e5bc27cd93410316429015e4123b41e5996d53",
+    "reincluded_at": "0x2a5fbb9e89d77dd94758d5cd0f1f7693ca84af758dd545db1aa98f2c94582833",
+    "readded_by_besu": [],
+    "resubmitted": [
+      "0x6a043a1667ad307c143462bd590d142e28a7ea71e53aa1deb5d9c8ebdfcffb35",
+      "0xc6afc33029599365e1015b665ebcb8ad0cbb25303de732b4d432f89ac1f5564d"
+    ]
+  },
+  {
     "test": "gate_works_beside_lineth_transaction_pool_validator",
     "passed": true,
     "besu": "besu/v26.8.1/osx-aarch_64/openjdk-java-25"
