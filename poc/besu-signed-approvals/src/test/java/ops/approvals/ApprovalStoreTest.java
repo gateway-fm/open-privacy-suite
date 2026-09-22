@@ -24,30 +24,34 @@ class ApprovalStoreTest {
   @Test
   void storesLatestApprovalPerTransactionAndRespectsCapacity() {
     final AtomicLong clock = new AtomicLong(1_000);
-    final Set<Hash> pooled = Set.of(approval(1, 0).txHash(), approval(2, 0).txHash());
-    final ApprovalStore store = new ApprovalStore(2, 60_000, clock::get, () -> pooled);
+    final ApprovalStore store = new ApprovalStore(2, 60_000, 5_000, clock::get);
     assertTrue(store.put(approval(1, 1)));
     assertTrue(store.put(approval(1, 1))); // duplicate is idempotent, not a second slot
     assertTrue(store.put(approval(1, 2))); // a newer preflight for the same tx replaces
     assertEquals(approval(1, 2), store.get(approval(1, 0).txHash()).orElseThrow());
     assertTrue(store.put(approval(2, 1)));
+    store.pooled(approval(1, 0).txHash());
+    store.pooled(approval(2, 0).txHash());
+    clock.addAndGet(10_000);
     assertFalse(store.put(approval(3, 1))); // full of live approvals: refuse, never approve implicitly
     assertEquals(2, store.size());
     assertTrue(store.get(approval(3, 0).txHash()).isEmpty());
   }
 
   @Test
-  void fullStoreGivesUpUnpooledApprovalsBeforeRefusing() {
+  void fullStoreGivesUpOldUnpooledApprovalsBeforeRefusing() {
     final AtomicLong clock = new AtomicLong(1_000);
-    final Set<Hash> pooled = new java.util.HashSet<>();
-    final ApprovalStore store = new ApprovalStore(2, 60_000, clock::get, () -> pooled);
+    final ApprovalStore store = new ApprovalStore(2, 60_000, 5_000, clock::get);
     store.put(approval(1, 1));
     clock.incrementAndGet();
     store.put(approval(2, 1));
-    pooled.add(approval(2, 0).txHash());
-    assertTrue(store.put(approval(3, 1)), "oldest unpooled approval (1) makes room");
+    store.pooled(approval(2, 0).txHash());
+    assertFalse(store.put(approval(3, 1)), "approval 1 is unpooled but too young to give up");
+    clock.addAndGet(10_000);
+    assertTrue(store.put(approval(3, 1)), "oldest unpooled approval (1) makes room once old enough");
     assertTrue(store.get(approval(1, 0).txHash()).isEmpty());
-    pooled.add(approval(3, 0).txHash());
+    store.pooled(approval(3, 0).txHash());
+    clock.addAndGet(10_000);
     assertFalse(store.put(approval(4, 1)), "every held approval backs a pooled transaction: refuse");
     assertEquals(2, store.size());
   }
@@ -55,7 +59,7 @@ class ApprovalStoreTest {
   @Test
   void removesIncludedAndSweepsOrphansByTtl() {
     final AtomicLong clock = new AtomicLong(1_000);
-    final ApprovalStore store = new ApprovalStore(100, 5_000, clock::get);
+    final ApprovalStore store = new ApprovalStore(100, 5_000, 0, clock::get);
     store.put(approval(1, 1));
     store.put(approval(2, 1));
     store.removeAll(List.of(approval(1, 0).txHash()));

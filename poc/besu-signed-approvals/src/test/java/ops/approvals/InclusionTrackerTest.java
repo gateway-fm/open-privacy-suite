@@ -4,7 +4,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import org.apache.tuweni.bytes.Bytes;
@@ -29,19 +28,18 @@ class InclusionTrackerTest {
     tracker.recordIncluded(h(11), h(0), 1, List.of(h(101), h(102)));
     tracker.recordIncluded(h(21), h(0), 1, List.of(h(201)));
     tracker.recordIncluded(h(12), h(11), 2, List.of(h(103)));
-    final Map<Hash, Hash> parents = Map.of(h(12), h(11), h(11), h(0), h(21), h(0));
 
     // Nothing is final yet: nothing is released.
-    assertTrue(tracker.finalizedUpTo(Optional.empty(), parents::get).isEmpty());
+    assertTrue(tracker.finalizedUpTo(Optional.empty()).isEmpty());
 
     // A1 becomes final: its transactions are released; A2 and the fork are not.
-    Set<Hash> released = tracker.finalizedUpTo(Optional.of(h(11)), parents::get);
+    Set<Hash> released = tracker.finalizedUpTo(Optional.of(h(11)));
     assertEquals(Set.of(h(101), h(102)), released);
     assertEquals(2, tracker.trackedBlocks());
 
     // A2 becomes final: released; the fork block B1 stays tracked until it is dropped explicitly,
     // and its approvals are never released by finality of another chain.
-    released = tracker.finalizedUpTo(Optional.of(h(12)), parents::get);
+    released = tracker.finalizedUpTo(Optional.of(h(12)));
     assertEquals(Set.of(h(103)), released);
     assertEquals(1, tracker.trackedBlocks());
     assertEquals(Set.of(h(201)), tracker.forget(h(21)));
@@ -54,9 +52,8 @@ class InclusionTrackerTest {
     tracker.recordIncluded(h(11), h(0), 1, List.of(h(101)));
     tracker.recordIncluded(h(12), h(11), 2, List.of(h(102)));
     tracker.recordIncluded(h(13), h(12), 3, List.of(h(103)));
-    final Map<Hash, Hash> parents = Map.of(h(13), h(12), h(12), h(11), h(11), h(0));
-    assertEquals(Set.of(h(101), h(102), h(103)), tracker.finalizedUpTo(Optional.of(h(13)), parents::get));
-    assertTrue(tracker.finalizedUpTo(Optional.of(h(13)), parents::get).isEmpty());
+    assertEquals(Set.of(h(101), h(102), h(103)), tracker.finalizedUpTo(Optional.of(h(13))));
+    assertTrue(tracker.finalizedUpTo(Optional.of(h(13))).isEmpty());
   }
 
   @Test
@@ -64,8 +61,7 @@ class InclusionTrackerTest {
     final InclusionTracker tracker = new InclusionTracker();
     tracker.recordIncluded(h(11), h(0), 1, List.of(h(101)));
     tracker.recordIncluded(h(21), h(0), 1, List.of(h(201))); // reorg: rival at height 1
-    final Map<Hash, Hash> parents = Map.of(h(21), h(0), h(11), h(0));
-    assertEquals(Set.of(h(201)), tracker.finalizedUpTo(Optional.of(h(21)), parents::get));
+    assertEquals(Set.of(h(201)), tracker.finalizedUpTo(Optional.of(h(21))));
     // The losing block's transactions are back in the pool and keep their approvals.
     assertEquals(1, tracker.trackedBlocks());
   }

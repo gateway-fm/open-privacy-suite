@@ -34,7 +34,7 @@ class ApprovalListenerTest {
     body.write(ApprovalBatch.message(approvals));
     body.write(signature);
 
-    final ApprovalStore store = new ApprovalStore(10, 60_000, new AtomicLong(1)::get);
+    final ApprovalStore store = new ApprovalStore(10, 60_000, 0, new AtomicLong(1)::get);
     try (ApprovalListener listener =
         new ApprovalListener(
             new InetSocketAddress("127.0.0.1", 0),

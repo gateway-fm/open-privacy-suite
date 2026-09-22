@@ -23,8 +23,8 @@ import org.hyperledger.besu.plugin.services.rpc.PluginRpcRequest;
 import org.hyperledger.besu.plugin.services.rpc.RpcMethodError;
 
 /**
- * {@code ops_prepareApproval(rawTx[, blockHash])}: simulates the exact signed transaction on the
- * state of one block with the same tracer the producer uses, and returns the calls-V3 fingerprint
+ * {@code ops_prepareApproval(rawTx)}: simulates the exact signed transaction on the pending
+ * block's state with the same tracer the producer uses, and returns the calls-V3 fingerprint
  * plus the geth-shaped call tree OPS recomputes and validates against. Preflight and enforcement
  * therefore share one implementation. Errors are short reason strings; lifecycle transactions are
  * refused.
