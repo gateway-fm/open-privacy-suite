@@ -7,7 +7,7 @@ reasoning behind each placement decision with its evidence, the full table
 inventory of the live database, and a log of which claims were checked how and
 which of them turned out wrong.
 
-Companion to [DECISION.md §3.5](../research/dsl-policy-and-node-enforcement/DECISION.md)
+Companion to DECISION.md §3.5 (`docs/research/dsl-policy-and-node-enforcement/DECISION.md`, untracked; it lives in the main checkout and is not on this branch)
 and `API_ENDPOINTS.md` (the generated inventory: 173 canonical operations on
 `feat/ops-dsl-reth`, about 50 of them admin impersonation mirrors of explorer
 and RPC reads). Everything here is verified against the registered routes and
@@ -29,7 +29,7 @@ write; their `GET`s keep working as reads of the projection.
 | Stream (`kind`) | What the document holds | Legacy write endpoints it replaces (now 409 when active) | Why a snapshot suffices |
 |---|---|---|---|
 | `groups` | group definitions: slug, name, admin flags, RPC method allowlist, claims, verbose errors | `POST /orgs/{o}/groups`, `PUT/DELETE /orgs/{o}/groups/{g}`, `PUT /orgs/{o}/groups/{g}/access`, `POST /orgs/{o}/groups/batch-delete` | one owner (org admin), reproducible; deleting a group with live members requires the exact member count in the document, so it cannot silently drop other writers' memberships |
-| `contract-registry` | contracts (address, name, ABI, visibility flags) and their read grants (claims metadata, event rules) | `POST /orgs/{o}/contracts`, `PUT/DELETE /orgs/{o}/contracts/{a}`, `PUT …/{a}/abi`, `PUT …/{a}/visibleto-unlock`, `PUT …/{a}/events-allow-dynamic-payload`, `POST /orgs/{o}/contracts/claim`, `POST …/contracts/sync-delete`, `POST …/contracts/batch-move`, `POST/PUT/DELETE …/contracts/{a}/grants[/{g}]` (claims / event-rules part) | configuration, not observation: pipeline-registered contracts are *adopted* as drift into the next revision, never deleted by re-applying |
+| `contract-registry` | contracts (address, name, ABI, visibility flags) and their read grants (claims metadata, event rules) | `POST /orgs/{o}/contracts`, `PUT/DELETE /orgs/{o}/contracts/{a}`, `PUT …/{a}/abi`, `PUT …/{a}/visibleto-unlock`, `PUT …/{a}/events-allow-dynamic-payload`, `POST /orgs/{o}/contracts/claim`, `POST …/contracts/sync-delete`, `POST …/contracts/batch-move`, `POST/PUT/DELETE …/contracts/{a}/grants[/{g}]` (claims / event-rules part — the route closes when either this stream or `execution-rules` is active; the column-level split is the database trigger's) | configuration, not observation: pipeline-registered contracts are *adopted* as drift into the next revision, never deleted by re-applying |
 | `execution-rules` | the policy: which group may call which function with which argument bounds, nested-call / delegatecall rules, deployment rights — compiled to Solidity and executed by the node on every frame | `contract_grants.functions` (the function part of `POST/PUT/DELETE …/grants`), and the RD-1287 `POST /orgs/{o}/execution-policy/revisions`, `…/{id}/activate`, `…/{id}/withdraw` | the single statement of what may execute; anything else would be a second writer of the same permission |
 | `compliance` | org settings (enabled, threshold, currency, unknown-price policy, enforce/monitor), per-address thresholds, and each token's entry: symbol, decimals, and either a price-feed id or a fixed price | `PUT /orgs/{o}/compliance/config`, `PUT/DELETE …/compliance/tokens/{t}`, `PUT/DELETE …/compliance/address-thresholds/{a}` | settings, not observations. **Live rates are not in the document**: the fetcher writes `system_token_prices` on a timer and the checker resolves a per-org entry with a feed id to that live price (`compliance/checker.go:262`); sanctions hits and travel-rule records stay operational too |
 | `approvers` | which admin groups may activate revisions; trusted CI issuers/keys | — (new) | it is the authority configuration itself; human-only, activated by a different human |
@@ -100,9 +100,10 @@ lost. The 4 September research and DECISION §3.5 fixed the target shape:
 
 ## 5. Questions this map leaves for the CTO
 
-1. When does Reth policy mode become the default? Until then the legacy
-   writers stay open for organisations without active streams, and the old
-   preflight gate still decides access in legacy mode.
+1. When does Reth policy mode become the default? The legacy writers close
+   per stream as soon as that stream has an active revision, in either mode;
+   only the preflight gate is tied to the mode, and in legacy mode it still
+   decides access.
 2. Scoped admin roles and quotas for standing agent automation ("add up to N
    members a day") — an RBAC extension, not a DSL question; not built.
 3. MCP rebuild timing (table above).
@@ -230,10 +231,13 @@ Two of the four were narrowed by that questioning.
 document **unless they write different kinds of thing that history merged into
 one table** — then the fix is to separate them, not to tolerate drift. Drift
 adoption today covers exactly two such cases: a chain observation stored in the
-`contracts` table alongside decisions, and the legacy deploy auto-grant, which
-the policy already expresses declaratively (`targetClass: deployer`). Both are
-to be removed. For memberships separation does not help: three writers produce
-the same row for the same person.
+`contracts` table alongside decisions, and the legacy deploy auto-grant. Both
+enter through the authorised registration transaction — the Reth reconciler
+and, since this branch, the legacy plain-CREATE path too — so the next registry
+revision adopts them as drift instead of the guard refusing them. Whether the
+auto-grant should exist at all once the rules express it (`targetClass:
+deployer`) is open. For memberships separation does not help: three writers
+produce the same row for the same person.
 
 **Test 2 — it must take effect before anyone can review it.** The latency of a
 document is our four-eyes rule (`configuration_revision_store.go:442`). The part
@@ -371,7 +375,7 @@ unverified, which is exactly where the errors were.
 |---|---|---|
 | "32 legacy write operations move to the streams" | counted routes carrying a stream guard in `admin_rbac.go`, `admin_compliance.go`, `admin_shared_infra.go` | exactly 32 |
 | "their `GET`s keep working" | no `GET` of a migrated class carries a guard | confirmed |
-| "the database triggers refuse a direct write" | `configuration_guard_projection` and its eight triggers (075) | confirmed, including the `contract_grants` split between registry and execution-rules |
+| "the database triggers refuse a direct write" | `configuration_guard_projection` and its nine triggers (075) | confirmed, including the `contract_grants` split between registry and execution-rules |
 | every endpoint named in §3 exists | matched against the generated `API_ENDPOINTS.md` | all found |
 | "`approvers` and `platform` are human-only" | `configuration.RequiresHumanAuthor`, enforced on submit and activate | confirmed |
 | "a link is a signature, not an assertion" | `eth_link.go`; `MOCK_SIGNATURES` force-disabled in production (`config.go:475`) | confirmed |
@@ -380,7 +384,7 @@ unverified, which is exactly where the errors were.
 | "a user row appears at login" | `EnsureUserExists` in `auth.go`, `auth_azure.go` | confirmed |
 | "memberships have several writers" | admin API, Azure auto-provision (`auth_azure.go:298`), ZK roles (`auth.go:603`) | confirmed — three, now named |
 | "deleting a group with live members needs the exact count" | `groups.go:80-86` | confirmed |
-| "pipeline-registered resources are adopted, not swept" | `PreservedDrift` in every diff | confirmed |
+| "pipeline-registered resources are adopted, not swept" | `PreservedDrift` in the groups, registry, compliance and platform diffs; `ExecutionDiff` has none, because a deployment cannot create a rule | confirmed, with that limit |
 | "the compiled policy is never on chain" | `known_bytecode` from the snapshot; `private_policy.rs` — no state entry, chain code at the same address does not override it, the application cannot observe it | confirmed |
 | "94 flat MCP tools today" | `AddTool` call sites | 94 |
 | "≈18 µs and 6 436 gas per policy check" | `tests/frame_cost.rs`, release, 2 000 transactions per configuration | measured |

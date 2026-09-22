@@ -18,7 +18,8 @@ compliance settings, approvers, and platform items. Thirty-two write endpoints
 close behind them: once a stream has an active revision they answer 409, and a
 database trigger refuses a direct write. Each stream is edited through the same
 eight calls — read context, list revisions, submit, read one, simulate,
-activate, activate through CI, withdraw. Everything about **people** stays an
+activate, activate through CI, withdraw (the platform stream has seven: no CI
+activation). Everything about **people** stays an
 operation on its existing endpoint: accounts, memberships, address links, bans,
 KYC. Those are produced by events and proofs, not authored by anyone.
 
@@ -54,11 +55,11 @@ are. New groups and contracts show up as normal rows. Nobody has to rebuild
 those screens.
 
 Editing is what changes. Once a stream is managed by a document, the old edit
-and delete calls are refused. The screens do not know that yet. The buttons are
-still there, the call fails, and the administrator is told something untrue:
-deleting a group reports that the group may still have members. Those screens
-need to go read-only for a managed stream and point the administrator at the
-configuration screen (RD-1295).
+and delete calls are refused. Until this branch the screens did not know that:
+the buttons stayed, the call failed, and the administrator was told something
+untrue — deleting a group reported that the group might still have members.
+The screens now ask the server whether the stream is managed, go read-only
+when it is, and otherwise show the server's refusal word for word (RD-1295).
 
 One caution about "if it all lives in Git, we can drop the admin UI". The
 configuration screen is not a text box. Someone other than the author has to
@@ -101,9 +102,12 @@ stays an operation is written by *events*: a login, a directory, a finalized
 receipt, a price feed. Making those documents too would either put an approval
 inside the login path or have machines self-activate revisions, which removes
 the review and keeps the conflict, since two documents declaring a complete
-state overwrite each other exactly as a document overwrites a row. Two places
-still break the rule and are on the list below: the deployment auto-grant and
-`refresh-codehash`.
+state overwrite each other exactly as a document overwrites a row. One place
+still breaks the rule and is on the list below: `refresh-codehash`. The
+deployment auto-grant no longer bypasses anything — both deployment paths now
+register through the authorised transaction, and the next registry revision
+adopts the rows as drift — but whether it should exist at all once the rules
+express it (`targetClass: deployer`) is still open.
 
 ## 4. Where the document text should live
 
