@@ -53,6 +53,10 @@ class LoadStack(Stack):
 
     def __init__(self, name, plugin=True):
         self.extra_env = {"MAX_CONCURRENT_REQUESTS": "5000"}
+        if plugin:
+            # OPS-side delivery timings (enqueue -> sign -> write), flushed when OPS exits.
+            self.hops_file = h.EVIDENCE / "gasstorm" / (name + "-hops.json")
+            self.extra_env["OPS_APPROVAL_HOPS_FILE"] = str(self.hops_file)
         super().__init__(name, plugin=plugin)
 
     def seed(self):
@@ -240,9 +244,35 @@ def confirmed(node, hashes):
     return successful, failed, missing
 
 
-def compare(workload, rates, duration, interval):
+DECISIONS = ("wait", "allow", "drop", "deny", "unsupported")
+
+
+def decisions(node):
+    """Producer decisions so far, per transaction hash: which outcomes each hash went through."""
+    seen = {}
+    for line in node.log_path.read_text(errors="replace").splitlines():
+        m = re.search(r"OPS_APPROVAL_DECISION (\w+) tx=(0x[0-9a-f]+)", line)
+        if m and m.group(1) in DECISIONS:
+            seen.setdefault(m.group(2), []).append(m.group(1))
+    return seen
+
+
+def race_summary(before, after):
+    """How often an approved transaction was seen by the producer before its approval arrived."""
+    new = {k: v for k, v in after.items() if k not in before}
+    allowed = [k for k, v in new.items() if "allow" in v]
+    waited = [k for k in allowed if "wait" in new[k]]
+    return {"transactions_evaluated": len(new), "allowed": len(allowed),
+            "allowed_after_waiting": len(waited),
+            "pending_rate": round(len(waited) / len(allowed), 4) if allowed else None,
+            "max_waits_before_allow": max((new[k].count("wait") for k in waited), default=0),
+            "dropped_timeout": len([k for k, v in new.items() if "drop" in v]),
+            "denied": len([k for k, v in new.items() if "deny" in v or "unsupported" in v])}
+
+
+def compare(workload, rates, duration, interval, only_gate=False):
     results = []
-    for plugin in (False, True):
+    for plugin in ((True,) if only_gate else (False, True)):
         name = ("gate-on" if plugin else "gate-off")
         with contextlib.closing(LoadStack(name, plugin=plugin)) as stack:
             miner = Miner(stack.node, interval=interval)
@@ -252,6 +282,7 @@ def compare(workload, rates, duration, interval):
                     label = f"{workload}-{rate}"
                     print(f"\n{name}: {workload} at {rate} tx/s for {duration}s", flush=True)
                     started = time.time()
+                    seen_before = decisions(stack.node) if plugin else {}
                     run, hashes = loadgen.run(miner, workload, rate, duration, label)
                     # Let the last submissions reach a block, then stop the clock: the receipt scan
                     # that follows is verification, not part of the run.
@@ -272,6 +303,7 @@ def compare(workload, rates, duration, interval):
                     if plugin:
                         gate = [t["gate_ns"] for t in stack.node.timings()]
                         row["gate_us_per_tx_median"] = round(statistics.median(gate) / 1000, 1) if gate else None
+                        row["race"] = race_summary(seen_before, decisions(stack.node))
                     results.append(row)
                     print("RESULT", json.dumps(row), flush=True)
             finally:
@@ -292,9 +324,11 @@ def main():
     parser.add_argument("--rates", default="100,300", help="comma-separated target rates")
     parser.add_argument("--duration", type=int, default=20)
     parser.add_argument("--block-interval", type=float, default=1.0)
+    parser.add_argument("--only-gate", action="store_true", help="skip the gate-off baseline")
     args = parser.parse_args()
     prepare()
-    compare(args.workload, [int(r) for r in args.rates.split(",")], args.duration, args.block_interval)
+    compare(args.workload, [int(r) for r in args.rates.split(",")], args.duration, args.block_interval,
+            only_gate=args.only_gate)
 
 
 if __name__ == "__main__":

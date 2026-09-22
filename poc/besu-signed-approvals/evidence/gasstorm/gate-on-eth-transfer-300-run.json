@@ -1,26 +1,25 @@
 {
-  "id": "test-1789421134116070000",
-  "startedAt": "2026-09-14T23:25:34.115985+02:00",
-  "completedAt": "2026-09-14T23:26:01.603219+02:00",
+  "id": "test-1790085002150415000",
+  "startedAt": "2026-09-22T15:50:02.150413+02:00",
+  "completedAt": "2026-09-22T15:50:30.052971+02:00",
   "pattern": "constant",
   "transactionType": "eth-transfer",
   "durationMs": 20000,
   "txSent": 6003,
-  "txConfirmed": 6001,
+  "txConfirmed": 6003,
   "txFailed": 0,
-  "txDiscarded": 2,
-  "averageTps": 228.07463825172528,
-  "peakTps": 221,
+  "averageTps": 225.4644881130769,
+  "peakTps": 211,
   "latencyStats": {
-    "count": 6001,
-    "min": 358,
-    "max": 7009,
-    "avg": 1240.8028661889684,
-    "p50": 1005,
-    "p75": 1268,
-    "p90": 1447,
-    "p95": 1615.9999999999998,
-    "p99": 6805,
+    "count": 6003,
+    "min": 432,
+    "max": 7575,
+    "avg": 1761.7411294352823,
+    "p50": 1191,
+    "p75": 1636,
+    "p90": 3866.8000000000006,
+    "p95": 6574.699999999999,
+    "p99": 7374.9400000000005,
     "buckets": [
       {
         "label": "0-250ms",
@@ -28,19 +27,19 @@
       },
       {
         "label": "250-500ms",
-        "count": 333
+        "count": 90
       },
       {
         "label": "500-1s",
-        "count": 2631
+        "count": 2073
       },
       {
         "label": "1-2s",
-        "count": 2755
+        "count": 2604
       },
       {
         "label": "2s+",
-        "count": 282
+        "count": 1236
       }
     ]
   },
@@ -68,13 +67,13 @@
   "txLoggingEnabled": true,
   "executionLayer": "gravity-reth",
   "privacyMode": true,
-  "blockCount": 39,
+  "blockCount": 38,
   "isFavorite": false,
-  "onChainFirstBlock": 32,
-  "onChainLastBlock": 52,
-  "onChainTxCount": 5719,
-  "onChainTps": 285.95,
-  "onChainDurationSecs": 20,
+  "onChainFirstBlock": 1,
+  "onChainLastBlock": 21,
+  "onChainTxCount": 5881,
+  "onChainTps": 280.04761904761904,
+  "onChainDurationSecs": 21,
   "pendingLatency": {
     "count": 0,
     "min": 0,
@@ -108,7 +107,7 @@
   },
   "verification": {
     "metricsMatch": false,
-    "txCountDelta": -282,
+    "txCountDelta": -122,
     "gasUsedDelta": 0,
     "txReceipts": {
       "sampleSize": 0,
@@ -121,12 +120,12 @@
     },
     "allChecksPass": false,
     "warnings": [
-      "Confirmed 282 more TXs than on-chain - possible double counting"
+      "Confirmed 122 more TXs than on-chain - possible double counting"
     ],
     "incrementalMode": true,
     "snapshots": [
       {
-        "timestamp": "2026-09-14T23:25:54.12428+02:00",
+        "timestamp": "2026-09-22T15:50:22.158089+02:00",
         "firstBlock": 0,
         "lastBlock": 0,
         "blocksSampled": 0,
