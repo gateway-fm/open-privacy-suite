@@ -58,6 +58,11 @@ func (s *Service) deliver(ctx context.Context, conn net.Conn) {
 	}()
 	broken := watchConnection(conn)
 	jsonMode := os.Getenv("OPS_APPROVAL_ENCODING") == "json" // comparison only
+	// A batch whose write failed is kept and sent first on the next connection.
+	// The frame is already signed, so it is resent byte for byte; the producer's
+	// store is keyed by transaction hash, so a duplicate is harmless. Without
+	// this, a reset socket silently lost every approval in flight.
+	var retry *Batch
 	for {
 		if conn == nil {
 			var err error
@@ -76,34 +81,42 @@ func (s *Service) deliver(ctx context.Context, conn net.Conn) {
 			s.connections.Add(1)
 			broken = watchConnection(conn)
 		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-broken:
-			conn.Close()
-			conn = nil
-		case batch := <-s.signed:
-			mark(batch.Approvals, func(h *Hop, n int64) { h.DeliveryStart = n })
-			frame := batch.frame
-			if jsonMode {
-				data, err := json.Marshal(batch)
-				if err != nil {
-					continue
-				}
-				frame = binary.BigEndian.AppendUint32(nil, uint32(len(data)))
-				frame = append(frame, data...)
-			}
-			if len(frame) < 4 || len(frame) > MaxBatchFrame+4 {
-				slog.Error("invalid approval frame", "error", errors.New("frame size"))
-				continue
-			}
-			mark(batch.Approvals, func(h *Hop, n int64) { h.Encoded = n; h.Connected = n; h.WriteStart = n })
-			if err := writeAll(conn, frame); err != nil {
-				slog.Warn("approval delivery failed", "error", err)
+		var batch Batch
+		if retry != nil {
+			batch, retry = *retry, nil
+		} else {
+			select {
+			case <-ctx.Done():
+				return
+			case <-broken:
 				conn.Close()
 				conn = nil
+				continue
+			case batch = <-s.signed:
 			}
-			mark(batch.Approvals, func(h *Hop, n int64) { h.Written = n })
 		}
+		mark(batch.Approvals, func(h *Hop, n int64) { h.DeliveryStart = n })
+		frame := batch.frame
+		if jsonMode {
+			data, err := json.Marshal(batch)
+			if err != nil {
+				continue
+			}
+			frame = binary.BigEndian.AppendUint32(nil, uint32(len(data)))
+			frame = append(frame, data...)
+		}
+		if len(frame) < 4 || len(frame) > MaxBatchFrame+4 {
+			slog.Error("invalid approval frame", "error", errors.New("frame size"))
+			continue
+		}
+		mark(batch.Approvals, func(h *Hop, n int64) { h.Encoded = n; h.Connected = n; h.WriteStart = n })
+		if err := writeAll(conn, frame); err != nil {
+			slog.Warn("approval delivery failed; resending after reconnect", "error", err, "approvals", len(batch.Approvals))
+			conn.Close()
+			conn = nil
+			retry = &batch
+			continue
+		}
+		mark(batch.Approvals, func(h *Hop, n int64) { h.Written = n })
 	}
 }
