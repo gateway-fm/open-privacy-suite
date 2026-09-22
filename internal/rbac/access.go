@@ -2274,21 +2274,24 @@ func (c *AccessController) NotifyDeploymentMined(
 		contract.DeployedByUserID = &deployment.DeployerUserID
 	}
 	contract.DeployedAt = &now
-	if err := c.store.CreateContract(ctx, contract); err != nil {
-		slog.Warn("failed to create contract record for plain CREATE", "address", contractAddress, "error", err)
-		// Still clean up pre-registration even if contract creation failed.
-	} else if deployment.DeployerUserID != "" {
-		// Grant contract to deployer's existing deploy group (non-fatal if it fails)
-		if err := c.store.GrantContractToDeployerGroup(ctx, deployment.OrgID, contract.ID, deployment.DeployerUserID); err != nil {
-			slog.Warn("failed to grant contract to deployer group", "address", contractAddress, "error", err)
-		} else {
-			// Drop the deployer's cached permissions so the next call to the
-			// freshly-deployed contract re-resolves and sees the new grant
-			// instead of waiting for cache TTL expiry.
-			if invErr := c.InvalidateUser(ctx, deployment.DeployerUserID); invErr != nil {
-				slog.Warn("failed to invalidate deployer cache after plain CREATE grant", "user_id", deployment.DeployerUserID, "error", invErr)
-			}
+	// Contract and deployer grant land in one authorised registration
+	// transaction, so a reviewed contract-registry or execution-rules document
+	// owning this organisation admits them as deployment drift instead of the
+	// projection guard refusing a plain insert.
+	granted, err := c.store.RegisterDeployedContract(ctx, contract, deployment.DeployerUserID)
+	switch {
+	case err != nil:
+		slog.Warn("failed to register plain CREATE deployment", "address", contractAddress, "error", err)
+		// Still clean up pre-registration even if registration failed.
+	case granted:
+		// Drop the deployer's cached permissions so the next call to the
+		// freshly-deployed contract re-resolves and sees the new grant
+		// instead of waiting for cache TTL expiry.
+		if invErr := c.InvalidateUser(ctx, deployment.DeployerUserID); invErr != nil {
+			slog.Warn("failed to invalidate deployer cache after plain CREATE grant", "user_id", deployment.DeployerUserID, "error", invErr)
 		}
+	case deployment.DeployerUserID != "":
+		slog.Warn("plain CREATE registered without a deployer grant: no current deploy-claim membership", "address", contractAddress, "user_id", deployment.DeployerUserID)
 	}
 	if err := c.store.DeletePreregisteredAddressByAddress(ctx, deployment.PreRegisteredAddr); err != nil {
 		slog.Warn("failed to delete pre-registration after finalization", "address", deployment.PreRegisteredAddr, "error", err)

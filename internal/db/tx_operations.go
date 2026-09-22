@@ -2,6 +2,8 @@ package db
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 
 	"privacy-proxy/internal/rbac"
@@ -200,4 +202,79 @@ func (d *DB) GrantContractToDeployerGroup(ctx context.Context, orgID, contractID
 			return nil
 		})
 	})
+}
+
+// RegisterDeployedContract records a contract that a finalized deployment
+// created, together with the deployer group's grant, in one authorised
+// registration transaction.
+//
+// A deployment is a chain fact, not configuration. Once a contract-registry
+// or execution-rules revision owns the organisation's desired state, the
+// projection guard refuses plain inserts into contracts and contract_grants;
+// this is the legacy path's only way through, marked as deployment
+// registration so the next revision adopts the rows as drift. The marker
+// admits inserts only — never an UPDATE or DELETE of reviewed rows.
+//
+// The grant is best-effort: a deployer whose deploy membership lapsed between
+// preflight and finalization still gets the contract registered, just without
+// a grant. The boolean reports whether a grant was written.
+func (d *DB) RegisterDeployedContract(ctx context.Context, contract *rbac.Contract, deployerUserID string) (bool, error) {
+	var granted bool
+	err := withRetry(ctx, func() error {
+		granted = false
+		return d.WithTx(ctx, func(tx *Tx) error {
+			if err := tx.AuthorizeDeploymentRegistration(ctx, contract.OrgID); err != nil {
+				return err
+			}
+			deployer := deployerUserID
+			if deployer != "" {
+				// The account may have been deleted between preflight and
+				// finalization. Keep the chain fact and drop the attribution,
+				// as the Reth reconciler does, instead of failing the insert on
+				// the deployer foreign key.
+				var existing string
+				err := tx.tx.QueryRowContext(ctx, `SELECT id FROM users WHERE id=$1 FOR KEY SHARE`, deployer).Scan(&existing)
+				switch {
+				case errors.Is(err, sql.ErrNoRows):
+					deployer = ""
+					contract.DeployedByUserID = nil
+				case err != nil:
+					return err
+				}
+			}
+			if err := tx.CreateContract(ctx, contract); err != nil {
+				return err
+			}
+			if deployer == "" {
+				return nil
+			}
+			// Same group rule as GrantContractToDeployerGroup — the deployer's
+			// current, unexpired membership of a group carrying the deploy
+			// claim — and, as on the Reth path, no grant for a banned account.
+			// Idempotent on retry.
+			result, err := tx.tx.ExecContext(ctx, `INSERT INTO contract_grants (id, contract_id, group_id)
+				 SELECT $1, $2, g.id
+				 FROM user_memberships m
+				 JOIN groups g ON g.id = m.group_id
+				 JOIN group_access ga ON ga.group_id = g.id
+				 JOIN users u ON u.id = m.user_id
+				 WHERE m.user_id = $3 AND g.org_id = $4
+				   AND NOT u.banned
+				   AND 'deploy' = ANY(ga.claims)
+				   AND (m.expires_at IS NULL OR m.expires_at > NOW())
+				 ORDER BY g.id LIMIT 1
+				 ON CONFLICT (contract_id, group_id) DO NOTHING`,
+				uuid.New().String(), contract.ID, deployer, contract.OrgID)
+			if err != nil {
+				return fmt.Errorf("failed to create deployer grant: %w", err)
+			}
+			rows, err := result.RowsAffected()
+			if err != nil {
+				return err
+			}
+			granted = rows > 0
+			return nil
+		})
+	})
+	return granted, err
 }

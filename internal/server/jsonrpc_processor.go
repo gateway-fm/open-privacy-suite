@@ -2310,18 +2310,20 @@ func (p *JSONRPCProcessor) pollAndFinalizeRuntimeCreates(txHash string, preRegAd
 					contract.DeployedByUserID = &userID
 				}
 				contract.DeployedAt = &now
-				if createErr := p.rbacAccessCtrl.Store().CreateContract(ctx, contract); createErr != nil {
-					slog.Warn("failed to register diverged runtime create", "address", addr, "error", createErr)
-				} else if userID != "" {
-					if gErr := p.rbacAccessCtrl.Store().GrantContractToDeployerGroup(ctx, orgID, contract.ID, userID); gErr != nil {
-						slog.Warn("failed to grant contract to deployer group for runtime create", "address", addr, "error", gErr)
-					} else {
-						// Drop the deployer's cached permissions so the next call to the
-						// newly-registered contract re-resolves and sees the new grant.
-						if invErr := p.rbacAccessCtrl.InvalidateUser(ctx, userID); invErr != nil {
-							slog.Warn("failed to invalidate deployer cache after runtime create grant", "user_id", userID, "error", invErr)
-						}
+				// One authorised registration transaction: admitted as deployment
+				// drift by a reviewed document owning this organisation.
+				granted, regErr := p.rbacAccessCtrl.Store().RegisterDeployedContract(ctx, contract, userID)
+				switch {
+				case regErr != nil:
+					slog.Warn("failed to register diverged runtime create", "address", addr, "error", regErr)
+				case granted:
+					// Drop the deployer's cached permissions so the next call to the
+					// newly-registered contract re-resolves and sees the new grant.
+					if invErr := p.rbacAccessCtrl.InvalidateUser(ctx, userID); invErr != nil {
+						slog.Warn("failed to invalidate deployer cache after runtime create grant", "user_id", userID, "error", invErr)
 					}
+				case userID != "":
+					slog.Warn("runtime create registered without a deployer grant: no current deploy-claim membership", "address", addr, "user_id", userID)
 				}
 			}
 		}

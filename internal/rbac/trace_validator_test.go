@@ -100,6 +100,9 @@ func (m *MockTraceStore) GetContractOwnerOrgID(ctx context.Context, address stri
 func (m *MockTraceStore) GrantContractToDeployerGroup(ctx context.Context, orgID, contractID, deployerUserID string) error {
 	return nil
 }
+func (m *MockTraceStore) RegisterDeployedContract(ctx context.Context, contract *Contract, deployerUserID string) (bool, error) {
+	return true, nil
+}
 
 func (m *MockTraceStore) AddSharedInfrastructure(address string) {
 	addr := strings.ToLower(address)

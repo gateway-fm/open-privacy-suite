@@ -78,6 +78,11 @@ type Store interface {
 	// GrantContractToDeployerGroup finds the deployer's existing group with
 	// the deploy claim in the given org and adds a contract_grant to it.
 	GrantContractToDeployerGroup(ctx context.Context, orgID, contractID, deployerUserID string) error
+	// RegisterDeployedContract records a finalized deployment's contract and
+	// the deployer group's grant in one authorised transaction that the
+	// configuration projection guard admits as deployment drift. Reports
+	// whether a grant was written.
+	RegisterDeployedContract(ctx context.Context, contract *Contract, deployerUserID string) (bool, error)
 
 	// ETH Address operations (for parameter constraint enforcement)
 	GetLinkedEthAddresses(ctx context.Context, did string) ([]string, error)

@@ -148,6 +148,9 @@ func (fakeStore) GetContractGrantSummary(context.Context, string) (map[string]*C
 func (fakeStore) GrantContractToDeployerGroup(context.Context, string, string, string) error {
 	return nil
 }
+func (fakeStore) RegisterDeployedContract(context.Context, *Contract, string) (bool, error) {
+	return true, nil
+}
 
 func (fakeStore) GetLinkedEthAddresses(context.Context, string) ([]string, error) {
 	return nil, nil
