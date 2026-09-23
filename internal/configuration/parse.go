@@ -97,7 +97,7 @@ func parseDocument(source []byte) (*Document, error) {
 		if err := exactDecode(specValue, &spec); err != nil {
 			return nil, err
 		}
-		if err := normalizeGroups(&spec); err != nil {
+		if err := normalizeGroups(&spec, d.Scope); err != nil {
 			return nil, err
 		}
 		d.Spec = spec
@@ -343,12 +343,15 @@ func exactShape(value any, typ reflect.Type, path string) error {
 var slugPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,99}$`)
 var methodPattern = regexp.MustCompile(`^(\*|[a-zA-Z][a-zA-Z0-9]*_(\*|[a-zA-Z][a-zA-Z0-9_]*))$`)
 
-func normalizeGroups(spec *GroupsSpec) error {
+func normalizeGroups(spec *GroupsSpec, scope Scope) error {
 	ids, slugs, names := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	for i := range spec.Groups {
 		g := &spec.Groups[i]
 		if !canonicalUUID(g.ID) || ids[g.ID] {
 			return fmt.Errorf("groups contain an invalid or duplicate id")
+		}
+		if err := validateSecretRef(g.RpcCredential, scope); err != nil {
+			return err
 		}
 		ids[g.ID] = true
 		if !slugPattern.MatchString(g.Slug) || slugs[g.Slug] {

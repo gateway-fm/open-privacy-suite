@@ -184,7 +184,7 @@ func (d *DB) ListGroupsWithAccessPaginated(ctx context.Context, orgID string, li
 // of groupAccessColumns minus group_id (implied by the join key), in the same
 // relative order, scanned by scanGroupsWithAccess. The two list queries had
 // hand-copied a shorter list that dropped verbose_errors (RD-1257).
-const groupAccessJoinColumns = `ga.id, ga.allowed_methods, ga.claims, ga.rpc_api_key, ga.verbose_errors, ga.created_at, ga.updated_at`
+const groupAccessJoinColumns = `ga.id, ga.allowed_methods, ga.claims, ga.rpc_api_key, ga.rpc_api_key_source, ga.verbose_errors, ga.created_at, ga.updated_at`
 
 // scanGroupsWithAccess scans rows shaped as prefixColumns("g", groupColumns)
 // + groupAccessJoinColumns; the ga.* columns are nullable via the LEFT JOIN.
@@ -197,14 +197,14 @@ func scanGroupsWithAccess(rows *sql.Rows) ([]*rbac.GroupWithAccess, error) {
 		// Access fields (nullable from LEFT JOIN)
 		var accessID sql.NullString
 		var allowedMethods, claimsStr []string
-		var rpcAPIKey sql.NullString
+		var rpcAPIKey, rpcAPIKeySource sql.NullString
 		var verboseErrors sql.NullBool
 		var accessCreatedAt, accessUpdatedAt sql.NullTime
 
 		if err := rows.Scan(
 			&group.ID, &group.OrgID, &parentID, &group.Slug, &group.Name,
 			&description, &group.Depth, &group.Path, &group.IsOrgAdmin, &group.IsOrgReadonlyAdmin, &group.IsSystem, &group.AutoCreated, &group.CreatedAt, &group.UpdatedAt,
-			&accessID, ScanTextArray(&allowedMethods), ScanTextArray(&claimsStr), &rpcAPIKey, &verboseErrors, &accessCreatedAt, &accessUpdatedAt,
+			&accessID, ScanTextArray(&allowedMethods), ScanTextArray(&claimsStr), &rpcAPIKey, &rpcAPIKeySource, &verboseErrors, &accessCreatedAt, &accessUpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan group with access: %w", err)
 		}
@@ -233,6 +233,9 @@ func scanGroupsWithAccess(rows *sql.Rows) ([]*rbac.GroupWithAccess, error) {
 			}
 			if rpcAPIKey.Valid {
 				access.RPCAPIKey = &rpcAPIKey.String
+			}
+			if rpcAPIKeySource.Valid {
+				access.RPCAPIKeySource = &rpcAPIKeySource.String
 			}
 			gwa.Access = access
 		}
@@ -426,19 +429,19 @@ func (d *DB) CreateGroupAccess(ctx context.Context, access *rbac.GroupAccess) er
 // every access SELECT must use (single-row and batch variants scan through
 // scanGroupAccessRow). The batch variant had drifted to a shorter list and
 // silently dropped verbose_errors (RD-1257).
-const groupAccessColumns = `id, group_id, allowed_methods, claims, rpc_api_key, verbose_errors, created_at, updated_at`
+const groupAccessColumns = `id, group_id, allowed_methods, claims, rpc_api_key, rpc_api_key_source, verbose_errors, created_at, updated_at`
 
 // scanGroupAccessRow scans one group_access row. The scanner is either a
 // *sql.Row or a *sql.Rows positioned on a row.
 func scanGroupAccessRow(s interface{ Scan(dest ...any) error }) (*rbac.GroupAccess, error) {
 	access := &rbac.GroupAccess{}
 	var allowedMethods, defaultClaims []string
-	var rpcAPIKey sql.NullString
+	var rpcAPIKey, rpcAPIKeySource sql.NullString
 
 	err := s.Scan(
 		&access.ID, &access.GroupID,
 		ScanTextArray(&allowedMethods), ScanTextArray(&defaultClaims),
-		&rpcAPIKey, &access.VerboseErrors,
+		&rpcAPIKey, &rpcAPIKeySource, &access.VerboseErrors,
 		&access.CreatedAt, &access.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -456,6 +459,9 @@ func scanGroupAccessRow(s interface{ Scan(dest ...any) error }) (*rbac.GroupAcce
 
 	if rpcAPIKey.Valid {
 		access.RPCAPIKey = &rpcAPIKey.String
+	}
+	if rpcAPIKeySource.Valid {
+		access.RPCAPIKeySource = &rpcAPIKeySource.String
 	}
 
 	return access, nil

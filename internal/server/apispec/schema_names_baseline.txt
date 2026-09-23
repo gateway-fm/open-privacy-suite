@@ -215,6 +215,7 @@ privacy-proxy_internal_configuration.RegistryDiff
 privacy-proxy_internal_configuration.RegistrySnapshot
 privacy-proxy_internal_configuration.ResourceChange
 privacy-proxy_internal_configuration.Scope
+privacy-proxy_internal_configuration.SecretRef
 privacy-proxy_internal_configuration.SharedInfrastructure
 privacy-proxy_internal_configuration.Tenant
 privacy-proxy_internal_configuration.TokenPrice

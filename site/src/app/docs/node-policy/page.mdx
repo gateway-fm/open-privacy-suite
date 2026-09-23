@@ -42,7 +42,7 @@ a managed resource is an error. Automation-created resources are retained as
 drift for adoption in a later revision. Once a stream is active, its former
 configuration mutation endpoints close. User onboarding, memberships, bans,
 address links, sanctions and disclosure remain operational actions. Upstream
-RPC credentials can still be rotated separately.
+RPC credentials can still be rotated separately, or declared in the groups document as an environment variable name (`rpcCredential.fromEnv`) that activation resolves; the value never enters the document.
 
 ## Preview and observe execution
 

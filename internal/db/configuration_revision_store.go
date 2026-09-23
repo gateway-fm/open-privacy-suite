@@ -626,7 +626,7 @@ func configurationGroups(ctx context.Context, q DBTX, scope configuration.Scope,
 		if err := q.QueryRowContext(ctx, `SELECT COUNT(*),COUNT(*) FILTER(WHERE NOT u.banned) FROM user_memberships m JOIN users u ON u.id=m.user_id WHERE m.group_id=$1 AND (m.expires_at IS NULL OR m.expires_at>NOW())`, group.ID).Scan(&members, &activeMembers); err != nil {
 			return snapshot, err
 		}
-		state := configuration.GroupState{Group: configuration.ExportGroup(group, access), Managed: managed[group.ID], Protected: group.IsSystem, LiveMemberships: members, ActiveMembers: activeMembers}
+		state := configuration.GroupState{Group: configuration.ExportGroup(group, access), Managed: managed[group.ID], Protected: group.IsSystem, LiveMemberships: members, ActiveMembers: activeMembers, Credential: credentialOwner(access)}
 		if group.ParentID != nil || group.Depth != 0 || group.Path != group.Slug {
 			state.LegacyHierarchy = &configuration.LegacyGroupHierarchy{ParentID: group.ParentID, Depth: group.Depth, Path: group.Path}
 		}
@@ -665,7 +665,68 @@ func projectConfigurationGroups(ctx context.Context, tx *Tx, scope configuration
 			return err
 		}
 	}
+	// Credentials follow the whole projection, not only the changed groups:
+	// every activation re-resolves what the document declares, so rotation is
+	// "change the variable, activate", and a withdrawn declaration is cleared.
+	for _, group := range diff.Projection {
+		if err := projectGroupCredential(ctx, tx, group); err != nil {
+			return err
+		}
+	}
 	return tx.InvalidateCacheForOrg(ctx, scope.ID)
+}
+
+// projectGroupCredential applies a group's declared credential or withdraws
+// the one a previous document wrote. Declared: resolve now, inside the
+// activation transaction, and store the ciphertext where the rotation
+// endpoint would. Not declared: clear only a credential a document wrote,
+// never one set operationally. Every refusal names the variable and nothing
+// else, and rolls the activation back.
+func projectGroupCredential(ctx context.Context, tx *Tx, group configuration.Group) error {
+	if group.RpcCredential == nil {
+		_, err := tx.tx.ExecContext(ctx, `UPDATE group_access SET rpc_api_key=NULL,rpc_api_key_source=NULL,updated_at=NOW() WHERE group_id=$1 AND rpc_api_key_source IS NOT NULL`, group.ID)
+		return err
+	}
+	name := group.RpcCredential.FromEnv
+	if tx.secrets == nil {
+		return ConfigurationConflict("group %s declares credential %s but this deployment cannot resolve credentials", group.ID, name)
+	}
+	ciphertext, err := tx.secrets(name)
+	switch {
+	case errors.Is(err, configuration.ErrSecretUnset):
+		return ConfigurationConflict("group %s credential %s is not set in the OPS environment", group.ID, name)
+	case errors.Is(err, configuration.ErrSecretEncryptionUnavailable):
+		return ConfigurationConflict("group %s credential %s cannot be stored: credential encryption is not configured", group.ID, name)
+	case err != nil:
+		return fmt.Errorf("resolve credential %s for group %s: %w", name, group.ID, err)
+	}
+	result, err := tx.tx.ExecContext(ctx, `UPDATE group_access SET rpc_api_key=$2,rpc_api_key_source=$3,updated_at=NOW() WHERE group_id=$1`, group.ID, ciphertext, name)
+	if err != nil {
+		return err
+	}
+	// The access row is written by the upsert just before this step; a
+	// declaration that found nothing to hold the value must not pass as done.
+	if n, err := result.RowsAffected(); err != nil {
+		return err
+	} else if n != 1 {
+		return ConfigurationConflict("group %s has no access row to hold credential %s", group.ID, name)
+	}
+	return nil
+}
+
+// credentialOwner says who set a group's upstream credential: the document
+// (rendered back as rpcCredential), an operator through the rotation endpoint
+// (never rendered as source), or nobody.
+func credentialOwner(access *rbac.GroupAccess) string {
+	switch {
+	case access == nil:
+		return "none"
+	case access.RPCAPIKeySource != nil && *access.RPCAPIKeySource != "":
+		return "declared"
+	case access.RPCAPIKey != nil && *access.RPCAPIKey != "":
+		return "operational"
+	}
+	return "none"
 }
 
 // ConfigurationActorRoles resolves current scoped authority using the activation

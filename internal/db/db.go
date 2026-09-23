@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/jackc/tern/v2/migrate"
 
+	"privacy-proxy/internal/configuration"
 	"privacy-proxy/internal/db/migrations"
 )
 
@@ -59,6 +60,28 @@ type DB struct {
 	// case (legacy behaviour preserved for tests and bootstrap).
 	rbacAuditChainMu sync.RWMutex
 	rbacAuditChain   RBACAuditChain
+
+	// configurationSecrets resolves a credential placeholder declared in a
+	// groups document into the ciphertext to store. nil until the server
+	// installs it; a document that declares a credential cannot activate
+	// without it.
+	configurationSecretsMu sync.RWMutex
+	configurationSecrets   configuration.SecretResolver
+}
+
+// SetConfigurationSecretResolver installs the resolver activation uses for
+// rpcCredential placeholders. The server owns the encryption key, so the
+// resolver is built there; the database layer only ever sees ciphertext.
+func (d *DB) SetConfigurationSecretResolver(resolver configuration.SecretResolver) {
+	d.configurationSecretsMu.Lock()
+	defer d.configurationSecretsMu.Unlock()
+	d.configurationSecrets = resolver
+}
+
+func (d *DB) configurationSecretResolver() configuration.SecretResolver {
+	d.configurationSecretsMu.RLock()
+	defer d.configurationSecretsMu.RUnlock()
+	return d.configurationSecrets
 }
 
 // SetRBACAuditChain installs the rbac_audit_log hash chain on the DB.

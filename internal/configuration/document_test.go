@@ -47,6 +47,9 @@ func TestDocumentStrictAndCanonical(t *testing.T) {
 		"missing methods":  strings.Replace(string(good), `"allowedMethods":["eth_call"],`, "", 1),
 		"null claims":      strings.Replace(string(good), `"claims":[]`, `"claims":null`, 1),
 		"unknown secret":   strings.Replace(string(good), `"verboseErrors":false`, `"verboseErrors":false,"rpc_api_key":"secret"`, 1),
+		"credential value": strings.Replace(string(good), `"verboseErrors":false`, `"verboseErrors":false,"rpcCredential":{"fromEnv":"OPS_RPC_CREDENTIAL_11111111111111111111111111111111_A","value":"secret"}`, 1),
+		"credential bare":  strings.Replace(string(good), `"verboseErrors":false`, `"verboseErrors":false,"rpcCredential":{"value":"secret"}`, 1),
+		"credential null":  strings.Replace(string(good), `"verboseErrors":false`, `"verboseErrors":false,"rpcCredential":null`, 1),
 		"cross scope":      strings.Replace(string(good), `"kind":"organization"`, `"kind":"platform"`, 1),
 		"unsupported kind": strings.Replace(string(good), `"kind":"groups"`, `"kind":"whatever"`, 1),
 		"trailing value":   string(good) + `{}`,
@@ -157,4 +160,62 @@ func TestGroupDocumentPreservesLegacyMethodAndClaimSemantics(t *testing.T) {
 	require.NotContains(t, doc.Spec.(GroupsSpec).Groups[0].AllowedMethods, "*", "wildcards expand to the current explicit allowlist as in the original setter")
 	_, _, err = doc.Canonical()
 	require.NoError(t, err, "expanded standard method names must remain valid source")
+}
+
+// A credential placeholder names a variable the platform provisions for this
+// organisation and nothing else. Anything outside the organisation's own
+// namespace is refused at parse time, so a tenant admin can never point a
+// group at the process environment at large or at another tenant's variable.
+func TestGroupCredentialPlaceholderNamespacedAndStrict(t *testing.T) {
+	own := "OPS_RPC_CREDENTIAL_11111111111111111111111111111111_PAYMENTS"
+	declared := group(groupOne)
+	declared.RpcCredential = &SecretRef{FromEnv: own}
+	doc, err := Parse(source(t, []Group{declared}))
+	require.NoError(t, err)
+	spec := doc.Spec.(GroupsSpec)
+	require.NotNil(t, spec.Groups[0].RpcCredential)
+	require.Equal(t, own, spec.Groups[0].RpcCredential.FromEnv)
+
+	// Absent stays absent: the pointer is nil, and the canonical text carries no key.
+	plain, err := Parse(source(t, []Group{group(groupOne)}))
+	require.NoError(t, err)
+	require.Nil(t, plain.Spec.(GroupsSpec).Groups[0].RpcCredential)
+	canonical, _, err := plain.Canonical()
+	require.NoError(t, err)
+	require.NotContains(t, string(canonical), "rpcCredential")
+
+	for name, variable := range map[string]string{
+		"operator-wide key":  "RPC_API_KEY",
+		"process secret":     "JWT_SECRET",
+		"database dsn":       "DATABASE_URL",
+		"other organisation": "OPS_RPC_CREDENTIAL_22222222222222222222222222222222_PAYMENTS",
+		"prefix only":        "OPS_RPC_CREDENTIAL_11111111111111111111111111111111_",
+		"lowercase":          "OPS_RPC_CREDENTIAL_11111111111111111111111111111111_payments",
+		"dashes in uuid":     "OPS_RPC_CREDENTIAL_11111111-1111-1111-1111-111111111111_PAYMENTS",
+		"shell expansion":    "${OPS_RPC_CREDENTIAL_11111111111111111111111111111111_PAYMENTS}",
+		"empty":              "",
+		"too long":           "OPS_RPC_CREDENTIAL_11111111111111111111111111111111_" + strings.Repeat("A", 65),
+	} {
+		t.Run(name, func(t *testing.T) {
+			bad := group(groupOne)
+			bad.RpcCredential = &SecretRef{FromEnv: variable}
+			_, err := Parse(source(t, []Group{bad}))
+			require.Error(t, err)
+		})
+	}
+
+	// The placeholder is part of the reviewed text: changing it is an update,
+	// keeping it is not.
+	before := GroupSnapshot{Scope: Scope{Kind: "organization", ID: orgID}, ActiveRevision: 4, Groups: []GroupState{{Group: declared, Managed: true, ActiveMembers: 1}}}
+	same, err := DiffGroups(doc, before)
+	require.NoError(t, err)
+	require.Empty(t, same.Changes)
+	rotated := declared
+	rotated.RpcCredential = &SecretRef{FromEnv: own + "_2"}
+	changed, err := Parse(source(t, []Group{rotated}))
+	require.NoError(t, err)
+	diff, err := DiffGroups(changed, before)
+	require.NoError(t, err)
+	require.Len(t, diff.Changes, 1)
+	require.Equal(t, "update", diff.Changes[0].Action)
 }

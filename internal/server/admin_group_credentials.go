@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/crypto"
 	"privacy-proxy/internal/rbac"
 )
@@ -18,6 +19,7 @@ import (
 // @Param group_id path string true "Group UUID"
 // @Param request body object true "rpc_api_key only; empty string clears it"
 // @Success 204
+// @Failure 409 {object} apimodels.APIError "the credential is declared by the group's configuration document; change the document instead"
 // @Security BearerAuth
 // @Router /api/v1/admin/orgs/{org_id}/groups/{group_id}/rpc-credential [put]
 func (s *Server) rotateGroupRPCCredential(c *gin.Context) {
@@ -30,7 +32,7 @@ func (s *Server) rotateGroupRPCCredential(c *gin.Context) {
 		return
 	}
 	if group.IsSystem && c.GetString("auth_method") != "admin_token" {
-		c.JSON(http.StatusForbidden, gin.H{"error": "system group credentials require bootstrap authority"})
+		c.JSON(http.StatusForbidden, apimodels.APIError{Error: "system group credentials require bootstrap authority"})
 		return
 	}
 	if denyJWTAdminTouchOrgAdminGroup(c, group) || denyOperatorRegularGroup(c, group) {
@@ -42,12 +44,12 @@ func (s *Server) rotateGroupRPCCredential(c *gin.Context) {
 	decoder := json.NewDecoder(io.LimitReader(c.Request.Body, 16385))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&input); err != nil || input.Key == nil || len(*input.Key) > 8192 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "rpc_api_key is required; no desired-state fields are accepted"})
+		c.JSON(http.StatusBadRequest, apimodels.APIError{Error: "rpc_api_key is required; no desired-state fields are accepted"})
 		return
 	}
 	var extra any
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "unexpected credential request content"})
+		c.JSON(http.StatusBadRequest, apimodels.APIError{Error: "unexpected credential request content"})
 		return
 	}
 	var encrypted *string

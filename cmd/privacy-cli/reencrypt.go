@@ -96,8 +96,12 @@ func runReencryptRPCKeys(args []string) {
 		os.Exit(1)
 	}
 
+	// Declared credentials (rpc_api_key_source set by a reviewed groups
+	// document) are skipped: the projection barrier refuses key-only writes
+	// to them, and the next activation of the stream re-encrypts them under
+	// the key the server runs with.
 	rows, err := conn.QueryContext(ctx,
-		`SELECT id, rpc_api_key FROM group_access WHERE rpc_api_key IS NOT NULL AND rpc_api_key <> ''`)
+		`SELECT id, rpc_api_key FROM group_access WHERE rpc_api_key IS NOT NULL AND rpc_api_key <> '' AND rpc_api_key_source IS NULL`)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "query group_access: %v\n", err)
 		os.Exit(1)

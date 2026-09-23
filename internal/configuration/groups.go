@@ -117,7 +117,7 @@ func diffGroups(document *Document, snapshot GroupSnapshot) (GroupDiff, error) {
 	sort.Slice(result.Projection, func(i, j int) bool { return result.Projection[i].ID < result.Projection[j].ID })
 	// New identifiers must not collide with a preserved unmanaged name/slug.
 	projection := GroupsSpec{Groups: result.Projection}
-	if err := normalizeGroups(&projection); err != nil {
+	if err := normalizeGroups(&projection, document.Scope); err != nil {
 		return result, err
 	}
 	beforeAdmins, afterAdmins := int64(0), int64(0)
@@ -152,6 +152,9 @@ func ExportGroup(group *rbac.Group, access *rbac.GroupAccess) Group {
 			out.Claims = append(out.Claims, string(claim))
 		}
 		out.VerboseErrors = access.VerboseErrors
+		if access.RPCAPIKeySource != nil && *access.RPCAPIKeySource != "" {
+			out.RpcCredential = &SecretRef{FromEnv: *access.RPCAPIKeySource}
+		}
 	}
 	sort.Strings(out.AllowedMethods)
 	sort.Strings(out.Claims)

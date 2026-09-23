@@ -93,7 +93,7 @@ field; bans do not.
 | Sanctions list | operational **today**, but this depends on who produces it: a list the customer curates from OFAC designations is a decision and belongs in a document; a vendor feed is not. `sanctioned_addresses` already records `source`, so both can coexist — see the decision below |
 | Deployment records | an observation: the receipt names the signing address, and two principals may share one. Only OPS knows which of them submitted the transaction, because the submission carried its authenticated identity |
 | Disclosure | every step is the other organisation's answer |
-| Secrets (group RPC credential) | must never appear in a text that is diffed, reviewed and exported |
+| Secrets (group RPC credential) | the value must never appear in a text that is diffed, reviewed and exported. The document may name the environment variable that holds it, in the organisation's own namespace; activation resolves and encrypts the value, and a variable that is not set refuses the activation |
 | Caches, sessions, permission results | recomputed or re-issued; never a source |
 
 The rule behind the table: **anything that makes a decision must be the document

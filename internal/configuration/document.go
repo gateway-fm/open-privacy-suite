@@ -82,6 +82,10 @@ type Group struct {
 	AllowedMethods     []string `json:"allowedMethods"`
 	Claims             []string `json:"claims"`
 	VerboseErrors      bool     `json:"verboseErrors"`
+	// RpcCredential names the environment variable holding the group's
+	// upstream RPC credential. Optional; the value is resolved at activation
+	// and never appears in the document.
+	RpcCredential *SecretRef `json:"rpcCredential,omitempty" optional:"true"`
 }
 
 type GroupsSpec struct {
@@ -151,6 +155,10 @@ type GroupState struct {
 	ActiveMembers   int64 `json:"activeMembers"`
 	// LegacyHierarchy is retained database metadata, not authorable source.
 	LegacyHierarchy *LegacyGroupHierarchy `json:"legacyHierarchy,omitempty"`
+	// Credential says who owns the group's upstream credential today:
+	// "declared" (by the document, rendered as rpcCredential), "operational"
+	// (set through the rotation endpoint, never rendered as source) or "none".
+	Credential string `json:"credential"`
 }
 type LegacyGroupHierarchy struct {
 	ParentID *string `json:"parentId"`

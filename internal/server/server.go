@@ -19,6 +19,7 @@ import (
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/compliance"
 	"privacy-proxy/internal/config"
+	"privacy-proxy/internal/configuration"
 	"privacy-proxy/internal/db"
 	migrationsaudit "privacy-proxy/internal/db/migrations_audit"
 	"privacy-proxy/internal/disclosure"
@@ -770,6 +771,10 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	}
 	rbacAuditChain := audit.NewHashChain(rbacAuditSeed)
 	database.SetRBACAuditChain(rbacAuditChain)
+	// Credential placeholders in groups documents resolve from this process's
+	// environment and are stored encrypted; without an encryption key the
+	// resolver refuses rather than storing plaintext.
+	database.SetConfigurationSecretResolver(configuration.NewEnvSecretResolver(cfg.RPCAPIKeyEncryptionKey))
 
 	// Initialize SIEM forwarder if webhook URL is configured.
 	// RD-950: NewSIEMForwarder now applies the SSRF guard at construction

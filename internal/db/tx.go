@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+
+	"privacy-proxy/internal/configuration"
 )
 
 // DBTX is an interface satisfied by both *sql.DB and *sql.Tx.
@@ -24,6 +26,8 @@ type DBTX interface {
 type Tx struct {
 	tx          *sql.Tx
 	databaseURL string
+	// secrets is the credential resolver in force when the transaction began.
+	secrets configuration.SecretResolver
 }
 
 // BeginTx starts a new database transaction.
@@ -32,7 +36,7 @@ func (d *DB) BeginTx(ctx context.Context) (*Tx, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	return &Tx{tx: tx, databaseURL: d.databaseURL}, nil
+	return &Tx{tx: tx, databaseURL: d.databaseURL, secrets: d.configurationSecretResolver()}, nil
 }
 
 // Commit commits the transaction.

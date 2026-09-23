@@ -259,9 +259,9 @@ func (f *EventRulesField) UnmarshalJSON(data []byte) error {
 // EventRules can optionally restrict which event logs are visible.
 // Claims are inherited from the group's GroupAccess.claims - grants just link groups to contracts.
 type ContractGrant struct {
-	ID         string           `json:"id"`
-	ContractID string           `json:"contract_id"`
-	GroupID    string           `json:"group_id"`
+	ID         string `json:"id"`
+	ContractID string `json:"contract_id"`
+	GroupID    string `json:"group_id"`
 	// No omitempty: a non-nil empty slice ([]) means "deny all functions"
 	// (events-only grant) and MUST be distinguishable in the API response from
 	// nil ("all functions"). Mirrors EventRules below, which is likewise always
@@ -277,14 +277,17 @@ type ContractGrant struct {
 // Claims are operational gates: only deploy, upgrade, and admin are meaningful.
 // Read/write access is determined by AllowedMethods, not claims.
 type GroupAccess struct {
-	ID             string    `json:"id"`
-	GroupID        string    `json:"group_id"`
-	AllowedMethods []string  `json:"allowed_methods"`
-	Claims         []Claim   `json:"claims"`                // Operational claims: deploy, upgrade, admin
-	RPCAPIKey      *string   `json:"rpc_api_key,omitempty"` // API key for upstream RPC proxy authentication
-	VerboseErrors  bool      `json:"verbose_errors"`        // RD-1137 Part A: members get curated reason codes on the wire for denials
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ID             string   `json:"id"`
+	GroupID        string   `json:"group_id"`
+	AllowedMethods []string `json:"allowed_methods"`
+	Claims         []Claim  `json:"claims"`                // Operational claims: deploy, upgrade, admin
+	RPCAPIKey      *string  `json:"rpc_api_key,omitempty"` // API key for upstream RPC proxy authentication
+	// RPCAPIKeySource names the environment variable a reviewed groups document
+	// resolved rpc_api_key from; nil when the key was set operationally or not at all.
+	RPCAPIKeySource *string   `json:"rpc_api_key_source,omitempty"`
+	VerboseErrors   bool      `json:"verbose_errors"` // RD-1137 Part A: members get curated reason codes on the wire for denials
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 
 	// Computed fields (not stored in DB, populated by handlers for child groups)
 	EffectiveClaims  []Claim `json:"effective_claims,omitempty"`
@@ -404,13 +407,13 @@ func (r *AccessCheckRequest) EffectiveMethod() string {
 // that consumes this field should slog it for the operator and
 // respond with a generic opaque message to the client.
 type AccessCheckResult struct {
-	Allowed        bool    `json:"allowed"`
-	AuthRequired   bool    `json:"auth_required,omitempty"` // True when denial is due to missing authentication (401 vs 403)
-	Reason         string  `json:"reason,omitempty"`
-	OrgID          string  `json:"org_id,omitempty"`  // Resolved organization ID
-	UserID         string  `json:"user_id,omitempty"` // Internal user ID (UUID)
-	RPCAPIKey      string  `json:"-"`                 // API key for upstream RPC proxy (excluded from JSON — sensitive)
-	Claims         []Claim `json:"claims,omitempty"`
+	Allowed      bool    `json:"allowed"`
+	AuthRequired bool    `json:"auth_required,omitempty"` // True when denial is due to missing authentication (401 vs 403)
+	Reason       string  `json:"reason,omitempty"`
+	OrgID        string  `json:"org_id,omitempty"`  // Resolved organization ID
+	UserID       string  `json:"user_id,omitempty"` // Internal user ID (UUID)
+	RPCAPIKey    string  `json:"-"`                 // API key for upstream RPC proxy (excluded from JSON — sensitive)
+	Claims       []Claim `json:"claims,omitempty"`
 }
 
 // GroupWithAccess combines a Group with its access settings.

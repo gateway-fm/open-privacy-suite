@@ -2862,6 +2862,8 @@ components:
           type: boolean
         name:
           type: string
+        rpcCredential:
+          $ref: '#/components/schemas/privacy-proxy_internal_configuration.SecretRef'
         slug:
           type: string
         verboseErrors:
@@ -2916,6 +2918,12 @@ components:
       properties:
         activeMembers:
           type: integer
+        credential:
+          description: |-
+            Credential says who owns the group's upstream credential today:
+            "declared" (by the document, rendered as rpcCredential), "operational"
+            (set through the rotation endpoint, never rendered as source) or "none".
+          type: string
         group:
           $ref: '#/components/schemas/privacy-proxy_internal_configuration.Group'
         legacyHierarchy:
@@ -3088,6 +3096,15 @@ components:
         id:
           type: string
         kind:
+          type: string
+      type: object
+    privacy-proxy_internal_configuration.SecretRef:
+      description: |-
+        RpcCredential names the environment variable holding the group's
+        upstream RPC credential. Optional; the value is resolved at activation
+        and never appears in the document.
+      properties:
+        fromEnv:
           type: string
       type: object
     privacy-proxy_internal_configuration.SharedInfrastructure:
@@ -4517,6 +4534,11 @@ components:
           type: boolean
         rpc_api_key:
           description: API key for upstream RPC proxy authentication
+          type: string
+        rpc_api_key_source:
+          description: |-
+            RPCAPIKeySource names the environment variable a reviewed groups document
+            resolved rpc_api_key from; nil when the key was set operationally or not at all.
           type: string
         updated_at:
           type: string
@@ -10389,6 +10411,13 @@ paths:
       responses:
         "204":
           description: No Content
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
+          description: the credential is declared by the group's configuration document;
+            change the document instead
       security:
       - BearerAuth: []
       summary: Rotate operational upstream RPC credentials for a group

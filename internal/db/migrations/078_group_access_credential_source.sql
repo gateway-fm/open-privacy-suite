@@ -1,0 +1,18 @@
+-- WHAT: records which environment variable a group's upstream RPC credential
+-- was resolved from, when a reviewed groups document declared it.
+-- WHY: a groups document may name the variable holding a group's credential
+-- (rpcCredential.fromEnv). Activation resolves it and writes the encrypted
+-- value into rpc_api_key exactly as the rotation endpoint does; this column
+-- lets the current state render the placeholder back, lets a later revision
+-- withdraw what the document wrote without touching operationally set keys,
+-- and lets the rotation endpoint refuse to overwrite a declared credential.
+-- The value itself is never stored anywhere but rpc_api_key.
+-- AFFECTED ROWS: none rewritten; the column is NULL for every existing row,
+-- which means "set operationally or not at all".
+-- AUTHORITATIVE RECORD: the reviewed groups revision (configuration_revisions)
+-- plus its transactional audit; this migration writes no audit rows.
+-- EXPAND-ONLY: one nullable column on an existing table; existing grants cover it.
+-- The 075 projection guard keeps ignoring rpc_api_key on UPDATE for rows
+-- whose source is NULL (079 narrows the exemption to those): the value stays
+-- operational, only its declared source is desired state.
+ALTER TABLE group_access ADD COLUMN rpc_api_key_source TEXT;

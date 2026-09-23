@@ -408,6 +408,8 @@ cp rpc-namespaces.example.json rpc-namespaces.json
 
 Each RBAC group can have an API key for the upstream RPC node. This enables per-group rate limiting and usage tracking on the upstream side.
 
+A group's key is set either operationally, through the group credential endpoint, or declaratively: the reviewed groups document names an environment variable in the organisation's namespace (`OPS_RPC_CREDENTIAL_<ORG>_<NAME>`), and activation reads it from the OPS process environment, encrypts it with `RPC_API_KEY_ENCRYPTION_KEY` and stores it. Populate those variables from your secrets store the same way as the other secret-class settings; without an encryption key such an activation is refused rather than stored in plaintext.
+
 <EnvTable vars={[
   { name: "RPC_API_KEY", default: "(none)", description: "Global fallback API key for the upstream RPC node. Used when no group-specific key is configured." },
   { name: "RPC_API_KEY_HEADER", default: "Authorization", description: "Header name used to send the upstream RPC API key. Default 'Authorization' sends 'Bearer <key>'; any other value (e.g. 'X-API-Key') sends the key verbatim under that header. Validated against ^[A-Za-z0-9-]+$ at startup." },
