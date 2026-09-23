@@ -467,6 +467,10 @@ export const handlers = [
         runtime_tracing_enabled: false,
         travel_rule_enabled: true,
       },
+      // The server always reports the execution mode; legacy is its default
+      // (internal/server/node_policy.go executionStatus). Reth-mode tests
+      // override this per case.
+      execution: { mode: 'legacy', ready: true },
     });
   }),
 
