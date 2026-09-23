@@ -9889,6 +9889,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
           description: no such draft in this organization
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
+          description: the organization's execution rules are a managed configuration
+            stream; legacy drafts can no longer be changed here
         "500":
           content:
             application/json:

@@ -498,6 +498,15 @@ func isExecutionPolicyPreparation(c *gin.Context) bool {
 
 // withdrawExecutionPolicyRevision abandons a draft.
 //
+// Unlike submit, activate and simulate, this writer is not closed by the Reth
+// mode switch (closeLegacyExecutionWriter): a legacy draft enforces nothing
+// and can never reach the node-policy feed, which publishes active rows only,
+// so abandoning one creates no legacy policy. It stays open while the
+// organisation's execution-rules stream is not yet managed, which is when
+// leftover drafts can still be cleaned up; once a configuration revision is
+// active, the managed-stream guard on the route (and the barrier on the
+// table) closes it like every other legacy writer.
+//
 // @Summary      Withdraw an execution-policy draft
 // @Description  Abandons a draft that was never activated. An active or superseded revision is part of the record of what was enforced and cannot be withdrawn. Scoped to {org_id}; the restricted operator token is rejected.
 // @Tags         Admin: Execution policy
@@ -508,6 +517,7 @@ func isExecutionPolicyPreparation(c *gin.Context) bool {
 // @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
 // @Failure      403 {object} apimodels.APIError "operator token cannot manage per-org policy, or caller is out of org scope"
 // @Failure      404 {object} apimodels.APIError "no such draft in this organization"
+// @Failure      409 {object} apimodels.APIError "the organization's execution rules are a managed configuration stream; legacy drafts can no longer be changed here"
 // @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/execution-policy/revisions/{revision_id}/withdraw [post]

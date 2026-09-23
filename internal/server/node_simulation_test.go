@@ -13,6 +13,7 @@ import (
 	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/config"
 	"privacy-proxy/internal/nodepolicy"
+	"privacy-proxy/internal/policydsl"
 	"privacy-proxy/internal/rbac"
 	"privacy-proxy/internal/server/middleware"
 )
@@ -106,6 +107,46 @@ func TestRethModeClosesLegacyExecutionWritersAndReferenceSimulation(t *testing.T
 		require.Equal(t, http.StatusConflict, response.Code, response.Body.String())
 		require.Contains(t, response.Body.String(), "configuration")
 	}
+
+	// Withdrawing a leftover legacy draft is not closed by the mode switch. It
+	// only abandons a draft that enforces nothing and can never be published
+	// (the node-policy feed marks active rows only), so drafts left behind can
+	// still be cleaned up while the organisation's execution-rules stream is
+	// unmanaged. Reads stay open for the same reason.
+	artifact := &policydsl.Artifact{PolicyDigest: "policy", Source: "contract Policy {}", SourceDigest: "source", RuntimeBytecode: []byte{0}, RuntimeDigest: "runtime"}
+	leftover, err := f.server.db.CreateExecutionPolicyRevision(t.Context(), f.orgID, 0, "{}", artifact, &f.readonlyUserID)
+	require.NoError(t, err)
+	abandoned, err := f.server.db.CreateExecutionPolicyRevision(t.Context(), f.orgID, 0, "{}", artifact, &f.readonlyUserID)
+	require.NoError(t, err)
+	response := f.request(t, f.admin, http.MethodPost, base+"/"+abandoned.ID+"/activate", map[string]any{})
+	require.Equal(t, http.StatusConflict, response.Code, response.Body.String())
+	response = f.request(t, f.admin, http.MethodGet, base+"/"+abandoned.ID, nil)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	response = f.request(t, f.admin, http.MethodPost, base+"/"+abandoned.ID+"/withdraw", nil)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.Contains(t, response.Body.String(), `"status":"withdrawn"`)
+	response = f.request(t, f.admin, http.MethodPost, base+"/"+abandoned.ID+"/withdraw", nil)
+	require.Equal(t, http.StatusNotFound, response.Code, "a withdrawn draft is no longer a draft: %s", response.Body.String())
+
+	// Once the organisation's execution rules are a managed stream, the same
+	// guard that closes every legacy writer closes withdraw too: the draft
+	// left behind stays readable but can no longer be touched here.
+	rules := "/api/v1/admin/orgs/" + f.orgID + "/configuration/execution-rules"
+	response = f.request(t, f.readonly, http.MethodGet, rules+"/context", nil)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var rulesContext apimodels.ConfigurationContext
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &rulesContext))
+	response = f.request(t, f.readonly, http.MethodPost, rules+"/revisions", rulesContext.Source)
+	require.Equal(t, http.StatusCreated, response.Code, response.Body.String())
+	var rulesDraft apimodels.ConfigurationRevision
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &rulesDraft))
+	response = f.request(t, f.reviewer, http.MethodPost, rules+"/revisions/"+rulesDraft.ID+"/activate", nil)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	response = f.request(t, f.admin, http.MethodPost, base+"/"+leftover.ID+"/withdraw", nil)
+	require.Equal(t, http.StatusConflict, response.Code, response.Body.String())
+	require.Contains(t, response.Body.String(), "managed stream")
+	response = f.request(t, f.admin, http.MethodGet, base+"/"+leftover.ID, nil)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 }
 
 func TestNodeCandidatePreviewAllowsReadonlySelfAndNeverImpersonation(t *testing.T) {
