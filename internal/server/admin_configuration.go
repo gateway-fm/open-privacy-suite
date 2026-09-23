@@ -95,6 +95,7 @@ func (s *Server) listPlatformConfigurationRevisions(c *gin.Context) { s.listConf
 // @Failure 400 {object} apimodels.APIError
 // @Failure 403 {object} apimodels.APIError
 // @Failure 409 {object} apimodels.APIError
+// @Failure 503 {object} apimodels.APIError "this deployment lacks a dependency the document needs, such as the pinned Solidity compiler for execution rules"
 // @Security BearerAuth
 // @Router /api/v1/admin/configuration/platform/revisions [post]
 func (s *Server) submitPlatformConfigurationRevision(c *gin.Context) {
@@ -232,6 +233,9 @@ func configurationError(c *gin.Context, err error) {
 		respondConflict(c, db.ErrPolicyStaleBase.Error())
 	case errors.Is(err, db.ErrPolicyNotDraft):
 		respondConflict(c, db.ErrPolicyNotDraft.Error())
+	case errors.Is(err, db.ErrConfigurationUnavailable):
+		// The document is fine; this deployment is missing something it needs.
+		respondClientError(c, http.StatusServiceUnavailable, err, "configuration dependency is unavailable", "admin_configuration: dependency unavailable without client text")
 	case errors.Is(err, db.ErrConfigurationConflict):
 		respondClientError(c, http.StatusConflict, err, "configuration conflicts with the current revision state", "admin_configuration: conflict without client text")
 	default:
@@ -345,6 +349,7 @@ func (s *Server) getConfigurationContext(c *gin.Context) {
 // @Failure 400 {object} apimodels.APIError
 // @Failure 403 {object} apimodels.APIError
 // @Failure 409 {object} apimodels.APIError
+// @Failure 503 {object} apimodels.APIError "this deployment lacks a dependency the document needs, such as the pinned Solidity compiler for execution rules"
 // @Security BearerAuth
 // @Router /api/v1/admin/orgs/{org_id}/configuration/{kind}/revisions [post]
 func (s *Server) submitConfigurationRevision(c *gin.Context) {

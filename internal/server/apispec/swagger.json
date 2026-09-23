@@ -8008,6 +8008,16 @@
                             }
                         },
                         "description": "Conflict"
+                    },
+                    "503": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "this deployment lacks a dependency the document needs, such as the pinned Solidity compiler for execution rules"
                     }
                 },
                 "security": [
@@ -11683,6 +11693,16 @@
                             }
                         },
                         "description": "Conflict"
+                    },
+                    "503": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "this deployment lacks a dependency the document needs, such as the pinned Solidity compiler for execution rules"
                     }
                 },
                 "security": [

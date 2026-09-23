@@ -12,6 +12,28 @@ import (
 // failures retain their original type and are never exposed.
 var ErrConfigurationConflict = errors.New("configuration conflict")
 
+// ErrConfigurationUnavailable means the request is well formed and the state is
+// fine, but this deployment cannot carry it out because a dependency it needs
+// is missing. It is a capability problem with an operator fix, never a fault of
+// the document, so it must not read as a conflict with current state.
+var ErrConfigurationUnavailable = errors.New("configuration dependency unavailable")
+
+// ConfigurationUnavailableError carries client-safe text for that case.
+type ConfigurationUnavailableError struct{ message string }
+
+func (e *ConfigurationUnavailableError) Error() string {
+	return ErrConfigurationUnavailable.Error() + ": " + e.message
+}
+func (e *ConfigurationUnavailableError) ClientMessage() string { return e.Error() }
+func (e *ConfigurationUnavailableError) Is(target error) bool {
+	return target == ErrConfigurationUnavailable
+}
+
+// ConfigurationUnavailable builds a *ConfigurationUnavailableError.
+func ConfigurationUnavailable(format string, args ...any) error {
+	return &ConfigurationUnavailableError{message: fmt.Sprintf(format, args...)}
+}
+
 // ConfigurationConflictError is what ConfigurationConflict returns. Its text is
 // written for the revision author and may be returned verbatim by a handler
 // (RD-934 rule-4 carve-out): the format string is a constant from this package

@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"strings"
 
 	"privacy-proxy/internal/configuration"
@@ -79,7 +80,17 @@ func compileConfigurationExecution(ctx context.Context, q DBTX, doc *configurati
 	if err != nil {
 		return nil, ConfigurationConflict("execution policy: %s", err)
 	}
-	artifact, err := policydsl.NewCompiler().Build(ctx, validated)
+	// A deployment without the pinned compiler cannot produce an artifact, and
+	// that is an operator problem with a known fix — not a server fault. Say so
+	// instead of failing the request opaquely; capabilities.compiler already
+	// reports the same condition before anyone drafts against it. The
+	// underlying error names local paths, so it is logged, never returned.
+	compiler := policydsl.NewCompiler()
+	if err := compiler.Available(ctx); err != nil {
+		slog.Warn("execution-rules submission refused: no usable pinned compiler", "pinned_version", policydsl.SolidityVersion, "err", err)
+		return nil, ConfigurationUnavailable("execution rules are compiled with Solidity %s and this deployment has no usable compiler: install it and point POLICY_SOLC at it", policydsl.SolidityVersion)
+	}
+	artifact, err := compiler.Build(ctx, validated)
 	if err != nil {
 		return nil, err
 	}
