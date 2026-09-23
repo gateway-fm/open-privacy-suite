@@ -740,6 +740,11 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		// Start background CoinGecko price fetcher (unless disabled)
 		if !cfg.DisableCoinGecko {
 			priceSvc := pricing.NewService(database, database, cfg.PriceFetchInterval)
+			// The platform document may declare the endpoint and interval;
+			// the poller reads that before every fetch. Every fetch goes
+			// through the outbound destination guard, as the SIEM forwarder's do.
+			priceSvc.SetFeedStore(database)
+			priceSvc.UseGuardedTransport(!cfg.IsProduction())
 			priceSvc.SetMetrics(m.PricingFetchesTotal, m.PricingFetchDuration, m.PricingConsecutiveFailures)
 			priceSvc.Start()
 			s.priceService = priceSvc

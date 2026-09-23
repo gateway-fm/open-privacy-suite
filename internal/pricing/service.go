@@ -3,11 +3,14 @@ package pricing
 import (
 	"context"
 	"log/slog"
+	"net/url"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 
 	"privacy-proxy/internal/compliance"
+	"privacy-proxy/internal/configuration"
+	"privacy-proxy/internal/netguard"
 )
 
 // SystemPriceStore defines the database operations needed by the pricing service.
@@ -21,20 +24,34 @@ type SettingsStore interface {
 	GetSystemSetting(ctx context.Context, key string) (string, error)
 }
 
-// Service fetches token prices from CoinGecko on a schedule and updates the system_token_prices table.
+// FeedStore reads the price feed the active platform document declares, if
+// any. nil means none: the built-in endpoint and the environment interval.
+type FeedStore interface {
+	GetPlatformPriceFeed(ctx context.Context) (*configuration.PriceFeed, error)
+}
+
+// Service fetches token prices on a schedule and updates the system_token_prices
+// table. The endpoint and interval come from the platform document when it
+// declares a price feed, otherwise from the environment.
 type Service struct {
-	store               SystemPriceStore
-	settingsStore       SettingsStore
-	fetcher             *Fetcher
+	store         SystemPriceStore
+	settingsStore SettingsStore
+	feeds         FeedStore
+	fetcher       *Fetcher
+	// defaultInterval is the environment setting; interval is what the loop
+	// currently runs at; feedSource says where the current settings came from.
+	// All three are owned by the loop goroutine.
+	defaultInterval     time.Duration
 	interval            time.Duration
+	feedSource          string
 	cancel              context.CancelFunc
 	done                chan struct{}
 	refreshCh           chan struct{} // signals immediate re-fetch
 	consecutiveFailures int
 
 	// Prometheus metrics (optional, set via SetMetrics)
-	fetchesTotal        *prometheus.CounterVec
-	fetchDuration       prometheus.Histogram
+	fetchesTotal         *prometheus.CounterVec
+	fetchDuration        prometheus.Histogram
 	consecutiveFailGauge prometheus.Gauge
 }
 
@@ -48,13 +65,28 @@ func (s *Service) SetMetrics(fetches *prometheus.CounterVec, duration prometheus
 // NewService creates a new pricing service.
 func NewService(store SystemPriceStore, settingsStore SettingsStore, interval time.Duration) *Service {
 	return &Service{
-		store:         store,
-		settingsStore: settingsStore,
-		fetcher:       NewFetcher(),
-		interval:      interval,
-		done:          make(chan struct{}),
-		refreshCh:     make(chan struct{}, 1),
+		store:           store,
+		settingsStore:   settingsStore,
+		fetcher:         NewFetcher(),
+		defaultInterval: interval,
+		interval:        interval,
+		feedSource:      "environment",
+		done:            make(chan struct{}),
+		refreshCh:       make(chan struct{}, 1),
 	}
+}
+
+// SetFeedStore makes the service read the declared price feed before every
+// fetch. Call before Start.
+func (s *Service) SetFeedStore(feeds FeedStore) {
+	s.feeds = feeds
+}
+
+// UseGuardedTransport applies the outbound destination guard to every fetch,
+// so a declared endpoint cannot resolve to a private or loopback address in
+// production even if its name did not at review time. Call before Start.
+func (s *Service) UseGuardedTransport(allowPrivate bool) {
+	s.fetcher.client = newFeedClient(netguard.GuardedTransport(allowPrivate))
 }
 
 // Start begins the background price fetching loop.
@@ -65,10 +97,10 @@ func (s *Service) Start() {
 	go func() {
 		defer close(s.done)
 
-		// Fetch immediately on start
-		s.fetchAndUpdate(ctx)
+		// Fetch immediately on start; the declared feed, if any, sets the pace.
+		interval := s.fetchAndUpdate(ctx)
 
-		ticker := time.NewTicker(s.interval)
+		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 
 		for {
@@ -76,14 +108,16 @@ func (s *Service) Start() {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				s.fetchAndUpdate(ctx)
 			case <-s.refreshCh:
-				s.fetchAndUpdate(ctx)
+			}
+			if next := s.fetchAndUpdate(ctx); next != interval {
+				interval = next
+				ticker.Reset(interval)
 			}
 		}
 	}()
 
-	slog.Info("pricing service started", "interval", s.interval)
+	slog.Info("pricing service started", "interval", s.defaultInterval)
 }
 
 // Stop gracefully stops the background fetching.
@@ -115,7 +149,51 @@ var allCurrencies = func() []string {
 	return codes
 }()
 
-func (s *Service) fetchAndUpdate(ctx context.Context) {
+// fetchAndUpdate applies the declared feed, fetches prices, and returns the
+// interval until the next tick.
+func (s *Service) fetchAndUpdate(ctx context.Context) time.Duration {
+	s.applyDeclaredFeed(ctx)
+	s.updatePrices(ctx)
+	return s.interval
+}
+
+// applyDeclaredFeed points the fetcher at the feed the active platform
+// document declares, or back at the built-in endpoint and the environment
+// interval when there is none. It runs on the loop goroutine, which owns the
+// fetcher. A failed read keeps the last applied settings: moving the poller
+// on a guess would be worse than one late tick.
+func (s *Service) applyDeclaredFeed(ctx context.Context) {
+	if s.feeds == nil {
+		return
+	}
+	feed, err := s.feeds.GetPlatformPriceFeed(ctx)
+	if err != nil {
+		slog.Warn("pricing service could not read the declared price feed, keeping current settings", "error", err)
+		return
+	}
+	baseURL, interval, source := coingeckoBaseURL, s.defaultInterval, "environment"
+	if feed != nil {
+		baseURL, source = feed.URI, "platform document"
+		if feed.RefreshIntervalSeconds > 0 {
+			interval = time.Duration(feed.RefreshIntervalSeconds) * time.Second
+		}
+	}
+	if baseURL != s.fetcher.baseURL || interval != s.interval || source != s.feedSource {
+		slog.Info("pricing service price feed applied", "source", source, "interval", interval, "host", hostOf(baseURL))
+	}
+	s.fetcher.baseURL, s.interval, s.feedSource = baseURL, interval, source
+}
+
+// hostOf keeps the log to the destination's host; a declared URI may carry a
+// query the operator would not want repeated in every log line.
+func hostOf(rawURL string) string {
+	if u, err := url.Parse(rawURL); err == nil {
+		return u.Host
+	}
+	return "invalid"
+}
+
+func (s *Service) updatePrices(ctx context.Context) {
 	fetchStart := time.Now()
 
 	// Read current system token IDs from DB
@@ -152,7 +230,7 @@ func (s *Service) fetchAndUpdate(ctx context.Context) {
 		}
 	}
 
-	// Fetch all currencies from CoinGecko in a single request
+	// Fetch all currencies from the price feed in a single request
 	allPrices, err := s.fetcher.FetchAll(ctx, ids, allCurrencies)
 	if s.fetchDuration != nil {
 		s.fetchDuration.Observe(time.Since(fetchStart).Seconds())
@@ -166,9 +244,9 @@ func (s *Service) fetchAndUpdate(ctx context.Context) {
 			s.consecutiveFailGauge.Set(float64(s.consecutiveFailures))
 		}
 		if s.consecutiveFailures >= 3 {
-			slog.Error("CoinGecko fetch failed multiple times, prices may be stale", "consecutive_failures", s.consecutiveFailures, "error", err)
+			slog.Error("price feed fetch failed multiple times, prices may be stale", "consecutive_failures", s.consecutiveFailures, "source", s.feedSource, "error", err)
 		} else {
-			slog.Warn("CoinGecko fetch failed, keeping existing prices", "error", err)
+			slog.Warn("price feed fetch failed, keeping existing prices", "source", s.feedSource, "error", err)
 		}
 		return
 	}
@@ -219,5 +297,5 @@ func (s *Service) fetchAndUpdate(ctx context.Context) {
 		s.fetchesTotal.WithLabelValues("success").Inc()
 	}
 
-	slog.Info("pricing service: updated token prices from CoinGecko", "updated", updated, "total", len(ids))
+	slog.Info("pricing service: updated token prices", "source", s.feedSource, "updated", updated, "total", len(ids))
 }

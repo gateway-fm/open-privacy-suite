@@ -22,6 +22,8 @@ export interface ConfigurationCapabilities {
   approvalModes: string[];
   maxDocumentBytes: number;
   compiler: { version: string; available: boolean };
+  /** Whether a price feed declared in the platform document is polled here. */
+  priceFeed?: { available: boolean; reason?: string };
 }
 export interface ConfigurationContext {
   /** Optional in fixtures; the server always sends it. */

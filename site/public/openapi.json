@@ -708,6 +708,9 @@
                     },
                     "maxDocumentBytes": {
                         "type": "integer"
+                    },
+                    "priceFeed": {
+                        "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.ConfigurationPriceFeed"
                     }
                 },
                 "type": "object"
@@ -787,6 +790,17 @@
                     },
                     "managed": {
                         "type": "boolean"
+                    }
+                },
+                "type": "object"
+            },
+            "privacy-proxy_internal_apimodels.ConfigurationPriceFeed": {
+                "properties": {
+                    "available": {
+                        "type": "boolean"
+                    },
+                    "reason": {
+                        "type": "string"
                     }
                 },
                 "type": "object"
@@ -4254,6 +4268,9 @@
             },
             "privacy-proxy_internal_configuration.PlatformSpec": {
                 "properties": {
+                    "priceFeed": {
+                        "$ref": "#/components/schemas/privacy-proxy_internal_configuration.PriceFeed"
+                    },
                     "sharedInfrastructure": {
                         "items": {
                             "$ref": "#/components/schemas/privacy-proxy_internal_configuration.SharedInfrastructure"
@@ -4267,6 +4284,21 @@
                         },
                         "type": "array",
                         "uniqueItems": false
+                    }
+                },
+                "type": "object"
+            },
+            "privacy-proxy_internal_configuration.PriceFeed": {
+                "description": "PriceFeed, when present, names the endpoint and interval the pricing\nservice polls; absent means the environment defaults apply.",
+                "properties": {
+                    "format": {
+                        "type": "string"
+                    },
+                    "refreshIntervalSeconds": {
+                        "type": "integer"
+                    },
+                    "uri": {
+                        "type": "string"
                     }
                 },
                 "type": "object"

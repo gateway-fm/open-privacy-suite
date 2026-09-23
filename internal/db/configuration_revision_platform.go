@@ -2,6 +2,8 @@ package db
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 
 	"github.com/google/uuid"
 	"privacy-proxy/internal/configuration"
@@ -54,15 +56,40 @@ func configurationPlatform(ctx context.Context, q DBTX, active *ConfigurationRev
 	if err != nil {
 		return out, err
 	}
-	defer rows.Close()
 	for rows.Next() {
 		var v configuration.Tenant
 		if err := rows.Scan(&v.ID, &v.TenantID, &v.Label, &v.DefaultOrgID, &v.DefaultGroupID, &v.AutoProvision); err != nil {
+			rows.Close()
 			return out, err
 		}
 		out.Spec.Tenants = append(out.Spec.Tenants, v)
 	}
-	return out, rows.Err()
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return out, err
+	}
+	out.Spec.PriceFeed, err = readPlatformPriceFeed(ctx, q, suffix)
+	return out, err
+}
+
+// readPlatformPriceFeed returns the projected feed, or nil when no platform
+// document has declared one — the poller then keeps its environment defaults.
+func readPlatformPriceFeed(ctx context.Context, q DBTX, suffix string) (*configuration.PriceFeed, error) {
+	var feed configuration.PriceFeed
+	err := q.QueryRowContext(ctx, `SELECT uri,refresh_interval_seconds,format FROM platform_price_feed`+suffix).Scan(&feed.URI, &feed.RefreshIntervalSeconds, &feed.Format)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &feed, nil
+}
+
+// GetPlatformPriceFeed is the pricing service's read of the declared feed.
+func (d *DB) GetPlatformPriceFeed(ctx context.Context) (*configuration.PriceFeed, error) {
+	return readPlatformPriceFeed(ctx, d.conn, "")
 }
 func validateConfigurationPlatform(ctx context.Context, q DBTX, diff *configuration.PlatformDiff, lock bool) error {
 	if diff == nil {
@@ -101,11 +128,13 @@ func projectConfigurationPlatform(ctx context.Context, tx *Tx, view Configuratio
 		if change.Action != "delete" {
 			continue
 		}
-		if change.Resource == "sharedInfrastructure" {
+		// The price feed has no id; its row follows the projection below.
+		switch change.Resource {
+		case "sharedInfrastructure":
 			if _, err := tx.tx.ExecContext(ctx, `DELETE FROM shared_infrastructure WHERE address=$1`, shared[change.ID].Address); err != nil {
 				return err
 			}
-		} else {
+		case "tenant":
 			if _, err := tx.tx.ExecContext(ctx, `DELETE FROM allowed_azure_tenants WHERE id=$1`, change.ID); err != nil {
 				return err
 			}
@@ -120,6 +149,14 @@ func projectConfigurationPlatform(ctx context.Context, tx *Tx, view Configuratio
 		if _, err := tx.tx.ExecContext(ctx, `INSERT INTO allowed_azure_tenants(id,tenant_id,label,default_org_id,default_group_id,auto_provision)VALUES($1,$2,$3,NULLIF($4,'')::uuid,NULLIF($5,'')::uuid,$6) ON CONFLICT(id)DO UPDATE SET label=EXCLUDED.label,default_org_id=EXCLUDED.default_org_id,default_group_id=EXCLUDED.default_group_id,auto_provision=EXCLUDED.auto_provision,updated_at=NOW()`, v.ID, v.TenantID, v.Label, v.DefaultOrgID, v.DefaultGroupID, v.AutoProvision); err != nil {
 			return err
 		}
+	}
+	// The feed row mirrors the document: present when declared, gone when not.
+	if feed := diff.Projection.PriceFeed; feed == nil {
+		if _, err := tx.tx.ExecContext(ctx, `DELETE FROM platform_price_feed`); err != nil {
+			return err
+		}
+	} else if _, err := tx.tx.ExecContext(ctx, `INSERT INTO platform_price_feed(singleton,uri,refresh_interval_seconds,format)VALUES(TRUE,$1,$2,$3) ON CONFLICT(singleton)DO UPDATE SET uri=EXCLUDED.uri,refresh_interval_seconds=EXCLUDED.refresh_interval_seconds,format=EXCLUDED.format,updated_at=clock_timestamp()`, feed.URI, feed.RefreshIntervalSeconds, feed.Format); err != nil {
+		return err
 	}
 	return nil
 }

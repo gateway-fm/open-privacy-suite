@@ -3,6 +3,7 @@ package configuration
 import (
 	"encoding/hex"
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 )
@@ -22,9 +23,34 @@ type Tenant struct {
 	DefaultGroupID string `json:"defaultGroupId"`
 	AutoProvision  bool   `json:"autoProvision"`
 }
+
+// PriceFeedFormatCoinGeckoSimple is the one response shape the poller reads:
+// CoinGecko's /simple/price, {id:{currency:price}}. Token identity still comes
+// from the compliance stream's coingeckoId, whatever host serves the shape.
+const PriceFeedFormatCoinGeckoSimple = "coingecko-simple"
+
+// Bounds on a declared refresh interval: the floor the environment setting
+// also has, and one day. Whether an interval is short enough for this
+// deployment's staleness threshold is the server's check, not the document's.
+const (
+	MinPriceFeedRefreshSeconds = 60
+	MaxPriceFeedRefreshSeconds = 86400
+)
+
+// PriceFeed names the price source the deployment polls and how often. It is
+// desired state for the pricing service; a deployment whose environment turns
+// price fetching off stores it and does nothing with it.
+type PriceFeed struct {
+	URI                    string `json:"uri"`
+	RefreshIntervalSeconds int    `json:"refreshIntervalSeconds"`
+	Format                 string `json:"format"`
+}
 type PlatformSpec struct {
 	SharedInfrastructure []SharedInfrastructure `json:"sharedInfrastructure"`
 	Tenants              []Tenant               `json:"tenants"`
+	// PriceFeed, when present, names the endpoint and interval the pricing
+	// service polls; absent means the environment defaults apply.
+	PriceFeed *PriceFeed `json:"priceFeed,omitempty" optional:"true"`
 }
 
 func (PlatformSpec) configurationKind() Kind { return Platform }
@@ -56,8 +82,32 @@ func normalizePlatform(s *PlatformSpec) error {
 		}
 		ids[v.ID], tenants[v.TenantID] = true, true
 	}
+	if err := validatePriceFeed(s.PriceFeed); err != nil {
+		return err
+	}
 	sort.Slice(s.SharedInfrastructure, func(i, j int) bool { return s.SharedInfrastructure[i].ID < s.SharedInfrastructure[j].ID })
 	sort.Slice(s.Tenants, func(i, j int) bool { return s.Tenants[i].ID < s.Tenants[j].ID })
+	return nil
+}
+
+// validatePriceFeed checks what a document alone can decide: the one known
+// format, the interval bounds, and that the URI is a destination and nothing
+// else — absolute http(s) with a host, no credentials, no fragment. Whether
+// that destination is allowed in this deployment is checked by the server.
+func validatePriceFeed(f *PriceFeed) error {
+	if f == nil {
+		return nil
+	}
+	if f.Format != PriceFeedFormatCoinGeckoSimple {
+		return fmt.Errorf("priceFeed.format must be %q", PriceFeedFormatCoinGeckoSimple)
+	}
+	if f.RefreshIntervalSeconds < MinPriceFeedRefreshSeconds || f.RefreshIntervalSeconds > MaxPriceFeedRefreshSeconds {
+		return fmt.Errorf("priceFeed.refreshIntervalSeconds must be between %d and %d", MinPriceFeedRefreshSeconds, MaxPriceFeedRefreshSeconds)
+	}
+	u, err := url.Parse(f.URI)
+	if err != nil || len(f.URI) > 2048 || (u.Scheme != "https" && u.Scheme != "http") || u.Opaque != "" || u.Hostname() == "" || u.User != nil || u.Fragment != "" {
+		return fmt.Errorf("priceFeed.uri must be an absolute http(s) URL with a host and without credentials or fragment")
+	}
 	return nil
 }
 
@@ -116,7 +166,18 @@ func diffPlatform(doc *Document, snapshot PlatformSnapshot) (PlatformDiff, error
 			return out, fmt.Errorf("tenant identifier is immutable")
 		}
 	}
-	out.Projection = PlatformSpec{SharedInfrastructure: shared, Tenants: tenants}
+	// The feed is one resource without an id: present or absent, so absence
+	// is the deletion and no entry in deletions is needed.
+	before, after := snapshot.Spec.PriceFeed, spec.PriceFeed
+	switch {
+	case before == nil && after != nil:
+		out.Changes = append(out.Changes, ResourceChange{Action: "create", Resource: "priceFeed", ID: "priceFeed"})
+	case before != nil && after == nil:
+		out.Changes = append(out.Changes, ResourceChange{Action: "delete", Resource: "priceFeed", ID: "priceFeed"})
+	case before != nil && after != nil && *before != *after:
+		out.Changes = append(out.Changes, ResourceChange{Action: "update", Resource: "priceFeed", ID: "priceFeed"})
+	}
+	out.Projection = PlatformSpec{SharedInfrastructure: shared, Tenants: tenants, PriceFeed: after}
 	sort.Strings(out.PreservedDrift)
 	if err := normalizePlatform(&out.Projection); err != nil {
 		return out, err

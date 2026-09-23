@@ -187,7 +187,7 @@ Typical use cases: OFAC SDN List compliance, addresses associated with known fra
 
 Compliance thresholds are denominated in fiat, so the suite needs a fiat price for every token it values. Prices come from two sources:
 
-**CoinGecko (automatic, default-on).** A background fetcher keeps system prices current. Native ETH is auto-priced from CoinGecko with no manual configuration. Individual tokens opt into automatic pricing by setting a `coingecko_id` (supported: `ethereum`, `usd-coin`, `tether`). Set `DISABLE_COINGECKO=true` to turn the fetcher off (e.g. for air-gapped deployments that have no outbound network access).
+**CoinGecko (automatic, default-on).** A background fetcher keeps system prices current. Native ETH is auto-priced from CoinGecko with no manual configuration. Individual tokens opt into automatic pricing by setting a `coingecko_id` (supported: `ethereum`, `usd-coin`, `tether`). Set `DISABLE_COINGECKO=true` to turn the fetcher off (e.g. for air-gapped deployments that have no outbound network access). The endpoint and refresh interval can also be declared in the platform configuration document (`priceFeed`), reviewed and activated like any other platform change; the fetcher applies it on its next fetch without a restart. `DISABLE_COINGECKO=true` still turns the fetcher off regardless of the document, the interval must be at most half the price staleness threshold, and the endpoint URL must not carry a key (it is stored as reviewed text).
 
 **Manual prices.** Administrators can set fixed prices per token, entered per currency across the five supported fiat currencies: **USD, EUR, CHF, GBP, AED**.
 

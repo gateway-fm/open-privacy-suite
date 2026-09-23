@@ -48,12 +48,23 @@ type ConfigurationContext struct {
 // execution-rules artifacts right now. It describes the API, not the caller's
 // authority; see ConfigurationViewer for that.
 type ConfigurationCapabilities struct {
-	APIVersion       string                `json:"apiVersion"`
-	Kinds            []string              `json:"kinds"`
-	HumanOnlyKinds   []string              `json:"humanOnlyKinds"`
-	ApprovalModes    []string              `json:"approvalModes"`
-	MaxDocumentBytes int                   `json:"maxDocumentBytes"`
-	Compiler         ConfigurationCompiler `json:"compiler"`
+	APIVersion       string                 `json:"apiVersion"`
+	Kinds            []string               `json:"kinds"`
+	HumanOnlyKinds   []string               `json:"humanOnlyKinds"`
+	ApprovalModes    []string               `json:"approvalModes"`
+	MaxDocumentBytes int                    `json:"maxDocumentBytes"`
+	Compiler         ConfigurationCompiler  `json:"compiler"`
+	PriceFeed        ConfigurationPriceFeed `json:"priceFeed"`
+}
+
+// ConfigurationPriceFeed reports whether a price feed declared in the platform
+// document is polled by this deployment. Available=false means the pricing
+// service is not running here because the environment turned it off; a
+// declared feed is still accepted and stored, but has no effect until the
+// setting named in Reason changes.
+type ConfigurationPriceFeed struct {
+	Available bool   `json:"available"`
+	Reason    string `json:"reason,omitempty"`
 }
 
 // ConfigurationCompiler reports the pinned Solidity version execution-rules

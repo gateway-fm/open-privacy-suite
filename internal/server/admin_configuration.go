@@ -370,6 +370,14 @@ func (s *Server) submitConfigurationRevision(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "source scope and kind must match the route"})
 		return
 	}
+	// Deployment-specific limits on a declared price feed are told to the
+	// author now rather than to the approver at activation.
+	if spec, ok := doc.Spec.(configuration.PlatformSpec); ok {
+		if problem := s.platformPriceFeedProblem(spec.PriceFeed); problem != "" {
+			respondClientError(c, http.StatusBadRequest, clientErrorf("%s", problem), "invalid configuration source", "admin_configuration: platform price feed rejected without client text")
+			return
+		}
+	}
 	revision, err := s.db.SubmitConfigurationRevision(c.Request.Context(), raw, actor)
 	if err != nil {
 		configurationError(c, err)
@@ -520,6 +528,11 @@ func (s *Server) activateConfigurationRevision(c *gin.Context) {
 	if s.rbacAccessCtrl != nil {
 		s.rbacAccessCtrl.InvalidateOrgLocalCache(scope.ID)
 	}
+	// A platform activation may have changed the price feed. The poller reads
+	// it before every fetch anyway; this makes the next fetch now.
+	if scope.Kind == "platform" && s.priceService != nil {
+		s.priceService.RefreshNow()
+	}
 	c.JSON(http.StatusOK, configurationRevisionList(rows))
 }
 
@@ -565,6 +578,13 @@ func (s *Server) authorizeConfigurationActivation(ctx context.Context, tx *db.Tx
 			}
 			if !s.configurationPlatformSubject(subject) {
 				return db.ErrConfigurationForbidden
+			}
+		}
+		// Checked again here: the threshold or environment may have changed
+		// since the document was submitted.
+		if view.PlatformDiff != nil {
+			if problem := s.platformPriceFeedProblem(view.PlatformDiff.Projection.PriceFeed); problem != "" {
+				return db.ConfigurationConflict("%s", problem)
 			}
 		}
 		return nil
