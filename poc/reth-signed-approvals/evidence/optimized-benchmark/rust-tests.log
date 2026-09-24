@@ -1,0 +1,15 @@
+   Compiling ops-reth-approvals-poc v0.1.0 (<repo>/poc/reth-signed-approvals)
+    Finished `test` profile [unoptimized] target(s) in 3.29s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/main.rs (<repo>/.tmp/reth-policy-poc/target/debug/deps/ops_reth_approvals_poc-0dc2b62aa8e7f633)
+
+running 5 tests
+test approvals::tests::duplicates_keep_deadline_and_capacity_is_bounded ... ok
+test fingerprint::tests::shared_go_rust_golden ... ok
+test approvals::tests::signature_binds_every_field ... ok
+test direct::tests::unsupported_calls_values_and_bounds_remain_fail_closed ... ok
+test direct::tests::golden_and_generated_storage_and_call_variants ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s
+

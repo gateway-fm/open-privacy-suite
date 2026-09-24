@@ -1,0 +1,9 @@
+=== RUN   TestBatchRetainsTransactionsAndCallbacksAfterCallerReusesBuffers
+    ownership_probe_test.go:52: actual transaction submitted: nonce-4674
+    ownership_probe_test.go:53: queued transaction was replaced: got nonce-4674
+    ownership_probe_test.go:59: actual completion callback: nonce-4674
+    ownership_probe_test.go:60: completion delivered to wrong transaction: got nonce-4674
+--- FAIL: TestBatchRetainsTransactionsAndCallbacksAfterCallerReusesBuffers (0.00s)
+FAIL
+FAIL	github.com/gateway-fm/loadgenerator/internal/sender	0.368s
+FAIL

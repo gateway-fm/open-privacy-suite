@@ -1,0 +1,74 @@
+[
+  {
+    "file": "real-ops.log",
+    "equal_checks": 2,
+    "denied_with_matching_old_and_new_fingerprint": []
+  },
+  {
+    "file": "waiting-load.log",
+    "equal_checks": 2,
+    "denied_with_matching_old_and_new_fingerprint": []
+  },
+  {
+    "file": "caught_call_cannot_bypass.log",
+    "equal_checks": 4,
+    "denied_with_matching_old_and_new_fingerprint": [
+      "0x65074c44aa438aeaadfc27ef9e96ba3ff472f9ff77cbbef717fd84353eeb88e0",
+      "0x65074c44aa438aeaadfc27ef9e96ba3ff472f9ff77cbbef717fd84353eeb88e0"
+    ]
+  },
+  {
+    "file": "invalid.log",
+    "equal_checks": 2,
+    "denied_with_matching_old_and_new_fingerprint": []
+  },
+  {
+    "file": "restart-after.log",
+    "equal_checks": 2,
+    "denied_with_matching_old_and_new_fingerprint": []
+  },
+  {
+    "file": "same_block_cross_org_divergence.log",
+    "equal_checks": 4,
+    "denied_with_matching_old_and_new_fingerprint": [
+      "0x6a043a1667ad307c143462bd590d142e28a7ea71e53aa1deb5d9c8ebdfcffb35",
+      "0x6a043a1667ad307c143462bd590d142e28a7ea71e53aa1deb5d9c8ebdfcffb35"
+    ]
+  },
+  {
+    "file": "waiting.log",
+    "equal_checks": 6,
+    "denied_with_matching_old_and_new_fingerprint": []
+  },
+  {
+    "file": "fingerprint-cases.log",
+    "equal_checks": 10,
+    "denied_with_matching_old_and_new_fingerprint": []
+  },
+  {
+    "file": "allow.log",
+    "equal_checks": 6,
+    "denied_with_matching_old_and_new_fingerprint": []
+  },
+  {
+    "file": "read-only-cross-org.log",
+    "equal_checks": 2,
+    "denied_with_matching_old_and_new_fingerprint": [
+      "0xad278285819350b4dc377633506e44b849e975bbe80ad273823f65c75907c1f9",
+      "0xad278285819350b4dc377633506e44b849e975bbe80ad273823f65c75907c1f9"
+    ]
+  },
+  {
+    "file": "same_org_storage_divergence.log",
+    "equal_checks": 4,
+    "denied_with_matching_old_and_new_fingerprint": [
+      "0x6a043a1667ad307c143462bd590d142e28a7ea71e53aa1deb5d9c8ebdfcffb35",
+      "0x6a043a1667ad307c143462bd590d142e28a7ea71e53aa1deb5d9c8ebdfcffb35"
+    ]
+  },
+  {
+    "file": "history-producer.log",
+    "equal_checks": 2,
+    "denied_with_matching_old_and_new_fingerprint": []
+  }
+]

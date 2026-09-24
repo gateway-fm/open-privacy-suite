@@ -1,0 +1,38 @@
+[package]
+name = "ops-reth-approvals-poc"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+reth-ethereum = { path = "../../.tmp/reth/crates/ethereum/reth", features = ["node", "cli", "evm"] }
+reth-basic-payload-builder = { path = "../../.tmp/reth/crates/payload/basic" }
+reth-ethereum-payload-builder = { path = "../../.tmp/reth/crates/ethereum/payload" }
+reth-payload-builder-primitives = { path = "../../.tmp/reth/crates/payload/builder-primitives" }
+reth-ethereum-engine-primitives = { path = "../../.tmp/reth/crates/ethereum/engine-primitives" }
+alloy-evm = "=0.38.0"
+alloy-primitives = "=1.6.1"
+alloy-rpc-types-trace = "=2.3.0"
+revm-inspectors = "=0.42.0"
+ed25519-dalek = "=2.2.0"
+tokio = { version = "=1.52.3", features = ["full"] }
+eyre = "0.6"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+
+[profile.dev]
+debug = 0
+incremental = false
+
+[profile.test]
+debug = 0
+incremental = false
+
+[profile.release]
+debug = 0
+lto = false
+codegen-units = 16
+

@@ -1,0 +1,6 @@
+--- FAIL: TestPreflightCreationOwnership (0.00s)
+    --- FAIL: TestPreflightCreationOwnership/new_child_is_callable (0.00s)
+        trace_creation_test.go:28: allowed=false want=true: &{Allowed:false Reason:contract access denied DenialKind:unregistered DeniedTarget:0x2222222222222222222222222222222222222222 CreateTargets:[]}
+FAIL
+FAIL	privacy-proxy/internal/rbac	0.553s
+FAIL
