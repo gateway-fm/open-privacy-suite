@@ -3,6 +3,7 @@ package nodeapproval
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -36,12 +37,11 @@ func TestDeliveryConfirmsEachBatchOnOneConnection(t *testing.T) {
 			}
 		}
 	}
-	if got := value(t, s.metrics.batches.WithLabelValues(p.name, "OK")); got != 2 {
-		t.Fatalf("%v batches counted OK, want 2", got)
-	}
-	if got := value(t, s.metrics.latency.WithLabelValues(p.name)); got != 2 {
-		t.Fatalf("%v delivery latencies observed, want 2", got)
-	}
+	// OPS counts a batch when the confirmation arrives, which is after the producer stored it.
+	waitCounted(t, s, p.name, "OK", 2)
+	waitUntil(t, 2*time.Second, "both delivery latencies are observed", func() bool {
+		return value(t, s.metrics.latency.WithLabelValues(p.name)) == 2
+	})
 	if got := value(t, s.metrics.connected.WithLabelValues(p.name)); got != 1 {
 		t.Fatalf("connected gauge %v", got)
 	}
@@ -69,6 +69,7 @@ func TestFullStoreIsRetriedAndStoredOnce(t *testing.T) {
 	if calls := len(p.received()); calls != 2 {
 		t.Fatalf("%d calls, want the refused one and one retry", calls)
 	}
+	waitCounted(t, s, p.name, "OK", 1)
 	for code, want := range map[string]float64{"StoreFull": 1, "OK": 1, "Unavailable": 0} {
 		if got := value(t, s.metrics.batches.WithLabelValues(p.name, code)); got != want {
 			t.Fatalf("batches{code=%s} = %v, want %v", code, got, want)
@@ -109,9 +110,8 @@ func TestPermanentRefusalsAreDroppedNotRetried(t *testing.T) {
 			if got := value(t, s.metrics.retries.WithLabelValues(p.name)); got != 0 {
 				t.Fatalf("%v retries after a permanent refusal", got)
 			}
-			if got := value(t, s.metrics.batches.WithLabelValues(p.name, code.String())); got != 1 {
-				t.Fatalf("batches{code=%s} = %v", code, got)
-			}
+			// The next batch can be stored before the refusal's answer is counted.
+			waitCounted(t, s, p.name, code.String(), 1)
 		})
 	}
 }
@@ -492,4 +492,50 @@ func TestHopsRecordTheDeliveryCall(t *testing.T) {
 	if r.ForwardStart == 0 {
 		t.Fatalf("forward mark missing: %+v", r)
 	}
+}
+
+// A producer that reports a maximum TTL below MinApprovalTTL would have OPS sign approvals that
+// expire inside the wait window: it is reported, is not ready, and does not shorten the TTL OPS
+// signs with for the other producers.
+func TestAProducerBelowTheMinimumTTLIsNotReadyAndDoesNotShortenTheTTL(t *testing.T) {
+	short := newProducer(t, "producer-short:1", "boot-short")
+	short.set(func(p *producer) { p.maxTTLms = 1000 })
+	normal := newProducer(t, "producer-normal:1", "boot-normal")
+	s := startDelivery(t, 10*time.Minute, testDelivery(short, normal))
+	waitUntil(t, 2*time.Second, "the short maximum TTL is reported", func() bool {
+		return value(t, s.metrics.mismatches.WithLabelValues(short.name, "max_ttl")) >= 1
+	})
+	if got := s.signingTTL(); got != 10*time.Minute {
+		t.Fatalf("signing TTL %v, want the configured 10m", got)
+	}
+	short.stop()
+	waitUntil(t, 2*time.Second, "the normal producer is ready", func() bool { return s.Accepting() })
+	h := txHashes(1, 1)[0]
+	enqueue(t, s, h)
+	waitUntil(t, 2*time.Second, "the approval is stored", func() bool { return normal.holds("boot-normal", h) })
+	env := normal.received()[0].envelope
+	if got := env.expires.Sub(env.issued); got != 10*time.Minute {
+		t.Fatalf("signed for %v, want 10m", got)
+	}
+}
+
+// A lane forgets its producer's maximum TTL when it stops being ready, so a standby that went
+// away no longer shortens what OPS signs for the others.
+func TestALaneThatStopsBeingReadyNoLongerShortensTheTTL(t *testing.T) {
+	standby := newProducer(t, "producer-standby:1", "boot-standby")
+	standby.set(func(p *producer) { p.maxTTLms = uint64((30 * time.Second).Milliseconds()) })
+	primary := newProducer(t, "producer-primary:1", "boot-primary")
+	s := startDelivery(t, 10*time.Minute, testDelivery(standby, primary))
+	waitUntil(t, 2*time.Second, "the standby's maximum applies", func() bool { return s.signingTTL() == 30*time.Second })
+	standby.stop()
+	waitUntil(t, 5*time.Second, "the standby's maximum is forgotten", func() bool { return s.signingTTL() == 10*time.Minute })
+}
+
+// waitCounted waits until OPS has counted want batches with code for target. OPS counts a batch
+// when the producer's answer arrives, which can be after a producer-side check already succeeded.
+func waitCounted(t *testing.T, s *Service, target, code string, want float64) {
+	t.Helper()
+	waitUntil(t, 2*time.Second, fmt.Sprintf("batches{code=%s} reaches %v", code, want), func() bool {
+		return value(t, s.metrics.batches.WithLabelValues(target, code)) == want
+	})
 }
