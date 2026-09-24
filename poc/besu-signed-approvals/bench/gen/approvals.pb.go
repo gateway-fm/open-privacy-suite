@@ -5,7 +5,8 @@
 // source: approvals.proto
 
 // Delivery benchmark only: the same signed OPS_APPROVAL_BATCH frame the raw-TCP path carries,
-// wrapped in a gRPC bidirectional stream so the receiver can acknowledge each batch.
+// wrapped in gRPC so the receiver can confirm each batch: an Ack per Batch on one bidirectional
+// stream, or one unary call per batch whose status is the confirmation.
 
 package gen
 
@@ -156,9 +157,11 @@ const file_approvals_proto_rawDesc = "" +
 	"\x03Ack\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x16\n" +
 	"\x06stored\x18\x02 \x01(\bR\x06stored\x12\x16\n" +
-	"\x06reason\x18\x03 \x01(\tR\x06reason2W\n" +
+	"\x06reason\x18\x03 \x01(\tR\x06reason2\x9b\x01\n" +
 	"\x10ApprovalDelivery\x12C\n" +
-	"\aDeliver\x12\x1a.ops.approvals.bench.Batch\x1a\x18.ops.approvals.bench.Ack(\x010\x01BN\n" +
+	"\aDeliver\x12\x1a.ops.approvals.bench.Batch\x1a\x18.ops.approvals.bench.Ack(\x010\x01\x12B\n" +
+	"\n" +
+	"DeliverOne\x12\x1a.ops.approvals.bench.Batch\x1a\x18.ops.approvals.bench.AckBN\n" +
 	"\x13ops.approvals.benchP\x01Z5privacy-proxy/poc/besu-signed-approvals/bench/gen;genb\x06proto3"
 
 var (
@@ -180,9 +183,11 @@ var file_approvals_proto_goTypes = []any{
 }
 var file_approvals_proto_depIdxs = []int32{
 	0, // 0: ops.approvals.bench.ApprovalDelivery.Deliver:input_type -> ops.approvals.bench.Batch
-	1, // 1: ops.approvals.bench.ApprovalDelivery.Deliver:output_type -> ops.approvals.bench.Ack
-	1, // [1:2] is the sub-list for method output_type
-	0, // [0:1] is the sub-list for method input_type
+	0, // 1: ops.approvals.bench.ApprovalDelivery.DeliverOne:input_type -> ops.approvals.bench.Batch
+	1, // 2: ops.approvals.bench.ApprovalDelivery.Deliver:output_type -> ops.approvals.bench.Ack
+	1, // 3: ops.approvals.bench.ApprovalDelivery.DeliverOne:output_type -> ops.approvals.bench.Ack
+	2, // [2:4] is the sub-list for method output_type
+	0, // [0:2] is the sub-list for method input_type
 	0, // [0:0] is the sub-list for extension type_name
 	0, // [0:0] is the sub-list for extension extendee
 	0, // [0:0] is the sub-list for field type_name

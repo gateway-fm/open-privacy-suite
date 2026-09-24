@@ -1,7 +1,8 @@
 syntax = "proto3";
 
 // Delivery benchmark only: the same signed OPS_APPROVAL_BATCH frame the raw-TCP path carries,
-// wrapped in a gRPC bidirectional stream so the receiver can acknowledge each batch.
+// wrapped in gRPC so the receiver can confirm each batch: an Ack per Batch on one bidirectional
+// stream, or one unary call per batch whose status is the confirmation.
 package ops.approvals.bench;
 
 option go_package = "privacy-proxy/poc/besu-signed-approvals/bench/gen;gen";
@@ -10,6 +11,8 @@ option java_multiple_files = true;
 
 service ApprovalDelivery {
   rpc Deliver(stream Batch) returns (stream Ack);
+  // One call per batch; the receiver does the same work as for a Deliver message.
+  rpc DeliverOne(Batch) returns (Ack);
 }
 
 message Batch {

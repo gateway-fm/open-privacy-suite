@@ -22,7 +22,8 @@ import java.util.HexFormat;
  * Records when each batch arrives. Same host as the sender, so wall clocks are comparable:
  * {@code recv_ns - sent_ns} is the one-way delivery time of the frame through the transport.
  *
- * <p>Usage: {@code BenchReceiver <tcp|grpc|grpc-mtls> <port> <out.jsonl> [certsDir]}
+ * <p>Usage: {@code BenchReceiver <tcp|grpc|grpc-mtls|grpc-unary|grpc-unary-mtls> <port> <out.jsonl> [certsDir]}
+ * (every gRPC transport serves both the stream and the unary method; {@code -mtls} requires client certificates)
  */
 public final class BenchReceiver {
   private static BufferedWriter out;
@@ -53,7 +54,7 @@ public final class BenchReceiver {
         NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", port))
             .addService(new Delivery())
             .permitKeepAliveWithoutCalls(true);
-    if (transport.equals("grpc-mtls")) {
+    if (transport.endsWith("-mtls")) {
       final File certs = new File(args[3]);
       final SslContext ssl =
           GrpcSslContexts.forServer(new File(certs, "server.crt"), new File(certs, "server.key"))
@@ -93,18 +94,29 @@ public final class BenchReceiver {
   }
 
   static final class Delivery extends ApprovalDeliveryGrpc.ApprovalDeliveryImplBase {
+    /** The per-batch work both shapes share: record the arrival, then confirm the batch as stored. */
+    private static Ack arrive(final Batch batch) {
+      final long recv = now();
+      try {
+        record(batch.getId(), recv, batch.getFrame().size());
+      } catch (IOException e) {
+        throw new RuntimeException(e);
+      }
+      return Ack.newBuilder().setId(batch.getId()).setStored(true).build();
+    }
+
+    @Override
+    public void deliverOne(final Batch batch, final StreamObserver<Ack> ack) {
+      ack.onNext(arrive(batch));
+      ack.onCompleted(); // the OK status is the confirmation
+    }
+
     @Override
     public StreamObserver<Batch> deliver(final StreamObserver<Ack> acks) {
       return new StreamObserver<>() {
         @Override
         public void onNext(final Batch batch) {
-          final long recv = now();
-          try {
-            record(batch.getId(), recv, batch.getFrame().size());
-          } catch (IOException e) {
-            throw new RuntimeException(e);
-          }
-          acks.onNext(Ack.newBuilder().setId(batch.getId()).setStored(true).build());
+          acks.onNext(arrive(batch));
         }
 
         @Override
