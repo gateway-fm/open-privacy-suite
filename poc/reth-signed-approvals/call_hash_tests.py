@@ -88,7 +88,13 @@ def documented_limit_and_mode_tampering():
         r.record('documented_limit_internal_accounting_can_change',preflight_increment=0,executed_increment=120)
     for mode in [0,42]:
         with r.node('tamper-mode-'+str(mode),wait_ms=100) as n,contextlib.closing(r.Client(n,hash_mode='calls')) as c:
-            tx=n.raw(h.ALICE,h.CALL_HASH_CASES,'tick()');a=c.prepare(tx);a['hash_mode']=mode;c.send(a);n.submit(tx)
+            tx=n.raw(h.ALICE,h.CALL_HASH_CASES,'tick()');batch=c.batch([c.prepare(tx)])
+            if mode==0:
+                # Relabelled strict after signing: the signed domain no longer matches.
+                c.send(dict(batch,approvals=[dict(batch['approvals'][0],hash_mode=0)]),expect='UNAUTHENTICATED')
+            else:
+                c.send_envelope(r.with_member_domain(batch['envelope'],0,b'OPS_APPROVAL_V9\0'),expect='INVALID_ARGUMENT')
+            n.submit(tx)
             time.sleep(.2);n.make_block([])
             assert n.rpc('eth_getTransactionReceipt',tx['hash']) is None and storage(n,h.CALL_HASH_CASES)==0
             r.record('reject_tampered_mode_'+str(mode))

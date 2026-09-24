@@ -6,9 +6,7 @@ import json
 import os
 import platform
 from pathlib import Path
-import socket
 import statistics
-import struct
 import subprocess
 import time
 import threading
@@ -17,25 +15,48 @@ import harness as h
 RESULTS=[]
 
 class Client:
+    """The Go fixture client in OPS's place: real preflight, the fixture signing key, and delivery
+    over the node's approval gRPC service. On start it calls Status, as OPS does per lane."""
     def __init__(self,node,connect=True,hash_mode=None):
         self.node=node
-        self.process=subprocess.Popen([str(h.ROOT/".tmp/approval-client"),node.rpc_url],stdin=subprocess.PIPE,stdout=subprocess.PIPE,text=True,env=dict(os.environ, **({"OPS_APPROVAL_HASH_MODE":hash_mode} if hash_mode else {})))
-        self.socket=socket.create_connection(("127.0.0.1",node.approval_port)) if connect else None
+        target=[f"127.0.0.1:{node.approval_port}"] if connect else []
+        self.process=subprocess.Popen([str(h.ROOT/".tmp/approval-client"),node.rpc_url,*target],stdin=subprocess.PIPE,stdout=subprocess.PIPE,text=True,env=dict(os.environ, **({"OPS_APPROVAL_HASH_MODE":hash_mode} if hash_mode else {})))
+    def call(self,request):
+        self.process.stdin.write(json.dumps(request)+"\n");self.process.stdin.flush()
+        line=self.process.stdout.readline();assert line,"approval client exited"
+        return json.loads(line)
     def prepare(self,tx):
-        self.process.stdin.write(json.dumps({"raw":tx["raw"],"principal":"did:fixture:org-a"})+"\n");self.process.stdin.flush()
-        result=json.loads(self.process.stdout.readline());assert "error" not in result,result
+        result=self.call({"raw":tx["raw"]});assert "error" not in result,result
         return result["Approval"]
-    def send(self,approval):
-        data=json.dumps(approval).encode();self.socket.sendall(struct.pack(">I",len(data))+data)
-    def batch(self,approvals):
-        self.process.stdin.write(json.dumps({"approvals":approvals})+"\n");self.process.stdin.flush()
-        result=json.loads(self.process.stdout.readline());assert "error" not in result,result
+    def batch(self,approvals,**times):
+        """Signs a batch; ttl_ms, or issued_at/expires_at in Unix ms, override the 10-minute TTL."""
+        result=self.call({"approvals":approvals,**times});assert "error" not in result,result
         return result
+    def send(self,item,expect="OK"):
+        """Delivers a signed batch (its fields under its signature), or one approval as a batch."""
+        if "approvals" not in item:item=self.batch([item])
+        reply=self.call({"deliver":item});assert reply.get("code")==expect,(reply,expect)
+        return reply
+    def send_envelope(self,envelope,expect):
+        reply=self.call({"envelope":envelope});assert reply.get("code")==expect,(reply,expect)
+        return reply
+    def status(self):
+        reply=self.call({"status":True});assert reply.get("code")=="OK",reply
+        return reply
     def approve(self,tx):
         a=self.prepare(tx);self.send(a);return a
     def close(self):
-        if self.socket:self.socket.close()
         self.process.stdin.close();self.process.wait(timeout=5);self.process.stdout.close()
+
+def with_member_domain(envelope,index,domain):
+    """The envelope with one approval's 16-byte domain replaced (layout: contract §2)."""
+    b=bytearray.fromhex(envelope);at=43+b[22]+120*index;b[at:at+16]=domain;return b.hex()
+
+def gone_from_pool(n,tx,seconds=3):
+    deadline=time.monotonic()+seconds
+    while n.rpc("eth_getTransactionByHash",tx["hash"]) is not None:
+        assert time.monotonic()<deadline,"transaction still pooled: "+tx["hash"]
+        time.sleep(.05)
 
 @contextlib.contextmanager
 def node(name,**kwargs):
@@ -109,11 +130,7 @@ def waits():
         assert elapsed<1.2,elapsed
         c.send(approval);n.make_block([waiting]);record("waiting_tx_does_not_block_ready_sender",ready_block_wall_ms=round(elapsed*1000,2))
         missing=n.raw(h.ALICE,h.BENCH_VAULT,"put(uint256,uint256)",3,7);a=c.prepare(missing);n.submit(missing)
-        deadline=time.monotonic()+3
-        while time.monotonic()<deadline:
-            if n.rpc("eth_getTransactionByHash",missing["hash"]) is None:break
-            time.sleep(.05)
-        else:raise AssertionError("missing approval not dropped")
+        gone_from_pool(n,missing)
         c.send(a);n.submit(missing);n.make_block([missing]);record("timeout_then_client_retry_same_signed_tx")
 
 def waiting_load():
@@ -127,10 +144,41 @@ def waiting_load():
 
 def invalid():
     with node("invalid",wait_ms=400) as n,contextlib.closing(Client(n)) as c:
-        tx=n.raw(h.ALICE,h.BENCH_VAULT,"put(uint256,uint256)",5,7);a=c.prepare(tx)
-        bad=dict(a,signature="00"*64);c.send(bad);n.submit(tx);time.sleep(.6);n.make_block([])
+        tx=n.raw(h.ALICE,h.BENCH_VAULT,"put(uint256,uint256)",5,7);batch=c.batch([c.prepare(tx)])
+        refused=c.send(dict(batch,signature="00"*64),expect="UNAUTHENTICATED")
+        n.submit(tx);time.sleep(.6);n.make_block([])
         assert n.rpc("eth_getTransactionReceipt",tx["hash"]) is None
-        c.send(a);n.submit(tx);n.make_block([tx]);record("forged_signature_denied_then_valid_retry")
+        c.send(batch);n.submit(tx);n.make_block([tx]);record("forged_signature_denied_then_valid_retry",refusal=refused)
+
+def expiry():
+    """Contract §6: an approval is usable while now < expires_at; an expired one counts as absent.
+    §3 checks 5-7: late, over-long and future-dated batches are refused and store nothing."""
+    with node("expiry",wait_ms=3000) as n,contextlib.closing(Client(n)) as c:
+        pooled=n.raw(h.ALICE,h.BENCH_VAULT,"put(uint256,uint256)",11,7)
+        late=n.raw(h.ADMIN,h.BENCH_VAULT,"put(uint256,uint256)",12,7)
+        a,b=c.prepare(pooled),c.prepare(late)
+        # Stored and pooled in time, but no block is built before the approval expires.
+        c.send(c.batch([a],ttl_ms=800));n.submit(pooled)
+        time.sleep(1.2);n.make_block([])
+        assert n.rpc("eth_getTransactionByHash",pooled["hash"]) is not None,"dropped before its wait window ended"
+        # A fresh approval (later issued_at) replaces the expired one within the window.
+        c.send(a);n.make_block([pooled])
+        record("expired_approval_is_absent_at_the_gate_then_fresh_approval_is_used",hash=pooled["hash"])
+        # Delivered in time, expired before the transaction arrives: it waits and is dropped.
+        c.send(c.batch([b],ttl_ms=300));time.sleep(.5);n.submit(late)
+        gone_from_pool(n,late,seconds=5);n.make_block([])
+        assert n.rpc("eth_getTransactionReceipt",late["hash"]) is None
+        now=int(time.time()*1000);hour=3_600_000
+        refusals={
+            "expired":c.send(c.batch([b],issued_at=now-2000,expires_at=now-1000),expect="FAILED_PRECONDITION"),
+            "lifetime_above_max_ttl":c.send(c.batch([b],issued_at=now,expires_at=now+hour+1),expect="INVALID_ARGUMENT"),
+            "issued_ahead_of_clock":c.send(c.batch([b],issued_at=now+60_000,expires_at=now+120_000),expect="FAILED_PRECONDITION"),
+        }
+        n.submit(late);time.sleep(.3);n.make_block([])
+        stats=timings(n)[-1]["approval_stats"]
+        assert stats["expired_approvals"]>=2 and stats["invalid_envelopes"]==3,stats
+        c.send(b);n.make_block([late])
+        record("approval_expiring_before_arrival_drops_the_transaction_and_refused_batches_store_nothing",refusals=refusals,stats=stats)
 
 def real_ops():
     with node("real-ops") as n:
@@ -149,11 +197,59 @@ def restart():
         tx=n.raw(h.ALICE,h.ROUTER,"run(uint256)",7);c.approve(tx);n.submit(tx)
         directory=n.directory
     with node("restart-after",wait_ms=500,directory=directory) as n,contextlib.closing(Client(n)) as c:
-        time.sleep(.7)
+        # The store lived in memory; with nothing redelivered the restored transaction times out.
+        gone_from_pool(n,tx)
         n.make_block([])
         assert n.rpc("eth_getTransactionReceipt",tx["hash"]) is None
         # User sends the same signed tx; OPS does a fresh preflight and delivers approval.
         c.approve(tx);n.submit(tx);n.make_block([tx]);record("actual_restart_loses_approval_then_client_retry_succeeds")
+
+def restart_resend():
+    """Contract §4: a restarted producer has a new boot id; OPS resends the batches it retains
+    and the restored transaction waits for them, even when OPS reconnects after its wait window."""
+    with node("resend-before",wait_ms=1500) as n,contextlib.closing(Client(n)) as c:
+        tx=n.raw(h.ALICE,h.ROUTER,"run(uint256)",9)
+        retained=c.batch([c.prepare(tx)])
+        first=c.send(retained);n.submit(tx)
+        directory=n.directory
+    with node("resend-after",wait_ms=1500,directory=directory) as n:
+        # The pool restores the transaction at boot; OPS is back only after twice the wait window.
+        time.sleep(3)
+        assert n.rpc("eth_getTransactionByHash",tx["hash"]) is not None,"dropped before OPS reconnected"
+        with contextlib.closing(Client(n)) as c:
+            status=c.status()
+            assert status["boot_id"]!=first["boot_id"],(status,first)
+            # The same signed bytes: no new preflight, no new signature.
+            again=c.send(retained)
+            assert again["boot_id"]==status["boot_id"] and again["stored"]==1,again
+            n.make_block([tx])
+        assert n.rpc("eth_getTransactionReceipt",tx["hash"])["status"]=="0x1"
+        record("restart_then_resend_retained_batch_under_new_boot_id",boot_ids=[first["boot_id"],again["boot_id"]])
+
+def reorg():
+    """Contract §6: an approval stays until the block that included its transaction is final, so a
+    transaction a reorganisation returns to the pool is included again with no new approval."""
+    with node("reorg-producer") as n,node("reorg-rival",disabled=True) as rival,contextlib.closing(Client(n)) as c:
+        genesis=n.head["hash"]
+        tx=n.raw(h.ALICE,h.ROUTER,"run(uint256)",7);c.approve(tx);n.submit(tx)
+        n.make_block([tx],finalized=genesis)
+        # Past the store's 1 s pool re-check: the approval must outlive the transaction's pool stay.
+        time.sleep(2)
+        # Another producer's block at the same height, without the transaction, becomes canonical.
+        other=rival.make_block([],fee_recipient=h.ALICE)
+        assert n.engine("engine_newPayloadV2",other)["status"]=="VALID"
+        state={"headBlockHash":other["blockHash"],"safeBlockHash":genesis,"finalizedBlockHash":genesis}
+        assert n.engine("engine_forkchoiceUpdatedV2",state,None)["payloadStatus"]["status"]=="VALID"
+        n.head=n.rpc("eth_getBlockByNumber","latest",False);assert n.head["hash"]==other["blockHash"]
+        deadline=time.monotonic()+5
+        while (n.rpc("eth_getTransactionByHash",tx["hash"]) or {}).get("blockHash") is not None:
+            assert time.monotonic()<deadline,"reorganised transaction did not return to the pool"
+            time.sleep(.05)
+        n.make_block([tx])
+        stats=timings(n)[-1]["approval_stats"]
+        assert stats["verified"]==1,stats
+        assert n.rpc("eth_getTransactionReceipt",tx["hash"])["status"]=="0x1"
+        record("reorg_returns_the_transaction_and_its_kept_approval_includes_it_again",block=n.head["hash"],stats={k:stats[k] for k in ("verified","released_on_finality")})
 
 def history():
     with node("history-producer") as producer,contextlib.closing(Client(producer)) as c:
@@ -185,7 +281,7 @@ def bench(samples=9,batch=32):
                                 approvals.append(approval)
                                 txs.append(tx)
                             if enabled:c.send(c.batch(approvals))
-                            # Network delivery is outside the timed region. No module ACK is used.
+                            # Delivery, and its OK, is outside the timed region.
                             for tx in txs:n.submit(tx)
                             before=len(timings(n));payload=n.make_block(txs)
                             matches=[t for t in timings(n)[before:] if t["block_hash"]==payload["blockHash"] and t["transactions"]==batch]
@@ -221,10 +317,14 @@ def write_benchmark_report(measurements,batch):
     report={"method":"Instant around real Reth default_ethereum_payload including execution and state/receipt roots; divided by included tx count. Identical preflight warming in BOTH modes. Excludes RPC/preflight/approval delivery/wait and engine import. Same block hashes asserted for every control/module pair.","hardware":machine_info(),"build":{"rustc":subprocess.check_output(["rustc","--version"],text=True).strip(),"profile":"release opt-level=3 lto=false codegen-units=16","reth_commit":h.RETH_COMMIT},"raw":measurements,"summary":summary}
     (h.EVIDENCE/"benchmark.json").write_text(json.dumps(report,indent=2)+"\n");print(json.dumps(summary,indent=2),flush=True)
 
+def node_scenarios():
+    """Everything that needs only the node and the fixture client, not an OPS server."""
+    divergence("same_block_cross_org_divergence");divergence("caught_call_cannot_bypass",catch=True);divergence("same_org_storage_divergence",storage_only=True);divergence("stock_control_executes_cross_org",disabled=True)
+    read_only();fingerprint_cases();waits();waiting_load();invalid();expiry();restart();restart_resend();reorg();history()
+
 if __name__=="__main__":
-    parser=argparse.ArgumentParser();parser.add_argument("mode",choices=["smoke","test","bench","all"]);args=parser.parse_args();h.prepare()
-    if args.mode in ["smoke","test","all"]:ordinary()
-    if args.mode in ["test","all"]:
-        divergence("same_block_cross_org_divergence");divergence("caught_call_cannot_bypass",catch=True);divergence("same_org_storage_divergence",storage_only=True);divergence("stock_control_executes_cross_org",disabled=True)
-        read_only();fingerprint_cases();waits();waiting_load();invalid();real_ops();restart();history()
+    parser=argparse.ArgumentParser();parser.add_argument("mode",choices=["smoke","node","test","bench","all"]);args=parser.parse_args();h.prepare()
+    if args.mode in ["smoke","node","test","all"]:ordinary()
+    if args.mode in ["node","test","all"]:node_scenarios()
+    if args.mode in ["test","all"]:real_ops()
     if args.mode in ["bench","all"]:bench()

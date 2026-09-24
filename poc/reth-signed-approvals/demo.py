@@ -73,8 +73,7 @@ class Stack:
                 MAX_CONCURRENT_REQUESTS="128",EXPLORER_DATABASE_URL="",TRACE_TIERED_VALIDATION="false",
                 AUDIT_BUFFER_DIR=str(self.directory/"audit-buffer"),DB_MAX_OPEN_CONNS="30")
             if ops_env:env.update(ops_env)
-            if not disabled:env.update(OPS_APPROVAL_TARGET=f"127.0.0.1:{self.node.approval_port}",OPS_APPROVAL_SEED_FILE=str(seed),OPS_APPROVAL_MAX_BATCH="32",OPS_APPROVAL_HASH_MODE=self.hash_mode)
-            if os.environ.get("OPS_APPROVAL_ENCODING"):env["OPS_APPROVAL_ENCODING"]=os.environ["OPS_APPROVAL_ENCODING"]
+            if not disabled:env.update(OPS_APPROVAL_TARGETS=f"127.0.0.1:{self.node.approval_port}",OPS_APPROVAL_SEED_FILE=str(seed),OPS_APPROVAL_MAX_BATCH="32",OPS_APPROVAL_HASH_MODE=self.hash_mode)
             if os.environ.get("OPS_TRACE_HOPS")=="1":env["OPS_APPROVAL_HOPS_FILE"]=str(h.EVIDENCE/(name+"-ops-hops.json"))
             self.opslog=(self.directory/"ops.log").open("w")
             self.ops=subprocess.Popen([str(h.ROOT/".tmp/ops-server")],cwd=self.directory,env=env,stdout=self.opslog,stderr=subprocess.STDOUT,

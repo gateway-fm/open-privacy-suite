@@ -28,13 +28,13 @@ def tests():
     with node("batch-tampered",wait_ms=600) as n, contextlib.closing(Client(n)) as c:
         txs=[n.raw(sender,h.BENCH_VAULT,"put(uint256,uint256)",i,7) for i,sender in enumerate([h.ALICE,h.ADMIN])]
         batch=c.batch([c.prepare(t) for t in txs]); forged=copy.deepcopy(batch)
-        forged["approvals"][1]["principal"]=h.ZERO
-        c.send(forged)
+        forged["approvals"][1]["fingerprint"]="0x"+"11"*32
+        c.send(forged,expect="UNAUTHENTICATED")
         for t in txs:n.submit(t)
         time.sleep(.8);n.make_block([])
         stats=timings(n)[-1]["approval_stats"]
         assert stats["verified"]==0 and stats["invalid_envelopes"]==1,stats
-        # Deliver after transactions on retry. The node must wait without a caller ACK.
+        # Deliver after the transactions on retry: they are pooled again and wait for it.
         for t in txs:n.submit(t)
         c.send(batch);n.make_block(txs)
         record("tampering_rejects_entire_batch_then_late_valid_retry_succeeds")

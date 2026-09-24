@@ -24,8 +24,8 @@ try:
     run.divergence("caught_call_cannot_bypass",catch=True)
     run.divergence("same_org_storage_divergence",storage_only=True)
     run.divergence("stock_control_executes_cross_org",disabled=True)
-    run.read_only();run.fingerprint_cases();run.waits();run.waiting_load();run.invalid()
-    run.real_ops();run.restart();run.history();batch_tests.tests()
+    run.read_only();run.fingerprint_cases();run.waits();run.waiting_load();run.invalid();run.expiry()
+    run.real_ops();run.restart();run.restart_resend();run.history();batch_tests.tests()
     lifecycle_tests.tests()
 finally:
     subprocess.run(["docker","stop","-t","3",pg],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
