@@ -9,9 +9,11 @@ import java.util.List;
 
 /**
  * Delivery unit, byte-compatible with internal/nodeapproval.Batch: {@code OPS_APPROVAL_BATCH_V2\0}
- * ‖ u8 key-id length ‖ key id ‖ u32 count ‖ count × 120-byte items ‖ 64-byte Ed25519 signature over
- * everything before it. The key id names which of the producer's trusted keys signed, and is inside
- * the signed bytes. The 4-byte frame length prefix is handled by the listener.
+ * ‖ u8 key-id length ‖ key id ‖ u64 issued_at ‖ u64 expires_at ‖ u32 count ‖ count × 120-byte items ‖
+ * 64-byte Ed25519 signature over everything before it (docs/implementation/approvals-wire-contract.md).
+ * The key id names which of the producer's trusted keys signed; issued_at and expires_at are Unix
+ * milliseconds. Both are inside the signed bytes. The 4-byte frame length prefix is handled by the
+ * listener.
  */
 public final class ApprovalBatch {
   static final byte[] DOMAIN = "OPS_APPROVAL_BATCH_V2\0".getBytes(StandardCharsets.US_ASCII);
@@ -21,7 +23,8 @@ public final class ApprovalBatch {
   static final int SIGNATURE_SIZE = 64;
 
   /** A structurally valid batch whose signature has not been checked yet. */
-  public record Decoded(String keyId, List<Approval> approvals, byte[] message, byte[] signature) {}
+  public record Decoded(
+      String keyId, long issuedAt, long expiresAt, List<Approval> approvals, byte[] message, byte[] signature) {}
 
   private ApprovalBatch() {}
 
@@ -29,7 +32,7 @@ public final class ApprovalBatch {
     if (body.length > MAX_FRAME) {
       throw new InvalidBatchException("frame exceeds " + MAX_FRAME + " bytes");
     }
-    if (body.length < DOMAIN.length + 1 + 1 + 4 + Approval.ITEM_SIZE + SIGNATURE_SIZE) {
+    if (body.length < DOMAIN.length + 1 + 1 + 16 + 4 + Approval.ITEM_SIZE + SIGNATURE_SIZE) {
       throw new InvalidBatchException("frame too short");
     }
     if (!Arrays.equals(body, 0, DOMAIN.length, DOMAIN, 0, DOMAIN.length)) {
@@ -38,7 +41,7 @@ public final class ApprovalBatch {
     final ByteBuffer b = ByteBuffer.wrap(body);
     b.position(DOMAIN.length);
     final int keyLength = Byte.toUnsignedInt(b.get());
-    if (keyLength < 1 || keyLength > MAX_KEY_ID || b.remaining() < keyLength + 4) {
+    if (keyLength < 1 || keyLength > MAX_KEY_ID || b.remaining() < keyLength + 16 + 4) {
       throw new InvalidBatchException("invalid key id length " + keyLength);
     }
     final byte[] keyBytes = new byte[keyLength];
@@ -47,7 +50,12 @@ public final class ApprovalBatch {
     if (!PluginOptions.validKeyId(keyId)) {
       throw new InvalidBatchException("invalid key id");
     }
-    final int header = DOMAIN.length + 1 + keyLength + 4;
+    final long issuedAt = b.getLong();
+    final long expiresAt = b.getLong();
+    if (Long.compareUnsigned(expiresAt, issuedAt) <= 0) {
+      throw new InvalidBatchException("batch expires before it is issued");
+    }
+    final int header = DOMAIN.length + 1 + keyLength + 16 + 4;
     final long count = Integer.toUnsignedLong(b.getInt());
     if (count < 1 || count > MAX_APPROVALS) {
       throw new InvalidBatchException("invalid approval count " + count);
@@ -62,19 +70,22 @@ public final class ApprovalBatch {
     }
     return new Decoded(
         keyId,
+        issuedAt,
+        expiresAt,
         List.copyOf(approvals),
         Arrays.copyOfRange(body, 0, messageLength),
         Arrays.copyOfRange(body, messageLength, body.length));
   }
 
   /** The signed bytes for a list of approvals (mirror of Go Batch.Message; used by tests). */
-  static byte[] message(final String keyId, final List<Approval> approvals) {
+  static byte[] message(
+      final String keyId, final long issuedAt, final long expiresAt, final List<Approval> approvals) {
     final ByteArrayOutputStream out = new ByteArrayOutputStream();
     out.writeBytes(DOMAIN);
     final byte[] key = keyId.getBytes(StandardCharsets.US_ASCII);
     out.write(key.length);
     out.writeBytes(key);
-    out.writeBytes(ByteBuffer.allocate(4).putInt(approvals.size()).array());
+    out.writeBytes(ByteBuffer.allocate(8 + 8 + 4).putLong(issuedAt).putLong(expiresAt).putInt(approvals.size()).array());
     approvals.forEach(a -> out.writeBytes(a.message()));
     return out.toByteArray();
   }

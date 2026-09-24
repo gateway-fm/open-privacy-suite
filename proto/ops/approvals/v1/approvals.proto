@@ -1,0 +1,44 @@
+// Delivery of signed approval batches from OPS to a block producer (the Besu
+// plugin or the Reth node). Semantics, status codes and retries:
+// docs/implementation/approvals-wire-contract.md.
+syntax = "proto3";
+
+package ops.approvals.v1;
+
+option go_package = "privacy-proxy/internal/nodeapproval/approvalpb;approvalpb";
+option java_multiple_files = true;
+option java_package = "ops.approvals.grpc";
+
+service ApprovalDelivery {
+  // Deliver verifies and stores one signed batch. OK means every approval in
+  // the batch is stored; any error means none is. A batch is all or nothing.
+  rpc Deliver(DeliverRequest) returns (DeliverResponse);
+  // Status identifies the receiver. OPS calls it after every (re)connect and
+  // resends the batches it retains when the boot id has changed.
+  rpc Status(StatusRequest) returns (StatusResponse);
+}
+
+message DeliverRequest {
+  // The signed envelope byte for byte: the signed message followed by the
+  // 64-byte Ed25519 signature.
+  bytes batch = 1;
+}
+
+message DeliverResponse {
+  // Random identifier of the receiver's current process start.
+  string boot_id = 1;
+  // Approvals stored from this batch; equal to the batch size on OK.
+  uint32 stored = 2;
+}
+
+message StatusRequest {}
+
+message StatusResponse {
+  string boot_id = 1;
+  uint64 chain_id = 2;
+  // Key ids the receiver trusts, so a sender sees a rotation gap before its
+  // first batch is refused.
+  repeated string trusted_key_ids = 3;
+  // The longest expires_at - now the receiver accepts, in milliseconds.
+  uint64 max_ttl_ms = 4;
+}

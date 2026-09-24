@@ -64,7 +64,7 @@ func readApprovalHashes(t *testing.T, c net.Conn, want int, deadline time.Time) 
 		if !bytes.HasPrefix(message, []byte("OPS_APPROVAL_BATCH_V2\x00")) {
 			t.Fatalf("unexpected frame %q", message[:min(len(message), 24)])
 		}
-		header := 22 + 1 + int(message[22]) // domain, key id length, key id
+		header := 22 + 1 + int(message[22]) + 16 // domain, key id length, key id, issued_at, expires_at
 		count := binary.BigEndian.Uint32(message[header : header+4])
 		body := message[header+4:]
 		for i := uint32(0); i < count; i++ {

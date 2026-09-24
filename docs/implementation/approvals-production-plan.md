@@ -43,7 +43,7 @@ Numbers are measured unless marked *estimate*. File references are to
    `Signer` with a key id and an explicit "KMS later" seam). Not ECDSA via KMS: a KMS signature per
    batch would put a network call and ~10 ms into the delivery path for no gain over a rotatable
    software key. What changed: the signed batch names its key (`OPS_APPROVAL_BATCH_V2`,
-   `key_id` inside the signed bytes, `OPS_APPROVAL_KEY_ID` on OPS, default `default`); the plugin
+   `key_id` — and since 24 September `issued_at`/`expires_at` — inside the signed bytes, `OPS_APPROVAL_KEY_ID` on OPS, default `default`); the plugin
    holds a **set** of trusted keys (`--plugin-ops-approval-public-keys id=hex,…`; the old single
    `--public-key` is the `default` id); OPS signs through a `Signer` interface so a KMS/HSM-backed
    ECDSA signer can be added without touching the wire. Rotation is add-then-switch: add the new
@@ -293,6 +293,9 @@ Replacing §3.4. Effort *estimate* 0.5–1 day.
    which item 1 measures.
 
 ### 3.6 What the delivery contract must specify
+
+The byte layout, status codes, redelivery and settings are specified in
+[approvals-wire-contract.md](approvals-wire-contract.md); this section records why.
 
 Forwarding does not wait for confirmations (decision 1a), so these are reliability semantics,
 not request-path ones — written down before the `.proto`:

@@ -34,7 +34,7 @@ class ApprovalBatchTest {
 
   private static byte[] frame(final List<Approval> approvals, final byte[] signature) throws Exception {
     final ByteArrayOutputStream out = new ByteArrayOutputStream();
-    out.write(ApprovalBatch.message("default", approvals));
+    out.write(ApprovalBatch.message("default", Fixtures.GOLDEN_ISSUED_AT, Fixtures.GOLDEN_EXPIRES_AT, approvals));
     out.write(signature);
     return out.toByteArray();
   }
@@ -60,13 +60,39 @@ class ApprovalBatchTest {
   }
 
   @Test
+  void decodesTheSignedExpiry() throws Exception {
+    for (final String name : List.of("batch.json", "call-batch.json")) {
+      final JsonNode v = Fixtures.load(name);
+      assertEquals(Fixtures.GOLDEN_ISSUED_AT, v.get("issued_at").asLong(), name);
+      assertEquals(Fixtures.GOLDEN_EXPIRES_AT, v.get("expires_at").asLong(), name);
+      final Golden g = golden(name);
+      final ApprovalBatch.Decoded decoded = ApprovalBatch.decode(frame(g.approvals(), g.signature()));
+      assertEquals(Fixtures.GOLDEN_ISSUED_AT, decoded.issuedAt(), name);
+      assertEquals(Fixtures.GOLDEN_EXPIRES_AT, decoded.expiresAt(), name);
+    }
+  }
+
+  @Test
+  void refusesAnExpiryNotAfterIssue() throws Exception {
+    final Golden g = golden("batch.json");
+    for (final long expires : new long[] {Fixtures.GOLDEN_ISSUED_AT, Fixtures.GOLDEN_ISSUED_AT - 1}) {
+      final ByteArrayOutputStream out = new ByteArrayOutputStream();
+      out.write(ApprovalBatch.message("default", Fixtures.GOLDEN_ISSUED_AT, expires, g.approvals()));
+      out.write(g.signature());
+      assertThrows(InvalidBatchException.class, () -> ApprovalBatch.decode(out.toByteArray()), "expires_at " + expires);
+    }
+  }
+
+  @Test
   void rejectsTamperingUnknownModesAndBadSizes() throws Exception {
     final Golden g = golden("call-batch.json");
     final ApprovalVerifier verifier = new ApprovalVerifier(java.util.Map.of("default", Fixtures.FIXTURE_PUBLIC_KEY));
     final byte[] ok = frame(g.approvals(), g.signature());
+    // domain | u8 key id length | "default" | u64 issued_at | u64 expires_at | u32 count
+    final int header = ApprovalBatch.DOMAIN.length + 1 + "default".length() + 8 + 8 + 4;
 
     final byte[] flipped = ok.clone();
-    flipped[ApprovalBatch.DOMAIN.length + 4 + 16 + 8] ^= 1; // first tx hash byte
+    flipped[header + 16 + 8] ^= 1; // first tx hash byte: after the item domain and chain id
     assertFalse(verifier.verify(ApprovalBatch.decode(flipped)));
 
     final byte[] badSig = ok.clone();
@@ -78,7 +104,7 @@ class ApprovalBatchTest {
     assertFalse(new ApprovalVerifier(java.util.Map.of("default", otherKey)).verify(ApprovalBatch.decode(ok)));
 
     final byte[] unknownMode = ok.clone();
-    unknownMode[ApprovalBatch.DOMAIN.length + 4 + 14] = '9'; // "OPS_APPROVAL_V9"
+    unknownMode[header + 14] = '9'; // "OPS_APPROVAL_V9"
     assertThrows(InvalidBatchException.class, () -> ApprovalBatch.decode(unknownMode));
 
     final byte[] wrongDomain = ok.clone();
@@ -89,7 +115,7 @@ class ApprovalBatchTest {
     assertThrows(InvalidBatchException.class, () -> ApprovalBatch.decode(truncated));
 
     final byte[] countMismatch = ok.clone();
-    countMismatch[ApprovalBatch.DOMAIN.length + 3] = 1; // says 1 approval, carries 2
+    countMismatch[header - 1] = 1; // says 1 approval, carries 2
     assertThrows(InvalidBatchException.class, () -> ApprovalBatch.decode(countMismatch));
 
     assertThrows(InvalidBatchException.class, () -> ApprovalBatch.decode(frame(List.of(), g.signature())));

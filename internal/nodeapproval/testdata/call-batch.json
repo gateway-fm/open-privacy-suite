@@ -1,6 +1,8 @@
 {
   "version": 2,
   "key_id": "default",
+  "issued_at": 1790000000000,
+  "expires_at": 1790000600000,
   "approvals": [
     {
       "hash_mode": 3,
@@ -16,5 +18,5 @@
       "principal": "0x0000000000000000000000000000000000000000000000000000000000000000"
     }
   ],
-  "signature": "786b8601d91c7c8ffd3e26d926251e2ce0b618caac6dce1b9edaf9a3304a11d8d3a47dca83d67e566a303fa176fc2d719a24c4f3559e6217362754b6847c3f07"
+  "signature": "87246fef1afda0d094cd654137e52111e97c23261b6b7fb6549dfbcaad173e42c60f1ebbe244b0ce822b896ffc8dd39d08748131cd0e1b23d84e9182aa55e000"
 }

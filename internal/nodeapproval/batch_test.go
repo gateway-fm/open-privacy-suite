@@ -24,7 +24,7 @@ func batchFixtures(n int) []Approval {
 
 func TestBatchGolden(t *testing.T) {
 	key := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{7}, 32))
-	batch, err := SignBatch(key, batchFixtures(3))
+	batch, err := goldenSigner(key).SignBatch(batchFixtures(3))
 	if err != nil {
 		t.Fatal(err)
 	}

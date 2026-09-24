@@ -24,6 +24,10 @@ final class Fixtures {
       Bytes.fromHexString("ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c")
           .toArrayUnsafe();
 
+  /** The golden vectors are signed at this instant (Go expiry_test.go goldenIssued) with the default 10-minute TTL. */
+  static final long GOLDEN_ISSUED_AT = 1790000000000L;
+  static final long GOLDEN_EXPIRES_AT = 1790000600000L;
+
   private Fixtures() {}
 
   /** JsonNode to the plain Map/List/String/Boolean shapes the encoders work on. */
