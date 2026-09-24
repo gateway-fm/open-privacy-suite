@@ -6,7 +6,7 @@ steps. Nothing about authorization is stubbed: the fixtures are the test identit
 development login, and the script standing in for a consensus client and an identity provider.
 
 ```sh
-cd <repo>
+cd "$(git rev-parse --show-toplevel)"
 export JAVA_HOME=$PWD/.tmp/jdk25/jdk-25.0.4.1+1/Contents/Home
 go build -tags mockauth -o .tmp/ops-server ./cmd/server
 (cd poc/besu-signed-approvals && gradle --no-daemon build)
