@@ -1,0 +1,18 @@
+node:internal/deps/undici/undici:13510
+      Error.captureStackTrace(err);
+            ^
+
+TypeError: fetch failed
+    at node:internal/deps/undici/undici:13510:13
+    at async api (file://<repo>/poc/reth-signed-approvals/ui_browser_test.mjs:20:13)
+    at async file://<repo>/poc/reth-signed-approvals/ui_browser_test.mjs:55:17 {
+  [cause]: Error: read ETIMEDOUT
+      at TCP.onStreamRead (node:internal/stream_base_commons:216:20)
+      at TCP.callbackTrampoline (node:internal/async_hooks:130:17) {
+    errno: -60,
+    code: 'ETIMEDOUT',
+    syscall: 'read'
+  }
+}
+
+Node.js v23.11.0

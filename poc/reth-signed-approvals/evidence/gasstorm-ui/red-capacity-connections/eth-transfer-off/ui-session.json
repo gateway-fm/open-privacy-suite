@@ -1,0 +1,13 @@
+{
+  "url": "http://127.0.0.1:18000/load-test/",
+  "pid": 11510,
+  "enforcement": false,
+  "wallets": 10,
+  "gas_limit": 200000000,
+  "block_seconds": 1,
+  "loadgen": "http://127.0.0.1:57209",
+  "OPS": "http://127.0.0.1:57026",
+  "org": "4ed640d8-9d4b-4885-9b5b-7388bf1b3435",
+  "node": "http://127.0.0.1:57014",
+  "dashboard_image": "sha256:3520327ee7a7f8ebbe863f32f5827c19c6c675ea070969c5ba08557c1aafcb27"
+}

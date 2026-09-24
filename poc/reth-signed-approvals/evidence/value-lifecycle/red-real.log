@@ -1,0 +1,28 @@
+Warning: "selfdestruct" has been deprecated. Note that, starting from the Cancun hard fork, the underlying opcode no longer deletes the code and data associated with an account and only transfers its Ether to the beneficiary, unless executed in the same transaction in which the contract was created (see EIP-6780). Any use in newly deployed contracts is strongly discouraged even if the new behavior is taken into account. Future changes to the EVM might further reduce the functionality of the opcode.
+   --> contracts/Applications.sol:128:57:
+    |
+128 |     function destroy(address payable target) external { selfdestruct(target); }
+    |                                                         ^^^^^^^^^^^^
+
+Warning: "selfdestruct" has been deprecated. Note that, starting from the Cancun hard fork, the underlying opcode no longer deletes the code and data associated with an account and only transfers its Ether to the beneficiary, unless executed in the same transaction in which the contract was created (see EIP-6780). Any use in newly deployed contracts is strongly discouraged even if the new behavior is taken into account. Future changes to the EVM might further reduce the functionality of the opcode.
+   --> contracts/Applications.sol:156:57:
+    |
+156 |     function destroy(address payable target) external { selfdestruct(target); }
+    |                                                         ^^^^^^^^^^^^
+
+Traceback (most recent call last):
+  File "<repo>/poc/reth-signed-approvals/lifecycle_tests.py", line 115, in <module>
+    h.prepare();tests()
+                ~~~~~^^
+  File "<repo>/poc/reth-signed-approvals/lifecycle_tests.py", line 112, in tests
+    ordinary(fork);divergence(fork)
+    ~~~~~~~~^^^^^^
+  File "<repo>/poc/reth-signed-approvals/lifecycle_tests.py", line 30, in ordinary
+    c.approve(tx);n.submit(tx);n.make_block([tx]);r=receipt(n,tx)
+    ~~~~~~~~~^^^^
+  File "<repo>/poc/reth-signed-approvals/run.py", line 35, in approve
+    a=self.prepare(tx);self.send(a);return a
+  File "<repo>/poc/reth-signed-approvals/run.py", line 26, in prepare
+    result=json.loads(self.process.stdout.readline());assert "error" not in result,result
+                                                             ^^^^^^^^^^^^^^^^^^^^^
+AssertionError: {'error': 'V1 supports protected legacy/EIP-1559 zero-value contract calls only'}

@@ -1,0 +1,18 @@
+{
+  "results": [
+    {
+      "workload": "storage-write",
+      "confirmed": 25368,
+      "successfulReceipts": 25368,
+      "missingReceipts": 85,
+      "failed": 0,
+      "duplicateLogEntries": 0,
+      "confirmedCounterDelta": 0,
+      "peakLiveTps": 827.5180316552484,
+      "dashboardPeakTps": 838,
+      "adaptive": true,
+      "wallets": 10
+    }
+  ],
+  "websocketFrames": 224
+}

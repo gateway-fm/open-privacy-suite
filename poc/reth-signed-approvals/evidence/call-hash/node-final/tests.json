@@ -1,0 +1,171 @@
+[
+  {
+    "test": "counter_strict",
+    "passed": true,
+    "approved": 64,
+    "confirmed": 1,
+    "total": 1
+  },
+  {
+    "test": "counter_calls",
+    "passed": true,
+    "approved": 64,
+    "confirmed": 64,
+    "total": 64
+  },
+  {
+    "test": "shared_token_balances",
+    "passed": true,
+    "confirmed": 64
+  },
+  {
+    "test": "three_nested_shared_counters",
+    "passed": true,
+    "confirmed": 32
+  },
+  {
+    "test": "precompile_call_identity",
+    "passed": true
+  },
+  {
+    "test": "reject_changed_argument",
+    "passed": true,
+    "decisions": [
+      {
+        "actual": "Ok(0x9bf347ec0209a50bfbadb17609eae320ebdccda098b5bcc57f2205462a954c78)",
+        "decision": "deny",
+        "expected": "0x40343a3277f266794150d6ea45977e69162bb206e8dc0eb516a179b5ee1cd20c",
+        "hash_mode": 3,
+        "tx_hash": "0x025e39ae10edc9bd5a2c300fa776497f2e048a63e21134092b44bc823e555d57"
+      },
+      {
+        "actual": "Ok(0x9bf347ec0209a50bfbadb17609eae320ebdccda098b5bcc57f2205462a954c78)",
+        "decision": "deny",
+        "expected": "0x40343a3277f266794150d6ea45977e69162bb206e8dc0eb516a179b5ee1cd20c",
+        "hash_mode": 3,
+        "tx_hash": "0x025e39ae10edc9bd5a2c300fa776497f2e048a63e21134092b44bc823e555d57"
+      }
+    ]
+  },
+  {
+    "test": "reject_changed_extra_call",
+    "passed": true,
+    "decisions": [
+      {
+        "actual": "Ok(0xf5b1e74cfd6f023c244f62aa8969cb1c009754592801c425cf49b47295037723)",
+        "decision": "deny",
+        "expected": "0xe7e24a9306eb06f92ad6f03f94277d68f51787ee4c3e2ec50e954eb459641817",
+        "hash_mode": 3,
+        "tx_hash": "0x3511d3653761dc4ee01aa7b4c91370af84f46951e9de6e702afd887bfae18830"
+      },
+      {
+        "actual": "Ok(0xf5b1e74cfd6f023c244f62aa8969cb1c009754592801c425cf49b47295037723)",
+        "decision": "deny",
+        "expected": "0xe7e24a9306eb06f92ad6f03f94277d68f51787ee4c3e2ec50e954eb459641817",
+        "hash_mode": 3,
+        "tx_hash": "0x3511d3653761dc4ee01aa7b4c91370af84f46951e9de6e702afd887bfae18830"
+      }
+    ]
+  },
+  {
+    "test": "reject_changed_unexpected_create",
+    "passed": true,
+    "decisions": [
+      {
+        "actual": "Err(\"lifecycle/unknown operation under call-only approval\")",
+        "decision": "deny",
+        "expected": "0x685b85b061f9a07beaf2fc246d11a2ba72640828a71b456bd783ebae99d8f6bd",
+        "hash_mode": 3,
+        "tx_hash": "0xdcfb3c8df8275bb26ae2b45376e55deeb6c5294b6e9eb193e5eae07cd12fcd8e"
+      },
+      {
+        "actual": "Err(\"lifecycle/unknown operation under call-only approval\")",
+        "decision": "deny",
+        "expected": "0x685b85b061f9a07beaf2fc246d11a2ba72640828a71b456bd783ebae99d8f6bd",
+        "hash_mode": 3,
+        "tx_hash": "0xdcfb3c8df8275bb26ae2b45376e55deeb6c5294b6e9eb193e5eae07cd12fcd8e"
+      }
+    ]
+  },
+  {
+    "test": "reject_changed_executed_code",
+    "passed": true,
+    "decisions": [
+      {
+        "actual": "Ok(0xa0dec0447564a7a520b94c2dbeb0e27230e7b003b618a39b6b3520f97142e6e9)",
+        "decision": "deny",
+        "expected": "0x0623dfe0fb7e5bcbadf0c260e74e0311e03fae54bcffd5698ec84d84e654b042",
+        "hash_mode": 3,
+        "tx_hash": "0xa98037402afdd48c7908331f51d893780de0a24b949d83a5ac7a8364206788fc"
+      },
+      {
+        "actual": "Ok(0xa0dec0447564a7a520b94c2dbeb0e27230e7b003b618a39b6b3520f97142e6e9)",
+        "decision": "deny",
+        "expected": "0x0623dfe0fb7e5bcbadf0c260e74e0311e03fae54bcffd5698ec84d84e654b042",
+        "hash_mode": 3,
+        "tx_hash": "0xa98037402afdd48c7908331f51d893780de0a24b949d83a5ac7a8364206788fc"
+      }
+    ]
+  },
+  {
+    "test": "reject_changed_native_value",
+    "passed": true,
+    "decisions": [
+      {
+        "actual": "Ok(0x533c90f558d9d81112e5f9996f2d9bf1b4d49863d6b100d3f50103c1321100d1)",
+        "decision": "deny",
+        "expected": "0x7bee371646e9eb3aa0d915255a3463dafb8430171599d5df9e1ecc5d23e846cf",
+        "hash_mode": 3,
+        "tx_hash": "0x3ba205727d2a0d084557cf9b41e7e964d1858c64be3d1229a0b305e04ade0f07"
+      },
+      {
+        "actual": "Ok(0x533c90f558d9d81112e5f9996f2d9bf1b4d49863d6b100d3f50103c1321100d1)",
+        "decision": "deny",
+        "expected": "0x7bee371646e9eb3aa0d915255a3463dafb8430171599d5df9e1ecc5d23e846cf",
+        "hash_mode": 3,
+        "tx_hash": "0x3ba205727d2a0d084557cf9b41e7e964d1858c64be3d1229a0b305e04ade0f07"
+      }
+    ]
+  },
+  {
+    "test": "calls_cross_org_redirect",
+    "passed": true,
+    "hash": "0x6a043a1667ad307c143462bd590d142e28a7ea71e53aa1deb5d9c8ebdfcffb35"
+  },
+  {
+    "test": "calls_caught_foreign_redirect",
+    "passed": true,
+    "hash": "0x65074c44aa438aeaadfc27ef9e96ba3ff472f9ff77cbbef717fd84353eeb88e0"
+  },
+  {
+    "test": "no_write_cross_org_call_denied_despite_identical_return_and_storage",
+    "passed": true
+  },
+  {
+    "test": "documented_limit_internal_accounting_can_change",
+    "passed": true,
+    "preflight_increment": 0,
+    "executed_increment": 120
+  },
+  {
+    "test": "reject_tampered_mode_0",
+    "passed": true
+  },
+  {
+    "test": "reject_tampered_mode_42",
+    "passed": true
+  },
+  {
+    "test": "same_org_nested_call_executes",
+    "passed": true,
+    "hash": "0x6a043a1667ad307c143462bd590d142e28a7ea71e53aa1deb5d9c8ebdfcffb35"
+  },
+  {
+    "test": "delegatecall_uses_caller_storage",
+    "passed": true
+  },
+  {
+    "test": "EIP1559_signed_transaction",
+    "passed": true
+  }
+]

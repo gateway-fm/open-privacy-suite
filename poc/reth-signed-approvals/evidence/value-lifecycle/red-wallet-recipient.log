@@ -1,0 +1,8 @@
+--- FAIL: TestPreflightValueRecipients (0.00s)
+    --- FAIL: TestPreflightValueRecipients/native_call (0.00s)
+        trace_creation_test.go:62: allowed=false want=true: &{Allowed:false Reason:contract access denied DenialKind:unregistered DeniedTarget:0x2222222222222222222222222222222222222222 CreateTargets:[]}
+    --- FAIL: TestPreflightValueRecipients/destruction_payout (0.00s)
+        trace_creation_test.go:62: allowed=false want=true: &{Allowed:false Reason:contract access denied DenialKind:unregistered DeniedTarget:0x2222222222222222222222222222222222222222 CreateTargets:[]}
+FAIL
+FAIL	privacy-proxy/internal/rbac	0.519s
+FAIL

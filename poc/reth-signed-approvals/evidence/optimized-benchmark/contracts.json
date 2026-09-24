@@ -1,0 +1,435 @@
+{
+  "contracts": {
+    "contracts/Applications.sol:BenchRelay": {
+      "abi": [
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "key",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "count",
+              "type": "uint256"
+            }
+          ],
+          "name": "run",
+          "outputs": [],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        }
+      ],
+      "bin-runtime": "6080604052348015600e575f5ffd5b50600436106026575f3560e01c80637357f5d214602a575b5f5ffd5b6039603536600460b4565b603b565b005b5f5b8181101560af5761330063541aea0f6054838660d3565b6040516001600160e01b031960e084901b1681526004810191909152600760248201526044015f604051808303815f87803b1580156090575f5ffd5b505af115801560a1573d5f5f3e3d5ffd5b50505050806001019050603d565b505050565b5f5f6040838503121560c4575f5ffd5b50508035926020909101359150565b8082018082111560f157634e487b7160e01b5f52601160045260245ffd5b9291505056fea26469706673582212203a1f7f7730e0626a34adc3eef662e66657290b777b712c861f9b72965410d2a564736f6c63430008230033"
+    },
+    "contracts/Applications.sol:BenchRouter": {
+      "abi": [
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "key",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "count",
+              "type": "uint256"
+            }
+          ],
+          "name": "run",
+          "outputs": [],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        }
+      ],
+      "bin-runtime": "6080604052348015600e575f5ffd5b50600436106026575f3560e01c80637357f5d214602a575b5f5ffd5b603960353660046092565b603b565b005b6040516339abfae960e11b8152600481018390526024810182905261320090637357f5d2906044015f604051808303815f87803b1580156079575f5ffd5b505af1158015608a573d5f5f3e3d5ffd5b505050505050565b5f5f6040838503121560a2575f5ffd5b5050803592602090910135915056fea26469706673582212203bb7ed52d9117503a3155cf83972b7f3588b401edbf4fe5f0254c33828c903b164736f6c63430008230033"
+    },
+    "contracts/Applications.sol:BenchVault": {
+      "abi": [
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "key",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "value",
+              "type": "uint256"
+            }
+          ],
+          "name": "put",
+          "outputs": [],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "name": "values",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        }
+      ],
+      "bin-runtime": "6080604052348015600e575f5ffd5b50600436106030575f3560e01c8063541aea0f1460345780635e383d21146052575b5f5ffd5b6050603f3660046080565b5f9182526020829052604090912055565b005b606e605d366004609f565b5f6020819052908152604090205481565b60405190815260200160405180910390f35b5f5f604083850312156090575f5ffd5b50508035926020909101359150565b5f6020828403121560ae575f5ffd5b503591905056fea26469706673582212209118c90e8087bdb01781b782c5b6caa8d8236ec8cf49e51c1f1869db95a92f1364736f6c63430008230033"
+    },
+    "contracts/Applications.sol:FingerprintCases": {
+      "abi": [
+        {
+          "anonymous": false,
+          "inputs": [
+            {
+              "indexed": false,
+              "internalType": "bytes",
+              "name": "data",
+              "type": "bytes"
+            }
+          ],
+          "name": "Entry",
+          "type": "event"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "bool",
+              "name": "fail",
+              "type": "bool"
+            }
+          ],
+          "name": "inner",
+          "outputs": [
+            {
+              "internalType": "bytes",
+              "name": "",
+              "type": "bytes"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
+          "inputs": [],
+          "name": "mixed",
+          "outputs": [
+            {
+              "internalType": "bytes",
+              "name": "",
+              "type": "bytes"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        }
+      ],
+      "bin-runtime": "608060405234801561000f575f5ffd5b5060043610610034575f3560e01c8063354df1f914610038578063963f0fb314610056575b5f5ffd5b610040610069565b60405161004d91906102b7565b60405180910390f35b6100406100643660046102e9565b6101e6565b60607f27f9da2106e1817b65cee2d24f2eaca6eec940e01ecfa825e44df102ac1c993a6040516100ae906020808252600190820152600160ff1b604082015260600190565b60405180910390a160405163963f0fb360e01b81525f6004820152309063963f0fb3906024015f604051808303815f875af11580156100ef573d5f5f3e3d5ffd5b505050506040513d5f823e601f3d908101601f191682016040526101169190810190610323565b5060405163963f0fb360e01b815260016004820152309063963f0fb3906024015f604051808303815f875af192505050801561017357506040513d5f823e601f3d908101601f191682016040526101709190810190610323565b60015b1561017a57505b7f27f9da2106e1817b65cee2d24f2eaca6eec940e01ecfa825e44df102ac1c993a6040516101c19060208082526002908201526001600160f81b0319604082015260600190565b60405180910390a15060408051808201909152600381526180ff60e81b602082015290565b60607f27f9da2106e1817b65cee2d24f2eaca6eec940e01ecfa825e44df102ac1c993a60405161022b90602080825260029082015260ff60f01b604082015260600190565b60405180910390a181156102765760405162461bcd60e51b815260206004820152600e60248201526d636175676874206669787475726560901b604482015260640160405180910390fd5b50506040805180820190915260048152621122ff60e01b602082015290565b5f5b838110156102af578181015183820152602001610297565b50505f910152565b602081525f82518060208401526102d5816040850160208701610295565b601f01601f19169190910160400192915050565b5f602082840312156102f9575f5ffd5b81358015158114610308575f5ffd5b9392505050565b634e487b7160e01b5f52604160045260245ffd5b5f60208284031215610333575f5ffd5b815167ffffffffffffffff811115610349575f5ffd5b8201601f81018413610359575f5ffd5b805167ffffffffffffffff8111156103735761037361030f565b604051601f8201601f19908116603f0116810167ffffffffffffffff811182821017156103a2576103a261030f565b6040528181528282016020018610156103b9575f5ffd5b6103ca826020830160208601610295565b9594505050505056fea26469706673582212208e6ae8758b502208046d9e2f178bd8a509da49d464ab4a248136962979fcf8a464736f6c63430008230033"
+    },
+    "contracts/Applications.sol:IReadVault": {
+      "abi": [
+        {
+          "inputs": [],
+          "name": "total",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        }
+      ],
+      "bin-runtime": ""
+    },
+    "contracts/Applications.sol:IRelay": {
+      "abi": [
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "amount",
+              "type": "uint256"
+            }
+          ],
+          "name": "forward",
+          "outputs": [],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        }
+      ],
+      "bin-runtime": ""
+    },
+    "contracts/Applications.sol:IVault": {
+      "abi": [
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "amount",
+              "type": "uint256"
+            }
+          ],
+          "name": "note",
+          "outputs": [],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        }
+      ],
+      "bin-runtime": ""
+    },
+    "contracts/Applications.sol:ReadRelay": {
+      "abi": [
+        {
+          "inputs": [],
+          "name": "probe",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        }
+      ],
+      "bin-runtime": "6080604052348015600e575f5ffd5b50600436106026575f3560e01c8063b74af5a914602a575b5f5ffd5b60306042565b60405190815260200160405180910390f35b5f4315604f576123006053565b6113005b6001600160a01b0316632ddbd13a6040518163ffffffff1660e01b8152600401602060405180830381865afa158015608d573d5f5f3e3d5ffd5b505050506040513d601f19601f8201168201806040525081019060af919060b4565b905090565b5f6020828403121560c3575f5ffd5b505191905056fea26469706673582212200542826069582830ee83c938630be246c5aa28d6f5340bb6766737ec65471e1c64736f6c63430008230033"
+    },
+    "contracts/Applications.sol:ReadRouter": {
+      "abi": [
+        {
+          "inputs": [],
+          "name": "probe",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        }
+      ],
+      "bin-runtime": "6080604052348015600e575f5ffd5b50600436106026575f3560e01c8063b74af5a914602a575b5f5ffd5b60306042565b60405190815260200160405180910390f35b5f6142006001600160a01b031663b74af5a96040518163ffffffff1660e01b8152600401602060405180830381865afa1580156080573d5f5f3e3d5ffd5b505050506040513d601f19601f8201168201806040525081019060a2919060a7565b905090565b5f6020828403121560b6575f5ffd5b505191905056fea264697066735822122008ee5a8bd89b100f699ea5a5c2d42cbd7c7d46c2cd5e6a7a4f532020fc1204cf64736f6c63430008230033"
+    },
+    "contracts/Applications.sol:Relay": {
+      "abi": [
+        {
+          "inputs": [],
+          "name": "afterCalls",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [],
+          "name": "beforeCalls",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "amount",
+              "type": "uint256"
+            }
+          ],
+          "name": "forward",
+          "outputs": [],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "address",
+              "name": "next",
+              "type": "address"
+            }
+          ],
+          "name": "setTarget",
+          "outputs": [],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
+          "inputs": [],
+          "name": "target",
+          "outputs": [
+            {
+              "internalType": "address",
+              "name": "",
+              "type": "address"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        }
+      ],
+      "bin-runtime": "608060405234801561000f575f5ffd5b5060043610610055575f3560e01c80634fa679d81461005957806375b481021461006e578063776d1a011461008a578063cca1b24b146100b9578063d4b83992146100c2575b5f5ffd5b61006c610067366004610170565b6100ec565b005b61007760025481565b6040519081526020015b60405180910390f35b61006c610098366004610187565b5f80546001600160a01b0319166001600160a01b0392909216919091179055565b61007760015481565b5f546100d4906001600160a01b031681565b6040516001600160a01b039091168152602001610081565b60018054905f6100fb836101b4565b90915550505f54604051635284a24560e01b8152600481018390526001600160a01b0390911690635284a245906024015f604051808303815f87803b158015610142575f5ffd5b505af1158015610154573d5f5f3e3d5ffd5b505060028054925090505f610168836101b4565b919050555050565b5f60208284031215610180575f5ffd5b5035919050565b5f60208284031215610197575f5ffd5b81356001600160a01b03811681146101ad575f5ffd5b9392505050565b5f600182016101d157634e487b7160e01b5f52601160045260245ffd5b506001019056fea2646970667358221220bbf3d56761fa941fd3205296160f8eccd2b1f8ed96db498a68a7f6a69498f55b64736f6c63430008230033"
+    },
+    "contracts/Applications.sol:Router": {
+      "abi": [
+        {
+          "inputs": [],
+          "name": "afterCalls",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [],
+          "name": "beforeCalls",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [],
+          "name": "caughtFailures",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "amount",
+              "type": "uint256"
+            }
+          ],
+          "name": "run",
+          "outputs": [],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "amount",
+              "type": "uint256"
+            }
+          ],
+          "name": "runCatch",
+          "outputs": [],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "address",
+              "name": "target",
+              "type": "address"
+            },
+            {
+              "internalType": "uint256",
+              "name": "amount",
+              "type": "uint256"
+            }
+          ],
+          "name": "runDelegate",
+          "outputs": [],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        }
+      ],
+      "bin-runtime": "608060405234801561000f575f5ffd5b5060043610610060575f3560e01c806347903b0e1461006457806375b4810214610079578063936eb4f814610094578063a444f5e91461009d578063cca1b24b146100b0578063ffa19290146100b8575b5f5ffd5b6100776100723660046102a2565b6100cb565b005b61008260015481565b60405190815260200160405180910390f35b61008260025481565b6100776100ab3660046102a2565b610157565b6100825f5481565b6100776100c63660046102b9565b6101c8565b5f805490806100d9836102ee565b90915550506040516309f4cf3b60e31b81526004810182905261120090634fa679d8906024015f604051808303815f87803b158015610116575f5ffd5b505af1925050508015610127575060015b6101405760028054905f61013a836102ee565b91905055505b60018054905f61014f836102ee565b919050555050565b5f80549080610165836102ee565b90915550506040516309f4cf3b60e31b81526004810182905261120090634fa679d8906024015f604051808303815f87803b1580156101a2575f5ffd5b505af11580156101b4573d5f5f3e3d5ffd5b505060018054925090505f61014f836102ee565b5f805490806101d6836102ee565b91905055505f826001600160a01b0316826040516024016101f991815260200190565b60408051601f198184030181529181526020820180516001600160e01b0316635284a24560e01b1790525161022e9190610312565b5f60405180830381855af49150503d805f8114610266576040519150601f19603f3d011682016040523d82523d5f602084013e61026b565b606091505b50509050806102895760028054905f610283836102ee565b91905055505b60018054905f610298836102ee565b9190505550505050565b5f602082840312156102b2575f5ffd5b5035919050565b5f5f604083850312156102ca575f5ffd5b82356001600160a01b03811681146102e0575f5ffd5b946020939093013593505050565b5f6001820161030b57634e487b7160e01b5f52601160045260245ffd5b5060010190565b5f82515f5b818110156103315760208186018101518583015201610317565b505f92019182525091905056fea26469706673582212207f0e009d6827d96e82863813b126769edd02179f11cc291c200f12a7dd3fbc3c64736f6c63430008230033"
+    },
+    "contracts/Applications.sol:Vault": {
+      "abi": [
+        {
+          "anonymous": false,
+          "inputs": [
+            {
+              "indexed": false,
+              "internalType": "uint256",
+              "name": "amount",
+              "type": "uint256"
+            }
+          ],
+          "name": "Noted",
+          "type": "event"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "amount",
+              "type": "uint256"
+            }
+          ],
+          "name": "note",
+          "outputs": [],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
+          "inputs": [],
+          "name": "total",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        }
+      ],
+      "bin-runtime": "6080604052348015600e575f5ffd5b50600436106030575f3560e01c80632ddbd13a1460345780635284a24514604d575b5f5ffd5b603b5f5481565b60405190815260200160405180910390f35b605c605836600460a7565b605e565b005b805f5f828254606c919060bd565b90915550506040518181527f2a4c0836f0899d4ca8a13ae15d769f0d0d3bdf2401c0afde8a60c80070b912fb9060200160405180910390a150565b5f6020828403121560b6575f5ffd5b5035919050565b8082018082111560db57634e487b7160e01b5f52601160045260245ffd5b9291505056fea26469706673582212208c3fb62aacff5fb3b1929ac59ee2e6912be46a355c844ff5672894c449a593ef64736f6c63430008230033"
+    }
+  },
+  "version": "0.8.35+commit.47b9dedd.Darwin.appleclang"
+}

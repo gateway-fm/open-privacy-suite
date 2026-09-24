@@ -1,0 +1,53 @@
+[
+  {
+    "test": "OPS_native_EOA_transfer_uses_existing_policy",
+    "passed": true
+  },
+  {
+    "test": "OPS_payable_nested_call",
+    "passed": true
+  },
+  {
+    "test": "OPS_nested_wallet_transfers_preserve_registered_org_boundaries",
+    "passed": true
+  },
+  {
+    "test": "OPS_root_and_nested_creation_require_deploy_claim",
+    "passed": true
+  },
+  {
+    "test": "OPS_constructor_nested_creation_and_selfdestruct_foreign_targets_denied",
+    "passed": true
+  },
+  {
+    "test": "OPS_payable_root_deployment_registered",
+    "passed": true,
+    "address": "0x712516e61c8b383df4a63cfe83d7701bce54b03e"
+  },
+  {
+    "test": "OPS_nested_deployment_new_child_call_and_registration",
+    "passed": true,
+    "address": "0xa12f8ab8b0437713596c7d2f56c9b31eb86b4d91"
+  },
+  {
+    "test": "OPS_CREATE2_registered",
+    "passed": true,
+    "address": "0x94be5f895e7027403504b375f5e563e5839b46bb"
+  },
+  {
+    "test": "OPS_SELFDESTRUCT_Cancun_preserves_code",
+    "passed": true
+  },
+  {
+    "test": "OPS_SELFDESTRUCT_pays_normal_wallet",
+    "passed": true
+  },
+  {
+    "test": "OPS_temporary_creation_not_registered",
+    "passed": true
+  },
+  {
+    "test": "OPS_approved_ETH_call_redirected_cross_org_is_excluded_by_Reth",
+    "passed": true
+  }
+]

@@ -1,0 +1,191 @@
+{
+  "hardware": {
+    "os": "macOS-26.6.1-arm64-arm-64bit-Mach-O",
+    "architecture": "arm64",
+    "logical_cpus": 12,
+    "cpu": "Apple M2 Max",
+    "memory_bytes": 34359738368
+  },
+  "repositories": {
+    "OPS": {
+      "path": "<repo>",
+      "commit": "717279591c7a51c96187b9081eceb9afeb7fa30f",
+      "branch": "poc/ops-reth-signed-approvals",
+      "status": "M internal/rbac/trace_validator.go\n M internal/rbac/trace_validator_test.go\n M internal/server/jsonrpc_processor.go\n M internal/server/jsonrpc_trace.go\n M internal/server/server.go\n?? docs/research/\n?? internal/nodeapproval/\n?? internal/rbac/trace_creation_test.go\n?? internal/server/node_approvals.go\n?? internal/server/node_approvals_integration_test.go\n?? poc/"
+    },
+    "Gasstorm": {
+      "path": "~/work/software/gasstorm",
+      "commit": "c7cb9cb1ca73959fc413632e1bf5a1156ed06e0b",
+      "branch": "main",
+      "status": ""
+    },
+    "loadgenerator": {
+      "path": str(Path.home() / "work/software/loadgenerator"),
+      "commit": "d24667e23b010ded9a1d2e80f4d90741c6ab51f2",
+      "branch": "docs/security-response-times",
+      "status": ""
+    },
+    "Reth": {
+      "path": "<repo>/.tmp/reth-policy-poc/reth",
+      "commit": "5a6940e351fed80458fe6c9da8581cbe4b8bd036",
+      "branch": "",
+      "status": ""
+    }
+  },
+  "source_sha256": {
+    "go.mod": "eb3f8465e1e3c510b76d22446a0f47bd49deec7da6dbf1274370c1fbd278876d",
+    "go.sum": "2fd49546a9e625916d89949e23669b7878ff97c287852f563201ed9dbe643d2d",
+    "internal/nodeapproval/batch.go": "de2f51b9a126bad48aa98d994fc604782a888e6197a24e224e49811f17baf889",
+    "internal/nodeapproval/batch_test.go": "eb391243d81c4c44b49f155a0b75e6a1daaa84db93fdbeba84be88a280d36eb6",
+    "internal/nodeapproval/fingerprint.go": "e634c03a3185acee72e0d51cba957f98468149deca618ddeb38f5d93e8ab5683",
+    "internal/nodeapproval/hops.go": "07fb3240298ed800847707e266373c0974a67ac9558e1241dedc5cc61d7d27ac",
+    "internal/nodeapproval/lifecycle_test.go": "879f4a3c4c15b753e1c6ac74398e47ca46f2a8e863d63398a36a453e2959ddaa",
+    "internal/nodeapproval/prepare_test.go": "0f1d2a21a5bc938581f0bf811b2c7559b1e7d953ef141932fabf4d2cb576b22a",
+    "internal/nodeapproval/rpc_pool_test.go": "bb4407cd7536d93daf250c88d5fac31856aa46e91fff8807ef85e87fa74b4553",
+    "internal/nodeapproval/service.go": "55cc409b05d8224cb0bff5ae1120b07bcbe2539b4cd2191c2083168af1528dbb",
+    "internal/nodeapproval/service_test.go": "f9358d48b375a3c53a675e2f4d143057d59843467807ddcd031b40fd3d0c15b1",
+    "internal/nodeapproval/transport.go": "3d83fb925844ac90cd9d89466d330cf645cecb8ab97c7a7c363a93ccf8228106",
+    "internal/nodeapproval/transport_test.go": "68ba999e492405e4141527e7b1864331b0214673e4ae100086dfa2d94f8a09e8",
+    "internal/nodehttp/transport.go": "05b9b6ecef1edc9c0e789793d5d7658561a3223eef1334aef2ae35795f43a225",
+    "internal/nodehttp/transport_bench_test.go": "a62faf36a7ba1bc1e3c605c0ee574f6a52356ddecae1f07182df63e83136dce7",
+    "internal/rbac/abi_registry.go": "4ef4bcb4deef776292e5ea82c778ead0cbf158d6a81b65994f9f94c385432b99",
+    "internal/rbac/abi_registry_test.go": "1e2ed6ddb3747287804ea93963fee62b946a728e02859026e11b9e3d4452b037",
+    "internal/rbac/access.go": "ae31216f7ed1247df80f970b86c6c07f0c1f5afe94d2dc73387096a4d9ed1089",
+    "internal/rbac/access_bypass_cache_test.go": "9c63f7684a1452afd13b7c33e65b7537f7516a956bec789d558da8b9b18b98b2",
+    "internal/rbac/access_cross_org_test.go": "095a8e3ef833d01dcba233395b63340142a143d7396a6571d61660adcc444255",
+    "internal/rbac/access_deny_attribution_test.go": "92bbd86441e8542fe14a644d46827674810267a27cff20ef1ecf306c71b4c424",
+    "internal/rbac/access_kyc_metadata_test.go": "8829da56786b6b56d1aba0a6dae4579ef4b6abbbfe59984cfa28e5f42f6f85a8",
+    "internal/rbac/access_test.go": "6a5ea88f14dc92299c0990dece5f361645f8b850ed11390cdc384c96954a995d",
+    "internal/rbac/access_unregistered_test.go": "276aa7b51f2a86870749082ab3e7a4a82373202088abc8fe615854ffefeae207",
+    "internal/rbac/cache.go": "5eac3d1ca707d4e7a7f9315be20bb88bb56d8c17929a276f982fe2d0a5f635dd",
+    "internal/rbac/cache_bench_test.go": "9371b6e60dd832328e159df0e1cb5020930fa7e0ed08002b7617bfbb9ff1eb4f",
+    "internal/rbac/cache_test.go": "dbfaa6724f71a651894e8a957cb0833b5a70de1a5c68dd1d24d02002ad2a77d9",
+    "internal/rbac/canonicalize_method_test.go": "d2b07aea2ad363de3bfc8daa1521b46fb0a756b38bcde184c2aab3f35540d1f4",
+    "internal/rbac/event_filter.go": "80a49a71ea616fde4c0ce948229f626148f8df4c9d255d466a5293ee6b8f5692",
+    "internal/rbac/event_filter_test.go": "00fbdddb89be0a6ab5aeb5e872de15d3f5591b83d5ba55326319daf4509581dd",
+    "internal/rbac/event_param_rules.go": "09f50e5a2cdfcdfdd4b95eb74e3990579ef12d5c1418027436a48ea5bd6cc2fd",
+    "internal/rbac/event_signatures.go": "5d54db6354a8be027861190917a33763a3e1e5ccebb1ce0a02ebb2fc56596b4d",
+    "internal/rbac/event_signatures_test.go": "2798a68556182b8c00db34164ed2105b36fb64db0ed425ebb2dca79a6cd906aa",
+    "internal/rbac/expand_claims_test.go": "d8fd132e350bcee24ea019e94f50ad331346bddb16b1b71df2f8422d6c6a3841",
+    "internal/rbac/factory_access_test.go": "337ee06650e4ee70ef7ddf985b9976e4e027a546546d0b761fbe39f063d17eae",
+    "internal/rbac/interfaces.go": "b0d3e98abcacd17bc2f1bcade33d3c13071ad8121abc9ba1cf1f470bb744a044",
+    "internal/rbac/log_decision.go": "2769e01c153bed3e25a2da9b4ea7431ad23433be437c571dfd228817a8e29231",
+    "internal/rbac/log_decision_test.go": "dd02a6c098726751cc9e794d52064f0704acc57d9730e96d44088b1e39a0f7d1",
+    "internal/rbac/method_claim.go": "a5896c7fce4c30cba97f4e745764016cc742895e11ef8b20c7ca16ca7346e9c6",
+    "internal/rbac/method_claim_test.go": "3035329fc99df3ff403255fd38bfc3c9902aaf823f505287d55c2cb5b9575e26",
+    "internal/rbac/methods.go": "88554b4a0f0b28e1f04ccc98eac5296943ad212f0855ae7d6bcde4a2b10d6a37",
+    "internal/rbac/models.go": "9c79531f819d485c1d99b337d3b8e0b0cf12d940248e6e826d861849879d2f41",
+    "internal/rbac/models_test.go": "0a27e196ef39785d675985bbc7f3ac3b5634d72aff29a9929e8db2bc6ba44770",
+    "internal/rbac/org_context.go": "a71b7b19387f5db71597219bcb1bade26735ccf8658f3c4511de927572af2a05",
+    "internal/rbac/org_context_test.go": "bc060aaa56b532ad873c8d00b3e5b148cd4d4121222b340f8b916d9dd7f185be",
+    "internal/rbac/owner_memo_test.go": "07d6a9d27ba0b44fb731c951b6101a89311348272c2035421d694ddf1bf985db",
+    "internal/rbac/param_validator.go": "e1e2739c2dd8803a5ca3add9562bfda4e2dc6e47bf9435ee343ef3008e77feb9",
+    "internal/rbac/param_validator_test.go": "eaa6f0a13520bbd61303982c7818a5f80ac6d9885acbc5812c3891ca746b807f",
+    "internal/rbac/pending_deployments.go": "d827a16b0ea9ee9564e782a2bca2017c4eda7e5c83fc443ccdd8dd4d4674cb74",
+    "internal/rbac/pending_deployments_test.go": "bd8e5baf246fc3802e537ee0386c40b1a322f78d41d463413014acee8682a6f0",
+    "internal/rbac/resolver.go": "7cc525bdf13be40a511f2d6053264f65b9677b84a33dbbc8d1644de0adbbe746",
+    "internal/rbac/resolver_test.go": "1188702ba0745c22521b3e36d621ae41ff276d97b78627867cb035fcb20bc0d8",
+    "internal/rbac/storage_slots.go": "84acd617f69d8742880a29df0ff71e05eb6e22c608d48c70092b68288355dce6",
+    "internal/rbac/storage_slots_test.go": "45c70d8ae32823df48e84d2a55cd8f4a43209c4b85db35f9e7d6758c86d0fb46",
+    "internal/rbac/store.go": "1b97eb8a8bc83443c828b94f0330ce99ec1ce9b4338444df028b080f0eb0e578",
+    "internal/rbac/trace_creation_test.go": "678b6d5ac522c78c7a6b5c01a353474f319b92c0e60c9f7c49f26e93c9368c10",
+    "internal/rbac/trace_validator.go": "d00f4dcc3129b42ea7febbccaad18db304b43773cb15f69f243f2815dc4bedaf",
+    "internal/rbac/trace_validator_test.go": "ba5537c6d9ea366d2ae67cffc17f19035a167b6ef0ce3001f1683adbb46bbfa1",
+    "internal/rbac/upgrade_validator.go": "7ae22789dd27bb7a44c8b0141d314ee68f3ad3221369cad753efb0509454cd1d",
+    "internal/rbac/upgrade_validator_test.go": "3a1b10d6a804630ec1d66af71c2b0fb7a51be3e4bd412cda803b8eb0895758ec",
+    "internal/rbac/visibleto_unlock.go": "ed490daf02dd55faf7b678e581b933d768bafdf9c25503b0ce678d5211dc4b58",
+    "internal/server/jsonrpc_processor.go": "c99e943351f9b9bfb910a05e8a7d01d15b38c777356d3b5ade322b47a9a6cbb3",
+    "internal/server/jsonrpc_trace.go": "69cb7bde5ba5769787c0414935390823363708d24f0568ea886c9ea48d66d7a4",
+    "internal/server/node_approvals.go": "e1457a4879c0047d689a0b4f8d1ec08488deeea939616921dbf517b4ba5ee0b7",
+    "internal/server/server.go": "4a68b8e97e805b1accdaa41f5e752f77a52d22ee536dd428c2e1c0150231d98a",
+    "poc/reth-signed-approvals/Cargo.lock": "39d5f147648f7667ebbd975523515db3d1bb7d3037cad88cbb0e7214c2bba6da",
+    "poc/reth-signed-approvals/Cargo.toml": "f56952ab76414512d1fb4aaded7add380c0229ffb4a601a8ae99f96439a1401f",
+    "poc/reth-signed-approvals/analyze_gasstorm.py": "4034601da949a97104ccbbea47f2bf69c94ed5524d45528316363928e97b3f8e",
+    "poc/reth-signed-approvals/analyze_transport.py": "2c9cdaef68aded8cf76af4f031d36026603b2de448bc82bdc18ebd650c1e5cd0",
+    "poc/reth-signed-approvals/batch_tests.py": "140e084c387b77839ecd2b60328896c5dcf7100cb5798d28654eb0bfc44b2223",
+    "poc/reth-signed-approvals/client/main.go": "57c4722d62211a053974482161f79755d3ea0a739422537c4bebddc264e0d8e8",
+    "poc/reth-signed-approvals/contracts/Applications.sol": "6f20f989a724184cbe9326e3b818a00f1c2a2f8147eef6cbe49441ed07d067a1",
+    "poc/reth-signed-approvals/demo.py": "f5f00a70ec37bf6ffe6aa92ff4b27595db4bcf75e467576bec3eca3a35da83f1",
+    "poc/reth-signed-approvals/demo.sh": "832d003dbc73574b39cb437206a214531a2e8a85b587b89f3f8fa40dbaba8e79",
+    "poc/reth-signed-approvals/gasstorm.sh": "e4f54e577f56233785dfe5b6ea94bee3357a015e9b30947d84588c56f4016133",
+    "poc/reth-signed-approvals/gasstorm_compare.py": "e65d41c88baa24938727ce41a5c3bb21d8752d1df1b7e0e08a14ed204066b3f8",
+    "poc/reth-signed-approvals/harness.py": "8437ed328741d0254244859e00710ef0049a24e7355670bd9446a9e1c0f7ba15",
+    "poc/reth-signed-approvals/lifecycle_ops_tests.py": "50eaaec12cb0328d283424996fc0b02edbbc713b2b82d3d3bd21b4c7010206e2",
+    "poc/reth-signed-approvals/lifecycle_tests.py": "b61c521e65be9dc6175147f418111dc22fc0f1bf5cb10950c21fb08edd22826e",
+    "poc/reth-signed-approvals/profile_bench.py": "1269d9f0e232b49b79209edfbef9b15bc204b01a3d1bcf2e132e059fdb25cd7c",
+    "poc/reth-signed-approvals/run.py": "34b56dd48664bed2ff856fa08ec2a7e203c06492b5f2285725684087485f083d",
+    "poc/reth-signed-approvals/setup.py": "e4a5b658a73625b377c7a1b933ecbf52725a53ee39b39bd587c392710e5cf6bd",
+    "poc/reth-signed-approvals/src/approvals.rs": "456c4fd2ef897ccfaa76b531a2f36ff3ae278ceac737b6658be7a4b055911cae",
+    "poc/reth-signed-approvals/src/batch.rs": "f4c871e5adef3e16cdd7c1ce333b2aebff03728ab1714cbc5cdf439138789d6d",
+    "poc/reth-signed-approvals/src/direct.rs": "eec20034efdb6c5c2382f4378292ed0c2df686370420beb854699346d3ce532d",
+    "poc/reth-signed-approvals/src/execution.rs": "6299024821cd93e1acd4dc80c04bf1c86540b2404c7d914b5656f44505e9cf2c",
+    "poc/reth-signed-approvals/src/fingerprint.rs": "3d898bf86ca4ad68198c2ebe36789aa2ad3bd90d10ed6835b0b234258a3e2891",
+    "poc/reth-signed-approvals/src/hops.rs": "f58ad5efd25724f49e27c89eebbefa8732a3618038dd9cb188f78b52649e8157",
+    "poc/reth-signed-approvals/src/main.rs": "7e7a215f18c77862ca13f7700544c8d9588e63dbb7bd51067a0d4ec6f87832e4",
+    "poc/reth-signed-approvals/src/payload.rs": "126a1cfae32288155cb6f8279e80615670754ff5130d70999cee567256fedb5d",
+    "poc/reth-signed-approvals/src/profile.rs": "7d34b43bea2a08c8ce755e1250a447eed7b8b7750c7e3a37a8e47811fd5204ac",
+    "poc/reth-signed-approvals/src/verification.rs": "ccef3dd209fbbf74a191a57bff730e1a491a1366b4aa2541e1d8664ffe9ed2d1",
+    "poc/reth-signed-approvals/transport_checks.py": "8f36c74c628e5b5b63d16902ea561aba2c7212c12481f919806e3c63e17319b6",
+    "poc/reth-signed-approvals/verify.py": "089ccbfc1552efcc338a5092640ec5b736feafbef7d294e334480b08ecc9e2e1"
+  },
+  "binaries": {
+    "OPS": {
+      "path": "<repo>/.tmp/ops-server",
+      "sha256": "8cc8e0c1c77a90df458889ee94a84abcb043008ee1fc99ff36d2f1aa45d7a589"
+    },
+    "approval-client": {
+      "path": "<repo>/.tmp/approval-client",
+      "sha256": "35356df7391977fdf138f3d9239509ffc0e5ef55c625222b5ecc85b8687d6323"
+    },
+    "loadgenerator": {
+      "path": "<repo>/.tmp/gasstorm-loadgen",
+      "sha256": "2acc05736f317ad5ff828ca3a2deaf244713d09aae677215333f28eee3510ac8"
+    },
+    "Reth": {
+      "path": "<repo>/.tmp/reth-policy-poc/target/release/ops-reth-approvals-poc",
+      "sha256": "44ee7893ae691398aee2392514750f3b33e84ac664150c996e038fd9f4472197"
+    }
+  },
+  "configuration": {
+    "wallets": 10,
+    "DIDs": 1,
+    "MAX_CONCURRENT_REQUESTS": 5000,
+    "DB_MAX_OPEN_CONNS": 30,
+    "block_interval_seconds": 1,
+    "hardfork": "Shanghai",
+    "sending_seconds": 20,
+    "repetitions_per_mode_rate": 2,
+    "fixtures": [
+      "development identity-provider login",
+      "Engine API block scheduling"
+    ],
+    "real": [
+      "OPS HTTP",
+      "PostgreSQL",
+      "Redis",
+      "Reth EVM and mempool",
+      "DB permissions",
+      "wallet links",
+      "approval signatures"
+    ],
+    "indexer": false
+  },
+  "command": "bash poc/reth-signed-approvals/gasstorm.sh all",
+  "regressions_after_pool_fix": {
+    "regression-final/tests.json": {
+      "passed": 55,
+      "total": 55,
+      "sha256": "414d414751ad5bbaea8a9a92775b4b47ef7b1187dfabb81432f364004769434b"
+    },
+    "ops-final/tests.json": {
+      "passed": 12,
+      "total": 12,
+      "sha256": "849530e8ad654545e888ad0ea337ec6f4011a144ea616a1c095e395f0252e44d"
+    }
+  },
+  "artifacts_sha256": {
+    "comparison.json": "d8e86c7e7fd549fe2220281f2384199321a623a99a08032277e1014cb33c1b85",
+    "contention/runs.json": "55e13b362127f3274f3c7ede50cb6ddc860e64c315004c69596a986a913659cc",
+    "safety-final/safety.json": "d128518ac1ad034a44e148f7d4fca819177cb4b3efcbaec7955bb0c37c358ca4"
+  }
+}

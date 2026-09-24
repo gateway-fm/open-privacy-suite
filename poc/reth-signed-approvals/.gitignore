@@ -1,0 +1,6 @@
+/target/
+/__pycache__/
+/*.log
+/evidence/*-rpc.json
+/evidence/**/*-rpc.json
+!evidence/**/*.log

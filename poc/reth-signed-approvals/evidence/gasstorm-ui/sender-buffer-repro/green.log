@@ -1,0 +1,16 @@
+=== RUN   TestBatchRetainsTransactionsAndCallbacksAfterCallerReusesBuffers
+    ownership_probe_test.go:52: actual transaction submitted: nonce-4673
+    ownership_probe_test.go:59: actual completion callback: nonce-4673
+--- PASS: TestBatchRetainsTransactionsAndCallbacksAfterCallerReusesBuffers (0.00s)
+=== RUN   TestSenderBasic
+--- PASS: TestSenderBasic (0.00s)
+=== RUN   TestSenderAtCapacity
+--- PASS: TestSenderAtCapacity (0.00s)
+=== RUN   TestSenderCapacityMetrics
+--- PASS: TestSenderCapacityMetrics (0.05s)
+=== RUN   TestSenderConcurrency
+--- PASS: TestSenderConcurrency (0.00s)
+=== RUN   TestSenderErrorCallback
+--- PASS: TestSenderErrorCallback (0.00s)
+PASS
+ok  	github.com/gateway-fm/loadgenerator/internal/sender	0.495s

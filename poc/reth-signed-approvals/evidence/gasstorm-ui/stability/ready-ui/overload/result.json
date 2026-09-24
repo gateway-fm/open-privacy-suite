@@ -1,0 +1,135 @@
+{
+  "beforeStop": {
+    "status": "running",
+    "txSent": 49120,
+    "txConfirmed": 44756,
+    "txFailed": 0,
+    "currentTps": 2026.8908847086586,
+    "averageTps": 2368.370298939248,
+    "elapsedMs": 20740,
+    "durationMs": 120000,
+    "targetTps": 6000,
+    "pattern": "constant",
+    "transactionType": "eth-transfer",
+    "warnings": [
+      "Insufficient accounts for target TPS: have 10 accounts (can sustain ~150 TPS), but targeting 6000 TPS. Recommended: 600 accounts. Current capacity: 2% of target."
+    ],
+    "peakTps": 2238,
+    "flowStats": {
+      "directConfirmed": 44756,
+      "pendingConfirmed": 0,
+      "preconfConfirmed": 0,
+      "droppedRequeued": 0,
+      "revokedFlow": 0,
+      "failedFlow": 0,
+      "totalTracked": 49120,
+      "avgStageCount": 1.9111563517915309
+    },
+    "latency": {
+      "count": 44756,
+      "min": 813,
+      "max": 3368,
+      "avg": 2049.6744793994103,
+      "p50": 1994,
+      "p75": 2248,
+      "p90": 2657,
+      "p95": 2761,
+      "p99": 2917,
+      "buckets": [
+        {
+          "label": "0-250ms",
+          "count": 0
+        },
+        {
+          "label": "250-500ms",
+          "count": 0
+        },
+        {
+          "label": "500-1s",
+          "count": 41
+        },
+        {
+          "label": "1-2s",
+          "count": 22403
+        },
+        {
+          "label": "2s+",
+          "count": 22312
+        }
+      ]
+    },
+    "blockCount": 20,
+    "blockAttestationEnabled": false,
+    "hsmFailoverEnabled": false,
+    "privacyAvailable": true,
+    "privacyMode": true
+  },
+  "offeredRate": 6000,
+  "stopMs": 247,
+  "resetMs": 241,
+  "retest": {
+    "status": "completed",
+    "txSent": 10010,
+    "txConfirmed": 9898,
+    "txFailed": 0,
+    "currentTps": 747.9575908293422,
+    "averageTps": 537.5651146554965,
+    "elapsedMs": 18621,
+    "durationMs": 10000,
+    "targetTps": 1000,
+    "pattern": "constant",
+    "transactionType": "eth-transfer",
+    "warnings": [
+      "Insufficient accounts for target TPS: have 10 accounts (can sustain ~150 TPS), but targeting 1000 TPS. Recommended: 100 accounts. Current capacity: 10% of target."
+    ],
+    "peakTps": 941,
+    "flowStats": {
+      "directConfirmed": 9898,
+      "pendingConfirmed": 0,
+      "preconfConfirmed": 0,
+      "droppedRequeued": 0,
+      "revokedFlow": 0,
+      "failedFlow": 0,
+      "totalTracked": 10010,
+      "avgStageCount": 1.9888111888111888
+    },
+    "latency": {
+      "count": 9898,
+      "min": 275,
+      "max": 7464,
+      "avg": 1661.5785007072136,
+      "p50": 1109,
+      "p75": 1440.75,
+      "p90": 6309.3,
+      "p95": 6822.15,
+      "p99": 7218.03,
+      "buckets": [
+        {
+          "label": "0-250ms",
+          "count": 0
+        },
+        {
+          "label": "250-500ms",
+          "count": 645
+        },
+        {
+          "label": "500-1s",
+          "count": 3340
+        },
+        {
+          "label": "1-2s",
+          "count": 4859
+        },
+        {
+          "label": "2s+",
+          "count": 1054
+        }
+      ]
+    },
+    "blockCount": 9,
+    "blockAttestationEnabled": false,
+    "hsmFailoverEnabled": false,
+    "privacyAvailable": true,
+    "privacyMode": true
+  }
+}
