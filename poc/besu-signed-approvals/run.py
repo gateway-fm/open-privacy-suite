@@ -259,12 +259,14 @@ def bad_deliveries():
             "store full": "UNAVAILABLE",
         }, refused
         assert refused["store full"].get("reason") == "store-full", refused["store full"]
+        assert n.metric("ops_approval_store_size") == 0, "a refused batch stores nothing"
         n.submit(tx)
         n.make_block([])
         assert n.in_pool(tx["hash"]), "no refused batch may unblock the transaction"
         duplicates = c.send([a, a])  # duplicates within one batch and a re-delivery are harmless
         assert duplicates["stored"] == 2 and duplicates["boot_id"] == c.boot_id, duplicates
         c.send(a)
+        assert n.metric("ops_approval_store_size") == 1, "one transaction, one slot"
         n.make_block([tx])
         assert n.receipt(tx["hash"])["status"] == "0x1"
         batches = {code: n.metric("ops_approval_batches_total", status=code)
@@ -275,7 +277,7 @@ def bad_deliveries():
         # Every candidate rebuild (~500 ms) decides again, so a transaction is counted once per build.
         decisions = {d: n.metric("ops_approval_decisions_total", decision=d) for d in ("allow", "wait", "drop", "deny")}
         assert decisions["allow"] >= 1 and decisions["wait"] >= 1 and decisions["drop"] == decisions["deny"] == 0, decisions
-        assert n.metric("ops_approval_store_size") == 1 and n.metric("ops_approval_connections") == 1
+        assert n.metric("ops_approval_connections") == 1
         record("refused_deliveries_answer_their_status_codes_and_store_nothing_duplicates_idempotent",
                codes=codes, batches=batches)
 
@@ -630,7 +632,11 @@ def expired_approval_not_included():
         confirmed = c.deliver(envelope)
         assert confirmed["code"] == "OK" and confirmed["stored"] == 1, confirmed
         assert n.metric("ops_approval_store_size") == 1
-        time.sleep(3.2)  # expired after 2 s; the store sweeps every second
+        time.sleep(2.0)  # expired; the store sweeps expired approvals every second
+        for _ in range(50):
+            if n.metric("ops_approval_store_size") == 0:
+                break
+            time.sleep(0.1)
         assert n.metric("ops_approval_store_size") == 0, "the store must evict an expired approval"
         before = n.nonce(h.ALICE), n.balance(h.ALICE)
         n.submit(tx)
@@ -652,6 +658,19 @@ def expired_approval_not_included():
         n.submit(tx)
         n.make_block([tx])
         assert n.receipt(tx["hash"])["status"] == "0x1" and n.storage(h.VAULT_A) == 7
+        # Pooled while its approval was still valid, built after it expired: selection decides.
+        pooled = n.raw(h.ADMIN, h.ROUTER, "run(uint256)", 5)
+        assert c.send(c.prepare(pooled), ttl_ms=2_000)["stored"] == 1
+        n.submit(pooled)
+        time.sleep(2.2)  # expired, and past the 2 s wait window
+        n.make_block([])
+        for _ in range(40):
+            if not n.in_pool(pooled["hash"]):
+                break
+            time.sleep(0.25)
+        assert not n.in_pool(pooled["hash"]) and n.receipt(pooled["hash"]) is None and n.storage(h.VAULT_A) == 7
+        assert not any(f"allow tx={pooled['hash']}" in d for d in n.decisions())
+        assert any(f"drop tx={pooled['hash']}" in d for d in n.decisions()), n.decisions()
         record("expired_approval_counts_as_absent_transaction_dropped_not_included", late=late["message"])
 
 
