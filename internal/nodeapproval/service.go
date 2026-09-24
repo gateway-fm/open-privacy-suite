@@ -67,32 +67,43 @@ func (p *Prepared) GetCodeHash(_ context.Context, address string) (string, error
 }
 
 type Service struct {
-	hashMode    uint8
-	node        nodeKind
-	connections atomic.Uint64
-	closing     atomic.Bool
-	hops        *hops
-	rpc         *rpc.Client
-	rpcHTTP     *http.Client
-	signer      Signer
-	ttl         time.Duration // OPS_APPROVAL_TTL: how long the approvals signed stay usable
-	address     string
-	queue       chan Approval
-	signed      chan Batch
-	maxBatch    int
-	cancel      context.CancelFunc
-	done        chan struct{}
-	signDone    chan struct{}
-	once        sync.Once
+	hashMode uint8
+	node     nodeKind
+	hops     *hops
+	rpc      *rpc.Client
+	rpcHTTP  *http.Client
+	signer   Signer
+	// ttl is OPS_APPROVAL_TTL; batches are signed for less when a producer accepts less.
+	ttl       time.Duration
+	signedTTL time.Duration // the signer goroutine's last TTL, to log a change once
+	maxBatch  int
+	queue     chan Approval
+	// mu orders Enqueue against Close: once closing is set, nothing more enters the queue, so
+	// the signer's drain sees everything Enqueue accepted.
+	mu      sync.RWMutex
+	closing bool
+	chainID atomic.Uint64 // the chain OPS approves for, learned from what it enqueues
+	retain  *retention
+	lanes   []*lane
+	metrics *deliveryMetrics
+	drain   time.Duration
+	log     logGate
+	// cancel stops the signer; stop ends delivery once the drain is over.
+	cancel   context.CancelFunc
+	stop     context.CancelFunc
+	signDone chan struct{}
+	once     sync.Once
 }
 
-func New(url, address string, seed []byte) (*Service, error) {
-	return NewWithTransport(url, address, seed, nodehttp.DefaultTransportConfig())
+// New starts the approval service: preflight against the node at url, delivery to every producer
+// in targets (the value of OPS_APPROVAL_TARGETS, a comma-separated host:port list).
+func New(url, targets string, seed []byte) (*Service, error) {
+	return NewWithTransport(url, targets, seed, nodehttp.DefaultTransportConfig())
 }
 
 // NewWithTransport uses the same upstream pool settings as OPS forwarding and
 // tracing. Geth's default HTTP client retains only two idle connections per host.
-func NewWithTransport(url, address string, seed []byte, tc nodehttp.TransportConfig) (*Service, error) {
+func NewWithTransport(url, targets string, seed []byte, tc nodehttp.TransportConfig) (*Service, error) {
 	if len(seed) != ed25519.SeedSize {
 		return nil, errors.New("approval key must be a 32-byte Ed25519 seed")
 	}
@@ -123,21 +134,20 @@ func NewWithTransport(url, address string, seed []byte, tc nodehttp.TransportCon
 			return nil, errors.New("OPS_APPROVAL_MAX_BATCH must be between 1 and 32")
 		}
 	}
+	delivery, err := configuredDelivery(targets)
+	if err != nil {
+		return nil, err
+	}
 	client, httpClient, err := dialPreflightRPC(url, tc)
 	if err != nil {
 		return nil, err
 	}
-	conn, err := dialApproval(context.Background(), address)
-	if err != nil {
+	s := &Service{hashMode: mode, node: node, hops: newHops(), rpc: client, rpcHTTP: httpClient, signer: NewEd25519Signer(keyID, seed), ttl: ttl, maxBatch: maxBatch}
+	if err := s.startDelivery(delivery); err != nil {
 		client.Close()
 		httpClient.CloseIdleConnections()
 		return nil, err
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	s := &Service{hashMode: mode, node: node, hops: newHops(), rpc: client, rpcHTTP: httpClient, signer: NewEd25519Signer(keyID, seed), ttl: ttl, address: address, queue: make(chan Approval, 4096), signed: make(chan Batch, 128), maxBatch: maxBatch, cancel: cancel, done: make(chan struct{}), signDone: make(chan struct{})}
-	s.connections.Store(1)
-	go s.signLoop(ctx)
-	go s.deliver(ctx, conn)
 	return s, nil
 }
 
@@ -166,9 +176,14 @@ func dialPreflightRPC(url string, tc nodehttp.TransportConfig) (*rpc.Client, *ht
 	}
 	return client, httpClient, err
 }
+
+// Close refuses new approvals, signs what Enqueue already accepted, delivers it for at most the
+// drain timeout, and closes the connections.
 func (s *Service) Close() {
 	s.once.Do(func() {
-		s.closing.Store(true) // Enqueue refuses from here; what was accepted is drained
+		s.mu.Lock()
+		s.closing = true // Enqueue refuses from here; what it accepted is drained
+		s.mu.Unlock()
 		if s.cancel != nil {
 			s.cancel()
 		}
@@ -181,13 +196,8 @@ func (s *Service) Close() {
 		if s.signDone != nil {
 			<-s.signDone
 		}
-		if s.done != nil {
-			<-s.done
-		}
+		s.stopDelivery()
 		s.hops.flush()
-		if count := s.connections.Load(); count > 0 {
-			slog.Info("approval connections used", "count", count)
-		}
 	})
 }
 func (s *Service) Prepare(ctx context.Context, raw string) (*Prepared, error) {
@@ -271,25 +281,42 @@ func (s *Service) Prepare(ctx context.Context, raw string) (*Prepared, error) {
 }
 
 // Enqueue is called only AFTER OPS RBAC, trace and compliance gates have passed.
-// It never waits for a node acknowledgement and never resubmits a transaction.
+// It never waits for a node acknowledgement and never resubmits a transaction. It refuses when
+// no producer is ready to take the approval (wire contract §5): the caller answers 503 instead
+// of forwarding a transaction that cannot be approved.
 func (s *Service) Enqueue(p *Prepared) error {
 	p.Approval.hop = s.hops.add(p.Approval.TxHash)
 	a := p.Approval
 	a.Principal = common.Hash{} // reserved: senders write zeros
 	a.Signature = ""
-	if s.closing.Load() {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closing {
+		s.refuse(refusedClosed)
 		return errors.New("approval sender closed")
 	}
-	select {
-	case <-s.done:
-		return errors.New("approval sender closed")
-	default:
+	if s.chainID.Load() != a.ChainID {
+		s.chainID.Store(a.ChainID)
+	}
+	if now := time.Now(); !s.ready(a.ChainID, now) {
+		s.refuse(refusedNotReady)
+		if held, ok := s.log.allow(refusedNotReady, now); ok {
+			slog.Warn("approval refused: no producer is ready; the transaction is answered 503", "chain_id", a.ChainID, "suppressed", held)
+		}
+		return errNoProducerReady
 	}
 	select {
 	case s.queue <- a:
 		return nil
 	default:
+		s.refuse(refusedQueueFull)
 		return errors.New("approval delivery queue full")
+	}
+}
+
+func (s *Service) refuse(reason string) {
+	if s.metrics != nil {
+		s.metrics.refused.WithLabelValues(reason).Inc()
 	}
 }
 
@@ -307,52 +334,52 @@ func (s *Service) takeBatch(first Approval) []Approval {
 
 func (s *Service) signLoop(ctx context.Context) {
 	defer close(s.signDone)
-	defer close(s.signed) // tells the sender the drain is complete
+	defer s.retain.finish() // tells the lanes the drain can complete
+	prune := time.NewTicker(pruneEvery)
+	defer prune.Stop()
 	for {
 		select {
 		case <-ctx.Done():
-			// Stop: sign whatever Enqueue already accepted, so the sender can drain
-			// it. Nothing new arrives — Enqueue refuses once closing is set.
+			// Stop: sign whatever Enqueue already accepted, so the lanes can drain it.
+			// Nothing new arrives — Enqueue refuses once closing is set.
 			for len(s.queue) > 0 {
-				s.signOne(<-s.queue, true)
+				s.signOne(<-s.queue)
 			}
 			return
 		case first := <-s.queue:
-			if !s.signOne(first, false) {
-				return
-			}
+			s.signOne(first)
+		case now := <-prune.C:
+			s.retain.prune(now)
 		}
 	}
 }
 
-// signOne signs one batch starting with first and hands it to the sender. It
-// returns false when the service is stopping and the batch could not be handed
-// over; during a drain the handover waits, bounded by the sender's own deadline.
-func (s *Service) signOne(first Approval, draining bool) bool {
+// signOne signs one batch starting with first and publishes it. Nothing here waits for a
+// producer: the request goroutine never waits for signing or network delivery.
+func (s *Service) signOne(first Approval) {
 	approvals := s.takeBatch(first)
+	ttl := s.signingTTL()
+	if ttl != s.signedTTL {
+		if ttl < s.ttl {
+			slog.Warn("approvals signed for less than OPS_APPROVAL_TTL: a producer accepts no more", "ttl", ttl, "configured", s.ttl)
+		} else if s.signedTTL != 0 {
+			slog.Info("approvals signed for OPS_APPROVAL_TTL again", "ttl", ttl)
+		}
+		s.signedTTL = ttl
+	}
 	mark(approvals, func(h *Hop, n int64) { h.SignStart = n })
-	batch, err := s.signer.SignBatch(approvals, s.ttl)
+	batch, err := s.signer.SignBatch(approvals, ttl)
 	mark(approvals, func(h *Hop, n int64) { h.SignEnd = n })
 	if err != nil {
 		slog.Error("approval batch signing failed", "error", err)
-		return true
+		return
 	}
-	// The sender owns transport. Backpressure here is bounded and never makes
-	// the request goroutine wait for signing or network delivery.
-	if draining {
-		select {
-		case s.signed <- batch:
-		case <-s.done:
-			return false
-		}
-		return true
-	}
-	select {
-	case s.signed <- batch:
-		return true
-	case <-s.done:
-		return false
-	}
+	s.publish(batch)
+}
+
+// publish hands a signed batch to delivery: retained for redelivery, and taken by every lane.
+func (s *Service) publish(b Batch) {
+	s.retain.add(b, time.Now())
 }
 
 // Use the pinned prestate, not a second code lookup at latest. A failed CREATE

@@ -1,17 +1,11 @@
 package nodeapproval
 
 import (
-	"bytes"
-	"crypto/ed25519"
-	"encoding/binary"
 	"encoding/json"
-	"errors"
-	"github.com/ethereum/go-ethereum/common"
-	"io"
-	"net"
 	"os"
 	"testing"
-	"time"
+
+	"github.com/ethereum/go-ethereum/common"
 )
 
 func fixture(t *testing.T) object {
@@ -79,76 +73,8 @@ func TestFingerprintConformanceAndSensitivity(t *testing.T) {
 	}
 }
 
-func TestDeliveryUsesPersistentConnectionWithoutAck(t *testing.T) {
-	listener, e := net.Listen("tcp", "127.0.0.1:0")
-	if e != nil {
-		t.Fatal(e)
-	}
-	defer listener.Close()
-	seed := bytes.Repeat([]byte{7}, 32)
-	s, e := New("http://127.0.0.1:1", listener.Addr().String(), seed)
-	if e != nil {
-		t.Fatal(e)
-	}
-	defer s.Close()
-	received := make(chan error, 2)
-	go func() {
-		c, e := listener.Accept()
-		if e != nil {
-			received <- e
-			return
-		}
-		defer c.Close()
-		c.SetReadDeadline(time.Now().Add(time.Second))
-		for i := 0; i < 2; i++ {
-			var n uint32
-			if e = binary.Read(c, binary.BigEndian, &n); e != nil {
-				received <- e
-				return
-			}
-			data := make([]byte, n)
-			if _, e = io.ReadFull(c, data); e != nil {
-				received <- e
-				return
-			}
-			if len(data) < 64 || !bytes.HasPrefix(data, []byte("OPS_APPROVAL_BATCH_V2\x00")) {
-				received <- io.ErrUnexpectedEOF
-				return
-			}
-			message, sig := data[:len(data)-64], data[len(data)-64:]
-			if !ed25519.Verify(ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey), message, sig) {
-				received <- io.ErrUnexpectedEOF
-				return
-			}
-			// Each 120-byte approval ends with the reserved field, which senders fill with zeros.
-			header := 22 + 1 + int(message[22]) + 16 + 4 // domain, key id, issued_at, expires_at, count
-			for item := message[header:]; len(item) >= 120; item = item[120:] {
-				if !bytes.Equal(item[88:120], make([]byte, 32)) {
-					received <- errors.New("the reserved field is not zero")
-					return
-				}
-			}
-
-			received <- nil
-		}
-	}()
-	p := &Prepared{Approval: Approval{ChainID: 31337, TxHash: common.HexToHash("0x1234"), Fingerprint: common.HexToHash("0x5678")}}
-	for i := 0; i < 2; i++ {
-		if e = s.Enqueue(p); e != nil {
-			t.Fatal(e)
-		}
-		select {
-		case e := <-received:
-			if e != nil {
-				t.Fatalf("delivery failed: %v", e)
-			}
-		case <-time.After(2 * time.Second):
-			t.Fatal("singleton was not delivered immediately")
-		}
-	}
-}
 func TestQueueIsBounded(t *testing.T) {
-	s := &Service{signer: NewEd25519Signer("default", make([]byte, 32)), queue: make(chan Approval, 1), done: make(chan struct{})}
+	s := &Service{signer: NewEd25519Signer("default", make([]byte, 32)), queue: make(chan Approval, 1), lanes: []*lane{readyLane(0)}}
 	p := &Prepared{}
 	if e := s.Enqueue(p); e != nil {
 		t.Fatal(e)

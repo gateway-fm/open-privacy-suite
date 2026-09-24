@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -53,24 +55,13 @@ func TestBatchGolden(t *testing.T) {
 			t.Fatal("accepted invalid batch size", n)
 		}
 	}
-	b32, err := SignBatch(key, batchFixtures(32))
+	// Wire contract §1: a full batch is under 4.1 KiB, even under the longest key id.
+	full, err := NewEd25519Signer(strings.Repeat("k", 64), bytes.Repeat([]byte{7}, 32)).SignBatch(batchFixtures(32), DefaultApprovalTTL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	frame, _ := json.Marshal(b32)
-	if len(frame) > MaxBatchFrame {
-		t.Fatal("valid batch exceeds ingress limit")
-	}
-}
-
-func nextBatch(t *testing.T, ch <-chan Batch) Batch {
-	t.Helper()
-	select {
-	case b := <-ch:
-		return b
-	case <-time.After(time.Second):
-		t.Fatal("signer waited for more approvals")
-		return Batch{}
+	if n := len(full.Encoded()); n > 4198 {
+		t.Fatalf("a full batch encodes to %d bytes", n)
 	}
 }
 
@@ -79,7 +70,9 @@ func TestSignerSnapshotIndependentOfDelivery(t *testing.T) {
 	entered := make(chan []Approval, 4)
 	release := make(chan struct{})
 	hook := &hookSigner{Signer: NewEd25519Signer("default", make([]byte, 32)), entered: entered, release: release}
-	s := &Service{signer: hook, ttl: DefaultApprovalTTL, queue: make(chan Approval, 64), signed: make(chan Batch, 4), maxBatch: 32, signDone: make(chan struct{}), done: make(chan struct{})}
+	m := newDeliveryMetrics()
+	s := &Service{signer: hook, ttl: DefaultApprovalTTL, queue: make(chan Approval, 64), maxBatch: 32, signDone: make(chan struct{}),
+		metrics: m, retain: newRetention(defaultRetainMax, m), lanes: []*lane{readyLane(0)}}
 	s.queue <- batchFixtures(1)[0]
 	go s.signLoop(ctx)
 	defer func() { cancel(); <-s.signDone }()
@@ -94,13 +87,26 @@ func TestSignerSnapshotIndependentOfDelivery(t *testing.T) {
 		}
 	}
 	close(release)
-	// There is deliberately no delivery worker. Signing can run ahead independently.
-	for _, want := range []int{1, 32, 1} {
-		b := nextBatch(t, s.signed)
-		if len(b.Approvals) != want {
-			t.Fatalf("got %d, want %d", len(b.Approvals), want)
-		}
+	// There is deliberately no delivery lane: signing never waits for one, and every batch is
+	// retained for the lanes to take.
+	var sizes []int
+	for deadline := time.Now().Add(time.Second); len(sizes) < 3 && time.Now().Before(deadline); {
+		time.Sleep(time.Millisecond)
+		sizes = retainedSizes(s.retain)
 	}
+	if !slices.Equal(sizes, []int{1, 32, 1}) {
+		t.Fatalf("retained batches of %v approvals, want [1 32 1]", sizes)
+	}
+}
+
+func retainedSizes(r *retention) []int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var sizes []int
+	for _, e := range r.entries[r.head:] {
+		sizes = append(sizes, len(e.batch.Approvals))
+	}
+	return sizes
 }
 
 func BenchmarkBatchSigning(b *testing.B) {

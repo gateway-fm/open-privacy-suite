@@ -10,14 +10,12 @@ import (
 )
 
 const MaxBatchApprovals = 32
-const MaxBatchFrame = 16384
 
 // Batch signs complete approvals, including their individual hash-mode domain, in order.
 // A batch is only a delivery unit; transactions execute independently. Version 2 names the
 // key that signed it, so a producer can hold several trusted keys and a rotation is
 // add-then-switch instead of a simultaneous restart of every node and OPS.
 type Batch struct {
-	frame   []byte
 	encoded []byte
 	Version uint32 `json:"version"`
 	KeyID   string `json:"key_id"`
@@ -96,8 +94,12 @@ func (b Batch) Message() ([]byte, error) {
 	return message, nil
 }
 
-// Frame is the length-prefixed wire encoding produced by SignBatch (test fixtures deliver it directly).
-func (b Batch) Frame() []byte { return b.frame }
+// Frame is the envelope behind a 4-byte big-endian length, the framing the PoC harness replays
+// over raw TCP. Delivery sends Encoded in a gRPC call.
+func (b Batch) Frame() []byte {
+	frame := binary.BigEndian.AppendUint32(make([]byte, 0, 4+len(b.encoded)), uint32(len(b.encoded)))
+	return append(frame, b.encoded...)
+}
 
 // Encoded is the signed envelope as it travels: the signed message followed by
 // the 64-byte Ed25519 signature (docs/implementation/approvals-wire-contract.md).
@@ -154,8 +156,6 @@ func (s *Ed25519Signer) SignBatch(approvals []Approval, ttl time.Duration) (Batc
 	signature := ed25519.Sign(s.key, message)
 	b.Signature = hex.EncodeToString(signature)
 	b.encoded = append(append(make([]byte, 0, len(message)+len(signature)), message...), signature...)
-	b.frame = binary.BigEndian.AppendUint32(make([]byte, 0, 4+len(b.encoded)), uint32(len(b.encoded)))
-	b.frame = append(b.frame, b.encoded...)
 	return b, nil
 }
 

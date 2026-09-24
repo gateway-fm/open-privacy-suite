@@ -13,18 +13,17 @@ import (
 
 // Opt-in diagnostics, buffered until shutdown. No per-approval logging or disk
 // writes in the live path. Unix timestamps are comparable only on the same host.
+// The delivery marks follow the first target's first delivery of the batch.
 type Hop struct {
-	Hash          common.Hash `json:"hash"`
-	Queued        int64       `json:"queued"`
-	SignStart     int64       `json:"sign_start"`
-	SignEnd       int64       `json:"sign_end"`
-	DeliveryStart int64       `json:"delivery_start"`
-	Encoded       int64       `json:"encoded"`
-	ConnectStart  int64       `json:"connect_start"`
-	Connected     int64       `json:"connected"`
-	WriteStart    int64       `json:"write_start"`
-	Written       int64       `json:"written"`
-	ForwardStart  int64       `json:"forward_start"`
+	Hash      common.Hash `json:"hash"`
+	Queued    int64       `json:"queued"`
+	SignStart int64       `json:"sign_start"`
+	SignEnd   int64       `json:"sign_end"`
+	// CallStart is when the first Deliver call for the batch began; Stored is when the producer
+	// answered OK, retries included.
+	CallStart    int64 `json:"call_start"`
+	Stored       int64 `json:"stored"`
+	ForwardStart int64 `json:"forward_start"`
 }
 type hops struct {
 	path  string
