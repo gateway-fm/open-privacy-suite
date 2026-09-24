@@ -285,8 +285,9 @@ Replacing §3.4. Effort *estimate* 0.5–1 day.
    to the batches in flight; expected after acks + redelivery + outbox: zero.
 2. ~~One gRPC implementation, measured once~~ — **done** (`bench/`): the same signed frames, the
    same host, 500 batches/s × 32 approvals for 10,000 batches, sender in Go (grpc-go 1.82),
-   receiver in Java at **Besu's grpc 1.79.0 / Netty 4.2.17** — the versions a plugin inside Besu
-   is bound to. One-way delivery, sender wall clock to receiver wall clock:
+   receiver in Java at Besu's grpc 1.79.0 — with Netty 4.1.130, which grpc-netty pulls in, not
+   Besu's 4.2.17 (true of both runs below). The receiver does not verify signatures, so the round
+   trips exclude verification. One-way delivery, sender wall clock to receiver wall clock:
 
    | Transport | p50 | p90 | p99 | max | ack round trip p50 / p99 |
    |---|---:|---:|---:|---:|---:|
@@ -298,11 +299,28 @@ Replacing §3.4. Effort *estimate* 0.5–1 day.
    measurable on 3.9 KB frames; an acknowledgement returns in ~0.2 ms. Against a ~500 ms
    candidate cadence none of this is a factor, which is the measured answer to "is raw TCP
    faster": yes, by an amount that cannot matter. Reproduce with `bench/run.sh`.
+
+   **24 September, the decided shape (one unary call per batch).** Median of three 10,000-batch
+   runs at 500 batches/s, same host; frames are 3,954 B now (key id and signed expiry), so compare
+   within this table, not with the one above:
+
+   | Transport | one-way p50 | p90 | p99 | max | round trip p50 / p99 |
+   |---|---:|---:|---:|---:|---:|
+   | raw TCP, length prefix | **51 µs** | 79 µs | 216 µs | 8.4 ms | — |
+   | gRPC stream | **74 µs** | 131 µs | 624 µs | 32.1 ms | 140 µs / 1.14 ms |
+   | gRPC stream, mTLS | **79 µs** | 139 µs | 405 µs | 27.7 ms | 147 µs / 0.71 ms |
+   | **gRPC unary (decided)** | **120 µs** | 220 µs | 608 µs | 23.5 ms | 208 µs / 1.03 ms |
+   | gRPC unary, mTLS | **119 µs** | 206 µs | 554 µs | 22.3 ms | 209 µs / 0.96 ms |
+
+   One call per batch costs about 50 µs more than the stream at the median (51–105 µs on the round
+   trip across the six same-run pairs); p99 does not separate on a busy shared host, and every
+   gRPC maximum is the receiver JVM's cold start. Against the ~200 µs a transaction needs to reach
+   the pool and the ~500 ms candidate cadence, the decision stands.
 3. ~~Gossip topology check~~ — **done** (`f41e2ef`, `topology.py`, `--topology follower`): race
    0 of 16,013; see §3.5. Repeat once with Reth/Erigon as the follower when that stack exists.
 3a. **Capacity red test**: fill the store to capacity under load and count approvals refused and
    transactions lost; then the same after the cheap-overflow fix and the capacity refusal
-   (`RESOURCE_EXHAUSTED`, §3.6).
+   (`UNAVAILABLE` with the store-full trailer, wire contract §3).
 3b. ~~Reorg with lagging finality~~ — **done**: `reorg_keeps_approvals` (harness gained
    `finality_lag`, `parent`, `reorg_to_rival`). Finalized lags one block, a rival replaces the head
    (Besu logs the chain reorg), the orphaned transactions are resubmitted as the same signed bytes
