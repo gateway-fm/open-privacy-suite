@@ -61,8 +61,11 @@ Numbers are measured unless marked *estimate*. File references are to
    one user's transactions across addresses — dropping it from the wire is an open option.
    When TLS comes, it is in-process at both ends (no service mesh is known to be in place, and
    the sequencer may not run in one).
-4. **Where the plugin lives and ships**: inside this repository, or its own repository with
-   releases the Lineth operator pulls (Lineth loads plugin JARs from `besu/plugins/`).
+4. ~~Where the plugin lives and ships~~ — **decided (24 September): in this repository.** One
+   PR changes both ends of the wire format and the shared golden vectors, and CI runs OPS, Besu
+   and the plugin together. The JAR is released from here under its own tag, built for and named
+   after the Besu version it supports; the Lineth operator pulls it into `besu/plugins/`. The code
+   leaves `poc/` when packaging starts (§5 item 7).
 5. **Reth**: second shipped target, or reference implementation only. Both PoCs share the OPS
    side (`internal/nodeapproval`), so this decides test scope, not architecture.
 6. ~~Preflight placement~~ — **decided (24 September): on the sequencer for now.** A dedicated
@@ -380,7 +383,7 @@ Independently shippable; each ends with the 22-scenario suite green.
    log source on the sequencer (two lines per allowed transaction) — make them sampled or
    metric-only, and treat retention/shipping as a logging-control change.
 7. **Packaging and CI** — also earlier than it looks, since it is what lets 3–6 survive a Besu
-   bump: plugin build and release (decision 0.4); per-Besu-version scenario lane, nightly; grpc
+   bump: plugin build and release from this repository under its own tag (decision 0.4); per-Besu-version scenario lane, nightly; grpc
    and Netty versions pinned to Besu's; compatibility note per Lineth Besu bump.
 8. **Scope extensions**: 2930/4844; 7702 with the envelope extension; preflight replica
    (decision 0.6) if the sequencer load says so.
