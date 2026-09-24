@@ -74,9 +74,10 @@ Numbers are measured unless marked *estimate*. File references are to
    integrity without TLS: nobody on the network can forge or alter an approval. What TLS would
    add — confidentiality and peer authentication — is covered meanwhile by (a) a network rule
    letting only OPS reach the plugin's port (otherwise anyone reachable can make the plugin
-   verify junk), and (b) a recorded risk acceptance (§6). The one privacy-relevant field is the
-   principal, a Keccak hash of the OPS user id: a stable pseudonym that lets an eavesdropper link
-   one user's transactions across addresses — dropping it from the wire is an open option.
+   verify junk), and (b) a recorded risk acceptance (§6). The one privacy-relevant field was the
+   principal, a Keccak hash of the user's identifier — not a pseudonym, since an identifier derived
+   from an address can be enumerated, and read by no receiver. Since 24 September senders write
+   zeros there (wire contract §2); OPS's audit log remains the record of who submitted what.
    When TLS comes, it is in-process at both ends (no service mesh is known to be in place, and
    the sequencer may not run in one).
 4. ~~Where the plugin lives and ships~~ — **decided (24 September): in this repository.** One

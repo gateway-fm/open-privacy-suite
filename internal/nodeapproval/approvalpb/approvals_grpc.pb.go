@@ -33,6 +33,8 @@ const (
 type ApprovalDeliveryClient interface {
 	// Deliver verifies and stores one signed batch. OK means every approval in
 	// the batch is stored; any error means none is. A batch is all or nothing.
+	// A full store answers UNAVAILABLE with the trailer
+	// "ops-approval-reason: store-full".
 	Deliver(ctx context.Context, in *DeliverRequest, opts ...grpc.CallOption) (*DeliverResponse, error)
 	// Status identifies the receiver. OPS calls it after every (re)connect and
 	// resends the batches it retains when the boot id has changed.
@@ -73,6 +75,8 @@ func (c *approvalDeliveryClient) Status(ctx context.Context, in *StatusRequest, 
 type ApprovalDeliveryServer interface {
 	// Deliver verifies and stores one signed batch. OK means every approval in
 	// the batch is stored; any error means none is. A batch is all or nothing.
+	// A full store answers UNAVAILABLE with the trailer
+	// "ops-approval-reason: store-full".
 	Deliver(context.Context, *DeliverRequest) (*DeliverResponse, error)
 	// Status identifies the receiver. OPS calls it after every (re)connect and
 	// resends the batches it retains when the boot id has changed.
