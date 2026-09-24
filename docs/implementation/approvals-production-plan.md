@@ -25,7 +25,7 @@ Numbers are measured unless marked *estimate*. File references are to
    (§3.5); making the request path wait for the sequencer's confirmation would couple request
    p99 to a stalled call. Confirmations drive redelivery, not forwarding or ordering: OPS forwards
    the transaction without waiting for them.
-1b. **Finality on Lineth.** Release-on-finality (`c5b626c`) depends on what Maru sends as
+1b. **Finality on Lineth.** Release-on-finality (`5c0c609`) depends on what Maru sends as
    `finalizedBlockHash` and how far it lags. Nobody has checked. Until it is known, the store must
    be sized for rate × retention and its overflow path must be cheap (§2, blocker row). First item
    of any Lineth work: confirm Maru's finalized/safe semantics and the candidate-build cadence.
@@ -69,9 +69,9 @@ Numbers are measured unless marked *estimate*. File references are to
 5. ~~Reth~~ — **decided (24 September): both Besu and Reth ship.** Reth is faster and widely used, and it is
    where the performance story can be told; Besu covers Besu-based stacks such as Lineth. Both targets share the OPS side (`internal/nodeapproval`) and implement the same
    delivery contract (§3.6) — so every transport change lands in Java and in Rust, and CI runs a
-   lane per target. Starting point: the Reth PoC is still on envelope v1 (the v2 port is parked
-   in `patches/reth-poc-envelope-v2.patch`, four type errors left), and its source has never been
-   committed — it exists only as untracked files in its own worktree.
+   lane per target. Starting point: the Reth PoC (`poc/reth-signed-approvals/`) is still on
+   envelope v1 — the v2 port is parked in `patches/reth-poc-envelope-v2.patch`, four type errors
+   left.
 6. ~~Preflight placement~~ — **decided (24 September): on the sequencer for now.** A dedicated
    Besu replica running the plugin's RPC stays possible later (with 1c's hardening option); the
    plugin's preflight is a local simulation on the node's own head state and needs nothing from
@@ -102,18 +102,18 @@ Not corners: the fingerprint encoders, the selector's veto semantics, the metric
 
 | Corner | Where | Consequence | Fix |
 |---|---|---|---|
-| **Delivery is fire-and-forget.** ~~A batch whose write fails is dropped~~ — **fixed in `f98c440`**: the signed frame is resent on the next connection. Still open: a batch the plugin receives but cannot store (capacity) is logged and dropped, and a batch lost in a peer-closed socket buffer is never noticed. OPS learns nothing either way. | `internal/nodeapproval/transport.go` `deliver()`; plugin `ApprovalListener.accept()` | the transaction was already forwarded (`jsonrpc_processor.go:1684` enqueues, then forwards): it waits `waitMs` = 5 s, is evicted `TIMEOUT`, the client holds a hash and never gets a receipt, nothing is told | acknowledgements per batch (and a negative one for capacity); redelivery; durable outbox (next row) |
+| **Delivery is fire-and-forget.** ~~A batch whose write fails is dropped~~ — **fixed in `ca4976b`**: the signed frame is resent on the next connection. Still open: a batch the plugin receives but cannot store (capacity) is logged and dropped, and a batch lost in a peer-closed socket buffer is never noticed. OPS learns nothing either way. | `internal/nodeapproval/transport.go` `deliver()`; plugin `ApprovalListener.accept()` | the transaction was already forwarded (`jsonrpc_processor.go:1684` enqueues, then forwards): it waits `waitMs` = 5 s, is evicted `TIMEOUT`, the client holds a hash and never gets a receipt, nothing is told | acknowledgements per batch (and a negative one for capacity); redelivery; durable outbox (next row) |
 | **Nothing durable.** OPS queue is a channel (4096); plugin store is a `ConcurrentHashMap` | `service.go`; `ApprovalStore` | OPS crash after enqueue, or a Besu restart, loses approvals for forwarded transactions (scenario `restart_drops_approvals…`) | OPS outbox in Postgres; the node asks for redelivery of its pooled hashes on (re)connect |
-| ~~**Approvals deleted on inclusion**~~ — changed in `c5b626c` to **release on finality** (`InclusionTracker`, `BlockchainService.getFinalizedBlock()`). **Open, blocker-grade:** correctness now depends on finality *advancing* on the target network, which is unverified (decision 1b). If finality lags or is absent, every included approval is retained until the 4,096-block cut-off (~68 min at 1 s blocks) or the orphan sweep (5–10 min); at 700 tx/s that is 210k–420k approvals against a 100k capacity | `OpsApprovalPlugin.onBlockAdded`; `ApprovalStore.put` | once full, every `put` iterates the whole pool into a set and sorts all entries under the lock — on the single ingress thread; OPS's 1 s write deadline then fails and transactions go `PENDING`/`TIMEOUT`. The eviction victims are exactly the included-not-final approvals the fix keeps, so reorg protection degrades to zero under load. ~~The suite finalizes every block immediately, so no test exercises a reorg or lagging finality~~ — `reorg_keeps_approvals` now does (finality lags one block, a rival replaces the head, the returned transactions are included again with **no new approval**) | confirm Maru finality; size capacity/TTL to rate × retention; ~~cheap overflow path~~ (`8186d3d`: event-driven liveness, no scan, no sort); **finding from the scenario:** Besu 26.8.1 re-adds a reorganised block's transactions to its pool unreliably (one run returned nonce 1 and dropped nonce 0, another returned neither) — see the new row below |
-| **Nobody resubmits a reorganised transaction.** Besu's pool re-add after a reorg is partial (above); OPS keeps no record of what it forwarded, so it cannot detect that a forwarded transaction vanished from the canonical chain, let alone resubmit it | `jsonrpc_processor.go` forward path; no submission table on this branch | the approval survives (`c5b626c`), the transaction does not: the client sees a receipt disappear and must resubmit the same signed bytes itself — which does work without a new approval | a submissions record with reconciliation (the v2 branch's `node_submissions` + reconciler is the shape); belongs with the decision-feedback row |
+| ~~**Approvals deleted on inclusion**~~ — changed in `5c0c609` to **release on finality** (`InclusionTracker`, `BlockchainService.getFinalizedBlock()`). **Open, blocker-grade:** correctness now depends on finality *advancing* on the target network, which is unverified (decision 1b). If finality lags or is absent, every included approval is retained until the 4,096-block cut-off (~68 min at 1 s blocks) or the orphan sweep (5–10 min); at 700 tx/s that is 210k–420k approvals against a 100k capacity | `OpsApprovalPlugin.onBlockAdded`; `ApprovalStore.put` | once full, every `put` iterates the whole pool into a set and sorts all entries under the lock — on the single ingress thread; OPS's 1 s write deadline then fails and transactions go `PENDING`/`TIMEOUT`. The eviction victims are exactly the included-not-final approvals the fix keeps, so reorg protection degrades to zero under load. ~~The suite finalizes every block immediately, so no test exercises a reorg or lagging finality~~ — `reorg_keeps_approvals` now does (finality lags one block, a rival replaces the head, the returned transactions are included again with **no new approval**) | confirm Maru finality; size capacity/TTL to rate × retention; ~~cheap overflow path~~ (`5b134ca`: event-driven liveness, no scan, no sort); **finding from the scenario:** Besu 26.8.1 re-adds a reorganised block's transactions to its pool unreliably (one run returned nonce 1 and dropped nonce 0, another returned neither) — see the new row below |
+| **Nobody resubmits a reorganised transaction.** Besu's pool re-add after a reorg is partial (above); OPS keeps no record of what it forwarded, so it cannot detect that a forwarded transaction vanished from the canonical chain, let alone resubmit it | `jsonrpc_processor.go` forward path; no submission table on this branch | the approval survives (`5c0c609`), the transaction does not: the client sees a receipt disappear and must resubmit the same signed bytes itself — which does work without a new approval | a submissions record with reconciliation (the v2 branch's `node_submissions` + reconciler is the shape); belongs with the decision-feedback row |
 | ~~**One key, no `key_id`**~~ — **fixed (envelope v2)**: the batch names its key inside the signed bytes; the plugin (and the Reth PoC) hold a key set; unknown or swapped id fails closed. **Still open: no expiry** — an approval never expires while pooled, so an RBAC change after approval does not revoke it | `batch.go` `Ed25519Signer`; `ApprovalBatch`/`ApprovalVerifier`/`PluginOptions`; `batch.rs` | — | `issued_at`/`expires_at` with the `.proto` (phase 3) |
 | **Plain TCP, no TLS, no peer authentication** | `dialApproval`; `ApprovalListener` | the signature protects content only; anyone reaching the port can flood the store | §3 |
 | **Single delivery target**, one connection, one goroutine | `Service.address` | no standby sequencer, no second OPS instance | §4 |
-| **`ops_prepareApproval` unauthenticated at the node** | `PrepareApprovalRpc` | simulation only, but compute on the producer; reachable by anyone on the RPC port | network policy or Besu RPC authentication — **documented as a deployment requirement in `16010c9`**; enforcement is the operator's network policy until mTLS |
-| **Diagnostics in the live path** | ~~`OPS_APPROVAL_ENCODING=json`~~ removed in `9abebc2`; `hops.go` remains, opt-in by env (nil when unset) | — | ~~cap~~ `OPS_APPROVAL_HOPS_LIMIT` (`0ee3167`); the load harness records whole runs now |
+| **`ops_prepareApproval` unauthenticated at the node** | `PrepareApprovalRpc` | simulation only, but compute on the producer; reachable by anyone on the RPC port | network policy or Besu RPC authentication — **documented as a deployment requirement in `bd0a93d`**; enforcement is the operator's network policy until mTLS |
+| **Diagnostics in the live path** | ~~`OPS_APPROVAL_ENCODING=json`~~ removed in `1dcad1b`; `hops.go` remains, opt-in by env (nil when unset) | — | ~~cap~~ `OPS_APPROVAL_HOPS_LIMIT` (`b874c0f`); the load harness records whole runs now |
 | **No health signal** | — | while OPS is disconnected the first ~8k transactions (128 batches + 4,096 queued approvals) are forwarded and time out; after that `Enqueue` fails and requests get 503 without forwarding (`jsonrpc_processor.go:1684`) — fail-closed, but late and unannounced | connected-producers gauge on OPS, OPS-connected gauge on the plugin; the 503 rate as a signal; alerts; readiness reflects delivery connectivity |
-| ~~**Reconnect backs off only on dial failure**~~ — **fixed in `0ee3167`**: every connection loss (dial, write, peer close) is followed by one jittered pause; the test saw 11,023 connections in 700 ms before. Still open: a write that lands in the kernel buffer before the RST is marked written and lost | `deliver()` | — | the kernel-buffer case is only closed by acknowledgements |
-| ~~**Graceful shutdown drops in-flight approvals**~~ — **fixed in `0ee3167`**: the signer drains the queue on stop, the sender delivers until the batch channel closes or 2 s pass, `Enqueue` refuses once closing; 45 of 200 delivered before, 200 after | `Close()`, `deliver()`, `signLoop()` | — | — |
+| ~~**Reconnect backs off only on dial failure**~~ — **fixed in `b874c0f`**: every connection loss (dial, write, peer close) is followed by one jittered pause; the test saw 11,023 connections in 700 ms before. Still open: a write that lands in the kernel buffer before the RST is marked written and lost | `deliver()` | — | the kernel-buffer case is only closed by acknowledgements |
+| ~~**Graceful shutdown drops in-flight approvals**~~ — **fixed in `b874c0f`**: the signer drains the queue on stop, the sender delivers until the batch channel closes or 2 s pass, `Enqueue` refuses once closing; 45 of 200 delivered before, 200 after | `Close()`, `deliver()`, `signLoop()` | — | — |
 | **Frame limits hard-coded** | `MaxBatchApprovals` 32, `MaxBatchFrame` 16 KiB | undocumented | limits in the protocol document |
 | **Rate limiting deferred to OPS** | README | any authorised client can fill the store (100 k) for the TTL — and a full store is a **DoS lever**: every further `put` is a full pool scan plus an O(n log n) sort under the lock (see the finality row) | global (Redis) rate limit on preflight per principal; cheap overflow path |
 | **No feedback path for producer decisions** | `ApprovalSelector.reject()` logs `OPS_APPROVAL_DECISION` on the sequencer only | a transaction denied `MISMATCH` or dropped `TIMEOUT` vanishes: the user holds a hash and no receipt, OPS cannot say why, the explorer shows nothing, audit attribution stops at "forwarded" | decided 24 September (§3.3): decisions stay internal — the sequencer's decision log and metrics, shipped by the logging pipeline and recorded for audit; not sent back over the delivery channel and not surfaced to users |
@@ -279,7 +279,7 @@ Replacing §3.4. Effort *estimate* 0.5–1 day.
    measurable on 3.9 KB frames; an acknowledgement returns in ~0.2 ms. Against a ~500 ms
    candidate cadence none of this is a factor, which is the measured answer to "is raw TCP
    faster": yes, by an amount that cannot matter. Reproduce with `bench/run.sh`.
-3. ~~Gossip topology check~~ — **done** (`4573e40`, `topology.py`, `--topology follower`): race
+3. ~~Gossip topology check~~ — **done** (`f41e2ef`, `topology.py`, `--topology follower`): race
    0 of 16,013; see §3.5. Repeat once with Reth/Erigon as the follower when that stack exists.
 3a. **Capacity red test**: fill the store to capacity under load and count approvals refused and
    transactions lost; then the same after the cheap-overflow fix and the capacity refusal
@@ -358,18 +358,18 @@ Independently shippable; each ends with the 22-scenario suite green.
 
 0. **Lineth facts first**: Maru's finalized/safe semantics and lag; candidate-build cadence on
    the target configuration; the operator's change process for adding a plugin to the sequencer.
-   §3.5 and `c5b626c` rest on these.
+   §3.5 and `5c0c609` rest on these.
 1. **Baseline** (§3.5) — done, both layouts: 62–64 µs median delivery, race rate 0.
-2. **Reduced benchmark** (§3.4′): write-failure red test **done** (`f98c440`); gossip layout
-   **done** (`4573e40`); still to do: capacity red test, reorg-with-lagging-finality scenario, one
+2. **Reduced benchmark** (§3.4′): write-failure red test **done** (`ca4976b`); gossip layout
+   **done** (`f41e2ef`); still to do: capacity red test, reorg-with-lagging-finality scenario, one
    gRPC no-regression run with an uncapped sample, and the §3.4′ bench re-run in the decided
    unary shape (one call per batch) before its latency is quoted.
 2a. **Cheap, safe fixes that need no transport decision**: ~~backoff with jitter; drain on close;
-   configurable hop cap~~ (`0ee3167`); **cheap overflow path** in `ApprovalStore` — event-driven
+   configurable hop cap~~ (`b874c0f`); **cheap overflow path** in `ApprovalStore` — event-driven
    liveness from the pool's `TransactionAdded`/`Dropped` listeners, insertion order, a grace period
    for approvals whose transaction may still be on its way, no pool scan and no sort on overflow
    (a cached pool *query* was tried first and rejected by its own test: a stale view can evict a
-   live approval); `FORK` blocks recorded in the tracker; tracked depth given a basis (`8186d3d`);
+   live approval); `FORK` blocks recorded in the tracker; tracked depth given a basis (`5b134ca`);
    the reorg-with-lagging-finality scenario `reorg_keeps_approvals` (passes; full suite pending).
 3. **Transport + durability**: `.proto` **including envelope v2** (`key_id`, `issued_at`,
    `expires_at` — one wire migration, not two); gRPC unary per batch (plaintext; mTLS later, §0.3) at Besu's grpc
@@ -378,9 +378,9 @@ Independently shippable; each ends with the 22-scenario suite green.
 4. **Keys**: ~~key set on the plugin~~ (done, envelope v2); Secrets Manager via IRSA scoped to the
    one secret ARN (deployment); rotation procedure documented in the plugin README; per-instance
    keys are now one `OPS_APPROVAL_KEY_ID` per instance plus one entry in the plugin's key set.
-5. **Lifecycle**: ~~release on finality~~ (done, `c5b626c`); expiry honoured by the selector;
+5. **Lifecycle**: ~~release on finality~~ (done, `5c0c609`); expiry honoured by the selector;
    global rate limit on preflight; `ops_prepareApproval` behind network policy or Besu RPC auth
-   (documented, `16010c9`; enforcement is deployment).
+   (documented, `bd0a93d`; enforcement is deployment).
 6. **Observability** — a prerequisite for putting 3 on Lineth, not a follow-up: connected
    gauges both sides; delivery lag; race rate; 503 rate; decision counts; alerts; readiness
    reflects delivery. The per-transaction `OPS_APPROVAL_DECISION`/`TIMING` INFO lines are a new
@@ -389,7 +389,7 @@ Independently shippable; each ends with the 22-scenario suite green.
 7. **Packaging and CI** — also earlier than it looks, since it is what lets 3–6 survive a Besu
    bump: plugin build and release from this repository under its own tag (decision 0.4); per-Besu-version scenario lane, nightly; grpc
    and Netty versions pinned to Besu's; compatibility note per Lineth Besu bump.
-7r. **Reth parity** (decision 0.5): commit the Reth PoC into this branch; finish envelope v2 with
+7r. **Reth parity** (decision 0.5): ~~commit the Reth PoC into this branch~~ (done); finish envelope v2 with
    the key set; the gRPC delivery service on the Reth side with the same status codes and boot
    id; the scenario suite on Reth; a CI lane; and a Reth performance run on the production path
    with the same workloads as Besu, so the numbers can be compared and quoted.
@@ -412,5 +412,6 @@ Independently shippable; each ends with the 22-scenario suite green.
   block, per repository policy.
 - Installing the plugin on the sequencer is a change to the Lineth operator's component and goes
   through their change process, not only ours.
-- Evidence logs under `poc/…/evidence/` embed local paths; scrub before the repository is public.
+- Local machine paths in the evidence logs were replaced with `<repo>` / `~/` placeholders before the
+  branch was first pushed; scrub new evidence the same way before committing it.
 - Nothing here disables an existing control.

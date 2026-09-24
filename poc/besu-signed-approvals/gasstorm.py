@@ -20,7 +20,7 @@ import time
 import harness as h
 from demo import Stack, request
 
-LOADGEN_SOURCE = Path(os.environ.get("GASSTORM_LOADGEN_SOURCE", "<loadgenerator>"))
+LOADGEN_SOURCE = Path(os.environ.get("GASSTORM_LOADGEN_SOURCE", str(Path.home() / "work/software/loadgenerator")))
 LOADGEN_BINARY = h.ROOT / ".tmp/gasstorm-loadgen"
 EVIDENCE = h.EVIDENCE / "gasstorm"
 WALLETS = {}
