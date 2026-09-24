@@ -1,6 +1,7 @@
 mod approvals;
 mod batch;
 mod call_hash;
+mod delivery;
 mod direct;
 mod execution;
 mod fingerprint;
@@ -12,9 +13,10 @@ use reth_ethereum::{
     cli::interface::Cli,
     node::{EthereumNode, node::EthereumAddOns},
 };
-use std::{sync::Arc, time::Duration};
+use std::{sync::Arc, time::Instant};
 
 fn main() -> eyre::Result<()> {
+    let boot = Instant::now();
     if std::env::args().nth(1).as_deref() == Some("fingerprint") {
         let value: serde_json::Value = serde_json::from_reader(std::io::stdin())?;
         let hash = fingerprint::fingerprint(&value["calls"], &value["pre"], &value["diff"])
@@ -25,33 +27,39 @@ fn main() -> eyre::Result<()> {
     let enabled = std::env::var("OPS_APPROVALS").as_deref() == Ok("1");
     Cli::parse_args().run(async move |builder, _| {
         let store = if enabled {
-            let wait = std::env::var("OPS_APPROVAL_WAIT_MS")
-                .unwrap_or("5000".into())
-                .parse()?;
-            let capacity = std::env::var("OPS_APPROVAL_CAPACITY")
-                .unwrap_or("100000".into())
-                .parse()?;
-            let store = Arc::new(approvals::Store::new(Duration::from_millis(wait), capacity));
-            let key = alloy_primitives::hex::decode(std::env::var("OPS_APPROVAL_PUBLIC_KEY")?)?;
-            let key = ed25519_dalek::VerifyingKey::from_bytes(key.as_slice().try_into()?)?;
-            let chain = std::env::var("OPS_APPROVAL_CHAIN_ID")?.parse()?;
-            let listener =
-                tokio::net::TcpListener::bind(std::env::var("OPS_APPROVAL_LISTEN")?).await?;
-            let workers = std::env::var("OPS_APPROVAL_VERIFY_WORKERS")
-                .unwrap_or("2".into())
-                .parse()?;
-            let capacity = std::env::var("OPS_APPROVAL_VERIFY_QUEUE_BATCHES")
-                .unwrap_or("64".into())
-                .parse()?;
-            let verifier = verification::Verifier::new(
+            let settings = delivery::Settings::from_env().map_err(|e| eyre::eyre!(e))?;
+            let store = Arc::new(approvals::Store::new(
+                settings.wait,
+                settings.capacity,
+                boot,
+            ));
+            let boot_id = delivery::boot_id()?;
+            let listener = tokio::net::TcpListener::bind(&settings.listen).await?;
+            let service = delivery::Delivery::new(
+                &settings,
                 store.clone(),
-                key,
-                chain,
-                workers,
-                capacity,
-                std::env::var("OPS_APPROVAL_INGRESS_MODE").as_deref() != Ok("queued"),
+                boot_id.clone(),
+                approvals::unix_ms,
             )?;
-            tokio::spawn(approvals::serve(listener, store.clone(), verifier));
+            tracing::info!(listen = %settings.listen, %boot_id, "OPS approval delivery");
+            builder
+                .task_executor()
+                .spawn_critical_with_graceful_shutdown_signal(
+                    "ops approval delivery",
+                    move |shutdown| async move {
+                        // Hold the shutdown guard until the server has drained its calls.
+                        let (keep, kept) = tokio::sync::oneshot::channel();
+                        let signal = async move {
+                            let _ = keep.send(shutdown.await);
+                        };
+                        if let Err(err) =
+                            delivery::serve(listener, service, &settings, signal).await
+                        {
+                            tracing::error!(%err, "OPS approval delivery stopped");
+                        }
+                        drop(kept);
+                    },
+                );
             Some(store)
         } else {
             None
