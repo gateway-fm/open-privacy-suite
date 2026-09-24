@@ -141,7 +141,7 @@ class Node:
         env = dict(os.environ, OPS_APPROVALS="0" if disabled else "1", RUST_LOG="info",
                    OPS_APPROVAL_WAIT_MS=str(wait_ms), OPS_APPROVAL_CHAIN_ID="31337",
                    OPS_APPROVAL_LISTEN=f"127.0.0.1:{self.approval_port}",
-                   OPS_APPROVAL_PUBLIC_KEY="ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c")
+                   OPS_APPROVAL_PUBLIC_KEYS="default=ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c")
         if os.environ.get("OPS_TRACE_HOPS")=="1":env["OPS_APPROVAL_HOPS_FILE"]=str(EVIDENCE/(name+"-node-hops.json"))
         # Keep module stderr records separate: Reth stdout can otherwise interleave
         # with JSON formatting and corrupt a timing record during concurrent writes.
@@ -234,10 +234,12 @@ class Node:
                 result.append(json.loads(line.split("OPS_APPROVAL_DECISION ", 1)[1]))
         return result
 
-    def make_block(self, expected, denied=None, fee_recipient=ADMIN):
+    def make_block(self, expected, denied=None, fee_recipient=ADMIN, finalized=None):
+        """Builds, imports and makes canonical the next block. The new block is also safe and
+        final unless `finalized` names the block hash finality stays at."""
         number = int(self.head["number"], 16) + 1
-        state = {"headBlockHash": self.head["hash"], "safeBlockHash": self.head["hash"],
-                 "finalizedBlockHash": self.head["hash"]}
+        state = {"headBlockHash": self.head["hash"], "safeBlockHash": finalized or self.head["hash"],
+                 "finalizedBlockHash": finalized or self.head["hash"]}
         attrs = {"timestamp": hex(int(self.head["timestamp"], 16) + 12), "prevRandao": ZERO,
                  "suggestedFeeRecipient": fee_recipient, "withdrawals": []}
         version = "V3" if self.fork == "cancun" else "V2"
@@ -261,7 +263,9 @@ class Node:
         assert len(payload["transactions"]) == len(expected), payload
         result = self.engine("engine_newPayload"+version, payload, *([[],ZERO] if self.fork == "cancun" else []))
         assert result["status"] == "VALID", result
-        state = dict.fromkeys(state, payload["blockHash"])
+        state = {"headBlockHash": payload["blockHash"],
+                 "safeBlockHash": finalized or payload["blockHash"],
+                 "finalizedBlockHash": finalized or payload["blockHash"]}
         result = self.engine("engine_forkchoiceUpdated"+version, state, None)
         assert result["payloadStatus"]["status"] == "VALID", result
         for _ in range(100):
