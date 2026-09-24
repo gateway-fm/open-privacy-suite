@@ -19216,7 +19216,7 @@
                                 }
                             }
                         },
-                        "description": "concurrency limit or upstream rate limit"
+                        "description": "concurrency limit, signed-approval simulation budget, or upstream rate limit"
                     },
                     "500": {
                         "content": {
@@ -19352,7 +19352,7 @@
                                 }
                             }
                         },
-                        "description": "concurrency limit or upstream rate limit"
+                        "description": "concurrency limit, signed-approval simulation budget, or upstream rate limit"
                     },
                     "500": {
                         "content": {

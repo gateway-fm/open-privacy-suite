@@ -12901,7 +12901,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/internal_server.APIError'
-          description: concurrency limit or upstream rate limit
+          description: concurrency limit, signed-approval simulation budget, or upstream
+            rate limit
         "500":
           content:
             application/json:
@@ -12990,7 +12991,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/internal_server.APIError'
-          description: concurrency limit or upstream rate limit
+          description: concurrency limit, signed-approval simulation budget, or upstream
+            rate limit
         "500":
           content:
             application/json:

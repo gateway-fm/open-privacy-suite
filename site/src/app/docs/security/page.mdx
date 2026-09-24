@@ -375,6 +375,16 @@ Concurrency limiting is intentionally not requests-per-second rate limiting.
 Keeping these responsibilities separate avoids inconsistent quota accounting
 between Open Privacy Suite and the upstream service that owns node capacity.
 
+Signed transaction approvals are an exception. When they are enabled, every
+transaction is simulated on the node before it is approved, and Open Privacy
+Suite requests that simulation itself, not under the caller's group API key, so
+the upstream quota does not bound it. Open Privacy Suite therefore limits
+simulations per identity: `OPS_APPROVAL_PREFLIGHT_RATE` per second, up to
+`OPS_APPROVAL_PREFLIGHT_BURST` back to back. With Redis configured the budget is
+shared by all instances; without it, or while Redis is unreachable, each
+instance enforces it on its own. A transaction over the budget is refused with
+`429` before anything is simulated.
+
 ### Anonymous (Unauthenticated) Access
 
 A small set of **claim-free methods** can be called without any JWT token. These return only global chain metadata that carries no per-address information:

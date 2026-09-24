@@ -48,6 +48,7 @@ func TestNodeApprovalsRealReth(t *testing.T) {
 	p.nodeApprovals, err = nodeapproval.New(url, os.Getenv("OPS_TEST_APPROVAL_TARGET"), bytes.Repeat([]byte{7}, 32))
 	require.NoError(t, err)
 	t.Cleanup(p.nodeApprovals.Close)
+	require.NoError(t, p.configurePreflightLimit(nil))
 	data, err := os.ReadFile(os.Getenv("OPS_TEST_TX_FILE"))
 	require.NoError(t, err)
 	var inputs map[string]string

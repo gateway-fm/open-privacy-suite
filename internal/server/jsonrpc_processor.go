@@ -76,6 +76,7 @@ type JSONRPCProcessor struct {
 	// Circuit breaker + concurrency limiter (replaces rate limiter for authenticated users)
 	circuitBreaker         *CircuitBreaker
 	concurrencyLimiter     *ConcurrencyLimiter
+	preflightLimiter       preflightLimiter // per-principal budget for signed-approval preflights, installed with nodeApprovals by configurePreflightLimit; without it every preflight is refused
 	defaultRPCAPIKey       string
 	defaultRPCAPIKeyHeader string // operator-wide header name from RPC_API_KEY_HEADER; empty => proxy.DefaultAPIKeyHeader
 
@@ -1510,6 +1511,9 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 	// authoritative gate is the trace.
 	var prepared *nodeapproval.Prepared
 	if p.nodeApprovals != nil {
+		if limited := p.limitPreflight(ctx, req, start); limited != nil {
+			return limited
+		}
 		prepared, err = p.nodeApprovals.Prepare(ctx, rawTxHex)
 		if err != nil {
 			slog.Warn("signed preflight failed", "error", err)
