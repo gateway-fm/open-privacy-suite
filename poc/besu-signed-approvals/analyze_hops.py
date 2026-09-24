@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Delivery latency of today's raw-TCP approval path, from OPS's own hop marks.
+"""Delivery latency of OPS's approval path, from its own hop marks (recorded on the raw-TCP path).
 
 Reads the file OPS wrote at exit (OPS_APPROVAL_HOPS_FILE): one row per approval with
 nanosecond marks — queued, sign start/end, delivery start, write start/end, and the moment the
