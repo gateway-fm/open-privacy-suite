@@ -12,7 +12,7 @@ behind each choice are in [approvals-production-plan.md](approvals-production-pl
 |---|---|
 | Protocol | gRPC over HTTP/2, service `ops.approvals.v1.ApprovalDelivery` ([`proto/ops/approvals/v1/approvals.proto`](../../proto/ops/approvals/v1/approvals.proto)) |
 | Direction | OPS dials each producer (plan §0 1c). Each target address reaches exactly one producer: no load balancer in between, or the boot id (§4) changes on every reconnect |
-| Security | Plaintext for now (plan §0.3). A network rule must let only OPS reach the receiver's port; receivers may also restrict source addresses and cap connections and concurrent calls. The Ed25519 signature protects integrity either way |
+| Security | Plaintext for now (plan §0.3). A network rule must let only OPS reach the receiver's port, and receivers refuse to start without an explicit source list (CIDRs, or `any` to rely on the network rule alone). They also cap connections and concurrent calls, and close a connection that has not completed the HTTP/2 preface within 5 s or has carried no call for 30 s — OPS calls `Status` every second, so its own connections never idle. The Ed25519 signature protects integrity either way |
 | Calls | One unary `Deliver` per batch. Calls share one connection per producer and do not wait for each other; OPS bounds the calls in flight per producer. No gRPC-level retry policy: retries are OPS's (§5) |
 | Reconnect | OPS reconnects with backoff capped at 1 s and resolves the target name on every attempt, so a producer that restarts on a new address is reached within about a second |
 | Message size | A full batch is under 4.1 KiB; receivers cap requests at 64 KiB |
@@ -103,8 +103,9 @@ confirmed. The contract closes that gap:
   instance reconnects within about a second (§1).
 
 `StatusResponse` also carries the receiver's chain id, trusted key ids, maximum TTL, capacity and
-wait window. OPS signs with a TTL no longer than every lane's maximum and reports a lane whose chain
-or trusted key ids do not match.
+wait window. OPS signs with a TTL no longer than every ready lane's maximum. A lane whose chain or
+trusted key ids do not match, or whose maximum TTL is below 10 s, is not ready and does not shorten
+the TTL; OPS forgets a lane's reported values when it stops being ready.
 
 ## 5. Sender behaviour
 
@@ -147,10 +148,10 @@ or trusted key ids do not match.
 | `OPS_APPROVAL_MAX_IN_FLIGHT` | OPS | `8` | calls in flight per producer |
 | `OPS_APPROVAL_RETAIN_MAX` | OPS | `100000` | approvals retained for redelivery |
 | `--plugin-ops-approval-listen` | Besu plugin | — | gRPC listen address |
-| `--plugin-ops-approval-max-ttl-ms` | Besu plugin | `3600000` | longest `expires_at` − `issued_at` accepted |
+| `--plugin-ops-approval-max-ttl-ms` | Besu plugin | `3600000` | longest `expires_at` − `issued_at` accepted; 10 s to 24 h |
 | `--plugin-ops-approval-capacity` | Besu plugin | `100000` | approvals the store holds |
 | `--plugin-ops-approval-wait-ms` | Besu plugin | `5000` | how long a pooled transaction waits for its approval |
-| `--plugin-ops-approval-allowed-sources` | Besu plugin | any | optional comma-separated CIDR list of sources allowed to connect |
+| `--plugin-ops-approval-allowed-sources` | Besu plugin | — (required) | comma-separated CIDR list of sources allowed to connect, or `any` to rely on the network rule alone |
 | `--plugin-ops-approval-max-connections` | Besu plugin | `32` | open delivery connections; one per OPS instance is the norm |
 | `--plugin-ops-approval-max-concurrent-calls` | Besu plugin | `32` | delivery calls in flight per connection |
 | Same settings | Reth node | as the plugin | environment variables `OPS_APPROVAL_LISTEN`, `OPS_APPROVAL_MAX_TTL_MS`, `OPS_APPROVAL_CAPACITY`, `OPS_APPROVAL_WAIT_MS`, `OPS_APPROVAL_ALLOWED_SOURCES`, `OPS_APPROVAL_MAX_CONNECTIONS`, `OPS_APPROVAL_MAX_CONCURRENT_CALLS` |
