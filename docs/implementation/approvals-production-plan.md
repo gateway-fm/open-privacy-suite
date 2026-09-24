@@ -9,9 +9,9 @@ Numbers are measured unless marked *estimate*. File references are to
 
 ## 0. Decisions this plan needs
 
-1. ~~Transport~~ — **decided (24 September): gRPC over HTTP/2 with mTLS, one unary call per
+1. ~~Transport~~ — **decided (24 September): gRPC over HTTP/2 (TLS postponed, decision 3), one unary call per
    batch; the call's status is the confirmation; no broker.** OPS dials the sequencer (1c; one
-   inbound mTLS port on the sequencer, one channel per OPS instance); the Ed25519 payload signature
+   inbound port on the sequencer, one channel per OPS instance); the Ed25519 payload signature
    is kept. OK means the plugin verified and stored the batch; a retryable error means OPS resends
    it with backoff (§3.6). This replaces the earlier bidirectional stream with its own ack/nack
    messages: the confirmation comes with the call, so there is no ack protocol to build. Measured (§3.4′ item 2): gRPC is ~20 µs slower at the median than raw TCP and mTLS adds
@@ -50,7 +50,17 @@ Numbers are measured unless marked *estimate*. File references are to
    key to the plugin, switch OPS's `OPS_APPROVAL_KEY_ID`/seed, remove the old key — no
    simultaneous restart. Still open: expiry (`issued_at`/`expires_at`), which needs the same
    transport-independent envelope work and is scheduled with the `.proto`.
-3. **TLS termination**: mesh/sidecar in front of the plugin listener, or in-process.
+3. ~~TLS termination~~ — **postponed (24 September): plaintext gRPC on the internal network for
+   now**, like the rest of OPS's internal traffic (the OPS → node JSON-RPC path already carries
+   the raw transactions). Nothing secret crosses the channel and the Ed25519 signature protects
+   integrity without TLS: nobody on the network can forge or alter an approval. What TLS would
+   add — confidentiality and peer authentication — is covered meanwhile by (a) a network rule
+   letting only OPS reach the plugin's port (otherwise anyone reachable can make the plugin
+   verify junk), and (b) a recorded risk acceptance (§6). The one privacy-relevant field is the
+   principal, a Keccak hash of the OPS user id: a stable pseudonym that lets an eavesdropper link
+   one user's transactions across addresses — dropping it from the wire is an open option.
+   When TLS comes, it is in-process at both ends (no service mesh is known to be in place, and
+   the sequencer may not run in one).
 4. **Where the plugin lives and ships**: inside this repository, or its own repository with
    releases the Lineth operator pulls (Lineth loads plugin JARs from `besu/plugins/`).
 5. **Reth**: second shipped target, or reference implementation only. Both PoCs share the OPS
@@ -148,7 +158,7 @@ in parity by hand, and a protocol an on-call engineer has never seen.
 
 ### 3.3 Recommendation
 
-**Decided (24 September): gRPC over HTTP/2 with mTLS; OPS dials the sequencer; one unary call
+**Decided (24 September): gRPC over HTTP/2 (mTLS postponed, §0.3); OPS dials the sequencer; one unary call
 per batch, whose status is the confirmation; the Ed25519 payload signature kept; no broker.
 The producer's decisions stay on the sequencer — decision log and metrics — and do not travel
 back over this channel (§2, feedback row: internal, never user-facing).**
@@ -159,7 +169,7 @@ back over this channel (§2, feedback row: internal, never user-facing).**
   bench before quoting a number for it (§5 item 2).
 - Confirmations make redelivery exact and refusals visible to OPS; they are not used to gate
   forwarding (decision 1a).
-- **Who dials whom — decided (§0 1c).** *OPS → sequencer*: the sequencer exposes one inbound mTLS
+- **Who dials whom — decided (§0 1c).** *OPS → sequencer*: the sequencer exposes one inbound
   port — it already exposes `ops_prepareApproval` and the forward path inbound, so this adds no
   new direction; N OPS instances are N channels with no fan-in; redelivery after a sequencer
   restart is driven by the plugin's boot id in every response (§3.6). *Sequencer → OPS*: attractive only if the sequencer had no inbound ports at all
@@ -167,7 +177,7 @@ back over this channel (§2, feedback row: internal, never user-facing).**
   stream lands on one instance, so either the plugin discovers instances or a shared Postgres
   outbox sits in every delivery — the component-in-the-inclusion-path this section rejects
   for a broker. Standby sequencer: one more channel from each OPS instance (§4b).
-- mTLS authenticates both ends and gives encryption in transit (ISO/IEC 27001:2022 Annex A
+- *Postponed (§0.3); kept for when it lands:* mTLS authenticates both ends and gives encryption in transit (ISO/IEC 27001:2022 Annex A
   8.24, use of cryptography — confirm the mapping with Compliance); the payload signature
   authenticates the *decision* independently of the channel and remains auditable. Certificate
   lifecycle (CA, issuance, rotation, private keys in Secrets Manager / CSI) is part of the
@@ -304,7 +314,7 @@ not request-path ones — written down before the `.proto`:
 The CTO's PoC topology (18 September) fixes the vocabulary: **one Besu sequencer with the plugin,
 Reth and Erigon RPC nodes as the transaction submission channels.**
 
-**a) Several OPS instances.** Each instance holds its own mTLS channel to the sequencer (OPS dials,
+**a) Several OPS instances.** Each instance holds its own gRPC channel to the sequencer (OPS dials,
 §3.3), so no fan-in and no shared component in the delivery path; a Postgres outbox is per
 instance's durability, not a bus. Per-instance signing keys (with `key_id` and a key set on the
 plugin) give attribution and independent rotation. The same transaction reaching two instances
@@ -355,7 +365,7 @@ Independently shippable; each ends with the 22-scenario suite green.
    live approval); `FORK` blocks recorded in the tracker; tracked depth given a basis (`8186d3d`);
    the reorg-with-lagging-finality scenario `reorg_keeps_approvals` (passes; full suite pending).
 3. **Transport + durability**: `.proto` **including envelope v2** (`key_id`, `issued_at`,
-   `expires_at` — one wire migration, not two); gRPC unary per batch with mTLS at Besu's grpc
+   `expires_at` — one wire migration, not two); gRPC unary per batch (plaintext; mTLS later, §0.3) at Besu's grpc
    version; OPS dials the sequencer; status-code handling and boot-id redelivery (§3.6); Postgres
    outbox (expand-only, with the `privacy_proxy_app` GRANT block); certificate lifecycle.
 4. **Keys**: ~~key set on the plugin~~ (done, envelope v2); Secrets Manager via IRSA scoped to the
@@ -379,10 +389,12 @@ Independently shippable; each ends with the 22-scenario suite green.
 
 - The seed file on disk deviates from Secrets Manager as canonical store — resolved in phase 4;
   document the interim.
-- Phase 3 introduces mTLS: CA, issuance, rotation and where private keys live (Secrets Manager
-  via CSI/IRSA) are part of the design, not deployment detail. IRSA roles scoped to the specific
-  secret ARNs.
-- Phases 3–4 change access control (mTLS identities, key rotation) and 6 adds detective
+- **TLS on the approval channel is postponed (§0.3): record it as a risk acceptance** (ISO/IEC
+  27001:2022 Annex A 8.24, use of cryptography — Compliance to confirm how it is recorded), with
+  the network rule restricting the plugin's port to OPS as the compensating control. When mTLS
+  lands: CA, issuance, rotation and where private keys live (Secrets Manager via CSI/IRSA) are
+  part of the design, not deployment detail; IRSA roles scoped to the specific secret ARNs.
+- Phases 3–4 change access control (key rotation; mTLS identities once TLS lands) and 6 adds detective
   signals and a new log source on the sequencer (A.8.15 logging) — change-management
   documentation for ISO 27001 / Vanta.
 - The Postgres outbox is a new table: expand-only migration with the `privacy_proxy_app` GRANT
