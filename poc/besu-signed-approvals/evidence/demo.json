@@ -1,6 +1,6 @@
 {
-  "ops": "http://127.0.0.1:55880",
-  "besu": "http://127.0.0.1:55841",
+  "ops": "http://127.0.0.1:62419",
+  "besu": "http://127.0.0.1:62343",
   "checks": [
     {
       "name": "same_org_executes",

@@ -275,6 +275,22 @@ Consequences for §3:
 - The recommendation in §3.3 stands, on grounds of reliability, TLS, peer authentication,
   fan-out and operability — not speed.
 
+**24 September, the gRPC delivery end to end** (real OPS with its gRPC client, Postgres, Redis and
+the plugin's gRPC service; gate on; the same Gasstorm workload, 20 s per rate):
+
+| Layout · requested | Submitted / confirmed | Evaluated before its approval arrived | Dropped at the producer | Gate cost per transaction (median) |
+|---|---|---|---|---|
+| direct · 300 | 6,005 / 6,002 | 0 | 0 | 9.1 µs |
+| direct · 500 | 10,012 / 9,984 | **0 of 9,984** | 0 | 7.4 µs |
+| follower · 300 | 6,010 / 5,979 | 0 | 0 | — |
+| follower · 500 | 10,011 / 9,979 | **0 of 9,979** | 0 | 7.6 µs |
+
+No request was refused for want of a ready producer, no batch was refused or dropped, and none
+needed a resend. Every missing receipt is a request the load generator cancelled when a phase
+stopped — the OPS log shows them in exactly two seconds, one at the end of each rate — plus three
+failed database connections; OPS refused all of them before forwarding (fail closed). Evidence:
+`poc/besu-signed-approvals/evidence/gasstorm/summary.json`, `summary-follower.json`.
+
 ### 3.4′ Benchmark, reduced
 
 Replacing §3.4. Effort *estimate* 0.5–1 day.

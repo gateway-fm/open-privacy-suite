@@ -154,12 +154,12 @@
   {
     "test": "expired_approval_counts_as_absent_transaction_dropped_not_included",
     "passed": true,
-    "late": "expired 6109 ms ago"
+    "late": "expired 6269 ms ago"
   },
   {
     "test": "restart_new_boot_id_resend_of_the_retained_batch_restores_inclusion",
     "passed": true,
-    "boot_before": "1b5ca411f367e205943e68bd6155c165",
-    "boot_after": "94e58cedb5a816a6c68086305efb669b"
+    "boot_before": "509f764da1885cc4170047c4903b7c15",
+    "boot_after": "07101b351346da0b0c2366de1a6e4ddf"
   }
 ]

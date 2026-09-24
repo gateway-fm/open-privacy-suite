@@ -1,6 +1,6 @@
 {
-  "org": "a70c5c8e-0340-4e9f-9362-df451cd44835",
-  "group": "44de4d88-df77-4727-b7d8-8431f5ef373a",
+  "org": "b5b104bf-6a56-4626-a48a-a91c987fac08",
+  "group": "52d608f4-2961-42c3-b462-746fd35517f1",
   "did": "did:test:besu-gasstorm",
   "wallets": [
     "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
@@ -26,5 +26,5 @@
     "0x5fc8d32690cc91d4c39d9d3abcbd16989f875707"
   ],
   "gate": true,
-  "rpc_route": "http://127.0.0.1:54596/rpc/a70c5c8e-0340-4e9f-9362-df451cd44835"
+  "rpc_route": "http://127.0.0.1:64772/rpc/b5b104bf-6a56-4626-a48a-a91c987fac08"
 }
