@@ -68,7 +68,7 @@ func TestCallGoldenAndModeAuthentication(t *testing.T) {
 	}
 	key := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{7}, 32))
 	a := Approval{ChainID: 31337, HashMode: HashCalls, Fingerprint: want}
-	b, err := goldenSigner(key).SignBatch([]Approval{a, {ChainID: 31337, HashMode: HashStrict, Fingerprint: want}})
+	b, err := goldenSigner(key).SignBatch([]Approval{a, {ChainID: 31337, HashMode: HashStrict, Fingerprint: want}}, DefaultApprovalTTL)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -11,7 +11,7 @@ import (
 // rotation is add-then-switch instead of a simultaneous restart of every node and OPS.
 func TestBatchNamesItsSigningKey(t *testing.T) {
 	signer := NewEd25519Signer("ops-2026-09", bytes.Repeat([]byte{7}, 32))
-	batch, err := signer.SignBatch(batchFixtures(2))
+	batch, err := signer.SignBatch(batchFixtures(2), DefaultApprovalTTL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +39,7 @@ func TestBatchNamesItsSigningKey(t *testing.T) {
 		t.Fatalf("frame length %d", len(got))
 	}
 	for _, id := range []string{"", "has space", string(make([]byte, 65))} {
-		if _, err := NewEd25519Signer(id, bytes.Repeat([]byte{7}, 32)).SignBatch(batchFixtures(1)); err == nil {
+		if _, err := NewEd25519Signer(id, bytes.Repeat([]byte{7}, 32)).SignBatch(batchFixtures(1), DefaultApprovalTTL); err == nil {
 			t.Fatalf("accepted key id %q", id)
 		}
 	}

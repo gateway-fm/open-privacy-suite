@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"github.com/ethereum/go-ethereum/common"
 	"io"
 	"net"
@@ -119,13 +120,21 @@ func TestDeliveryUsesPersistentConnectionWithoutAck(t *testing.T) {
 				received <- io.ErrUnexpectedEOF
 				return
 			}
+			// Each 120-byte approval ends with the reserved field, which senders fill with zeros.
+			header := 22 + 1 + int(message[22]) + 16 + 4 // domain, key id, issued_at, expires_at, count
+			for item := message[header:]; len(item) >= 120; item = item[120:] {
+				if !bytes.Equal(item[88:120], make([]byte, 32)) {
+					received <- errors.New("the reserved field is not zero")
+					return
+				}
+			}
 
 			received <- nil
 		}
 	}()
 	p := &Prepared{Approval: Approval{ChainID: 31337, TxHash: common.HexToHash("0x1234"), Fingerprint: common.HexToHash("0x5678")}}
 	for i := 0; i < 2; i++ {
-		if e = s.Enqueue(p, "did:fixture"); e != nil {
+		if e = s.Enqueue(p); e != nil {
 			t.Fatal(e)
 		}
 		select {
@@ -141,10 +150,10 @@ func TestDeliveryUsesPersistentConnectionWithoutAck(t *testing.T) {
 func TestQueueIsBounded(t *testing.T) {
 	s := &Service{signer: NewEd25519Signer("default", make([]byte, 32)), queue: make(chan Approval, 1), done: make(chan struct{})}
 	p := &Prepared{}
-	if e := s.Enqueue(p, "x"); e != nil {
+	if e := s.Enqueue(p); e != nil {
 		t.Fatal(e)
 	}
-	if e := s.Enqueue(p, "x"); e == nil {
+	if e := s.Enqueue(p); e == nil {
 		t.Fatal("full queue accepted")
 	}
 }

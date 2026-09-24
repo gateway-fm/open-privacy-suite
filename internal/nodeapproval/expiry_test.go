@@ -14,12 +14,12 @@ var goldenIssued = time.UnixMilli(1790000000000).UTC()
 
 // goldenSigner signs at goldenIssued so golden vectors are reproducible.
 func goldenSigner(key ed25519.PrivateKey) *Ed25519Signer {
-	return &Ed25519Signer{keyID: "default", key: key, ttl: DefaultApprovalTTL, now: func() time.Time { return goldenIssued }}
+	return &Ed25519Signer{keyID: "default", key: key, now: func() time.Time { return goldenIssued }}
 }
 
 func TestBatchCarriesItsExpiry(t *testing.T) {
 	key := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{7}, 32))
-	batch, err := goldenSigner(key).WithTTL(90 * time.Second).SignBatch(batchFixtures(2))
+	batch, err := goldenSigner(key).SignBatch(batchFixtures(2), 90*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,19 +60,20 @@ func TestBatchRefusesAnExpiryNotAfterIssue(t *testing.T) {
 			t.Fatalf("accepted expires_at %d for issued_at 1000", expires)
 		}
 	}
-	if _, err := goldenSigner(ed25519.NewKeyFromSeed(make([]byte, 32))).WithTTL(0).SignBatch(batchFixtures(1)); err == nil {
+	if _, err := goldenSigner(ed25519.NewKeyFromSeed(make([]byte, 32))).SignBatch(batchFixtures(1), 0); err == nil {
 		t.Fatal("signed with a zero TTL")
 	}
 }
 
 func TestApprovalTTLSetting(t *testing.T) {
-	for value, want := range map[string]time.Duration{"": DefaultApprovalTTL, "90s": 90 * time.Second, "1h": time.Hour} {
+	for value, want := range map[string]time.Duration{"": DefaultApprovalTTL, "10s": 10 * time.Second, "90s": 90 * time.Second, "1h": time.Hour} {
 		t.Setenv("OPS_APPROVAL_TTL", value)
 		if got, err := configuredApprovalTTL(); err != nil || got != want {
 			t.Fatalf("OPS_APPROVAL_TTL=%q: got %v, %v; want %v", value, got, err, want)
 		}
 	}
-	for _, value := range []string{"0", "-1s", "61m", "ten minutes"} {
+	// The minimum leaves room for a producer's wait window plus a block (wire contract §5).
+	for _, value := range []string{"9s", "0", "-1s", "61m", "ten minutes"} {
 		t.Setenv("OPS_APPROVAL_TTL", value)
 		if _, err := configuredApprovalTTL(); err == nil {
 			t.Fatalf("accepted OPS_APPROVAL_TTL=%q", value)

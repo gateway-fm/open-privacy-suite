@@ -88,7 +88,7 @@ func TestApprovalSurvivesAFailedWrite(t *testing.T) {
 	defer listener.Close()
 	seed := bytes.Repeat([]byte{7}, 32)
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &Service{signer: NewEd25519Signer("default", seed), address: listener.Addr().String(),
+	s := &Service{signer: NewEd25519Signer("default", seed), ttl: DefaultApprovalTTL, address: listener.Addr().String(),
 		queue: make(chan Approval, 4096), signed: make(chan Batch, 128), maxBatch: MaxBatchApprovals,
 		cancel: cancel, done: make(chan struct{}), signDone: make(chan struct{})}
 	first := newBrokenConn()
@@ -98,7 +98,7 @@ func TestApprovalSurvivesAFailedWrite(t *testing.T) {
 
 	hash := common.HexToHash("0xfeed")
 	p := &Prepared{Approval: Approval{ChainID: 31337, TxHash: hash, Fingerprint: common.HexToHash("0x5678")}}
-	if err := s.Enqueue(p, "did:fixture"); err != nil {
+	if err := s.Enqueue(p); err != nil {
 		t.Fatal(err)
 	}
 	// The first write fails; OPS reconnects to the listener. The approval must arrive there.
@@ -179,7 +179,7 @@ func TestCloseDeliversEverythingAlreadyAccepted(t *testing.T) {
 	const count = 200
 	for i := 0; i < count; i++ {
 		p := &Prepared{Approval: Approval{ChainID: 31337, TxHash: common.BigToHash(big.NewInt(int64(i + 1))), Fingerprint: common.HexToHash("0x5678")}}
-		if err := s.Enqueue(p, "did:fixture"); err != nil {
+		if err := s.Enqueue(p); err != nil {
 			t.Fatal(err)
 		}
 	}
