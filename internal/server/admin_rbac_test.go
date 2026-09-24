@@ -386,7 +386,7 @@ func TestGroupAPI(t *testing.T) {
 	t.Run("SetGroupAccess", func(t *testing.T) {
 		body := map[string]any{
 			"allowed_methods": []string{"eth_call", "eth_getBalance"},
-			"claims":          []string{"read"},
+			"claims":          []string{"deploy"},
 		}
 		jsonBody, _ := json.Marshal(body)
 
@@ -451,7 +451,7 @@ func TestGroupAccessAPI(t *testing.T) {
 	t.Run("SetGroupAccess", func(t *testing.T) {
 		body := map[string]any{
 			"allowed_methods": []string{"eth_call", "eth_getBalance"},
-			"claims":          []string{"read"},
+			"claims":          []string{"deploy"},
 		}
 		jsonBody, _ := json.Marshal(body)
 
@@ -491,7 +491,7 @@ func TestGroupAccessValidation(t *testing.T) {
 		// Write methods no longer require a "write" claim — method allowlist is the gate
 		body := map[string]any{
 			"allowed_methods": []string{"eth_call", "eth_sendTransaction"},
-			"claims":  []string{},
+			"claims":          []string{},
 		}
 		jsonBody, _ := json.Marshal(body)
 
@@ -508,7 +508,7 @@ func TestGroupAccessValidation(t *testing.T) {
 		// Read methods no longer require a "read" claim — method allowlist is the gate
 		body := map[string]any{
 			"allowed_methods": []string{"eth_call", "eth_getBalance"},
-			"claims":  []string{},
+			"claims":          []string{},
 		}
 		jsonBody, _ := json.Marshal(body)
 
@@ -528,7 +528,7 @@ func TestGroupAccessValidation(t *testing.T) {
 		// ValidateTrace enforce access).
 		body := map[string]any{
 			"allowed_methods": []string{"debug_traceTransaction"},
-			"claims":  []string{},
+			"claims":          []string{},
 		}
 		jsonBody, _ := json.Marshal(body)
 
@@ -544,7 +544,7 @@ func TestGroupAccessValidation(t *testing.T) {
 	t.Run("AcceptsMethodsWithNoClaims", func(t *testing.T) {
 		body := map[string]any{
 			"allowed_methods": []string{"eth_call", "eth_sendTransaction"},
-			"claims":  []string{},
+			"claims":          []string{},
 		}
 		jsonBody, _ := json.Marshal(body)
 
@@ -560,7 +560,7 @@ func TestGroupAccessValidation(t *testing.T) {
 	t.Run("AcceptsEmptyMethodsList", func(t *testing.T) {
 		body := map[string]any{
 			"allowed_methods": []string{},
-			"claims":  []string{},
+			"claims":          []string{},
 		}
 		jsonBody, _ := json.Marshal(body)
 
@@ -576,7 +576,7 @@ func TestGroupAccessValidation(t *testing.T) {
 	t.Run("AcceptsUnknownMethodsWithoutClaims", func(t *testing.T) {
 		body := map[string]any{
 			"allowed_methods": []string{"some_unknown_method", "another_custom_method"},
-			"claims":  []string{}, // No claims needed for unknown methods
+			"claims":          []string{}, // No claims needed for unknown methods
 		}
 		jsonBody, _ := json.Marshal(body)
 
@@ -595,7 +595,7 @@ func TestGroupAccessValidation(t *testing.T) {
 				"eth_call", "eth_getBalance", "eth_chainId",
 				"eth_sendTransaction", "eth_sendRawTransaction",
 			},
-			"claims": []string{"read", "write", "admin", "upgrade", "deploy"},
+			"claims": []string{"admin", "upgrade", "deploy"},
 		}
 		jsonBody, _ := json.Marshal(body)
 
@@ -681,7 +681,7 @@ func TestWildcardMethodExpansion(t *testing.T) {
 		// Explicit methods should be stored as-is
 		body := map[string]any{
 			"allowed_methods": []string{"eth_call", "eth_getBalance"},
-			"claims":          []string{"read"},
+			"claims":          []string{"deploy"},
 		}
 		jsonBody, _ := json.Marshal(body)
 
@@ -1006,7 +1006,7 @@ func TestAccessCheckAPI(t *testing.T) {
 	// Set group access with allowed methods
 	accessBody := map[string]any{
 		"allowed_methods": []string{"eth_call", "eth_getBalance"},
-		"claims":  []string{"read"},
+		"claims":          []string{"deploy"},
 	}
 	accessJson, _ := json.Marshal(accessBody)
 	accessReq := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/orgs/%s/groups/%s/access", org.ID, group.ID), bytes.NewReader(accessJson))

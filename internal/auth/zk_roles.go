@@ -38,7 +38,7 @@ func (e *ZKRoleExtractor) ExtractRoleClaims(proofData map[string]any) (*ZKRoleCl
 	// {
 	//   "credentialSubject": {
 	//     "rbac_groups": ["org:group1", "org:group2"],
-	//     "rbac_claims": ["read", "write"],
+	//     "rbac_claims": ["deploy", "upgrade"],
 	//     "id": "did:polygonid:..."
 	//   }
 	// }

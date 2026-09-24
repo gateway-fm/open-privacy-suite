@@ -275,3 +275,32 @@ func TestOrgAdminInvariant_AdminRoleExclusiveConstraint(t *testing.T) {
 	require.Error(t, err, "DB CHECK constraint must reject both admin flags on one group")
 	assert.Contains(t, err.Error(), "groups_admin_role_exclusive")
 }
+
+// The claim vocabulary is exactly admin, upgrade and deploy (rbac.AllClaims).
+// "read" and "write" were retired when the method allowlist became the gate,
+// and nothing has accepted them since — but the group-access writer validated
+// nothing, so a stale client could still store them. They then sat in the
+// database as claims that grant nothing and that no reviewed configuration
+// document will accept. Refuse them at the door instead.
+func TestGroupAccessRejectsClaimsOutsideTheVocabulary(t *testing.T) {
+	f := configurationAPI(t)
+	group := &rbac.Group{ID: uuid.NewString(), OrgID: f.orgID, Slug: "claim-vocab", Name: "Claim vocabulary", Path: "claim-vocab"}
+	require.NoError(t, f.server.db.CreateGroup(t.Context(), group))
+	path := "/api/v1/admin/orgs/" + f.orgID + "/groups/" + group.ID + "/access"
+
+	for _, claims := range [][]string{{"read"}, {"write"}, {"deploy", "read"}, {"admin", "write"}, {"Deploy"}, {"superuser"}} {
+		response := f.request(t, f.admin, http.MethodPut, path, map[string]any{"allowed_methods": []string{"eth_call"}, "claims": claims})
+		require.Equal(t, http.StatusBadRequest, response.Code, "claims %v must be refused: %s", claims, response.Body.String())
+	}
+
+	// The real vocabulary still works, and admin still implies the rest.
+	response := f.request(t, f.admin, http.MethodPut, path, map[string]any{"allowed_methods": []string{"eth_call"}, "claims": []string{"deploy", "upgrade"}})
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	access, err := f.server.db.GetGroupAccess(t.Context(), group.ID)
+	require.NoError(t, err)
+	require.ElementsMatch(t, []rbac.Claim{rbac.ClaimDeploy, rbac.ClaimUpgrade}, access.Claims)
+
+	// An empty claim list stays valid: most groups carry no claims at all.
+	response = f.request(t, f.admin, http.MethodPut, path, map[string]any{"allowed_methods": []string{"eth_call"}, "claims": []string{}})
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+}

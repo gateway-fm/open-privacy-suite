@@ -39,6 +39,32 @@ var claimImplications = map[Claim][]Claim{
 //
 // Read/write are not claim-gated; the method allowlist is the source of truth.
 // Returns a deduplicated, sorted slice.
+// ValidateClaims rejects anything outside the claim vocabulary. The set is
+// exactly AllClaims(): "read" and "write" were retired when the method
+// allowlist became the gate for reads and writes, so a claim that is not one
+// of these grants nothing and only misleads whoever reads the group later.
+// Callers validate BEFORE expanding, so the error names what the client sent.
+func ValidateClaims(claims []Claim) error {
+	valid := make(map[Claim]bool, len(AllClaims()))
+	for _, c := range AllClaims() {
+		valid[c] = true
+	}
+	for _, c := range claims {
+		if !valid[c] {
+			return fmt.Errorf("unknown claim %q: the claims are %s", c, strings.Join(claimNames(AllClaims()), ", "))
+		}
+	}
+	return nil
+}
+
+func claimNames(claims []Claim) []string {
+	names := make([]string, 0, len(claims))
+	for _, c := range claims {
+		names = append(names, string(c))
+	}
+	return names
+}
+
 func ExpandClaims(claims []Claim) []Claim {
 	set := make(map[Claim]bool, len(claims))
 	for _, c := range claims {

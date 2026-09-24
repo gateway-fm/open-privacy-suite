@@ -682,6 +682,10 @@ func (s *Server) setGroupAccess(c *gin.Context) {
 	input.AllowedMethods = rbac.ExpandWildcardMethods(input.AllowedMethods)
 
 	// Expand claim hierarchy (admin → deploy + upgrade).
+	if err := rbac.ValidateClaims(input.Claims); err != nil {
+		respondClientError(c, http.StatusBadRequest, clientErrorf("%s", err), "invalid claims", "admin_rbac_group: claims rejected without client text")
+		return
+	}
 	input.Claims = rbac.ExpandClaims(input.Claims)
 
 	// Org-admin group invariants (RD-968 Gaps 1 & 3). On an is_org_admin group the
