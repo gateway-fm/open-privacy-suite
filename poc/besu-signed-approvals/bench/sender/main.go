@@ -68,7 +68,7 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		frames[i] = b.Frame()[4:] // body without the length prefix; the transport adds its own framing
+		frames[i] = b.Encoded() // the signed envelope; each transport adds its own framing
 	}
 	f, err := os.Create(*out)
 	if err != nil {

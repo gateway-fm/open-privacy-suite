@@ -94,13 +94,6 @@ func (b Batch) Message() ([]byte, error) {
 	return message, nil
 }
 
-// Frame is the envelope behind a 4-byte big-endian length, the framing the PoC harness replays
-// over raw TCP. Delivery sends Encoded in a gRPC call.
-func (b Batch) Frame() []byte {
-	frame := binary.BigEndian.AppendUint32(make([]byte, 0, 4+len(b.encoded)), uint32(len(b.encoded)))
-	return append(frame, b.encoded...)
-}
-
 // Encoded is the signed envelope as it travels: the signed message followed by
 // the 64-byte Ed25519 signature (docs/implementation/approvals-wire-contract.md).
 func (b Batch) Encoded() []byte { return b.encoded }
