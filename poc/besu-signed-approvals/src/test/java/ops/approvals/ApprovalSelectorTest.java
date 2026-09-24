@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.google.common.base.Stopwatch;
 import java.math.BigInteger;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -32,8 +33,13 @@ class ApprovalSelectorTest {
   private static final long CHAIN = 31337;
   private static final long WAIT = 5_000;
 
+  private static final long TTL = 600_000;
+
   private final AtomicLong clock = new AtomicLong(100_000);
+  private final List<String> decisions = new ArrayList<>();
+  private long issued;
   private ApprovalStore store;
+  private WaitWindow window;
   private ApprovalTracer tracer;
   private ApprovalSelector selector;
   private Transaction tx;
@@ -42,9 +48,24 @@ class ApprovalSelectorTest {
 
   @BeforeEach
   void setUp() throws Exception {
-    store = new ApprovalStore(100, 60_000, 0, clock::get);
+    store = new ApprovalStore(100, 0, clock::get);
+    // Booted long ago and OPS has called Status: every wait counts from pool admission.
+    window = new WaitWindow(WAIT, 0);
+    window.statusCalled(0);
     tracer = new ApprovalTracer();
-    selector = new ApprovalSelector(store, CHAIN, WAIT, clock::get, tracer);
+    selector =
+        new ApprovalSelector(
+            store,
+            CHAIN,
+            window,
+            clock::get,
+            tracer,
+            new ApprovalSelector.Metrics() {
+              @Override
+              public void decision(final String decision, final String reason) {
+                decisions.add(decision + "/" + reason);
+              }
+            });
     final KeyPair keys = SignatureAlgorithmFactory.getInstance().generateKeyPair();
     tx =
         org.hyperledger.besu.ethereum.core.Transaction.builder()
@@ -65,6 +86,16 @@ class ApprovalSelectorTest {
 
   private Approval approval(final int mode, final Hash fp) {
     return new Approval(mode, CHAIN, tx.getHash(), fp, Hash.ZERO);
+  }
+
+  /** Stores an approval signed now; each later one is issued later, so it replaces the last. */
+  private void approve(final int mode, final Hash fp) {
+    approve(mode, fp, TTL);
+  }
+
+  private void approve(final int mode, final Hash fp, final long ttl) {
+    final long issuedAt = clock.get() + issued++;
+    assertTrue(store.putAll("default", issuedAt, issuedAt + ttl, List.of(approval(mode, fp))));
   }
 
   private TransactionEvaluationContext context(final long addedAt) {
@@ -221,7 +252,7 @@ class ApprovalSelectorTest {
 
   @Test
   void selectsOnlyWhenExecutionMatchesTheApproval() {
-    store.put(approval(Approval.HASH_CALLS, fingerprint));
+    approve(Approval.HASH_CALLS, fingerprint);
     final TransactionEvaluationContext ctx = context(clock.get() - WAIT * 10); // age is irrelevant once approved
     assertTrue(selector.evaluateTransactionPreProcessing(ctx).selected());
     execute(records, false);
@@ -235,7 +266,7 @@ class ApprovalSelectorTest {
 
   @Test
   void lifecycleUnsupportedModeAndVanishedApprovalFailClosed() {
-    store.put(approval(Approval.HASH_CALLS, fingerprint));
+    approve(Approval.HASH_CALLS, fingerprint);
     final TransactionEvaluationContext ctx = context(clock.get());
     assertTrue(selector.evaluateTransactionPreProcessing(ctx).selected());
     execute(records, true);
@@ -250,7 +281,7 @@ class ApprovalSelectorTest {
     assertEquals(Optional.of(ApprovalSelector.MISMATCH), vanished.maybeInvalidReason());
 
     // A strict approval is a valid approval, but not for an execution that needs the calls mode.
-    store.put(approval(Approval.HASH_STRICT, fingerprint));
+    approve(Approval.HASH_STRICT, fingerprint);
     assertTrue(selector.evaluateTransactionPreProcessing(ctx).selected());
     execute(records, false);
     final TransactionSelectionResult wrongMode = selector.evaluateTransactionPostProcessing(ctx, result(false));
@@ -272,12 +303,12 @@ class ApprovalSelectorTest {
             observed.observation().state().diff());
 
     final ApprovalSelector strictSelector =
-        new ApprovalSelector(store, CHAIN, WAIT, clock::get, observed);
-    store.put(approval(Approval.HASH_STRICT, strictHash));
+        new ApprovalSelector(store, CHAIN, window, clock::get, observed, ApprovalSelector.Metrics.NONE);
+    approve(Approval.HASH_STRICT, strictHash);
     final TransactionEvaluationContext ctx = context(clock.get());
     assertTrue(strictSelector.evaluateTransactionPostProcessing(ctx, result(false)).selected());
 
-    store.put(approval(Approval.HASH_STRICT, Hash.ZERO));
+    approve(Approval.HASH_STRICT, Hash.ZERO);
     final TransactionSelectionResult mismatch =
         strictSelector.evaluateTransactionPostProcessing(ctx, result(false));
     assertTrue(mismatch.discard());
@@ -286,7 +317,7 @@ class ApprovalSelectorTest {
 
   @Test
   void interruptedExecutionIsNeverSelected() {
-    store.put(approval(Approval.HASH_CALLS, fingerprint));
+    approve(Approval.HASH_CALLS, fingerprint);
     final TransactionEvaluationContext ctx = context(clock.get());
     execute(records, false, false); // all frames seen, but the transaction never ended
     assertTrue(selector.evaluateTransactionPostProcessing(ctx, result(false)).discard());
@@ -294,7 +325,7 @@ class ApprovalSelectorTest {
 
   @Test
   void invalidProcessingResultIsNeverSelected() {
-    store.put(approval(Approval.HASH_CALLS, fingerprint));
+    approve(Approval.HASH_CALLS, fingerprint);
     final TransactionEvaluationContext ctx = context(clock.get());
     execute(records, false); // a matching trace must not rescue an invalid result
     // Besu rejects invalid results before consulting plugins; we still never say yes to one.
@@ -309,5 +340,80 @@ class ApprovalSelectorTest {
     execute(records, false);
     tracer.traceStartTransaction(null, tx);
     assertEquals(List.of(), tracer.records());
+  }
+
+  @Test
+  void anExpiredApprovalCountsAsAbsent() {
+    approve(Approval.HASH_CALLS, fingerprint, 1_000);
+    final TransactionEvaluationContext ctx = context(clock.get());
+    assertTrue(selector.evaluateTransactionPreProcessing(ctx).selected());
+    clock.addAndGet(1_000); // now = expires_at: usable only while now < expires_at
+    final TransactionSelectionResult waiting = selector.evaluateTransactionPreProcessing(ctx);
+    assertFalse(waiting.selected());
+    assertFalse(waiting.discard(), "within its wait window the transaction waits for a fresh approval");
+    assertEquals(Optional.of(ApprovalSelector.PENDING), waiting.maybeInvalidReason());
+    clock.addAndGet(WAIT);
+    final TransactionSelectionResult dropped = selector.evaluateTransactionPreProcessing(ctx);
+    assertTrue(dropped.discard());
+    assertEquals(Optional.of(ApprovalSelector.TIMEOUT), dropped.maybeInvalidReason());
+  }
+
+  @Test
+  void anApprovalThatExpiresDuringExecutionIsNotSelected() {
+    approve(Approval.HASH_CALLS, fingerprint, 1);
+    final TransactionEvaluationContext ctx = context(clock.get());
+    assertTrue(selector.evaluateTransactionPreProcessing(ctx).selected());
+    execute(records, false);
+    clock.addAndGet(1); // expires between pre- and post-processing
+    final TransactionSelectionResult post = selector.evaluateTransactionPostProcessing(ctx, result(false));
+    assertFalse(post.selected());
+    assertFalse(post.discard());
+    assertEquals(Optional.of(ApprovalSelector.PENDING), post.maybeInvalidReason());
+  }
+
+  @Test
+  void anApprovalSweptForExpiryDuringExecutionCountsAsAbsentNotVanished() {
+    approve(Approval.HASH_CALLS, fingerprint, 1);
+    final TransactionEvaluationContext ctx = context(clock.get());
+    assertTrue(selector.evaluateTransactionPreProcessing(ctx).selected());
+    execute(records, false);
+    clock.addAndGet(1);
+    assertEquals(1, store.evictExpired()); // the sweeper runs while the candidate executes
+    final TransactionSelectionResult post = selector.evaluateTransactionPostProcessing(ctx, result(false));
+    assertFalse(post.discard(), "expired, not vanished: the transaction waits out its window");
+    assertEquals(Optional.of(ApprovalSelector.PENDING), post.maybeInvalidReason());
+  }
+
+  @Test
+  void afterARestartTheWaitCountsFromTheFirstStatusCall() {
+    final WaitWindow booted = new WaitWindow(WAIT, clock.get());
+    final ApprovalSelector fresh =
+        new ApprovalSelector(store, CHAIN, booted, clock::get, tracer, ApprovalSelector.Metrics.NONE);
+    // Re-announced by an RPC node right after the restart, long before OPS has resent anything.
+    final TransactionEvaluationContext ctx = context(clock.get());
+    clock.addAndGet(2 * WAIT);
+    final TransactionSelectionResult early = fresh.evaluateTransactionPreProcessing(ctx);
+    assertFalse(early.discard(), "OPS has not called Status yet: keep waiting");
+    booted.statusCalled(clock.get());
+    clock.addAndGet(WAIT - 1);
+    assertFalse(fresh.evaluateTransactionPreProcessing(ctx).discard(), "the window runs from the Status call");
+    clock.addAndGet(1);
+    final TransactionSelectionResult late = fresh.evaluateTransactionPreProcessing(ctx);
+    assertTrue(late.discard());
+    assertEquals(Optional.of(ApprovalSelector.TIMEOUT), late.maybeInvalidReason());
+  }
+
+  @Test
+  void everyDecisionIsCountedAsAllowWaitDropOrDeny() {
+    final TransactionEvaluationContext fresh = context(clock.get());
+    selector.evaluateTransactionPreProcessing(fresh);
+    selector.evaluateTransactionPreProcessing(context(clock.get() - WAIT));
+    approve(Approval.HASH_CALLS, fingerprint);
+    assertTrue(selector.evaluateTransactionPreProcessing(fresh).selected());
+    execute(records, false);
+    assertTrue(selector.evaluateTransactionPostProcessing(fresh, result(false)).selected());
+    execute(records.subList(0, 1), false);
+    selector.evaluateTransactionPostProcessing(fresh, result(false));
+    assertEquals(List.of("wait/pending", "drop/timeout", "allow/matched", "deny/mismatch"), decisions);
   }
 }

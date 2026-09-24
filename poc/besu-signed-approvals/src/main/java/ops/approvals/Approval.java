@@ -7,9 +7,10 @@ import org.hyperledger.besu.datatypes.Hash;
 
 /**
  * One signed-approval item, byte-compatible with internal/nodeapproval.Approval.Message(): 16-byte
- * mode domain, u64 chain id, tx hash, execution fingerprint, principal hash.
+ * mode domain, u64 chain id, tx hash, execution fingerprint, 32 reserved bytes. Senders write zeros
+ * into the reserved field; it is signed over and otherwise ignored (wire contract §2).
  */
-public record Approval(int hashMode, long chainId, Hash txHash, Hash fingerprint, Hash principal) {
+public record Approval(int hashMode, long chainId, Hash txHash, Hash fingerprint, Hash reserved) {
   public static final int HASH_STRICT = 0;
   public static final int HASH_CALLS = 3;
   static final int ITEM_SIZE = 120;
@@ -32,7 +33,7 @@ public record Approval(int hashMode, long chainId, Hash txHash, Hash fingerprint
     b.putLong(chainId);
     b.put(txHash.getBytes().toArrayUnsafe());
     b.put(fingerprint.getBytes().toArrayUnsafe());
-    b.put(principal.getBytes().toArrayUnsafe());
+    b.put(reserved.getBytes().toArrayUnsafe());
     return b.array();
   }
 

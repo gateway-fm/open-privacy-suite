@@ -1,7 +1,7 @@
 package ops.approvals;
 
 import com.google.auto.service.AutoService;
-import java.net.InetSocketAddress;
+import io.grpc.Status;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
@@ -34,8 +34,8 @@ import org.slf4j.LoggerFactory;
 
 /**
  * OPS signed approvals for the block producer. Registers the transaction selector (gate), the
- * approval ingress, {@code ops_prepareApproval}, and cleanup. Any start-up problem halts Besu: a
- * producer without this plugin would include unapproved transactions.
+ * gRPC approval delivery service, {@code ops_prepareApproval}, and cleanup. Any start-up problem
+ * halts Besu: a producer without this plugin would include unapproved transactions.
  */
 @AutoService(BesuPlugin.class)
 public class OpsApprovalPlugin implements BesuPlugin {
@@ -53,14 +53,10 @@ public class OpsApprovalPlugin implements BesuPlugin {
         }
       };
 
-  /**
-   * Blocks whose approvals are still needed are tracked from inclusion until finality. Below this
-   * depth behind the head they stop being tracked and their approvals fall to the orphan sweep:
-   * about 68 minutes at one-second blocks, chosen as several times any finality lag a healthy
-   * consensus client should show; if the target network's finality lags more, raise it and size
-   * the store's capacity to rate × retention.
-   */
-  static final long TRACKED_BLOCK_DEPTH = 4_096;
+  /** Expired approvals and the blocks that held them are dropped this often. */
+  static final long EXPIRY_SWEEP_MS = 1_000;
+  /** The pooled set is checked against the pool this often, in case an event was missed. */
+  static final long POOL_RECONCILE_MS = 60_000;
 
   private final PluginOptions options = new PluginOptions();
   private final AtomicReference<PrepareApprovalRpc> prepare = new AtomicReference<>();
@@ -68,7 +64,7 @@ public class OpsApprovalPlugin implements BesuPlugin {
   private ServiceManager services;
   private BlockchainService blockchain;
   private ApprovalStore store;
-  private ApprovalListener listener;
+  private ApprovalServer server;
   private ScheduledExecutorService sweeper;
 
   @Override
@@ -111,8 +107,12 @@ public class OpsApprovalPlugin implements BesuPlugin {
       throw new IllegalArgumentException(
           "--plugin-ops-approval-listen, --plugin-ops-approval-chain-id and at least one trusted key (--plugin-ops-approval-public-key or --plugin-ops-approval-public-keys) are required");
     }
-    if (options.waitMs < 0 || options.capacity < 1 || options.maxConnections < 1 || options.orphanTtlMs < 1) {
-      throw new IllegalArgumentException("wait-ms >= 0, capacity/max-connections/orphan-ttl-ms >= 1 required");
+    if (options.waitMs < 0
+        || options.capacity < 1
+        || options.maxTtlMs < 1
+        || options.maxConnections < 1
+        || options.maxConcurrentCalls < 1) {
+      throw new IllegalArgumentException("wait-ms >= 0 and capacity, max-ttl-ms, max-connections, max-concurrent-calls >= 1 required");
     }
     final long chainId = options.chainId;
     blockchain = require(BlockchainService.class);
@@ -122,45 +122,34 @@ public class OpsApprovalPlugin implements BesuPlugin {
         .orElseThrow(() -> new IllegalArgumentException("--plugin-ops-approval-chain-id does not match the node's chain id"));
     final ApprovalVerifier verifier = new ApprovalVerifier(options.trustedKeys());
     final TransactionPoolService pool = require(TransactionPoolService.class);
-    // When full, drop the oldest approval whose transaction is not live in the pool and is old
-    // enough that its transaction is not merely still on its way; refuse only if nothing can go.
-    // Liveness comes from the pool's own events, so overflow never scans the pool. Flooding OPS
-    // with preflights is rate-limited at OPS.
-    store = new ApprovalStore(options.capacity, options.orphanTtlMs, options.waitMs, System::currentTimeMillis);
+    // The boot id and the wait window's restart extension both count from here: the store is
+    // empty until OPS has called Status and resent what it retains.
+    final WaitWindow window = new WaitWindow(options.waitMs, System.currentTimeMillis());
+    // The grace period is the wait window: an approval younger than that may be for a transaction
+    // still on its way, so a new approval never evicts it.
+    store = new ApprovalStore(options.capacity, options.waitMs, System::currentTimeMillis);
 
     final MetricsSystem metrics = require(MetricsSystem.class);
     final LabelledMetric<Counter> decisions =
-        metrics.createLabelledCounter(CATEGORY, "decisions_total", "producer decisions by outcome", "outcome");
-    final LabelledMetric<Counter> ingress =
-        metrics.createLabelledCounter(CATEGORY, "ingress_total", "approval ingress by outcome", "outcome");
-    metrics.createLabelledSuppliedGauge(CATEGORY, "approvals_held", "approvals in memory").labels(() -> (double) store.size());
+        metrics.createLabelledCounter(CATEGORY, "decisions_total", "producer decisions: allow, wait, drop, deny", "decision", "reason");
+    final LabelledMetric<Counter> batches =
+        metrics.createLabelledCounter(CATEGORY, "batches_total", "delivered approval batches by gRPC status", "status");
+    final Counter stored = metrics.createCounter(CATEGORY, "approvals_stored_total", "approvals of accepted batches");
+    final LabelledMetric<Counter> refused =
+        metrics.createLabelledCounter(CATEGORY, "connections_refused_total", "delivery connections refused at accept", "reason");
+    metrics.createIntegerGauge(CATEGORY, "store_size", "approvals in memory", store::size);
 
     require(TransactionSelectionService.class)
         .registerPluginTransactionSelectorFactory(
             new ApprovalSelectorFactory(
                 store,
                 chainId,
-                options.waitMs,
+                window,
                 System::currentTimeMillis,
                 new ApprovalSelector.Metrics() {
                   @Override
-                  public void pending() {
-                    decisions.labels("pending").inc();
-                  }
-
-                  @Override
-                  public void timeout() {
-                    decisions.labels("timeout").inc();
-                  }
-
-                  @Override
-                  public void mismatch(final String reason) {
-                    decisions.labels(reason).inc();
-                  }
-
-                  @Override
-                  public void matched() {
-                    decisions.labels("matched").inc();
+                  public void decision(final String decision, final String reason) {
+                    decisions.labels(decision, reason).inc();
                   }
                 }));
 
@@ -172,44 +161,62 @@ public class OpsApprovalPlugin implements BesuPlugin {
     events.addTransactionDroppedListener((tx, reason) -> store.unpooled(tx.getHash()));
 
     sweeper = Executors.newSingleThreadScheduledExecutor(r -> Thread.ofPlatform().name("ops-approval-sweeper").daemon(true).unstarted(r));
-    sweeper.scheduleAtFixedRate(() -> sweep(pool), options.orphanTtlMs, options.orphanTtlMs, TimeUnit.MILLISECONDS);
+    sweeper.scheduleWithFixedDelay(this::sweepExpired, EXPIRY_SWEEP_MS, EXPIRY_SWEEP_MS, TimeUnit.MILLISECONDS);
+    sweeper.scheduleWithFixedDelay(() -> reconcile(pool), POOL_RECONCILE_MS, POOL_RECONCILE_MS, TimeUnit.MILLISECONDS);
 
-    final int colon = options.listen.lastIndexOf(':');
-    if (colon <= 0) {
-      throw new IllegalArgumentException("--plugin-ops-approval-listen must be host:port");
-    }
-    listener =
-        new ApprovalListener(
-            new InetSocketAddress(options.listen.substring(0, colon), Integer.parseInt(options.listen.substring(colon + 1))),
-            options.maxConnections,
+    final ApprovalIngress ingress =
+        new ApprovalIngress(
             verifier,
             chainId,
+            options.maxTtlMs,
             store,
-            new ApprovalListener.Metrics() {
+            window,
+            System::currentTimeMillis,
+            new ApprovalIngress.Metrics() {
               @Override
-              public void accepted(final int approvals) {
-                ingress.labels("accepted").inc(approvals);
+              public void batch(final Status.Code code) {
+                batches.labels(code.name()).inc();
               }
 
               @Override
-              public void rejected(final String reason) {
-                ingress.labels(reason).inc();
+              public void stored(final int approvals) {
+                stored.inc(approvals);
               }
             });
-    listener.start();
+    server =
+        new ApprovalServer(
+            options.listenAddress(),
+            ingress,
+            new ApprovalServer.Limits(
+                options.allowedSources(), options.maxConnections, options.maxConcurrentCalls, ApprovalServer.PERMIT_KEEPALIVE_MS),
+            new ApprovalServer.Metrics() {
+              @Override
+              public void refused(final String reason) {
+                refused.labels(reason).inc();
+              }
+            });
+    server.start();
+    metrics.createIntegerGauge(CATEGORY, "connections", "open approval delivery connections", server::connections);
     LOG.info(
-        "OPS approval gate active: listen={} chain={} trusted_keys={} wait_ms={} capacity={}",
+        "OPS approval gate active: listen={} port={} boot_id={} chain={} trusted_keys={} wait_ms={} capacity={} max_ttl_ms={} allowed_sources={} max_connections={}",
         options.listen,
+        server.port(),
+        ingress.bootId(),
         chainId,
-        options.trustedKeys().keySet(),
+        verifier.keyIds(),
         options.waitMs,
-        options.capacity);
+        options.capacity,
+        options.maxTtlMs,
+        options.allowedSources(),
+        options.maxConnections);
   }
 
   private void onBlockAdded(final AddedBlockContext block) {
     // Inclusion is not the end of an approval's life: a reorganisation returns the block's
     // transactions to the pool, and they must still find their approvals there. Track the block
-    // and release along the finalized chain instead.
+    // and release along the finalized chain instead — but only while its approvals live: the store
+    // evicts them at expiry whatever the finality, so a block is tracked until its last approval
+    // expires (finality can lag the head by hours; expiry is what bounds the tracking).
     // FORK blocks are recorded too: a reorganisation onto that fork later needs their parents.
     if (block.getEventType() == AddedBlockContext.EventType.STORED_ONLY) {
       return;
@@ -217,14 +224,23 @@ public class OpsApprovalPlugin implements BesuPlugin {
     final BlockHeader header = block.getBlockHeader();
     final List<Hash> included =
         block.getBlockBody().getTransactions().stream().map(org.hyperledger.besu.datatypes.Transaction::getHash).toList();
-    inclusions.recordIncluded(header.getBlockHash(), header.getParentHash(), header.getNumber(), included);
-    // Included transactions left the pool; their approvals stay (until finality) but are no
-    // longer live, so they are the first to go if the store overflows.
-    included.forEach(store::unpooled);
+    final long keepUntil =
+        included.stream()
+            .map(store::get)
+            .flatMap(Optional::stream)
+            .mapToLong(ApprovalStore.Stored::expiresAt)
+            .max()
+            .orElse(Long.MIN_VALUE);
+    if (keepUntil > System.currentTimeMillis()) {
+      inclusions.recordIncluded(header.getBlockHash(), header.getParentHash(), header.getNumber(), included, keepUntil);
+    }
+    // A canonical block's transactions left the pool: their approvals stay (until finality or
+    // expiry) but become the first evictable after expired ones. A fork block's transactions are
+    // still pooled and keep theirs live.
+    if (block.getEventType() != AddedBlockContext.EventType.FORK) {
+      included.forEach(store::included);
+    }
     releaseFinalized();
-    // Blocks far below the head are no longer reorg candidates in practice; stop tracking them
-    // and let the orphan sweep reclaim their approvals like any other unpooled approval.
-    inclusions.forgetBelow(header.getNumber() - TRACKED_BLOCK_DEPTH);
   }
 
   private void releaseFinalized() {
@@ -239,29 +255,32 @@ public class OpsApprovalPlugin implements BesuPlugin {
     }
   }
 
-  private static Set<Hash> pendingHashes(final TransactionPoolService pool) {
-    final Set<Hash> referenced = new HashSet<>();
-    for (final PendingTransaction p : pool.getPendingTransactions()) {
-      referenced.add(p.getTransaction().getHash());
+  private void sweepExpired() {
+    try {
+      store.evictExpired();
+      inclusions.forgetExpired(System.currentTimeMillis());
+    } catch (final RuntimeException e) {
+      LOG.warn("OPS approval expiry sweep failed", e);
     }
-    return referenced;
   }
 
-  private void sweep(final TransactionPoolService pool) {
+  private void reconcile(final TransactionPoolService pool) {
     try {
-      final int dropped = store.sweepOrphans(pendingHashes(pool));
-      if (dropped > 0) {
-        LOG.info("OPS approval sweep dropped {} orphaned approvals", dropped);
+      final long takenAt = System.currentTimeMillis();
+      final Set<Hash> pending = new HashSet<>();
+      for (final PendingTransaction p : pool.getPendingTransactions()) {
+        pending.add(p.getTransaction().getHash());
       }
+      store.reconcile(pending, takenAt);
     } catch (final RuntimeException e) {
-      LOG.warn("OPS approval sweep failed", e);
+      LOG.warn("OPS approval pool reconciliation failed", e);
     }
   }
 
   @Override
   public void stop() {
-    if (listener != null) {
-      listener.close();
+    if (server != null) {
+      server.close();
     }
     if (sweeper != null) {
       sweeper.shutdownNow();

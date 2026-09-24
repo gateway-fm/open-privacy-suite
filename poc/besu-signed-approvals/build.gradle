@@ -1,12 +1,22 @@
 // OPS signed-approvals Besu plugin (PoC). Built against the Besu artifacts Lineth consumes.
 plugins {
   id 'java'
+  id 'com.google.protobuf' version '0.9.5'
+  id 'com.gradleup.shadow' version '9.2.2'
 }
 
 group = 'fm.gateway.ops'
 version = '0.1.0-poc'
 
 def besuVersion = '26.8.1-d97cbd6'
+// Besu 26.8.1 ships grpc-api, grpc-core, grpc-netty and grpc-util at this version and Netty 4.2.17
+// on its classpath, and loads plugins parent-first: the plugin compiles against exactly these and
+// never bundles them.
+def grpcVersion = '1.79.0'
+def nettyVersion = '4.2.17.Final'
+// Besu does not ship protobuf-java; the plugin bundles it, relocated. protoc and the runtime must be
+// the same release: generated code checks its runtime version.
+def protobufVersion = '4.32.1'
 
 repositories {
   mavenCentral()
@@ -19,9 +29,13 @@ java {
   toolchain { languageVersion = JavaLanguageVersion.of(25) }
 }
 
-configurations {
-  besuRuntime
+// The wire contract shared with OPS and the Reth node, and nothing else under proto/ (the protobuf
+// plugin compiles every .proto under a source directory, whatever its include patterns say).
+def contractProto = tasks.register('contractProto', Sync) {
+  from('../../proto') { include 'ops/approvals/v1/*.proto' }
+  into layout.buildDirectory.dir('contract-proto')
 }
+sourceSets.main.proto.srcDir(contractProto)
 
 dependencies {
   // Everything Besu already ships on its classpath is compileOnly; the JAR must stay thin.
@@ -32,6 +46,18 @@ dependencies {
   compileOnly 'com.fasterxml.jackson.core:jackson-annotations:2.19.0'
   compileOnly 'com.google.auto.service:auto-service-annotations:1.1.1'
   annotationProcessor 'com.google.auto.service:auto-service:1.1.1'
+  compileOnly enforcedPlatform("io.netty:netty-bom:${nettyVersion}")
+  compileOnly "io.grpc:grpc-api:${grpcVersion}"
+  compileOnly "io.grpc:grpc-core:${grpcVersion}"
+  compileOnly "io.grpc:grpc-netty:${grpcVersion}"
+  compileOnly "io.grpc:grpc-util:${grpcVersion}"
+
+  // What Besu lacks, carried in the plugin JAR (shadowJar). Not transitive, so nothing Besu already
+  // provides (grpc-api, Guava, annotations) is bundled a second time.
+  implementation("io.grpc:grpc-stub:${grpcVersion}") { transitive = false }
+  implementation("io.grpc:grpc-protobuf:${grpcVersion}") { transitive = false }
+  implementation("io.grpc:grpc-protobuf-lite:${grpcVersion}") { transitive = false }
+  implementation("com.google.protobuf:protobuf-java:${protobufVersion}") { transitive = false }
 
   testImplementation "org.hyperledger.besu:besu-plugin-api:${besuVersion}"
   testImplementation "org.hyperledger.besu.internal:besu-ethereum-core:${besuVersion}"
@@ -39,9 +65,26 @@ dependencies {
   testImplementation 'info.picocli:picocli:4.7.7'
   testImplementation 'org.slf4j:slf4j-api:2.0.17'
   testImplementation 'com.fasterxml.jackson.core:jackson-databind:2.19.0'
+  // The runtime Besu gives the plugin: the same gRPC and Netty, for the in-process round trips.
+  testImplementation enforcedPlatform("io.netty:netty-bom:${nettyVersion}")
+  testImplementation "io.grpc:grpc-api:${grpcVersion}"
+  testImplementation "io.grpc:grpc-core:${grpcVersion}"
+  testImplementation "io.grpc:grpc-netty:${grpcVersion}"
+  testImplementation "io.grpc:grpc-util:${grpcVersion}"
   testImplementation platform('org.junit:junit-bom:5.12.2')
   testImplementation 'org.junit.jupiter:junit-jupiter'
   testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+protobuf {
+  protoc { artifact = "com.google.protobuf:protoc:${protobufVersion}" }
+  plugins { grpc { artifact = "io.grpc:protoc-gen-grpc-java:${grpcVersion}" } }
+  generateProtoTasks {
+    all().configureEach { task ->
+      // No javax.annotation.Generated: nothing on Besu's classpath provides it.
+      task.plugins { grpc { option '@generated=omit' } }
+    }
+  }
 }
 
 tasks.withType(JavaCompile).configureEach {
@@ -59,8 +102,53 @@ test {
 }
 
 jar {
+  // The unshaded classes only; the plugin Besu loads is the shadow JAR below.
+  archiveClassifier = 'thin'
+}
+
+shadowJar {
   archiveFileName = 'ops-besu-approvals.jar'
+  archiveClassifier = ''
+  // Only what `implementation` resolves to at runtime: grpc-stub, grpc-protobuf(-lite), protobuf-java.
+  configurations = [project.configurations.runtimeClasspath]
+  // Besu loads every JAR in plugins/ into one parent-first class loader: a bundled class under its
+  // own name would lose to a copy Besu ships and clash with any other plugin that bundles it.
+  relocate 'com.google.protobuf', 'ops.approvals.shaded.com.google.protobuf'
+  relocate 'io.grpc.stub', 'ops.approvals.shaded.io.grpc.stub'
+  relocate 'io.grpc.protobuf', 'ops.approvals.shaded.io.grpc.protobuf'
+  exclude 'google/protobuf/**'
+  exclude 'META-INF/maven/**'
+  exclude '**/module-info.class'
   manifest {
     attributes('Implementation-Title': 'ops-besu-approvals', 'Implementation-Version': project.version)
   }
 }
+
+// Every class the JAR carries lives under ops/approvals/: ours, the generated contract, and the
+// relocated libraries. Anything else would shadow, or be shadowed by, a class on Besu's classpath.
+def verifyPluginJar = tasks.register('verifyPluginJar') {
+  def archive = tasks.named('shadowJar').flatMap { it.archiveFile }
+  inputs.file(archive)
+  doLast {
+    def stray = []
+    def service = false
+    new java.util.zip.ZipFile(archive.get().asFile).withCloseable { zip ->
+      zip.entries().each { entry ->
+        if (entry.name == 'META-INF/services/org.hyperledger.besu.plugin.BesuPlugin') {
+          service = true
+        }
+        if (!entry.directory && !entry.name.startsWith('META-INF/') && !entry.name.startsWith('ops/approvals/')) {
+          stray << entry.name
+        }
+      }
+    }
+    if (!service) {
+      throw new GradleException('plugin JAR lacks its BesuPlugin service entry')
+    }
+    if (!stray.isEmpty()) {
+      throw new GradleException("plugin JAR carries classes outside ops/approvals/: ${stray.take(10)}")
+    }
+  }
+}
+tasks.named('check') { dependsOn verifyPluginJar }
+tasks.named('assemble') { dependsOn tasks.named('shadowJar') }

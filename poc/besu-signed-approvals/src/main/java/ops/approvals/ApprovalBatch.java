@@ -12,15 +12,17 @@ import java.util.List;
  * ‖ u8 key-id length ‖ key id ‖ u64 issued_at ‖ u64 expires_at ‖ u32 count ‖ count × 120-byte items ‖
  * 64-byte Ed25519 signature over everything before it (docs/implementation/approvals-wire-contract.md).
  * The key id names which of the producer's trusted keys signed; issued_at and expires_at are Unix
- * milliseconds. Both are inside the signed bytes. The 4-byte frame length prefix is handled by the
- * listener.
+ * milliseconds. Both are inside the signed bytes. {@code DeliverRequest.batch} carries these bytes
+ * verbatim.
  */
 public final class ApprovalBatch {
   static final byte[] DOMAIN = "OPS_APPROVAL_BATCH_V2\0".getBytes(StandardCharsets.US_ASCII);
   static final int MAX_KEY_ID = 64;
   static final int MAX_APPROVALS = 32;
-  static final int MAX_FRAME = 16384;
   static final int SIGNATURE_SIZE = 64;
+  /** The longest valid envelope: 4,011 bytes, the longest key id and 32 approvals. */
+  static final int MAX_ENVELOPE =
+      DOMAIN.length + 1 + MAX_KEY_ID + 8 + 8 + 4 + MAX_APPROVALS * Approval.ITEM_SIZE + SIGNATURE_SIZE;
 
   /** A structurally valid batch whose signature has not been checked yet. */
   public record Decoded(
@@ -29,11 +31,11 @@ public final class ApprovalBatch {
   private ApprovalBatch() {}
 
   public static Decoded decode(final byte[] body) throws InvalidBatchException {
-    if (body.length > MAX_FRAME) {
-      throw new InvalidBatchException("frame exceeds " + MAX_FRAME + " bytes");
+    if (body.length > MAX_ENVELOPE) {
+      throw new InvalidBatchException("envelope exceeds " + MAX_ENVELOPE + " bytes");
     }
     if (body.length < DOMAIN.length + 1 + 1 + 16 + 4 + Approval.ITEM_SIZE + SIGNATURE_SIZE) {
-      throw new InvalidBatchException("frame too short");
+      throw new InvalidBatchException("envelope too short");
     }
     if (!Arrays.equals(body, 0, DOMAIN.length, DOMAIN, 0, DOMAIN.length)) {
       throw new InvalidBatchException("unknown batch domain");
@@ -62,7 +64,7 @@ public final class ApprovalBatch {
     }
     final int messageLength = header + (int) count * Approval.ITEM_SIZE;
     if (body.length != messageLength + SIGNATURE_SIZE) {
-      throw new InvalidBatchException("frame length does not match approval count");
+      throw new InvalidBatchException("envelope length does not match approval count");
     }
     final List<Approval> approvals = new ArrayList<>((int) count);
     for (int i = 0; i < count; i++) {

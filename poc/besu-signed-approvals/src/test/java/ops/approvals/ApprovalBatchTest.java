@@ -1,5 +1,6 @@
 package ops.approvals;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -56,6 +57,17 @@ class ApprovalBatchTest {
       assertEquals(g.approvals(), decoded.approvals(), name);
       final ApprovalVerifier verifier = new ApprovalVerifier(java.util.Map.of("default", Fixtures.FIXTURE_PUBLIC_KEY));
       assertTrue(verifier.verify(decoded), name);
+    }
+  }
+
+  @Test
+  void theJavaFixtureSignerReproducesGosGoldenSignatures() throws Exception {
+    // Ed25519 is deterministic: the tests' own batches are signed exactly as OPS signs them.
+    for (final String name : List.of("batch.json", "call-batch.json")) {
+      assertArrayEquals(
+          Fixtures.goldenEnvelope(name),
+          Fixtures.envelope("default", Fixtures.GOLDEN_ISSUED_AT, Fixtures.GOLDEN_EXPIRES_AT, Fixtures.goldenApprovals(name)),
+          name);
     }
   }
 
@@ -124,6 +136,6 @@ class ApprovalBatchTest {
       tooMany.add(g.approvals().get(0));
     }
     assertThrows(InvalidBatchException.class, () -> ApprovalBatch.decode(frame(tooMany, g.signature())));
-    assertThrows(InvalidBatchException.class, () -> ApprovalBatch.decode(new byte[ApprovalBatch.MAX_FRAME + 1]));
+    assertThrows(InvalidBatchException.class, () -> ApprovalBatch.decode(new byte[ApprovalBatch.MAX_ENVELOPE + 1]));
   }
 }
