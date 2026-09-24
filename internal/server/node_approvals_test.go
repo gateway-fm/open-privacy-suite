@@ -71,6 +71,10 @@ func TestNodeApprovalSettings(t *testing.T) {
 
 // With the gate on and no producer ready to take the approval, a transaction is refused with an
 // opaque 503 and never forwarded: forwarding it would only have it time out in the pool.
+// With no producer that can take the approval, a raw transaction is refused with
+// 503 and logged, and never forwarded. When no producer is ready at all, the
+// node is not even asked to simulate it; when only another chain's producer is
+// ready, the chain is known only after the preflight, and Enqueue refuses.
 func TestRawTransactionRefusedWhenNoApprovalProducerIsReady(t *testing.T) {
 	t.Setenv("OPS_APPROVAL_NODE", "besu")
 	ts := setupTestServerForRBAC(t)
@@ -86,54 +90,77 @@ func TestRawTransactionRefusedWhenNoApprovalProducerIsReady(t *testing.T) {
 	fingerprint, _, err := nodeapproval.CallFingerprint(calls, map[string]any{to: map[string]any{"code": "0x"}})
 	require.NoError(t, err)
 
-	var forwarded, preflights atomic.Int64
-	node := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			ID     any    `json:"id"`
-			Method string `json:"method"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&req)
-		var result any = "0x0"
-		switch req.Method {
-		case "eth_chainId":
-			result = "0x7a69"
-		case "eth_getCode":
-			result = "0x"
-		case "ops_prepareApproval": // the plugin's preflight of a plain transfer to an account without code
-			preflights.Add(1)
-			result = map[string]any{"hashMode": 3, "chainId": "0x7a69", "txHash": tx.Hash().Hex(), "fingerprint": fingerprint.Hex(),
-				"calls": calls, "codeHashes": map[string]string{to: crypto.Keccak256Hash(nil).Hex()}}
-		case "eth_sendRawTransaction":
-			forwarded.Add(1)
-			result = tx.Hash().Hex()
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": result})
-	}))
-	t.Cleanup(node.Close)
+	unreachable := func(t *testing.T) string {
+		// A target nothing listens on: the lane never connects, so no producer is ever ready.
+		closed, err := net.Listen("tcp", "127.0.0.1:0")
+		require.NoError(t, err)
+		require.NoError(t, closed.Close())
+		return closed.Addr().String()
+	}
+	for _, tc := range []struct {
+		name       string
+		target     func(t *testing.T) string
+		ready      bool
+		preflights int64
+	}{
+		{"no producer is ready", unreachable, false, 0},
+		{"only another chain's producer is ready", func(t *testing.T) string { return startApprovalSinkFor(t, 1) }, true, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var forwarded, preflights atomic.Int64
+			node := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var req struct {
+					ID     any    `json:"id"`
+					Method string `json:"method"`
+				}
+				_ = json.NewDecoder(r.Body).Decode(&req)
+				var result any = "0x0"
+				switch req.Method {
+				case "eth_chainId":
+					result = "0x7a69"
+				case "eth_getCode":
+					result = "0x"
+				case "ops_prepareApproval": // the plugin's preflight of a plain transfer to an account without code
+					preflights.Add(1)
+					result = map[string]any{"hashMode": 3, "chainId": "0x7a69", "txHash": tx.Hash().Hex(), "fingerprint": fingerprint.Hex(),
+						"calls": calls, "codeHashes": map[string]string{to: crypto.Keccak256Hash(nil).Hex()}}
+				case "eth_sendRawTransaction":
+					forwarded.Add(1)
+					result = tx.Hash().Hex()
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": result})
+			}))
+			t.Cleanup(node.Close)
 
-	// A target nothing listens on: the lane never connects, so no producer is ever ready.
-	closed, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	target := closed.Addr().String()
-	require.NoError(t, closed.Close())
-	approvals, err := nodeapproval.New(node.URL, target, bytes.Repeat([]byte{7}, 32))
-	require.NoError(t, err)
-	t.Cleanup(approvals.Close)
+			approvals, err := nodeapproval.New(node.URL, tc.target(t), bytes.Repeat([]byte{7}, 32))
+			require.NoError(t, err)
+			t.Cleanup(approvals.Close)
+			if tc.ready {
+				require.Eventually(t, approvals.Accepting, 5*time.Second, 10*time.Millisecond)
+			}
 
-	rt := tracer.NewRuntimeTracer(tracer.RuntimeTracerConfig{NodeURL: node.URL, Enabled: true, TieredEnabled: true, Timeout: 5 * time.Second})
-	t.Cleanup(rt.Stop)
-	p := NewJSONRPCProcessorWithTracing(ts.rbacAccessCtrl, &noopRateLimiter{}, proxy.New(node.URL), ts.db, rt, rbac.NewTraceValidator(ts.db),
-		NewCircuitBreaker(), NewConcurrencyLimiter(50, 0), "")
-	p.nodeApprovals = approvals
-	require.NoError(t, p.configurePreflightLimit(nil))
+			rt := tracer.NewRuntimeTracer(tracer.RuntimeTracerConfig{NodeURL: node.URL, Enabled: true, TieredEnabled: true, Timeout: 5 * time.Second})
+			t.Cleanup(rt.Stop)
+			p := NewJSONRPCProcessorWithTracing(ts.rbacAccessCtrl, &noopRateLimiter{}, proxy.New(node.URL), ts.db, rt, rbac.NewTraceValidator(ts.db),
+				NewCircuitBreaker(), NewConcurrencyLimiter(50, 0), "")
+			p.nodeApprovals = approvals
+			require.NoError(t, p.configurePreflightLimit(nil))
+			accessLog := recordAccessLog(p)
 
-	res := p.Process(ctx, &ProcessRequest{UserID: did, Method: "eth_sendRawTransaction", Params: []any{rawHex}, Body: body, ClientIP: "127.0.0.1"})
-	require.NotNil(t, res.Error, "status %d body %s", res.StatusCode, res.ResponseBody)
-	require.Equal(t, http.StatusServiceUnavailable, res.Error.StatusCode)
-	require.Equal(t, "approval delivery unavailable", res.Error.Message)
-	require.Zero(t, forwarded.Load(), "the transaction was forwarded without a producer to approve it")
-	require.Zero(t, preflights.Load(), "a preflight ran on the node although no producer could take its approval")
+			res := p.Process(ctx, &ProcessRequest{UserID: did, Method: "eth_sendRawTransaction", Params: []any{rawHex}, Body: body, ClientIP: "127.0.0.1"})
+			require.NotNil(t, res.Error, "status %d body %s", res.StatusCode, res.ResponseBody)
+			require.Equal(t, http.StatusServiceUnavailable, res.Error.StatusCode)
+			require.Equal(t, "approval delivery unavailable", res.Error.Message)
+			require.Equal(t, ReasonUpstreamError, res.Error.Reason)
+			entry, logged := accessLog.last()
+			require.Equal(t, 1, logged, "the refusal is written to the access log once")
+			require.Equal(t, http.StatusServiceUnavailable, entry.status)
+			require.Equal(t, ReasonUpstreamError, entry.denialReason)
+			require.Zero(t, forwarded.Load(), "the transaction was forwarded without a producer to approve it")
+			require.Equal(t, tc.preflights, preflights.Load(), "preflights run on the node")
+		})
+	}
 }
 
 // The delivery metrics are only useful if /metrics serves them: the gate's own

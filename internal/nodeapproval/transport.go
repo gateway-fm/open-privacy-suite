@@ -228,11 +228,15 @@ func (s *Service) Accepting() bool {
 	return false
 }
 
-// signingTTL is OPS_APPROVAL_TTL shortened to the smallest maximum TTL a producer reported, so
+// signingTTL is OPS_APPROVAL_TTL shortened to the smallest maximum TTL a ready producer reported, so
 // no producer refuses a batch for its lifetime (wire contract §5).
 func (s *Service) signingTTL() time.Duration {
 	ttl := s.ttl
+	now := time.Now().UnixNano()
 	for _, l := range s.lanes {
+		if now >= l.readyUntil.Load() {
+			continue // only a ready producer's maximum counts (wire contract §4)
+		}
 		if ms := l.maxTTL.Load(); ms > 0 && time.Duration(ms)*time.Millisecond < ttl {
 			ttl = time.Duration(ms) * time.Millisecond
 		}
@@ -687,6 +691,7 @@ func (l *lane) becameReady(now time.Time) uint64 {
 
 func (l *lane) notReady() {
 	l.readyUntil.Store(0)
+	l.maxTTL.Store(0) // a producer that went away no longer shortens what OPS signs
 	l.s.metrics.connected.WithLabelValues(l.target).Set(0)
 }
 
@@ -735,8 +740,16 @@ func (l *lane) status(stop context.Context, gen uint64) {
 	if chain := l.s.chainID.Load(); chain != 0 && st.GetChainId() != chain {
 		l.mismatch("chain_id", now, "chain_id", chain, "producer_chain_id", st.GetChainId())
 	}
-	l.maxTTL.Store(int64(min(st.GetMaxTtlMs(), uint64(MaxApprovalTTL.Milliseconds()))))
-	if trusted {
+	// A maximum below MinApprovalTTL would have OPS sign approvals that expire inside the wait
+	// window: such a producer is reported, is not ready, and does not shorten the TTL.
+	maxTTL := min(st.GetMaxTtlMs(), uint64(MaxApprovalTTL.Milliseconds()))
+	usable := maxTTL >= uint64(MinApprovalTTL.Milliseconds())
+	if !usable {
+		l.mismatch("max_ttl", now, "max_ttl_ms", st.GetMaxTtlMs(), "minimum_ms", MinApprovalTTL.Milliseconds())
+		maxTTL = 0
+	}
+	l.maxTTL.Store(int64(maxTTL))
+	if trusted && usable {
 		l.readyChain.Store(st.GetChainId())
 		l.readyUntil.Store(now.Add(l.readyWindow).UnixNano())
 	} else {

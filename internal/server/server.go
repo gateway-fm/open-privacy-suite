@@ -788,6 +788,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 			AllowInsecure:   !cfg.IsProduction(),
 		})
 		if siemErr != nil {
+			s.jsonrpcProcessor.closeNodeApprovals()
 			return nil, fmt.Errorf("init SIEM forwarder: %w", siemErr)
 		}
 		siemForwarder.SetMetrics(m.SIEMBatchesTotal, m.SIEMEventsDroppedTotal)
@@ -808,6 +809,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	if cfg.AuditBufferDir != "" {
 		auditBuf, bufErr := buffer.Open(cfg.AuditBufferDir)
 		if bufErr != nil {
+			s.jsonrpcProcessor.closeNodeApprovals()
 			return nil, fmt.Errorf("async audit buffer init (AUDIT_BUFFER_DIR=%q): %w", cfg.AuditBufferDir, bufErr)
 		}
 		s.auditBuffer = auditBuf
