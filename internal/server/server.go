@@ -961,6 +961,10 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	if err := s.jsonrpcProcessor.configureNodeApprovals(cfg.NodeURL, nodeTransport); err != nil {
 		return nil, err
 	}
+	if err := s.jsonrpcProcessor.configurePreflightLimit(redisClient); err != nil {
+		s.jsonrpcProcessor.nodeApprovals.Close()
+		return nil, err
+	}
 
 
 	// RD-858: scheduled audit hash-chain integrity verifier. Default
@@ -1339,7 +1343,7 @@ const MaxRequestBodySize = 1 << 20 // 1MB
 // @Failure      403 {object} apimodels.APIError "runtime-trace or compliance denial"
 // @Failure      404 {object} apimodels.APIError "method not allowed for the caller (denials are masked as method not found)"
 // @Failure      413 {object} apimodels.APIError "request body too large"
-// @Failure      429 {object} apimodels.APIError "concurrency limit or upstream rate limit"
+// @Failure      429 {object} apimodels.APIError "concurrency limit, signed-approval simulation budget, or upstream rate limit"
 // @Failure      500 {object} apimodels.APIError "trace-validation or compliance-check error"
 // @Failure      502 {object} apimodels.APIError "failed to forward to the upstream node"
 // @Security     BearerAuth
