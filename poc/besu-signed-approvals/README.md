@@ -5,13 +5,16 @@ and the [Besu/Lineth research](../../docs/research/dsl-policy-and-node-enforceme
 Plan and decisions: [PLAN.md](PLAN.md).
 
 **Result: the signed-approval gate runs as one plugin JAR on unmodified Besu 26.8.1 — the version
-Lineth pins — and passed all 21 integration scenarios (23 checks) on a real node, including the same-block target
+Lineth pins — and passed all 23 integration scenarios (25 checks) on a real node, including the same-block target
 change, caught inner failures, delegatecall, forged fingerprints, a call that turns into a CREATE after
 approval, contract deployment and self-destruction, restart, resubmission after a drop, fail-closed
-start-up, and running beside Lineth's own sequencer plugins (pool validator, and the transaction
-selector with its ZK tracer).**
-The OPS delivery path (`internal/nodeapproval` signer, batches, TCP framing) is byte-for-byte unchanged;
-OPS gains a Besu preflight mode.
+start-up, every refusal of the delivery contract with its status code, an approval that expires
+before its transaction is built, a restart healed by resending on the new boot id, and running beside
+Lineth's own sequencer plugins (pool validator, and the transaction selector with its ZK tracer).**
+Approvals arrive over gRPC: the plugin serves `ops.approvals.v1.ApprovalDelivery` exactly as the
+[wire contract](../../docs/implementation/approvals-wire-contract.md) specifies — one `Deliver` call per
+signed batch, whose status is the confirmation, and `Status` with the boot id OPS resends on. OPS gains a
+Besu preflight mode.
 
 **[DEMO.md](DEMO.md) — one command brings up the real OPS server, PostgreSQL, Redis and Besu and walks
 four steps (allowed call, cross-org refusal, same-block divergence veto, contract deployment), plus
@@ -25,7 +28,7 @@ flowchart LR
     O -- "ops_prepareApproval(rawTx)" --> P["Plugin: simulate with its tracer"]
     P -- "fingerprint + call tree" --> O
     O -- "Go re-encodes tree, must equal" --> S["Sign approval (Ed25519)"]
-    S -- "TCP batch" --> L["Plugin ingress → verified approvals in RAM"]
+    S -- "gRPC Deliver, one call per batch" --> L["Plugin ingress → verified approvals in RAM"]
     O -- "eth_sendRawTransaction" --> T["Besu tx pool"]
     T --> B["Block building (BlockTransactionSelector)"]
     L --> B
@@ -34,10 +37,10 @@ flowchart LR
     B -- "mismatch" --> R["rollback + drop from pool"]
 ```
 
-- **Gate** — `ApprovalSelector` (a `PluginTransactionSelector`). Pre-processing: no verified approval →
-  `invalidTransient` while `now − pool admission < wait`, then `invalid` (pool removal).
-  Post-processing: the calls-V3 fingerprint of the frames actually executed must equal the approved one;
-  otherwise `invalid`. Besu executes every candidate on a child `WorldUpdater` and commits only on
+- **Gate** — `ApprovalSelector` (a `PluginTransactionSelector`). Pre-processing: no usable approval
+  (none, or expired: now ≥ `expires_at`) → `invalidTransient` while `now − pool admission < wait`, then
+  `invalid` (pool removal). Post-processing: the approval must still be usable, and the calls-V3
+  fingerprint of the frames actually executed must equal the approved one; otherwise `invalid`. Besu executes every candidate on a child `WorldUpdater` and commits only on
   `SELECTED`, so an excluded transaction leaves no nonce, fee or storage change — the veto-before-commit
   the Reth PoC had to build inside the EVM wrapper is native here.
 - **Facts** — `ApprovalTracer` (a `BlockAwareOperationTracer`) records each frame at
@@ -68,11 +71,27 @@ flowchart LR
   existing `normalizeCall` + encoder over the tree — `Fingerprint` for strict, `CallFingerprint` for
   calls — and **refuses to sign unless its own hash equals the plugin's** — every preflight is a cross-implementation check, and RBAC trace
   validation keeps using the tree it always used.
-- **Ingress** — `ApprovalListener`: same 4-byte-length frames and `OPS_APPROVAL_BATCH_V1` batches as
-  the Reth module, JDK Ed25519 verification, ≤32 connections, 16 KiB frames; anything that does not
-  decode or verify is logged and ignored; a frame must arrive within 5 s of its first byte. Approvals live
-  only in memory (capacity 100 000 — when full, approvals whose transaction is not in the pool are given
-  up oldest-first before a new one is refused; orphan TTL 5 min; released on canonical inclusion).
+- **Ingress** — `ApprovalServer` serves the gRPC contract on the grpc-java 1.79.0 and Netty 4.2.17
+  that Besu 26.8.1 ships, and hands each batch to `ApprovalIngress`, which checks it in the contract's
+  order and answers with the first failing check's status: undecodable → `INVALID_ARGUMENT`, untrusted
+  key id → `PERMISSION_DENIED`, signature (JDK Ed25519) → `UNAUTHENTICATED`, another chain →
+  `INVALID_ARGUMENT`, TTL above the node's maximum → `INVALID_ARGUMENT`, issued more than 5 s ahead or
+  already expired → `FAILED_PRECONDITION`, no room → `UNAVAILABLE` with the trailer
+  `ops-approval-reason: store-full`. `OK` carries the boot id and the approval count. A batch is all or
+  nothing. Requests are capped at 64 KiB (gRPC itself answers `RESOURCE_EXHAUSTED` above that); an idle
+  connection may ping every 10 s; unlisted sources and connections beyond the cap are closed at
+  accept, before HTTP/2 sees a byte. The plugin JAR (2.1 MB) bundles only what Besu lacks — grpc-stub,
+  grpc-protobuf and protobuf-java — relocated under `ops.approvals.shaded`, so no class can clash with
+  Besu's or another plugin's; the build refuses a JAR with a class outside `ops/approvals/`.
+- **Store** — memory only, keyed by transaction hash; per transaction the approval with the greatest
+  (`issued_at`, key id, fingerprint) is kept, so a primary and a standby agree. An approval is usable
+  while now < `expires_at` and is kept until then or until the block that included its transaction is
+  final, whichever comes first — expiry is what bounds the store when finality lags. Under pressure the
+  store evicts expired approvals, then those of included transactions, then the oldest orphans by
+  `issued_at`; never an approval whose transaction is pooled, never one younger than the wait window
+  (measured from `issued_at`). A restart draws a new boot id; until OPS's first `Status` call after
+  boot, for at most 60 s, a transaction's wait counts from that call, so transactions re-announced by
+  the RPC nodes survive until OPS has resent.
 - **Fail-closed deployment** — enabled by name in `--plugins`; a missing JAR or missing option stops
   Besu at start-up (scenario 12).
 
@@ -88,7 +107,7 @@ flowchart LR
 | 5 | Same as 4 with `runCatch` (application catches the inner failure) | Denied; nothing written |
 | 6 | `runDelegate(vaultA, 3)` | Plugin tree shows `DELEGATECALL` from router to vault A; included; writes land in the router's storage, vault untouched |
 | 7 | Correctly signed approval with a forged fingerprint | Denied and dropped; nonce unchanged |
-| 8 | Flipped signature byte; approval for chain id 1; batch with duplicates; re-delivery | Ignored / ignored / harmless; transaction included once the real approval arrives |
+| 8 | Every refusal of the delivery contract: garbage, untrusted key id, flipped signature byte, another key under a trusted id, chain id 1, a 2 h TTL, issued 60 s ahead, expired, one approval more than the store holds; then a batch with duplicates, and a re-delivery | `INVALID_ARGUMENT`, `PERMISSION_DENIED`, `UNAUTHENTICATED` ×2, `INVALID_ARGUMENT` ×2, `FAILED_PRECONDITION` ×2, `UNAVAILABLE` with `store-full`; nothing stored, the transaction waits; duplicates and re-delivery `OK`, transaction included; Besu's metrics endpoint counts every batch by status |
 | 9 | Eight `tick()` calls from one sender, all approved against one pre-state | All eight included in one block, counter = 8 (calls V3 tolerates storage change) |
 | 10 | A transaction the plugin cannot describe (an unsupported type, or a lifecycle operation with no observable frame) | Refused at preflight; without an approval the producer drops it after the wait |
 | 11 | Approve, restart node, submit | Dropped after the wait (approvals are RAM only); new preflight + delivery → included |
@@ -101,13 +120,21 @@ flowchart LR
 | 15 | Same signed `run(7)` resubmitted after the mismatch drop of scenario 4, with a fresh preflight on the new state | Included (vault B = 7): a drop is not a blacklist |
 | 16 | `identity()` (STATICCALL to precompile 0x04) and a plain 1-wei transfer to an EOA | Both approved and included |
 | 17 | **Beside Lineth's own plugins** (JARs from `linea-besu-package` v2.2.0): (a) `LineaTransactionPoolValidatorPlugin`; (b) `LineaTransactionSelectorPlugin` with its ZK line-counting tracer, on an Osaka fixture chain; (c) the same selector on the Shanghai chain | (a) gate unaffected: approved tx included, unapproved dropped; (b) both selectors and both tracers run in one node — approved tx included (`ZkTracer` in the log), unapproved still dropped by our gate; (c) the plugin loads and starts, then Lineth's tracer aborts block building with `Fork no more supported by the tracer: SHANGHAI` |
+| 18 | **An approval that expires first**: delivered with a 2 s TTL, the transaction submitted after it expired; and a second transaction pooled while its approval was valid, its block built after the approval expired | The store evicts the first; that transaction waits, is dropped when its window ends, nothing written; the same batch again → `FAILED_PRECONDITION`; with a fresh approval the same signed transaction is included. The second is dropped at selection (`approval=expired` in the decision log), never included |
+| 19 | **Restart and resend**: approval delivered, producer restarts on the same address, an RPC node re-announces the transaction at once | It keeps waiting past its 1.5 s window (no `Status` call since boot); OPS's lane reconnects, `Status` shows a new boot id, the retained batch is resent byte for byte → included, no new preflight |
 
 Evidence: [tests.json](evidence/tests.json), per-scenario node logs (`evidence/*.log`, decision lines
 `OPS_APPROVAL_DECISION allow|wait|drop|deny`), RPC transcripts (`evidence/*-rpc.json`), genesis and
-compiled fixtures. Unit tests: 17 Java (`gradle test`: Go golden fingerprint, Go-signed batches over the
-wire, canonical JSON, both fingerprints against their Go golden vectors, the state snapshot,
-slow-loris frame deadline, store capacity, selector fail-closed paths), 6 new Go
-(`go test ./internal/nodeapproval/`). The frame → record mapping in `ApprovalTracer` is exercised by
+compiled fixtures. Unit tests: 94 Java (`gradle build`: Go golden fingerprints and Go-signed batches,
+canonical JSON, the state snapshot, selector fail-closed paths; the status code of every contract check
+and their order, all-or-nothing, the boot id and `Status`; the store's replacement rule, expiry,
+eviction order, youth from `issued_at` and room counted before eviction, also as random operation
+sequences checked against those invariants; expiry at selection and the wait window after boot;
+finality release through empty and expired blocks; and real gRPC round trips on loopback with a
+grpc-java client — refusal codes and the `store-full` trailer over the wire, the 64 KiB cap, allowed
+sources (also when the guard itself fails), the connection cap, the port released on close, and
+keepalive pings with no call in flight), plus a build check that the JAR carries no class outside
+`ops/approvals/`; Go tests with OPS (`go test ./internal/nodeapproval/...`). The frame → record mapping in `ApprovalTracer` is exercised by
 the integration scenarios and the parity check only, not by unit tests. A critic pass against the
 code preceded the final run; its blocker (EIP-6780 SELFDESTRUCT invisible to `traceEndTransaction`)
 is fixed by the opcode flag.
@@ -143,12 +170,15 @@ table and what each number does and does not cover.
   (scenario `reorg_keeps_approvals`). What does *not* return by itself is the transaction: Besu
   26.8.1 re-adds a reorganised block's transactions to its pool unreliably (observed: a sender's
   nonce 1 back and nonce 0 dropped; another run, neither), so the client — or a future OPS
-  reconciler — resubmits the same signed bytes, and no new approval is needed. Blocks more than
-  4,096 below the head stop being tracked and their approvals fall to the orphan sweep. Every
+  reconciler — resubmits the same signed bytes, and no new approval is needed. Release on finality
+  is bounded by expiry: every block is tracked, empty ones included, so the walk from the
+  finalized head never breaks; its approvals go when they expire, its link once no approval can be
+  alive (the maximum TTL). A reorganisation after expiry needs a fresh preflight. Every
   producer must run the plugin; a plugin that calls `BlockTransactionSelectionService.commit()`
   itself (bundle-style) must be checked before coexistence.
-- **Approvals are final once issued** (until inclusion or TTL); there is no revocation path, as in the
-  Reth PoC.
+- **Approvals are final once issued**, until they expire (the signed `expires_at`: OPS's TTL, at most
+  the node's `--plugin-ops-approval-max-ttl-ms`) or their block is final; there is no other revocation
+  path.
 - **Transaction types are a PoC scope limit, not a technical barrier.** `nodeapproval.Prepare` approves
   protected legacy and EIP-1559 only; access-list (2930), blob (4844) and set-code (7702) transactions are
   refused. OPS itself has no such limit — the product's raw-transaction path is type-agnostic and forwards
@@ -162,12 +192,14 @@ table and what each number does and does not cover.
   its frame exists; EIP-7702-delegated code hashes differ from `prestateTracer`'s designator. The
   plugin-served preflight sees exactly what the producer sees, so the two sides agree by construction.
 - **Capacity pressure is an OPS concern**: any authorised client can fill the store with orphaned
-  approvals for the TTL; the store gives up unpooled approvals first, but rate-limiting belongs in OPS.
+  approvals for the TTL; the store gives up expired, then included, then orphaned approvals first and
+  then refuses (`UNAVAILABLE`, OPS backs off), but rate-limiting belongs in OPS.
 - **Untested here**: a reverted inner frame that emitted logs (the tracer discards a failed frame's
   logs, as geth does, but no scenario exercises it), CALLCODE, out-of-gas inner frames,
   >128 frames / >4096 touched accounts / >16384 touched slots (the snapshot fails closed at those
   caps, unit-tested only),
-  approval replacement mid-evaluation, IPv6 listen addresses. The coexistence run uses Lineth's
+  approval replacement mid-evaluation, IPv6 listen addresses (`[addr]:port` is parsed, unit-tested
+  only). The coexistence run uses Lineth's
   *published* plugin JARs on our fixture chain, not their full sequencer configuration (bundles,
   forced transactions, profitability tuning, extra-data pricing) or a Linea network.
 - **Harness timing**: after the selector log shows the candidate, the harness waits 0.8–1.2 s before
@@ -175,7 +207,8 @@ table and what each number does and does not cover.
 - **`debug_traceCall` + `prestateTracer`** returned "Internal error" on this Besu build for the parity
   check; `eth_getCode` was used instead. OPS's Reth-mode preflight (`muxTracer`, `withLog`) does not work
   against Besu at all — hence the plugin-served preflight.
-- Plain TCP inside one perimeter, plugin JAR without a Besu plugin catalog (a start-up WARN).
+- Plaintext gRPC inside one perimeter (TLS is postponed: plan §0.3), plugin JAR without a Besu plugin
+  catalog (a start-up WARN).
 
 ## Reproduce
 
@@ -187,7 +220,7 @@ Go from `go.mod`, Python 3, Foundry `cast`, solc 0.8.35, the Besu 26.8.1 release
 export JAVA_HOME=$PWD/.tmp/jdk25/jdk-25.0.4.1+1/Contents/Home
 (cd poc/besu-signed-approvals && gradle --no-daemon build)      # unit tests + JAR
 go test ./internal/nodeapproval/
-python3 poc/besu-signed-approvals/run.py                         # all 21 scenarios (23 checks), ~12 min
+python3 poc/besu-signed-approvals/run.py                         # all 23 scenarios (25 checks), ~4 min
 python3 poc/besu-signed-approvals/run.py same_block_target_change
 ```
 
@@ -196,20 +229,53 @@ under `.tmp/linea-pkg/` and its `linea-sequencer`, `linea-tracer`, `arithmetizat
 `sequencer-interfaces` JARs (plus their dependency JARs) copied into the Besu distribution's
 `plugins/`; it skips itself when they are absent.
 
-`run.py` copies the JAR into `.tmp/besu-dist/besu-26.8.1/plugins/`, writes the genesis to `evidence/`,
-starts an isolated loopback-only Besu per scenario (`.tmp/besu-approval-runs/`), and plays the consensus
-client over the Engine API. Plugin options:
+`run.py` copies the JAR into the Besu distribution's `plugins/` (`.tmp/besu-dist/besu-26.8.1`, or
+`OPS_BESU_HOME`), writes the genesis to `evidence/`, starts an isolated loopback-only Besu per scenario
+(`.tmp/besu-approval-runs/`), plays the consensus client over the Engine API, and plays OPS through the
+Go fixture client (`client/`), which runs OPS's preflight and signing and delivers over gRPC. Plugin
+options (wire contract §7):
 
 ```
 --plugins=OpsApprovalPlugin
---plugin-ops-approval-listen=127.0.0.1:PORT     --plugin-ops-approval-public-keys=default=HEX32[,next=HEX32]
---plugin-ops-approval-chain-id=31337            --plugin-ops-approval-wait-ms=5000
---plugin-ops-approval-capacity=100000           --plugin-ops-approval-max-connections=32
---plugin-ops-approval-orphan-ttl-ms=300000
+--plugin-ops-approval-listen=HOST:PORT          gRPC delivery service; required
+--plugin-ops-approval-public-keys=default=HEX32[,next=HEX32]   trusted OPS keys; required
+--plugin-ops-approval-chain-id=31337            required
+--plugin-ops-approval-wait-ms=5000              how long a pooled transaction waits for its approval
+--plugin-ops-approval-capacity=100000           approvals the store holds
+--plugin-ops-approval-max-ttl-ms=3600000        longest expires_at - issued_at accepted; at most 24 h
+--plugin-ops-approval-allowed-sources=CIDR[,CIDR]   who may connect; default any
+--plugin-ops-approval-max-connections=32        open delivery connections
+--plugin-ops-approval-max-concurrent-calls=32   calls in flight per connection
 ```
 
-OPS: `OPS_APPROVAL_NODE=besu`, `OPS_APPROVAL_TARGET=host:port` (the plugin's listen address),
-`OPS_APPROVAL_SEED_FILE` as before; the node's `--rpc-http-api` must include `OPS`.
+The orphan lifetime is gone (expiry replaces it), and so are the raw-TCP frame limits: the gRPC
+service caps requests at 64 KiB, advertises the concurrent-call cap in HTTP/2 SETTINGS, requires the
+HTTP/2 preface within 5 s, and permits keepalive pings every 10 s with no call in flight (OPS pings
+every 20 s).
+
+OPS: `OPS_APPROVAL_NODE=besu`, the plugin's listen address as a delivery target
+(`OPS_APPROVAL_TARGETS`, wire contract §7), `OPS_APPROVAL_SEED_FILE` as before; the node's
+`--rpc-http-api` must include `OPS`. OPS must deliver over the gRPC contract: a sender still writing
+raw TCP frames is cut off at the HTTP/2 preface, so its transactions wait and are dropped — fail
+closed, and the reason `demo.py` and `gasstorm.py` need the gRPC-speaking OPS.
+
+**The delivery port is for OPS only — an operator requirement.** The service is plaintext gRPC and
+authenticates batches, not peers: the Ed25519 signature means nobody can forge or alter an approval,
+but anyone who reaches the port can make the producer verify junk and hold connections up to the
+cap. A network rule (security group, firewall or network policy) must let only the OPS instances
+reach `--plugin-ops-approval-listen`; that rule is the compensating control for TLS being postponed.
+`--plugin-ops-approval-allowed-sources` (matched on each connection's remote address, refused at
+accept) is defence in depth on top of it, not a replacement, and `--plugin-ops-approval-max-connections`
+and `--plugin-ops-approval-max-concurrent-calls` bound what any peer that gets through can hold.
+Each target address must reach exactly one producer: no load balancer in front of the port, or the
+boot id changes on every reconnect.
+
+**Metrics** go through Besu's metrics system under the category `ops_approval`, which Besu does not
+enable by default: add it to `--metrics-category`. `ops_approval_batches_total{status}` counts every
+delivered batch by its gRPC status; `ops_approval_approvals_stored_total`, `ops_approval_store_size`,
+`ops_approval_connections` and `ops_approval_connections_refused_total{reason=source|limit}` cover the
+store and the port; `ops_approval_decisions_total{decision=allow|wait|drop|deny,reason}` counts the
+gate's decisions, once per candidate build, so one transaction can count several times.
 
 **Keys and rotation.** A batch names the key that signed it, inside the signed bytes, and the
 plugin holds a *set* of trusted keys (`--plugin-ops-approval-public-keys id=hex,id=hex`;
@@ -223,8 +289,7 @@ logged with the id.
 The `OPS` namespace (`ops_prepareApproval`) only simulates, but it simulates on the block producer and
 has no authentication of its own. Expose it on an RPC listener that only OPS can reach — network
 policy, or Besu's own RPC authentication (`--rpc-http-authentication-enabled`) — never on a listener
-that serves users. The same applies to `--plugin-ops-approval-listen`: it verifies signatures, not
-peers, so it belongs inside the perimeter until the transport carries mTLS.
+that serves users; the same holds for the delivery port above.
 
 Demo and benchmarks: [demo.py](demo.py), headless load [gasstorm.py](gasstorm.py), the dashboard
 session [gasstorm_ui.py](gasstorm_ui.py) + [run_ui_case.sh](run_ui_case.sh) (see [DEMO.md](DEMO.md)).
@@ -232,7 +297,9 @@ session [gasstorm_ui.py](gasstorm_ui.py) + [run_ui_case.sh](run_ui_case.sh) (see
 Code map: [gate](src/main/java/ops/approvals/ApprovalSelector.java) ·
 [tracer](src/main/java/ops/approvals/ApprovalTracer.java) ·
 [encoder](src/main/java/ops/approvals/CallsFingerprint.java) ·
-[ingress](src/main/java/ops/approvals/ApprovalListener.java) ·
+[ingress checks](src/main/java/ops/approvals/ApprovalIngress.java) ·
+[gRPC service](src/main/java/ops/approvals/ApprovalServer.java) ·
+[store](src/main/java/ops/approvals/ApprovalStore.java) ·
 [preflight RPC](src/main/java/ops/approvals/PrepareApprovalRpc.java) ·
 [plugin wiring](src/main/java/ops/approvals/OpsApprovalPlugin.java) ·
 [OPS Besu mode](../../internal/nodeapproval/besu.go) · [harness](harness.py) · [scenarios](run.py).

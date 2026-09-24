@@ -162,14 +162,15 @@ python3 poc/besu-signed-approvals/analyze_hops.py evidence/gasstorm/gate-on-hops
 
 ### Does the transport matter? Raw TCP against gRPC, measured
 
-`bench/run.sh` sends the same signed batches over today's raw TCP, over a gRPC bidirectional stream,
+`bench/run.sh` sends the same signed batches over the raw TCP the plugin then listened on (it now serves
+gRPC, one unary call per batch — see the README), over a gRPC bidirectional stream,
 and over the same stream with mTLS — from Go (grpc-go) to a Java receiver at the grpc/Netty
 versions Besu 26.8.1 ships, since a plugin inside Besu is bound to those. 500 batches/s × 32
 approvals, 10,000 batches, one host.
 
 | Transport | one-way p50 | p90 | p99 | max | ack round trip p50 / p99 |
 |---|---:|---:|---:|---:|---:|
-| raw TCP (today) | **102 µs** | 224 µs | 568 µs | 18.7 ms | — |
+| raw TCP (the former ingress) | **102 µs** | 224 µs | 568 µs | 18.7 ms | — |
 | gRPC, plaintext | **123 µs** | 262 µs | 615 µs | 29.2 ms | 232 µs / 1.15 ms |
 | gRPC, mTLS | **109 µs** | 245 µs | 645 µs | 28.6 ms | 211 µs / 1.18 ms |
 

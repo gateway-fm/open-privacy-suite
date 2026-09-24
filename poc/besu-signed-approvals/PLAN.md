@@ -11,7 +11,7 @@ Research and API verification: `docs/research/dsl-policy-and-node-enforcement/op
 | Who computes the preflight fingerprint | **The plugin** (`ops_prepareApproval`), OPS recomputes from the returned call tree and refuses on mismatch | Same Java tracer at preflight and block time; Go encoder stays the reference; every preflight is a parity check |
 | Lifecycle txs (CREATE/CREATE2/SELFDESTRUCT) | **Rejected** in phase 1: `ops_prepareApproval` errors, so OPS denies before forwarding; a lifecycle op reached during block building is rejected (`OPS_APPROVAL_UNSUPPORTED`) | Strict V2 needs opcode-level tracing on Besu; no new approval domain invented for the PoC |
 | Test node | Official Besu **26.8.1** release tarball as a post-merge execution client, the harness playing the consensus client over the Engine API; plugin built against Cloudsmith `26.8.1-d97cbd6` | Besu 26.x removed Clique block production. The Lineth-pinned commit `efa817c` differs from 26.8.1 only by nullability annotations in the selection code (GitHub compare, verified). Lineth's own sequencer plugin is not built here — coexistence is a follow-up |
-| Delivery | Same TCP framing and Ed25519 batches as the Reth PoC | Zero change to `internal/nodeapproval` delivery |
+| Delivery | Same TCP framing and Ed25519 batches as the Reth PoC [since replaced by the gRPC wire contract, `docs/implementation/approvals-wire-contract.md`; see README] | Zero change to `internal/nodeapproval` delivery |
 | Block driver | Engine API (`forkchoiceUpdatedV2` with attributes → one `getPayloadV2` → `newPayloadV2`), as Maru drives Besu in Lineth | `engine_getPayload` finalises the proposal in Besu, so the harness waits for the selector's decision log before calling it once |
 
 ## Facts the design rests on (all verified in source, see RESEARCH.md §3)
@@ -68,9 +68,9 @@ Written before implementation; the code kept the roles and adjusted a few names 
 |---|---|---|
 | `Approval` (record) | item layout (`OPS_APPROVAL_V1\0`/`V3\0`, 120 bytes) | golden `batch.json`/`call-batch.json` from Go |
 | `ApprovalBatch` [was `BatchDecoder`] | frame → `OPS_APPROVAL_BATCH_V1\0` ‖ u32 n ‖ items ‖ 64-byte sig; rejects bad size/domain/mode | golden + tamper cases |
-| `ApprovalVerifier` | JDK Ed25519 verify against the configured public key (the chain-id filter lives in `ApprovalListener.accept`) | golden signature, wrong key |
-| `ApprovalStore` | `ConcurrentHashMap<Hash, Entry>`, capacity with unpooled-first eviction, orphan TTL, `removeAll` | capacity/TTL/idempotence |
-| `ApprovalListener` | `ServerSocket`, ≤32 connections, 16 KiB frame cap, one reader thread per connection | socket round trip with Go-signed frame |
+| `ApprovalVerifier` | JDK Ed25519 verify against the configured public key (the chain-id filter lives in `ApprovalListener.accept`) [a key set now; the chain check is in `ApprovalIngress`] | golden signature, wrong key |
+| `ApprovalStore` | `ConcurrentHashMap<Hash, Entry>`, capacity with unpooled-first eviction, orphan TTL, `removeAll` [now expiry instead of the orphan TTL, and the contract's eviction order] | capacity/TTL/idempotence |
+| `ApprovalListener` [replaced by `ApprovalServer` + `ApprovalIngress`: gRPC, see README] | `ServerSocket`, ≤32 connections, 16 KiB frame cap, one reader thread per connection | socket round trip with Go-signed frame |
 | `CallRecord`, `CallsFingerprint` | encoder (above) | golden `call-v3.json` `expected_calls`; each tamper case from `call_hash.rs` tests |
 | `CallTreeJson` | records → geth-shaped tree | round trip through the Go encoder (integration) |
 | `ApprovalTracer` | `BlockAwareOperationTracer` → records; lifecycle flag | integration (real EVM) + OPS cross-check on every prepare |
@@ -81,6 +81,9 @@ Written before implementation; the code kept the roles and adjusted a few names 
 Options: `--plugin-ops-approval-listen`, `--plugin-ops-approval-public-key`, `--plugin-ops-approval-chain-id`,
 `--plugin-ops-approval-wait-ms` (5000), `--plugin-ops-approval-capacity` (100000),
 `--plugin-ops-approval-max-connections` (32), `--plugin-ops-approval-orphan-ttl-ms` (300000).
+[Current options are in the README: the orphan TTL is gone, and the gRPC ingress added
+`--plugin-ops-approval-max-ttl-ms`, `--plugin-ops-approval-allowed-sources` and
+`--plugin-ops-approval-max-concurrent-calls`.]
 
 ## OPS-side change
 

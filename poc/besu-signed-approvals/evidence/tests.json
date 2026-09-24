@@ -59,8 +59,27 @@
     "passed": true
   },
   {
-    "test": "bad_signature_wrong_chain_ignored_duplicates_idempotent",
-    "passed": true
+    "test": "refused_deliveries_answer_their_status_codes_and_store_nothing_duplicates_idempotent",
+    "passed": true,
+    "codes": {
+      "garbage": "INVALID_ARGUMENT",
+      "untrusted key id": "PERMISSION_DENIED",
+      "flipped signature byte": "UNAUTHENTICATED",
+      "another key under a trusted id": "UNAUTHENTICATED",
+      "approval for chain 1": "INVALID_ARGUMENT",
+      "TTL of 2 h, maximum 1 h": "INVALID_ARGUMENT",
+      "issued 60 s ahead": "FAILED_PRECONDITION",
+      "expired": "FAILED_PRECONDITION",
+      "store full": "UNAVAILABLE"
+    },
+    "batches": {
+      "OK": 2.0,
+      "INVALID_ARGUMENT": 3.0,
+      "PERMISSION_DENIED": 1.0,
+      "UNAUTHENTICATED": 2.0,
+      "FAILED_PRECONDITION": 2.0,
+      "UNAVAILABLE": 1.0
+    }
   },
   {
     "test": "eight_counter_increments_approved_against_one_state_all_included",
@@ -131,5 +150,16 @@
     "test": "precompile_staticcall_and_plain_value_transfer_included",
     "passed": true,
     "precompile": "0x0000000000000000000000000000000000000004"
+  },
+  {
+    "test": "expired_approval_counts_as_absent_transaction_dropped_not_included",
+    "passed": true,
+    "late": "expired 6109 ms ago"
+  },
+  {
+    "test": "restart_new_boot_id_resend_of_the_retained_batch_restores_inclusion",
+    "passed": true,
+    "boot_before": "1b5ca411f367e205943e68bd6155c165",
+    "boot_after": "94e58cedb5a816a6c68086305efb669b"
   }
 ]
