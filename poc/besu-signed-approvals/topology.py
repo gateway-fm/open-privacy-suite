@@ -53,11 +53,7 @@ class PeeredNode(h.Node):
             static.write_text(json.dumps([p.split("?")[0] for p in static_peers]))
             args += ["--static-nodes-file", str(static)]
         if plugin:
-            args += ["--plugins", "OpsApprovalPlugin",
-                     "--plugin-ops-approval-listen", f"127.0.0.1:{self.approval_port}",
-                     "--plugin-ops-approval-public-key", h.APPROVAL_PUBLIC_KEY,
-                     "--plugin-ops-approval-chain-id", str(h.CHAIN_ID),
-                     "--plugin-ops-approval-wait-ms", str(wait_ms)]
+            args += ["--plugins", "OpsApprovalPlugin", *h.approval_options(self.approval_port, wait_ms)]
         else:
             args += ["--Xplugins-external-enabled=false"]
         env = dict(os.environ, JAVA_HOME=str(h.JAVA_HOME), PATH=f"{h.JAVA_HOME}/bin:" + os.environ["PATH"], JAVA_OPTS="-Xmx2g")
