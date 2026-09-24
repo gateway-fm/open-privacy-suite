@@ -10,8 +10,8 @@ Numbers are measured unless marked *estimate*. File references are to
 ## 0. Decisions this plan needs
 
 1. **Transport** for approval delivery — §3 recommends gRPC bidirectional streaming with mTLS,
-   **OPS dialling the sequencer** (one inbound mTLS port on the sequencer, one stream per OPS
-   instance), one acknowledgement per batch plus a capacity nack, the Ed25519 payload signature
+   OPS dialling the sequencer (direction decided, 1c; one inbound mTLS port on the sequencer, one
+   stream per OPS instance), one acknowledgement per batch plus a capacity nack, the Ed25519 payload signature
    kept. Measured (§3.4′ item 2): gRPC is ~20 µs slower at the median than raw TCP and mTLS adds
    nothing measurable, against a ~500 ms candidate cadence; the baseline (§3.5) shows the race
    does not occur. So the decision is not about speed — it is whether to build acks, TLS and peer
@@ -27,6 +27,13 @@ Numbers are measured unless marked *estimate*. File references are to
    `finalizedBlockHash` and how far it lags. Nobody has checked. Until it is known, the store must
    be sized for rate × retention and its overflow path must be cheap (§2, blocker row). First item
    of any Lineth work: confirm Maru's finalized/safe semantics and the candidate-build cadence.
+1c. ~~Connection direction~~ — **decided (24 September): OPS connects to the node, on Besu and
+   Reth alike.** OPS already opens a connection to the node for preflight on both
+   (`ops_prepareApproval` on Besu, `debug_traceCall` on Reth), so reversing only the approval
+   stream would buy nothing. It would matter only if preflight moved to a replica (decision 6)
+   and transactions went through RPC nodes: the approval stream would then be the only connection
+   OPS opens to the sequencer, and reversing it would leave the sequencer with no inbound
+   connection from OPS. That is a later hardening option, not part of this plan.
 2. ~~Key custody and signature scheme~~ — **decided and implemented (22 September).** Keep Ed25519
    as a **software key delivered like every other OPS secret** — environment or a Secrets
    Manager–mounted file (IRSA/CSI), never a config file, exactly the policy `internal/config/file.go`
@@ -46,8 +53,10 @@ Numbers are measured unless marked *estimate*. File references are to
    releases the Lineth operator pulls (Lineth loads plugin JARs from `besu/plugins/`).
 5. **Reth**: second shipped target, or reference implementation only. Both PoCs share the OPS
    side (`internal/nodeapproval`), so this decides test scope, not architecture.
-6. **Preflight placement** in the target topology (§4c): on the sequencer, or on a dedicated
-   Besu replica running the plugin's RPC. A replica needs a **separate preflight URL** in OPS
+6. ~~Preflight placement~~ — **decided (24 September): on the sequencer for now.** A dedicated
+   Besu replica running the plugin's RPC stays possible later (with 1c's hardening option); the
+   plugin's preflight is a local simulation on the node's own head state and needs nothing from
+   the block producer. A replica needs a **separate preflight URL** in OPS
    (today one `NODE_URL` serves preflight and forward) and lags the head by its import latency,
    which widens strict-V2's mismatch window; calls-V3 is mostly insensitive. The follower run
    (§3.5) already exercised this layout for plain transfers.
@@ -145,7 +154,7 @@ signature kept; the stream also carries the producer's decisions back (§2, feed
   timer (`takeBatch` snapshot semantics unchanged).
 - Acknowledgements make redelivery exact and nacks possible; they are not used to gate
   forwarding (decision 1a).
-- **Who dials whom.** *OPS → sequencer* (recommended): the sequencer exposes one inbound mTLS
+- **Who dials whom — decided (§0 1c).** *OPS → sequencer*: the sequencer exposes one inbound mTLS
   port — it already exposes `ops_prepareApproval` and the forward path inbound, so this adds no
   new direction; N OPS instances are N streams with no fan-in; the sequencer's first message on
   any new stream is its pooled hashes, so redelivery on (re)connect works regardless of who
