@@ -8,6 +8,8 @@ import (
 	"privacy-proxy/internal/nodeapproval"
 	"privacy-proxy/internal/nodehttp"
 	"strings"
+
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // configureNodeApprovals turns the signed-approval gate on when OPS_APPROVAL_TARGETS names the
@@ -31,4 +33,14 @@ func (p *JSONRPCProcessor) configureNodeApprovals(nodeURL string, tc nodehttp.Tr
 	}
 	p.nodeApprovals, err = nodeapproval.NewWithTransport(nodeURL, targets, seed, tc)
 	return err
+}
+
+// registerNodeApprovalMetrics registers the gate's delivery collector on reg, so
+// /metrics serves it next to the server's own metrics. With the gate off there is
+// nothing to register.
+func (p *JSONRPCProcessor) registerNodeApprovalMetrics(reg prometheus.Registerer) error {
+	if p.nodeApprovals == nil {
+		return nil
+	}
+	return reg.Register(p.nodeApprovals)
 }

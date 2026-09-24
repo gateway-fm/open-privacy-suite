@@ -965,6 +965,10 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		s.jsonrpcProcessor.nodeApprovals.Close()
 		return nil, err
 	}
+	if err := s.jsonrpcProcessor.registerNodeApprovalMetrics(m.Registry); err != nil {
+		s.jsonrpcProcessor.nodeApprovals.Close()
+		return nil, err
+	}
 
 
 	// RD-858: scheduled audit hash-chain integrity verifier. Default
