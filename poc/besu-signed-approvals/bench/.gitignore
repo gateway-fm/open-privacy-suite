@@ -4,5 +4,7 @@ certs/
 results/*-sender.jsonl
 results/*-receiver.jsonl
 results/*-receiver.log
+# The repository ignores *.log; keep the summary log with the evidence.
+!results/summary.log
 receiver/build/
 receiver/.gradle/

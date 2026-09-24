@@ -5,7 +5,8 @@
 // source: approvals.proto
 
 // Delivery benchmark only: the same signed OPS_APPROVAL_BATCH frame the raw-TCP path carries,
-// wrapped in a gRPC bidirectional stream so the receiver can acknowledge each batch.
+// wrapped in gRPC so the receiver can confirm each batch: an Ack per Batch on one bidirectional
+// stream, or one unary call per batch whose status is the confirmation.
 
 package gen
 
@@ -22,7 +23,8 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	ApprovalDelivery_Deliver_FullMethodName = "/ops.approvals.bench.ApprovalDelivery/Deliver"
+	ApprovalDelivery_Deliver_FullMethodName    = "/ops.approvals.bench.ApprovalDelivery/Deliver"
+	ApprovalDelivery_DeliverOne_FullMethodName = "/ops.approvals.bench.ApprovalDelivery/DeliverOne"
 )
 
 // ApprovalDeliveryClient is the client API for ApprovalDelivery service.
@@ -30,6 +32,8 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type ApprovalDeliveryClient interface {
 	Deliver(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[Batch, Ack], error)
+	// One call per batch; the receiver does the same work as for a Deliver message.
+	DeliverOne(ctx context.Context, in *Batch, opts ...grpc.CallOption) (*Ack, error)
 }
 
 type approvalDeliveryClient struct {
@@ -53,11 +57,23 @@ func (c *approvalDeliveryClient) Deliver(ctx context.Context, opts ...grpc.CallO
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type ApprovalDelivery_DeliverClient = grpc.BidiStreamingClient[Batch, Ack]
 
+func (c *approvalDeliveryClient) DeliverOne(ctx context.Context, in *Batch, opts ...grpc.CallOption) (*Ack, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Ack)
+	err := c.cc.Invoke(ctx, ApprovalDelivery_DeliverOne_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ApprovalDeliveryServer is the server API for ApprovalDelivery service.
 // All implementations must embed UnimplementedApprovalDeliveryServer
 // for forward compatibility.
 type ApprovalDeliveryServer interface {
 	Deliver(grpc.BidiStreamingServer[Batch, Ack]) error
+	// One call per batch; the receiver does the same work as for a Deliver message.
+	DeliverOne(context.Context, *Batch) (*Ack, error)
 	mustEmbedUnimplementedApprovalDeliveryServer()
 }
 
@@ -70,6 +86,9 @@ type UnimplementedApprovalDeliveryServer struct{}
 
 func (UnimplementedApprovalDeliveryServer) Deliver(grpc.BidiStreamingServer[Batch, Ack]) error {
 	return status.Error(codes.Unimplemented, "method Deliver not implemented")
+}
+func (UnimplementedApprovalDeliveryServer) DeliverOne(context.Context, *Batch) (*Ack, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeliverOne not implemented")
 }
 func (UnimplementedApprovalDeliveryServer) mustEmbedUnimplementedApprovalDeliveryServer() {}
 func (UnimplementedApprovalDeliveryServer) testEmbeddedByValue()                          {}
@@ -99,13 +118,36 @@ func _ApprovalDelivery_Deliver_Handler(srv interface{}, stream grpc.ServerStream
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type ApprovalDelivery_DeliverServer = grpc.BidiStreamingServer[Batch, Ack]
 
+func _ApprovalDelivery_DeliverOne_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Batch)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ApprovalDeliveryServer).DeliverOne(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ApprovalDelivery_DeliverOne_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ApprovalDeliveryServer).DeliverOne(ctx, req.(*Batch))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // ApprovalDelivery_ServiceDesc is the grpc.ServiceDesc for ApprovalDelivery service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var ApprovalDelivery_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "ops.approvals.bench.ApprovalDelivery",
 	HandlerType: (*ApprovalDeliveryServer)(nil),
-	Methods:     []grpc.MethodDesc{},
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "DeliverOne",
+			Handler:    _ApprovalDelivery_DeliverOne_Handler,
+		},
+	},
 	Streams: []grpc.StreamDesc{
 		{
 			StreamName:    "Deliver",
