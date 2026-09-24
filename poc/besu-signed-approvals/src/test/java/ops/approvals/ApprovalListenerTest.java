@@ -31,7 +31,7 @@ class ApprovalListenerTest {
     }
     final byte[] signature = Bytes.fromHexString(v.get("signature").asText()).toArrayUnsafe();
     final ByteArrayOutputStream body = new ByteArrayOutputStream();
-    body.write(ApprovalBatch.message("default", approvals));
+    body.write(ApprovalBatch.message("default", v.get("issued_at").asLong(), v.get("expires_at").asLong(), approvals));
     body.write(signature);
 
     final ApprovalStore store = new ApprovalStore(10, 60_000, 0, new AtomicLong(1)::get);

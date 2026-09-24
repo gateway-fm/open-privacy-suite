@@ -5,6 +5,8 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"os"
+	"time"
 )
 
 const MaxBatchApprovals = 32
@@ -15,11 +17,37 @@ const MaxBatchFrame = 16384
 // key that signed it, so a producer can hold several trusted keys and a rotation is
 // add-then-switch instead of a simultaneous restart of every node and OPS.
 type Batch struct {
-	frame     []byte
-	Version   uint32     `json:"version"`
-	KeyID     string     `json:"key_id"`
+	frame   []byte
+	encoded []byte
+	Version uint32 `json:"version"`
+	KeyID   string `json:"key_id"`
+	// IssuedAt and ExpiresAt are Unix milliseconds and part of the signed bytes. A
+	// producer uses the batch's approvals only before ExpiresAt, which bounds how
+	// long a decision outlives a policy change and how long a producer keeps it.
+	IssuedAt  uint64     `json:"issued_at"`
+	ExpiresAt uint64     `json:"expires_at"`
 	Approvals []Approval `json:"approvals"`
 	Signature string     `json:"signature"`
+}
+
+// DefaultApprovalTTL is how long a signed approval stays usable unless
+// OPS_APPROVAL_TTL says otherwise; MaxApprovalTTL is the longest OPS will sign.
+const (
+	DefaultApprovalTTL = 10 * time.Minute
+	MaxApprovalTTL     = time.Hour
+)
+
+// configuredApprovalTTL reads OPS_APPROVAL_TTL (a Go duration, 1s to 1h).
+func configuredApprovalTTL() (time.Duration, error) {
+	value := os.Getenv("OPS_APPROVAL_TTL")
+	if value == "" {
+		return DefaultApprovalTTL, nil
+	}
+	ttl, err := time.ParseDuration(value)
+	if err != nil || ttl < time.Second || ttl > MaxApprovalTTL {
+		return 0, errors.New("OPS_APPROVAL_TTL must be a duration between 1s and 1h")
+	}
+	return ttl, nil
 }
 
 const BatchVersion = 2
@@ -45,9 +73,14 @@ func (b Batch) Message() ([]byte, error) {
 	if b.Version != BatchVersion || len(b.Approvals) == 0 || len(b.Approvals) > MaxBatchApprovals || !ValidKeyID(b.KeyID) {
 		return nil, errors.New("unsupported or invalid approval batch")
 	}
+	if b.ExpiresAt <= b.IssuedAt {
+		return nil, errors.New("approval batch must expire after it is issued")
+	}
 	message := []byte(batchDomain)
 	message = append(message, byte(len(b.KeyID)))
 	message = append(message, b.KeyID...)
+	message = binary.BigEndian.AppendUint64(message, b.IssuedAt)
+	message = binary.BigEndian.AppendUint64(message, b.ExpiresAt)
 	message = binary.BigEndian.AppendUint32(message, uint32(len(b.Approvals)))
 	for _, a := range b.Approvals {
 		if !validHashMode(a.HashMode) {
@@ -64,6 +97,10 @@ func (b Batch) Message() ([]byte, error) {
 // Frame is the length-prefixed wire encoding produced by SignBatch (test fixtures deliver it directly).
 func (b Batch) Frame() []byte { return b.frame }
 
+// Encoded is the signed envelope as it travels: the signed message followed by
+// the 64-byte Ed25519 signature (docs/implementation/approvals-wire-contract.md).
+func (b Batch) Encoded() []byte { return b.encoded }
+
 // Signer produces the batch signature. The interface is the seam for a KMS- or HSM-backed
 // signer later; the producer only ever sees a key id and a signature.
 type Signer interface {
@@ -76,13 +113,22 @@ type Signer interface {
 type Ed25519Signer struct {
 	keyID string
 	key   ed25519.PrivateKey
+	ttl   time.Duration
+	now   func() time.Time
 }
 
 func NewEd25519Signer(keyID string, seed []byte) *Ed25519Signer {
-	if len(seed) != ed25519.SeedSize {
-		return &Ed25519Signer{keyID: keyID}
+	s := &Ed25519Signer{keyID: keyID, ttl: DefaultApprovalTTL, now: time.Now}
+	if len(seed) == ed25519.SeedSize {
+		s.key = ed25519.NewKeyFromSeed(seed)
 	}
-	return &Ed25519Signer{keyID: keyID, key: ed25519.NewKeyFromSeed(seed)}
+	return s
+}
+
+// WithTTL sets how long the approvals this signer signs stay usable.
+func (s *Ed25519Signer) WithTTL(ttl time.Duration) *Ed25519Signer {
+	s.ttl = ttl
+	return s
 }
 
 func (s *Ed25519Signer) KeyID() string { return s.keyID }
@@ -99,20 +145,24 @@ func (s *Ed25519Signer) SignBatch(approvals []Approval) (Batch, error) {
 	if s.key == nil {
 		return Batch{}, errors.New("approval signer has no key")
 	}
-	b := Batch{Version: BatchVersion, KeyID: s.keyID, Approvals: append([]Approval(nil), approvals...)}
+	if s.ttl < time.Millisecond {
+		return Batch{}, errors.New("approval TTL must be positive")
+	}
+	issued := uint64(s.now().UnixMilli())
+	b := Batch{Version: BatchVersion, KeyID: s.keyID, IssuedAt: issued, ExpiresAt: issued + uint64(s.ttl.Milliseconds()), Approvals: append([]Approval(nil), approvals...)}
 	message, err := b.Message()
 	if err != nil {
 		return Batch{}, err
 	}
 	signature := ed25519.Sign(s.key, message)
 	b.Signature = hex.EncodeToString(signature)
-	b.frame = binary.BigEndian.AppendUint32(make([]byte, 0, 4+len(message)+len(signature)), uint32(len(message)+len(signature)))
-	b.frame = append(b.frame, message...)
-	b.frame = append(b.frame, signature...)
+	b.encoded = append(append(make([]byte, 0, len(message)+len(signature)), message...), signature...)
+	b.frame = binary.BigEndian.AppendUint32(make([]byte, 0, 4+len(b.encoded)), uint32(len(b.encoded)))
+	b.frame = append(b.frame, b.encoded...)
 	return b, nil
 }
 
 // SignBatch signs under the key id "default"; fixtures and the harness client use it.
 func SignBatch(key ed25519.PrivateKey, approvals []Approval) (Batch, error) {
-	return (&Ed25519Signer{keyID: "default", key: key}).SignBatch(approvals)
+	return (&Ed25519Signer{keyID: "default", key: key, ttl: DefaultApprovalTTL, now: time.Now}).SignBatch(approvals)
 }

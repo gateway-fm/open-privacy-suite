@@ -28,7 +28,7 @@ class ApprovalKeySetTest {
           Hash.fromHexString(a.get("principal").asText())));
     }
     final ByteArrayOutputStream out = new ByteArrayOutputStream();
-    out.write(ApprovalBatch.message(v.get("key_id").asText(), approvals));
+    out.write(ApprovalBatch.message(v.get("key_id").asText(), v.get("issued_at").asLong(), v.get("expires_at").asLong(), approvals));
     out.write(Bytes.fromHexString(v.get("signature").asText()).toArrayUnsafe());
     return out.toByteArray();
   }

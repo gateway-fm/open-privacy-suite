@@ -108,6 +108,10 @@ func NewWithTransport(url, address string, seed []byte, tc nodehttp.TransportCon
 	if err != nil {
 		return nil, err
 	}
+	ttl, err := configuredApprovalTTL()
+	if err != nil {
+		return nil, err
+	}
 	maxBatch := MaxBatchApprovals
 	if value := os.Getenv("OPS_APPROVAL_MAX_BATCH"); value != "" {
 		var err error
@@ -127,7 +131,7 @@ func NewWithTransport(url, address string, seed []byte, tc nodehttp.TransportCon
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &Service{hashMode: mode, node: node, hops: newHops(), rpc: client, rpcHTTP: httpClient, signer: NewEd25519Signer(keyID, seed), address: address, queue: make(chan Approval, 4096), signed: make(chan Batch, 128), maxBatch: maxBatch, cancel: cancel, done: make(chan struct{}), signDone: make(chan struct{})}
+	s := &Service{hashMode: mode, node: node, hops: newHops(), rpc: client, rpcHTTP: httpClient, signer: NewEd25519Signer(keyID, seed).WithTTL(ttl), address: address, queue: make(chan Approval, 4096), signed: make(chan Batch, 128), maxBatch: maxBatch, cancel: cancel, done: make(chan struct{}), signDone: make(chan struct{})}
 	s.connections.Store(1)
 	go s.signLoop(ctx)
 	go s.deliver(ctx, conn)
