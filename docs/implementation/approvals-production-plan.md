@@ -66,8 +66,12 @@ Numbers are measured unless marked *estimate*. File references are to
    and the plugin together. The JAR is released from here under its own tag, built for and named
    after the Besu version it supports; the Lineth operator pulls it into `besu/plugins/`. The code
    leaves `poc/` when packaging starts (§5 item 7).
-5. **Reth**: second shipped target, or reference implementation only. Both PoCs share the OPS
-   side (`internal/nodeapproval`), so this decides test scope, not architecture.
+5. ~~Reth~~ — **decided (24 September): both Besu and Reth ship.** Reth is faster and widely used, and it is
+   where the performance story can be told; Besu covers Besu-based stacks such as Lineth. Both targets share the OPS side (`internal/nodeapproval`) and implement the same
+   delivery contract (§3.6) — so every transport change lands in Java and in Rust, and CI runs a
+   lane per target. Starting point: the Reth PoC is still on envelope v1 (the v2 port is parked
+   in `patches/reth-poc-envelope-v2.patch`, four type errors left), and its source has never been
+   committed — it exists only as untracked files in its own worktree.
 6. ~~Preflight placement~~ — **decided (24 September): on the sequencer for now.** A dedicated
    Besu replica running the plugin's RPC stays possible later (with 1c's hardening option); the
    plugin's preflight is a local simulation on the node's own head state and needs nothing from
@@ -385,6 +389,10 @@ Independently shippable; each ends with the 22-scenario suite green.
 7. **Packaging and CI** — also earlier than it looks, since it is what lets 3–6 survive a Besu
    bump: plugin build and release from this repository under its own tag (decision 0.4); per-Besu-version scenario lane, nightly; grpc
    and Netty versions pinned to Besu's; compatibility note per Lineth Besu bump.
+7r. **Reth parity** (decision 0.5): commit the Reth PoC into this branch; finish envelope v2 with
+   the key set; the gRPC delivery service on the Reth side with the same status codes and boot
+   id; the scenario suite on Reth; a CI lane; and a Reth performance run on the production path
+   with the same workloads as Besu, so the numbers can be compared and quoted.
 8. **Scope extensions**: 2930/4844; 7702 with the envelope extension; preflight replica
    (decision 0.6) if the sequencer load says so.
 
