@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"math/big"
 	"net"
 	"net/http"
@@ -24,10 +23,13 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
 
 	"privacy-proxy/internal/audit"
 	"privacy-proxy/internal/db"
 	"privacy-proxy/internal/nodeapproval"
+	"privacy-proxy/internal/nodeapproval/approvalpb"
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
 	privacyredis "privacy-proxy/internal/redis"
@@ -99,35 +101,31 @@ func startPreflightNode(t *testing.T) *preflightNode {
 	return node
 }
 
-// startApprovalSink accepts the approval delivery connection an approvals
-// service opens at start-up and discards whatever arrives on it.
+// startApprovalSink runs a stand-in block producer: it confirms every batch and
+// answers Status for chain 31337 trusting the key id "default", so an approvals
+// service delivering to it counts as ready.
 func startApprovalSink(t *testing.T) string {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	var mu sync.Mutex
-	var conns []net.Conn
-	go func() {
-		for {
-			conn, err := listener.Accept()
-			if err != nil {
-				return
-			}
-			mu.Lock()
-			conns = append(conns, conn)
-			mu.Unlock()
-			go func() { _, _ = io.Copy(io.Discard, conn) }()
-		}
-	}()
-	t.Cleanup(func() {
-		_ = listener.Close()
-		mu.Lock()
-		defer mu.Unlock()
-		for _, conn := range conns {
-			_ = conn.Close()
-		}
-	})
+	server := grpc.NewServer(grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{MinTime: 10 * time.Second, PermitWithoutStream: true}))
+	approvalpb.RegisterApprovalDeliveryServer(server, approvalSink{})
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(server.Stop)
 	return listener.Addr().String()
+}
+
+type approvalSink struct {
+	approvalpb.UnimplementedApprovalDeliveryServer
+}
+
+func (approvalSink) Deliver(context.Context, *approvalpb.DeliverRequest) (*approvalpb.DeliverResponse, error) {
+	return &approvalpb.DeliverResponse{BootId: "sink", Stored: 1}, nil
+}
+
+func (approvalSink) Status(context.Context, *approvalpb.StatusRequest) (*approvalpb.StatusResponse, error) {
+	return &approvalpb.StatusResponse{BootId: "sink", ChainId: 31337, TrustedKeyIds: []string{"default"},
+		MaxTtlMs: 3_600_000, Capacity: 100_000, WaitMs: 5_000}, nil
 }
 
 // isolateApprovalEnv pins every setting the approvals service and the preflight
@@ -158,6 +156,7 @@ func newApprovalInstance(t *testing.T, ts *testServerRBAC, nodeURL, sink string)
 	approvals, err := nodeapproval.New(nodeURL, sink, bytes.Repeat([]byte{7}, 32))
 	require.NoError(t, err)
 	t.Cleanup(approvals.Close)
+	require.Eventually(t, approvals.Accepting, 5*time.Second, 10*time.Millisecond, "the stand-in producer never became ready")
 	p.nodeApprovals = approvals
 	return p
 }

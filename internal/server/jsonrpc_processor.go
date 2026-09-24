@@ -1511,6 +1511,11 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 	// authoritative gate is the trace.
 	var prepared *nodeapproval.Prepared
 	if p.nodeApprovals != nil {
+		// No producer can take an approval: refuse before the node spends a preflight on it.
+		if !p.nodeApprovals.Accepting() {
+			p.recordRPCOutcome(req.Method, "approval_delivery_unavailable", start)
+			return &ProcessResult{Error: &ProcessError{StatusCode: http.StatusServiceUnavailable, Message: "approval delivery unavailable"}}
+		}
 		if limited := p.limitPreflight(ctx, req, start); limited != nil {
 			return limited
 		}

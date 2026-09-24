@@ -216,6 +216,18 @@ func (s *Service) ready(chain uint64, now time.Time) bool {
 	return false
 }
 
+// Accepting reports whether some producer is ready to take approvals, whatever its chain. The
+// request path asks before it spends a preflight on the node; Enqueue then checks the chain.
+func (s *Service) Accepting() bool {
+	now := time.Now().UnixNano()
+	for _, l := range s.lanes {
+		if now < l.readyUntil.Load() {
+			return true
+		}
+	}
+	return false
+}
+
 // signingTTL is OPS_APPROVAL_TTL shortened to the smallest maximum TTL a producer reported, so
 // no producer refuses a batch for its lifetime (wire contract §5).
 func (s *Service) signingTTL() time.Duration {

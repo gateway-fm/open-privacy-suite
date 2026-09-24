@@ -710,6 +710,10 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		s.jsonrpcProcessor.nodeApprovals.Close()
 		return nil, err
 	}
+	if err := s.jsonrpcProcessor.registerNodeApprovalMetrics(m.Registry); err != nil {
+		s.jsonrpcProcessor.nodeApprovals.Close()
+		return nil, err
+	}
 	s.jsonrpcProcessor.SetMetrics(m)
 	s.jsonrpcProcessor.SetTxVisibilityStore(database)
 	// RD-1214: same DB the explorer redactor resolves through, so the RPC log
