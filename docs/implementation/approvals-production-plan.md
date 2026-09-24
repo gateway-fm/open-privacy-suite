@@ -25,10 +25,28 @@ Numbers are measured unless marked *estimate*. File references are to
    (§3.5); making the request path wait for the sequencer's confirmation would couple request
    p99 to a stalled call. Confirmations drive redelivery, not forwarding or ordering: OPS forwards
    the transaction without waiting for them.
-1b. **Finality on Lineth.** Release-on-finality (`5c0c609`) depends on what Maru sends as
-   `finalizedBlockHash` and how far it lags. Nobody has checked. Until it is known, the store must
-   be sized for rate × retention and its overflow path must be cheap (§2, blocker row). First item
-   of any Lineth work: confirm Maru's finalized/safe semantics and the candidate-build cadence.
+1b. ~~Finality on Lineth~~ — **answered (24 September), from Maru v1.4.0 and Besu 26.8.1 source:**
+   - *What Maru sends as finalized* (`safe` = `finalized`). Without a `[linea]` section, finalized
+     = head in every forkchoice update (instant finality; the zero hash only for the first build
+     after genesis). With `[linea]` configured — as the Lineth-stack template does — finalized is
+     the L2 block the L1 rollup contract reports as finalized, polled every 1–6 s, which lags the
+     head by hours (Linea mainnet: median about 2 h, normally under 16 h). [Maru
+     `FinalizationState.kt`, `LineaFinalizationProvider.kt`, `MaruAppFactory.kt`; Lineth-stack
+     `config.toml.template`; docs.linea.build *transaction finality*.]
+   - *Build window.* `blockTimeSeconds: 1`. In steady state Maru sends the payload attributes for
+     block N+1 when N is imported and asks for the payload when Besu's block timer fires, so Besu
+     has just under 1 s — about two candidate rebuilds at the default 500 ms cadence. After an idle
+     period (and in any round after the first) it builds for a fixed 500 ms
+     (`min-block-build-time`). Lineth's templates leave Besu's `Xpos-*` flags at their defaults and
+     set `block-txs-selection-max-time=800` ms. [Maru `BeaconBlockImporter.kt`,
+     `EagerQbftBlockCreator.kt`, `QbftBlockCreatorFactory.kt`; Besu `MergeCoordinator.java`,
+     `BlockTimer.java`, `MiningOptions.java`.]
+   - *Consequences.* With rollup finality, release-on-finality would hold approvals for hours; the
+     signed expiry (10 minutes by default) is what bounds the store, so capacity is sized for rate ×
+     TTL, and the overflow path evicts approvals of already-included transactions first. The
+     ~500 ms candidate cadence the race analysis (§3.5) assumes holds. The 800 ms selection cap is a
+     budget the plugin's per-transaction selector cost counts against. Still to measure on a private
+     Lineth network: the actual finality lag there.
 1c. ~~Connection direction~~ — **decided (24 September): OPS connects to the node, on Besu and
    Reth alike.** OPS already opens a connection to the node for preflight on both
    (`ops_prepareApproval` on Besu, `debug_traceCall` on Reth), so reversing only the approval
