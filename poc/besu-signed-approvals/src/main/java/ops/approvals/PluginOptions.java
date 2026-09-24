@@ -1,13 +1,17 @@
 package ops.approvals;
 
+import java.net.InetSocketAddress;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.apache.tuweni.bytes.Bytes;
 import picocli.CommandLine.Option;
 
-/** {@code --plugin-ops-approval-*} command line options. Same meanings as the Reth PoC env vars. */
+/**
+ * {@code --plugin-ops-approval-*} command line options: the receiver settings of the wire contract
+ * §7, plus the delivery connection limits. Same meanings as the Reth node's settings.
+ */
 final class PluginOptions {
-  @Option(names = "--plugin-ops-approval-listen", description = "host:port for OPS approval delivery (required)")
+  @Option(names = "--plugin-ops-approval-listen", description = "host:port the gRPC approval delivery service listens on (required)")
   String listen;
 
   @Option(names = "--plugin-ops-approval-public-key", description = "hex Ed25519 public key of the OPS signer, trusted under key id 'default'")
@@ -65,15 +69,50 @@ final class PluginOptions {
   @Option(names = "--plugin-ops-approval-chain-id", description = "chain id approvals must be bound to (required)")
   Long chainId;
 
-  @Option(names = "--plugin-ops-approval-wait-ms", description = "how long an unapproved tx waits in the pool (default: ${DEFAULT-VALUE})")
+  @Option(names = "--plugin-ops-approval-wait-ms", description = "how long a pooled transaction waits for its approval (default: ${DEFAULT-VALUE})")
   long waitMs = 5_000;
 
-  @Option(names = "--plugin-ops-approval-capacity", description = "max approvals held in memory (default: ${DEFAULT-VALUE})")
+  @Option(names = "--plugin-ops-approval-capacity", description = "approvals the store holds (default: ${DEFAULT-VALUE})")
   int capacity = 100_000;
 
-  @Option(names = "--plugin-ops-approval-max-connections", description = "max concurrent OPS delivery connections (default: ${DEFAULT-VALUE})")
+  @Option(names = "--plugin-ops-approval-max-ttl-ms", description = "longest expires_at - issued_at of a batch accepted, in ms (default: ${DEFAULT-VALUE})")
+  long maxTtlMs = 3_600_000;
+
+  @Option(names = "--plugin-ops-approval-allowed-sources", description = "comma-separated CIDR blocks allowed to connect for delivery (default: any; a network rule must still let only OPS reach the port)")
+  String sources;
+
+  @Option(names = "--plugin-ops-approval-max-connections", description = "open delivery connections at most, one per OPS instance is the norm (default: ${DEFAULT-VALUE})")
   int maxConnections = 32;
 
-  @Option(names = "--plugin-ops-approval-orphan-ttl-ms", description = "drop approvals with no pool transaction after this (default: ${DEFAULT-VALUE})")
-  long orphanTtlMs = 300_000;
+  @Option(names = "--plugin-ops-approval-max-concurrent-calls", description = "delivery calls in flight per connection (default: ${DEFAULT-VALUE})")
+  int maxConcurrentCalls = 32;
+
+  /** {@code host:port}, or {@code [v6-address]:port}. */
+  InetSocketAddress listenAddress() {
+    final int colon = listen == null ? -1 : listen.lastIndexOf(':');
+    if (colon <= 0 || colon == listen.length() - 1) {
+      throw new IllegalArgumentException("--plugin-ops-approval-listen must be host:port, got '" + listen + "'");
+    }
+    String host = listen.substring(0, colon);
+    if (host.startsWith("[") != host.endsWith("]")) {
+      throw new IllegalArgumentException("--plugin-ops-approval-listen: unbalanced brackets in '" + listen + "'");
+    }
+    if (host.startsWith("[")) {
+      host = host.substring(1, host.length() - 1);
+    }
+    final int port;
+    try {
+      port = Integer.parseInt(listen.substring(colon + 1));
+    } catch (final NumberFormatException e) {
+      throw new IllegalArgumentException("--plugin-ops-approval-listen: invalid port in '" + listen + "'", e);
+    }
+    if (port < 0 || port > 65_535) {
+      throw new IllegalArgumentException("--plugin-ops-approval-listen: invalid port in '" + listen + "'");
+    }
+    return new InetSocketAddress(host, port);
+  }
+
+  AllowedSources allowedSources() {
+    return sources == null ? AllowedSources.ANY : AllowedSources.parse(sources);
+  }
 }

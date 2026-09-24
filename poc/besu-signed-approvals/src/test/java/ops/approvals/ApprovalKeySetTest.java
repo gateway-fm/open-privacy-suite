@@ -44,6 +44,10 @@ class ApprovalKeySetTest {
     // The same signature under a key id the producer does not know, or knows with another key, fails.
     assertFalse(new ApprovalVerifier(Map.of("next", Fixtures.FIXTURE_PUBLIC_KEY)).verify(decoded), "unknown key id");
     assertFalse(new ApprovalVerifier(Map.of("default", other)).verify(decoded), "wrong key under that id");
+    // Whether an id is trusted at all is its own check (PERMISSION_DENIED), before the signature's.
+    assertTrue(verifier.trusts("next"));
+    assertFalse(verifier.trusts("retired"));
+    assertEquals(List.of("default", "next"), verifier.keyIds());
   }
 
   @Test

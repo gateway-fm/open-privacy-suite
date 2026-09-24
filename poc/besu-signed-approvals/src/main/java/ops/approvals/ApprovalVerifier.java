@@ -9,6 +9,7 @@ import java.security.spec.EdECPoint;
 import java.security.spec.EdECPublicKeySpec;
 import java.security.spec.NamedParameterSpec;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -49,6 +50,16 @@ public final class ApprovalVerifier {
     } catch (final GeneralSecurityException e) {
       throw new IllegalArgumentException("invalid Ed25519 public key", e);
     }
+  }
+
+  /** Whether a key id is in the trusted set; checked before the signature (wire contract §3). */
+  public boolean trusts(final String keyId) {
+    return keys.containsKey(keyId);
+  }
+
+  /** The trusted key ids, sorted, as {@code Status} reports them. */
+  public List<String> keyIds() {
+    return keys.keySet().stream().sorted().toList();
   }
 
   public boolean verify(final ApprovalBatch.Decoded batch) {

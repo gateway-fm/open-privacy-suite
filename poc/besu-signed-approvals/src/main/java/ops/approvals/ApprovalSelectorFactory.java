@@ -6,23 +6,23 @@ import org.hyperledger.besu.plugin.services.txselection.PluginTransactionSelecto
 import org.hyperledger.besu.plugin.services.txselection.PluginTransactionSelectorFactory;
 import org.hyperledger.besu.plugin.services.txselection.SelectorsStateManager;
 
-/** One selector + tracer per pending block; the approval store is shared. */
+/** One selector + tracer per pending block; the approval store and the wait window are shared. */
 final class ApprovalSelectorFactory implements PluginTransactionSelectorFactory {
   private final ApprovalStore store;
   private final long chainId;
-  private final long waitMs;
+  private final WaitWindow window;
   private final LongSupplier clock;
   private final ApprovalSelector.Metrics metrics;
 
   ApprovalSelectorFactory(
       final ApprovalStore store,
       final long chainId,
-      final long waitMs,
+      final WaitWindow window,
       final LongSupplier clock,
       final ApprovalSelector.Metrics metrics) {
     this.store = store;
     this.chainId = chainId;
-    this.waitMs = waitMs;
+    this.window = window;
     this.clock = clock;
     this.metrics = metrics;
   }
@@ -30,6 +30,6 @@ final class ApprovalSelectorFactory implements PluginTransactionSelectorFactory 
   @Override
   public PluginTransactionSelector create(
       final ProcessableBlockHeader pendingBlockHeader, final SelectorsStateManager stateManager) {
-    return new ApprovalSelector(store, chainId, waitMs, clock, new ApprovalTracer(), metrics);
+    return new ApprovalSelector(store, chainId, window, clock, new ApprovalTracer(), metrics);
   }
 }
