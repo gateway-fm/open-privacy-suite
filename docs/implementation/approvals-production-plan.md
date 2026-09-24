@@ -9,10 +9,12 @@ Numbers are measured unless marked *estimate*. File references are to
 
 ## 0. Decisions this plan needs
 
-1. **Transport** for approval delivery — §3 recommends gRPC bidirectional streaming with mTLS,
-   OPS dialling the sequencer (direction decided, 1c; one inbound mTLS port on the sequencer, one
-   stream per OPS instance), one acknowledgement per batch plus a capacity nack, the Ed25519 payload signature
-   kept. Measured (§3.4′ item 2): gRPC is ~20 µs slower at the median than raw TCP and mTLS adds
+1. ~~Transport~~ — **decided (24 September): gRPC over HTTP/2 with mTLS, one unary call per
+   batch; the call's status is the confirmation; no broker.** OPS dials the sequencer (1c; one
+   inbound mTLS port on the sequencer, one channel per OPS instance); the Ed25519 payload signature
+   is kept. OK means the plugin verified and stored the batch; a retryable error means OPS resends
+   it with backoff (§3.6). This replaces the earlier bidirectional stream with its own ack/nack
+   messages: the confirmation comes with the call, so there is no ack protocol to build. Measured (§3.4′ item 2): gRPC is ~20 µs slower at the median than raw TCP and mTLS adds
    nothing measurable, against a ~500 ms candidate cadence; the baseline (§3.5) shows the race
    does not occur. So the decision is not about speed — it is whether to build acks, TLS and peer
    authentication on raw TCP ourselves or take gRPC's. *(Critic: the earlier "node dials OPS" was inconsistent — the
@@ -20,9 +22,9 @@ Numbers are measured unless marked *estimate*. File references are to
    behind one address turn a node-initiated stream into a fan-in problem or put Postgres into the
    delivery path. §3.3 weighs both directions.)*
 1a. **Forward-after-ack: no, unless a measurement says otherwise.** The race is 0 on both layouts
-   (§3.5); making the request path wait for the sequencer's ack would couple request p99 to a
-   stalled stream and needs a timeout policy, batch correlation and a head-of-line story (§3.6).
-   Acks are for redelivery and nacks, not for ordering.
+   (§3.5); making the request path wait for the sequencer's confirmation would couple request
+   p99 to a stalled call. Confirmations drive redelivery, not forwarding or ordering: OPS forwards
+   the transaction without waiting for them.
 1b. **Finality on Lineth.** Release-on-finality (`c5b626c`) depends on what Maru sends as
    `finalizedBlockHash` and how far it lags. Nobody has checked. Until it is known, the store must
    be sized for rate × retention and its overflow path must be cheap (§2, blocker row). First item
@@ -97,7 +99,7 @@ Not corners: the fingerprint encoders, the selector's veto semantics, the metric
 | ~~**Graceful shutdown drops in-flight approvals**~~ — **fixed in `0ee3167`**: the signer drains the queue on stop, the sender delivers until the batch channel closes or 2 s pass, `Enqueue` refuses once closing; 45 of 200 delivered before, 200 after | `Close()`, `deliver()`, `signLoop()` | — | — |
 | **Frame limits hard-coded** | `MaxBatchApprovals` 32, `MaxBatchFrame` 16 KiB | undocumented | limits in the protocol document |
 | **Rate limiting deferred to OPS** | README | any authorised client can fill the store (100 k) for the TTL — and a full store is a **DoS lever**: every further `put` is a full pool scan plus an O(n log n) sort under the lock (see the finality row) | global (Redis) rate limit on preflight per principal; cheap overflow path |
-| **No feedback path for producer decisions** | `ApprovalSelector.reject()` logs `OPS_APPROVAL_DECISION` on the sequencer only | a transaction denied `MISMATCH` or dropped `TIMEOUT` vanishes: the user holds a hash and no receipt, OPS cannot say why, the explorer shows nothing, audit attribution stops at "forwarded" | a decision stream from the plugin back to OPS (the bidi stream carries it); surfaced in transaction status and the explorer; recorded for audit |
+| **No feedback path for producer decisions** | `ApprovalSelector.reject()` logs `OPS_APPROVAL_DECISION` on the sequencer only | a transaction denied `MISMATCH` or dropped `TIMEOUT` vanishes: the user holds a hash and no receipt, OPS cannot say why, the explorer shows nothing, audit attribution stops at "forwarded" | decided 24 September (§3.3): decisions stay internal — the sequencer's decision log and metrics, shipped by the logging pipeline and recorded for audit; not sent back over the delivery channel and not surfaced to users |
 | **One `NODE_URL` for preflight and forward** | `server.go` → `node_approvals.go:13`; `besu.go` ignores the plugin's `parentBlockHash` | a preflight replica (decision 0.6) is impossible to configure; strict-V2 on a lagging node widens the mismatch window | separate preflight URL; pin the preflight block in the approval and let the producer check freshness |
 | **No CI, `@Unstable` Besu API** | `poc/` trees, Gradle against Cloudsmith | breaks silently on a Besu bump; Lineth pins the commit | per-Besu-version scenario lane (JDK 25 + Besu binary), nightly |
 | **Scope limits, documented** | README | producer-only; legacy + EIP-1559 only; strict-V2 state-exact for lifecycle; no revocation | decisions, not bugs; 2930/4844 trivial, 7702 needs the envelope extension |
@@ -122,8 +124,8 @@ recorded it — §3.5 fixes that.
 An **acknowledgement** could remove the race entirely — forward only after the producer has
 stored the approval — but §3.5 shows the race does not occur, and waiting would couple every
 request's p99 to a stalled stream and needs a timeout policy, batch correlation and a
-head-of-line story (§3.6). Decision 1a: acknowledgements are for **redelivery and nacks**, not
-for ordering. They remain the strongest argument for a transport with replies: without them a
+head-of-line story (§3.6). Decision 1a: confirmations drive **redelivery and refusals**, not
+forwarding or ordering. They remain the strongest argument for a transport with replies: without them a
 batch lost in a peer-closed socket buffer, or refused by a full store, is invisible to OPS.
 
 ### 3.2 Options
@@ -146,23 +148,25 @@ in parity by hand, and a protocol an on-call engineer has never seen.
 
 ### 3.3 Recommendation
 
-**gRPC bidirectional streaming over HTTP/2 with mTLS; OPS dials the sequencer; one
-acknowledgement per batch and a nack for a refused (full-store) batch; the Ed25519 payload
-signature kept; the stream also carries the producer's decisions back (§2, feedback row).**
+**Decided (24 September): gRPC over HTTP/2 with mTLS; OPS dials the sequencer; one unary call
+per batch, whose status is the confirmation; the Ed25519 payload signature kept; no broker.
+The producer's decisions stay on the sequencer — decision log and metrics — and do not travel
+back over this channel (§2, feedback row: internal, never user-facing).**
 
-- Latency-equivalent to raw TCP: one persistent stream, one write per batch, no batching
-  timer (`takeBatch` snapshot semantics unchanged).
-- Acknowledgements make redelivery exact and nacks possible; they are not used to gate
+- Latency-equivalent to raw TCP: one persistent HTTP/2 connection, one call per batch, calls
+  multiplexed so none waits for another, no batching timer (`takeBatch` snapshot semantics
+  unchanged). §3.4′ measured the streaming shape; the unary shape is re-measured on the same
+  bench before quoting a number for it (§5 item 2).
+- Confirmations make redelivery exact and refusals visible to OPS; they are not used to gate
   forwarding (decision 1a).
 - **Who dials whom — decided (§0 1c).** *OPS → sequencer*: the sequencer exposes one inbound mTLS
   port — it already exposes `ops_prepareApproval` and the forward path inbound, so this adds no
-  new direction; N OPS instances are N streams with no fan-in; the sequencer's first message on
-  any new stream is its pooled hashes, so redelivery on (re)connect works regardless of who
-  dialled. *Sequencer → OPS*: attractive only if the sequencer had no inbound ports at all
+  new direction; N OPS instances are N channels with no fan-in; redelivery after a sequencer
+  restart is driven by the plugin's boot id in every response (§3.6). *Sequencer → OPS*: attractive only if the sequencer had no inbound ports at all
   (decision 0.6 taken *and* forwarding moved off it); with N OPS behind one address a single
   stream lands on one instance, so either the plugin discovers instances or a shared Postgres
   outbox sits in every delivery — the component-in-the-inclusion-path this section rejects
-  for a broker. Standby sequencer: one more stream from each OPS instance (§4b).
+  for a broker. Standby sequencer: one more channel from each OPS instance (§4b).
 - mTLS authenticates both ends and gives encryption in transit (ISO/IEC 27001:2022 Annex A
   8.24, use of cryptography — confirm the mapping with Compliance); the payload signature
   authenticates the *decision* independently of the channel and remains auditable. Certificate
@@ -261,7 +265,8 @@ Replacing §3.4. Effort *estimate* 0.5–1 day.
 3. ~~Gossip topology check~~ — **done** (`4573e40`, `topology.py`, `--topology follower`): race
    0 of 16,013; see §3.5. Repeat once with Reth/Erigon as the follower when that stack exists.
 3a. **Capacity red test**: fill the store to capacity under load and count approvals refused and
-   transactions lost; then the same after the cheap-overflow fix and the nack.
+   transactions lost; then the same after the cheap-overflow fix and the capacity refusal
+   (`RESOURCE_EXHAUSTED`, §3.6).
 3b. ~~Reorg with lagging finality~~ — **done**: `reorg_keeps_approvals` (harness gained
    `finality_lag`, `parent`, `reorg_to_rival`). Finalized lags one block, a rival replaces the head
    (Besu logs the chain reorg), the orphaned transactions are resubmitted as the same signed bytes
@@ -270,31 +275,36 @@ Replacing §3.4. Effort *estimate* 0.5–1 day.
    1–5 ms of network delay cannot create a race; it only matters for failure recovery time,
    which item 1 measures.
 
-### 3.6 What the acknowledgement protocol must specify
+### 3.6 What the delivery contract must specify
 
-Forwarding does not wait for acks (decision 1a), so these are reliability semantics, not
-request-path ones — but they still have to be written down before the `.proto`:
+Forwarding does not wait for confirmations (decision 1a), so these are reliability semantics,
+not request-path ones — written down before the `.proto`:
 
-- **Batch identity** — a batch id in the frame, echoed in the ack/nack, so a stream can have
-  several batches in flight without head-of-line blocking on one nack.
-- **Nack reasons** — at least `capacity` and `unsupported`; on `capacity` OPS keeps the batch and
-  retries with backoff rather than dropping.
-- **Redelivery** — the sequencer's first message on a new stream lists its pooled hashes; OPS
-  redelivers what it still holds (outbox). Also **periodic**: after a sequencer restart, RPC nodes
-  re-announce pooled transactions before the plugin's stream is up, and `waitMs` counts from pool
-  admission (`getAddedAt`) — so a connect-only redelivery can arrive after the timeout. Either
-  redeliver on a timer while unacked approvals exist, or measure `waitMs` from plugin readiness.
+- **One call per batch.** The call returns only after the plugin has verified the signature and
+  stored the batch, so its status is the confirmation. Calls are independent and multiplexed on
+  one connection: no batch id, no head-of-line blocking, no ack messages.
+- **Status codes.** `OK` — stored. `RESOURCE_EXHAUSTED` — store full; OPS keeps the batch and
+  retries with backoff. `UNAVAILABLE` / `DEADLINE_EXCEEDED` — retry with backoff.
+  `UNAUTHENTICATED` / `PERMISSION_DENIED` / `INVALID_ARGUMENT` — bad signature, untrusted key id,
+  wrong chain or malformed batch: no retry, counted and alerted on OPS (a configuration fault,
+  e.g. a key not yet in the plugin's set).
+- **Redelivery after a sequencer restart.** A confirmed approval can still be lost when the
+  sequencer restarts (the store is RAM). Every response carries the plugin's boot id; when it
+  changes, OPS resends every approval it still retains (not yet final, §2). RPC nodes re-announce
+  pooled transactions after a restart and `waitMs` counts from pool admission (`getAddedAt`), so
+  the resend must land within `waitMs` of the plugin coming up — OPS probes on channel reconnect
+  rather than waiting for the next batch; alternatively `waitMs` counts from plugin readiness.
 - **Ordering** — none required across batches; the store is keyed by transaction hash and a
   newer approval replaces an older one.
-- **Decision feedback** — the sequencer streams `allow`/`deny(reason)`/`timeout` per transaction
-  hash back to OPS (§2, feedback row).
+- **Decisions** — `allow`/`deny(reason)`/`timeout` stay on the sequencer (decision log and
+  metrics, shipped by the logging pipeline); they are internal and never reach the user.
 
 ## 4. Several nodes
 
 The CTO's PoC topology (18 September) fixes the vocabulary: **one Besu sequencer with the plugin,
 Reth and Erigon RPC nodes as the transaction submission channels.**
 
-**a) Several OPS instances.** Each instance holds its own mTLS stream to the sequencer (OPS dials,
+**a) Several OPS instances.** Each instance holds its own mTLS channel to the sequencer (OPS dials,
 §3.3), so no fan-in and no shared component in the delivery path; a Postgres outbox is per
 instance's durability, not a bus. Per-instance signing keys (with `key_id` and a key set on the
 plugin) give attribution and independent rotation. The same transaction reaching two instances
@@ -302,7 +312,7 @@ plugin) give attribution and independent rotation. The same transaction reaching
 harmless at execution, only the audit attribution can flip.
 
 **b) The sequencer, optionally a standby.** Approvals must reach every node that may build the
-next block. With streams per consumer and redelivery-on-connect, a standby is one more stream;
+next block. With a channel per consumer and redelivery on a boot-id change, a standby is one more channel;
 it must be fed continuously, not on failover. "Multiple producers" means nothing else in this
 topology.
 
@@ -335,7 +345,8 @@ Independently shippable; each ends with the 22-scenario suite green.
 1. **Baseline** (§3.5) — done, both layouts: 62–64 µs median delivery, race rate 0.
 2. **Reduced benchmark** (§3.4′): write-failure red test **done** (`f98c440`); gossip layout
    **done** (`4573e40`); still to do: capacity red test, reorg-with-lagging-finality scenario, one
-   gRPC no-regression run with an uncapped sample → decision 0.1.
+   gRPC no-regression run with an uncapped sample, and the §3.4′ bench re-run in the decided
+   unary shape (one call per batch) before its latency is quoted.
 2a. **Cheap, safe fixes that need no transport decision**: ~~backoff with jitter; drain on close;
    configurable hop cap~~ (`0ee3167`); **cheap overflow path** in `ApprovalStore` — event-driven
    liveness from the pool's `TransactionAdded`/`Dropped` listeners, insertion order, a grace period
@@ -344,9 +355,9 @@ Independently shippable; each ends with the 22-scenario suite green.
    live approval); `FORK` blocks recorded in the tracker; tracked depth given a basis (`8186d3d`);
    the reorg-with-lagging-finality scenario `reorg_keeps_approvals` (passes; full suite pending).
 3. **Transport + durability**: `.proto` **including envelope v2** (`key_id`, `issued_at`,
-   `expires_at` — one wire migration, not two); gRPC bidi with mTLS at Besu's grpc version; OPS
-   dials the sequencer; acks, capacity nack, decision feedback; Postgres outbox (expand-only, with
-   the `privacy_proxy_app` GRANT block); redelivery on connect and periodic; certificate lifecycle.
+   `expires_at` — one wire migration, not two); gRPC unary per batch with mTLS at Besu's grpc
+   version; OPS dials the sequencer; status-code handling and boot-id redelivery (§3.6); Postgres
+   outbox (expand-only, with the `privacy_proxy_app` GRANT block); certificate lifecycle.
 4. **Keys**: ~~key set on the plugin~~ (done, envelope v2); Secrets Manager via IRSA scoped to the
    one secret ARN (deployment); rotation procedure documented in the plugin README; per-instance
    keys are now one `OPS_APPROVAL_KEY_ID` per instance plus one entry in the plugin's key set.
