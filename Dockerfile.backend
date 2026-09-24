@@ -60,21 +60,24 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-reco
 # one. The build fails loudly if either changes.
 #
 # Static build from the upstream release, since Debian does not package solc.
+# Both architectures come from the same upstream commit (47b9dedd), published
+# per-arch on binaries.soliditylang.org, each with its own checksum.
 ARG SOLC_VERSION=0.8.35
-ARG SOLC_SHA256=fa8ac9a32d301ad023a36ee5a29f8e291fe3200c60244e43c142539e82a617f4
+ARG SOLC_COMMIT=47b9dedd
+ARG SOLC_SHA256_AMD64=fa8ac9a32d301ad023a36ee5a29f8e291fe3200c60244e43c142539e82a617f4
+ARG SOLC_SHA256_ARM64=4218d2936d2b582bc5751dac548f97b36a8652b21ded52b60a1c1259143ee0e4
 RUN set -eux; \
     arch="$(dpkg --print-architecture)"; \
-    if [ "$arch" != "amd64" ]; then \
-      echo "WARNING: upstream publishes no static solc for $arch (checked for 0.8.35)." >&2; \
-      echo "This image will start, but submitting an execution policy will return 503." >&2; \
-      echo "Mount a compiler and set POLICY_SOLC, or build for linux/amd64." >&2; \
-      exit 0; \
-    fi; \
+    case "$arch" in \
+      amd64) sha="${SOLC_SHA256_AMD64}" ;; \
+      arm64) sha="${SOLC_SHA256_ARM64}" ;; \
+      *) echo "ERROR: no pinned solc published for $arch; execution policies cannot be compiled here." >&2; exit 1 ;; \
+    esac; \
     wget -q -O /usr/local/bin/solc \
-      "https://github.com/ethereum/solidity/releases/download/v${SOLC_VERSION}/solc-static-linux"; \
-    echo "${SOLC_SHA256}  /usr/local/bin/solc" | sha256sum -c -; \
+      "https://binaries.soliditylang.org/linux-${arch}/solc-linux-${arch}-v${SOLC_VERSION}+commit.${SOLC_COMMIT}"; \
+    echo "${sha}  /usr/local/bin/solc" | sha256sum -c -; \
     chmod +x /usr/local/bin/solc; \
-    solc --version | grep -q "Version: ${SOLC_VERSION}+"
+    solc --version | grep -q "Version: ${SOLC_VERSION}+commit.${SOLC_COMMIT}"
 
 RUN useradd -r -u 1000 -m appuser
 
