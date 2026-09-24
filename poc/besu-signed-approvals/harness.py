@@ -139,12 +139,24 @@ def b64(data):
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
 
 
+def approval_options(port, wait_ms, capacity=100_000, max_ttl_ms=3_600_000):
+    """The plugin's options as a producer runs it: the gRPC delivery service on loopback, where the
+    harness plays OPS, and only loopback sources allowed to connect."""
+    return ["--plugin-ops-approval-listen", f"127.0.0.1:{port}",
+            "--plugin-ops-approval-allowed-sources", "127.0.0.1/32",
+            "--plugin-ops-approval-public-key", APPROVAL_PUBLIC_KEY,
+            "--plugin-ops-approval-chain-id", str(CHAIN_ID),
+            "--plugin-ops-approval-wait-ms", str(wait_ms),
+            "--plugin-ops-approval-capacity", str(capacity),
+            "--plugin-ops-approval-max-ttl-ms", str(max_ttl_ms)]
+
+
 class Node:
     """Besu as a post-merge execution client; the harness plays the consensus client (Engine API)."""
 
     def __init__(self, name, plugin=True, configured=True, wait_ms=5000, directory=None, extra=(),
                  expect_exit=False, besu_home=None, linea_plugins=(), log_level=None, genesis=None,
-                 fork="shanghai"):
+                 fork="shanghai", approval_port=None, capacity=100_000, max_ttl_ms=3_600_000):
         self.name = name
         self.plugin = plugin
         self.fork = fork
@@ -156,7 +168,9 @@ class Node:
         self.directory.mkdir(parents=True, exist_ok=True)
         self.rpc_port = unused_port()
         self.engine_port = unused_port()
-        self.approval_port = unused_port()
+        self.metrics_port = unused_port()
+        # A restarted producer comes back on the address OPS dials: pass the old node's port.
+        self.approval_port = approval_port or unused_port()
         self.rpc_url = f"http://127.0.0.1:{self.rpc_port}"
         self.engine_url = f"http://127.0.0.1:{self.engine_port}"
         self.log_path = self.directory / "node.log"
@@ -188,10 +202,10 @@ class Node:
         if linea_plugins:
             args += LINEA_SELECTOR_OPTIONS
         if plugin and configured:
-            args += ["--plugin-ops-approval-listen", f"127.0.0.1:{self.approval_port}",
-                     "--plugin-ops-approval-public-key", APPROVAL_PUBLIC_KEY,
-                     "--plugin-ops-approval-chain-id", str(CHAIN_ID),
-                     "--plugin-ops-approval-wait-ms", str(wait_ms)]
+            args += approval_options(self.approval_port, wait_ms, capacity=capacity, max_ttl_ms=max_ttl_ms)
+            # Besu enables no plugin metric category by default: the plugin's must be named.
+            args += ["--metrics-enabled", "--metrics-host", "127.0.0.1", "--metrics-port", str(self.metrics_port),
+                     "--metrics-category", "ops_approval"]
         if not plugin:
             args += ["--Xplugins-external-enabled=false"]
         args += list(extra)
@@ -419,6 +433,26 @@ class Node:
             if "OPS_APPROVAL_DECISION " in line:
                 out.append(line.split("OPS_APPROVAL_DECISION ", 1)[1])
         return out
+
+    def metrics(self):
+        """The plugin's samples from Besu's Prometheus endpoint: {'name{labels}': value}."""
+        with urllib.request.urlopen(f"http://127.0.0.1:{self.metrics_port}/metrics", timeout=10) as response:
+            text = response.read().decode()
+        samples = {}
+        for line in text.splitlines():
+            if line.startswith("ops_approval_"):
+                name, value = line.rsplit(" ", 1)
+                samples[name] = float(value)
+        return samples
+
+    def metric(self, name, **labels):
+        """One sample, 0 when absent; labels match as a subset, several matches are summed."""
+        total = 0.0
+        for sample, value in self.metrics().items():
+            base, _, rest = sample.partition("{")
+            if base == name and all(f'{k}="{v}"' in rest for k, v in labels.items()):
+                total += value
+        return total
 
     def stop(self):
         with self.connections_lock:
