@@ -30,22 +30,29 @@ func TestApprovalSurvivesABrokenConnection(t *testing.T) {
 // A peer that accepts and immediately resets (a producer at its connection limit, a proxy, a
 // half-started node) must not turn OPS into a dial storm, even with a batch waiting for it.
 func TestLostConnectionBacksOffBeforeRedialing(t *testing.T) {
+	// The producer completes the HTTP/2 handshake — the connection becomes READY and Status is
+	// answered — and every connection then drops 30 ms later. gRPC resets its own connect backoff
+	// after a successful connection, so only the lane's own pause keeps this from a dial storm.
+	p := newProducer(t, "resetting-producer:1", "boot-a")
 	var dials atomic.Int64
-	cfg := testDelivery()
-	cfg.targets = []string{"resetting-peer:1"}
-	cfg.dialer = func(context.Context, string) (net.Conn, error) {
+	cfg := testDelivery(p)
+	cfg.dialer = func(ctx context.Context, _ string) (net.Conn, error) {
 		dials.Add(1)
-		client, server := net.Pipe()
-		server.Close()
-		return client, nil
+		conn, err := p.dial(ctx)
+		if err == nil {
+			time.AfterFunc(30*time.Millisecond, func() { _ = conn.Close() })
+		}
+		return conn, err
 	}
-	s := startDelivery(t, time.Minute, cfg)
-	s.publish(signedBatch(t, time.Minute, txHashes(1, 1)...))
+	startDelivery(t, time.Minute, cfg)
+	waitUntil(t, 2*time.Second, "a connection became ready", func() bool { return p.statusCalls() > 0 })
+	before := dials.Load()
 	time.Sleep(700 * time.Millisecond)
-	if n := dials.Load(); n > 10 {
-		t.Fatalf("%d connections in 700 ms: reconnecting without backoff", n)
-	} else if n == 0 {
-		t.Fatal("never connected")
+	// With the pause each cycle takes at least 130 ms (30 ms connected plus 100–200 ms paced).
+	if n := dials.Load() - before; n > 7 {
+		t.Fatalf("%d redials in 700 ms after ready connections dropped: reconnecting without a pause", n)
+	} else if n < 2 {
+		t.Fatalf("%d redials in 700 ms: the lane stopped reconnecting", n)
 	}
 }
 
