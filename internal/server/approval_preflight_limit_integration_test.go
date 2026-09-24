@@ -106,10 +106,16 @@ func startPreflightNode(t *testing.T) *preflightNode {
 // service delivering to it counts as ready.
 func startApprovalSink(t *testing.T) string {
 	t.Helper()
+	return startApprovalSinkFor(t, 31337)
+}
+
+// startApprovalSinkFor is startApprovalSink for a producer of chainID.
+func startApprovalSinkFor(t *testing.T, chainID uint64) string {
+	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	server := grpc.NewServer(grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{MinTime: 10 * time.Second, PermitWithoutStream: true}))
-	approvalpb.RegisterApprovalDeliveryServer(server, approvalSink{})
+	approvalpb.RegisterApprovalDeliveryServer(server, approvalSink{chainID: chainID})
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(server.Stop)
 	return listener.Addr().String()
@@ -117,14 +123,15 @@ func startApprovalSink(t *testing.T) string {
 
 type approvalSink struct {
 	approvalpb.UnimplementedApprovalDeliveryServer
+	chainID uint64
 }
 
 func (approvalSink) Deliver(context.Context, *approvalpb.DeliverRequest) (*approvalpb.DeliverResponse, error) {
 	return &approvalpb.DeliverResponse{BootId: "sink", Stored: 1}, nil
 }
 
-func (approvalSink) Status(context.Context, *approvalpb.StatusRequest) (*approvalpb.StatusResponse, error) {
-	return &approvalpb.StatusResponse{BootId: "sink", ChainId: 31337, TrustedKeyIds: []string{"default"},
+func (s approvalSink) Status(context.Context, *approvalpb.StatusRequest) (*approvalpb.StatusResponse, error) {
+	return &approvalpb.StatusResponse{BootId: "sink", ChainId: s.chainID, TrustedKeyIds: []string{"default"},
 		MaxTtlMs: 3_600_000, Capacity: 100_000, WaitMs: 5_000}, nil
 }
 
@@ -300,6 +307,9 @@ func TestApprovalPreflightLimit_SharedAcrossInstances(t *testing.T) {
 		// unavailable preflight — after the node was asked to run it.
 		require.Equal(t, ReasonTracingUnavailable, result.Error.Reason, "%s: %+v", step, result.Error)
 		require.Positive(t, simulations, "%s: an admitted call has the node simulate the transaction", step)
+		entry, _ := accessLogs[p].last()
+		require.Equal(t, accessLogEntry{status: http.StatusForbidden, orgID: org, denialReason: ReasonTracingUnavailable}, entry,
+			"%s: the unavailable preflight is written to the access log", step)
 	}
 	limited := func(p *JSONRPCProcessor, principal, step string) {
 		t.Helper()

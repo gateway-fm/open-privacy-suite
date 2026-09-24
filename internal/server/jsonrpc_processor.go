@@ -1509,8 +1509,7 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 	if p.nodeApprovals != nil {
 		// No producer can take an approval: refuse before the node spends a preflight on it.
 		if !p.nodeApprovals.Accepting() {
-			p.recordRPCOutcome(req.Method, "approval_delivery_unavailable", start)
-			return &ProcessResult{Error: &ProcessError{StatusCode: http.StatusServiceUnavailable, Message: "approval delivery unavailable"}}
+			return p.refuseApprovalDelivery(ctx, req, start)
 		}
 		if limited := p.limitPreflight(ctx, req, start); limited != nil {
 			return limited
@@ -1518,6 +1517,9 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 		prepared, err = p.nodeApprovals.Prepare(ctx, rawTxHex)
 		if err != nil {
 			slog.Warn("signed preflight failed", "error", err)
+			p.recordRPCOutcome(req.Method, "preflight_unavailable", start)
+			req.denialReason = ReasonTracingUnavailable
+			p.logAccess(ctx, req, http.StatusForbidden)
 			return &ProcessResult{Error: &ProcessError{StatusCode: http.StatusForbidden, Message: "signed preflight unavailable or unsupported transaction", Reason: ReasonTracingUnavailable}}
 		}
 	}
@@ -1695,7 +1697,7 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 					}
 				}
 			}
-			return &ProcessResult{Error: &ProcessError{StatusCode: http.StatusServiceUnavailable, Message: "approval delivery unavailable"}}
+			return p.refuseApprovalDelivery(ctx, req, start)
 		}
 	}
 	if prepared != nil {

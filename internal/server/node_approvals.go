@@ -1,13 +1,16 @@
 package server
 
 import (
+	"context"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"privacy-proxy/internal/nodeapproval"
 	"privacy-proxy/internal/nodehttp"
 	"strings"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -43,4 +46,21 @@ func (p *JSONRPCProcessor) registerNodeApprovalMetrics(reg prometheus.Registerer
 		return nil
 	}
 	return reg.Register(p.nodeApprovals)
+}
+
+// refuseApprovalDelivery answers a transaction no producer can take an approval
+// for: 503, logged like every other refusal, and never forwarded.
+func (p *JSONRPCProcessor) refuseApprovalDelivery(ctx context.Context, req *ProcessRequest, start time.Time) *ProcessResult {
+	p.recordRPCOutcome(req.Method, "approval_delivery_unavailable", start)
+	req.denialReason = ReasonUpstreamError
+	p.logAccess(ctx, req, http.StatusServiceUnavailable)
+	return &ProcessResult{Error: &ProcessError{StatusCode: http.StatusServiceUnavailable, Message: "approval delivery unavailable", Reason: ReasonUpstreamError}}
+}
+
+// closeNodeApprovals stops approval delivery, if it was started, when the server fails to start
+// after configuring it.
+func (p *JSONRPCProcessor) closeNodeApprovals() {
+	if p.nodeApprovals != nil {
+		p.nodeApprovals.Close()
+	}
 }
