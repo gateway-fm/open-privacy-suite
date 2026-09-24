@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -102,6 +103,11 @@ func (c *Compiler) Version(ctx context.Context) (string, error) {
 }
 
 // Available reports whether a usable, correctly pinned compiler is present.
+// ErrPolicyTooLarge means the policy is valid but compiles to more code than a
+// contract may hold. The author can act on it — split or simplify the policy —
+// so callers must not report it as a server fault.
+var ErrPolicyTooLarge = errors.New("policydsl: policy is too large to compile")
+
 func (c *Compiler) Available(ctx context.Context) error {
 	version, err := c.Version(ctx)
 	if err != nil {
@@ -189,7 +195,7 @@ func (c *Compiler) Build(ctx context.Context, v *Validated) (*Artifact, error) {
 		return nil, fmt.Errorf("policydsl: the compiler's runtime bytecode is not valid hex: %w", err)
 	}
 	if len(runtimeCode) > MaxRuntimeBytecode {
-		return nil, fmt.Errorf("policydsl: runtime bytecode exceeds %d bytes; split or simplify the policy", MaxRuntimeBytecode)
+		return nil, fmt.Errorf("%w: %d bytes compiled, the limit is %d; split or simplify the policy", ErrPolicyTooLarge, len(runtimeCode), MaxRuntimeBytecode)
 	}
 	creationCode, err := hex.DecodeString(creationHex)
 	if err != nil {

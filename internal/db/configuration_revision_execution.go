@@ -91,6 +91,12 @@ func compileConfigurationExecution(ctx context.Context, q DBTX, doc *configurati
 		return nil, ConfigurationUnavailable("execution rules are compiled with Solidity %s and this deployment has no usable compiler: install it and point POLICY_SOLC at it", policydsl.SolidityVersion)
 	}
 	artifact, err := compiler.Build(ctx, validated)
+	if errors.Is(err, policydsl.ErrPolicyTooLarge) {
+		// The document is well formed; it just does not fit in a contract.
+		// That is the author's to resolve, so say so rather than reporting a
+		// fault they cannot act on.
+		return nil, ConfigurationConflict("%s", strings.TrimPrefix(err.Error(), "policydsl: "))
+	}
 	if err != nil {
 		return nil, err
 	}

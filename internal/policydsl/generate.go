@@ -93,6 +93,7 @@ func GenerateSolidity(v *Validated) (string, error) {
 	}
 
 	var b strings.Builder
+	tables := newExceptionTables()
 
 	b.WriteString("// SPDX-License-Identifier: Apache-2.0\n")
 	b.WriteString("// Code generated from an approved ContractExecutionPolicy. DO NOT EDIT.\n")
@@ -162,7 +163,7 @@ func GenerateSolidity(v *Validated) (string, error) {
 	next := 0
 
 	for _, group := range groups {
-		if err := writeGroupBlock(&b, &bodies, &next, group, v.byGroup[group]); err != nil {
+		if err := writeGroupBlock(&b, &bodies, &next, group, v.byGroup[group], tables); err != nil {
 			return "", err
 		}
 	}
@@ -175,9 +176,71 @@ func GenerateSolidity(v *Validated) (string, error) {
 	b.WriteString("        return worst;\n")
 	b.WriteString("    }\n")
 	b.WriteString(bodies.String())
+	tables.write(&b)
 	b.WriteString("}\n")
 
 	return b.String(), nil
+}
+
+// exceptionTables emits each distinct deployer-exception table once and lets
+// every rule that carries it call the same function. The legacy import gives
+// every non-admin group the SAME organisation-wide table, so inlining it per
+// rule multiplies one table by the number of groups: 28 contracts across 7
+// groups is 196 inlined blocks, which on its own exceeds the runtime bytecode
+// limit. Sharing changes no decision — the same addresses and groups are
+// consulted — it only stops copying them.
+type exceptionTables struct {
+	index map[string]int
+	order []string
+	byKey map[string][]DeployerException
+}
+
+func newExceptionTables() *exceptionTables {
+	return &exceptionTables{index: map[string]int{}, byKey: map[string][]DeployerException{}}
+}
+
+// use returns the function name for this table, registering it on first sight.
+// Tables are keyed by their content, so identical tables share one function and
+// the order of emission follows first use, keeping generation deterministic.
+func (t *exceptionTables) use(exceptions []DeployerException) string {
+	if len(exceptions) == 0 {
+		return ""
+	}
+	var key strings.Builder
+	for _, e := range exceptions {
+		key.WriteString(strings.ToLower(e.StorageAddress))
+		key.WriteByte('|')
+		for _, g := range e.Groups {
+			key.WriteString(g)
+			key.WriteByte(',')
+		}
+		key.WriteByte(';')
+	}
+	k := key.String()
+	if _, seen := t.index[k]; !seen {
+		t.index[k] = len(t.order)
+		t.order = append(t.order, k)
+		t.byKey[k] = exceptions
+	}
+	return fmt.Sprintf("_excepted%d", t.index[k])
+}
+
+// write emits the registered tables as pure helpers returning true when the
+// frame's target is excluded for one of the frame's groups.
+func (t *exceptionTables) write(b *strings.Builder) {
+	for i, k := range t.order {
+		fmt.Fprintf(b, "\n    /// @dev deployer exceptions shared by every rule that declares them\n")
+		fmt.Fprintf(b, "    function _excepted%d(FrameContext memory frame) internal pure returns (bool) {\n", i)
+		for _, exception := range t.byKey[k] {
+			fmt.Fprintf(b, "        if (frame.storageAddress == %s) {\n            for (uint256 ei=0; ei<frame.groups.length; ei++) {\n", solidityAddress(common.HexToAddress(exception.StorageAddress)))
+			var conditions []string
+			for _, group := range exception.Groups {
+				conditions = append(conditions, "frame.groups[ei] == "+GroupID(group).Hex())
+			}
+			fmt.Fprintf(b, "                if (%s) return true;\n            }\n        }\n", strings.Join(conditions, " || "))
+		}
+		b.WriteString("        return false;\n    }\n")
+	}
 }
 
 func writeEntryPoints(b *strings.Builder, org string) {
@@ -282,7 +345,7 @@ func writeEntryPoints(b *strings.Builder, org string) {
 }
 
 // writeGroupBlock emits the dispatch for the rules bound to one group.
-func writeGroupBlock(b, bodies *strings.Builder, next *int, group string, index map[frameKey][]*compiledRule) error {
+func writeGroupBlock(b, bodies *strings.Builder, next *int, group string, index map[frameKey][]*compiledRule, tables *exceptionTables) error {
 	b.WriteString(fmt.Sprintf("            // group %s\n", solidityComment(group)))
 	b.WriteString(fmt.Sprintf("            if (g == %s) {\n", GroupID(group).Hex()))
 
@@ -295,7 +358,7 @@ func writeGroupBlock(b, bodies *strings.Builder, next *int, group string, index 
 			if err := writeRuleDispatch(b, n, key, rule); err != nil {
 				return err
 			}
-			if err := writeRuleBody(bodies, n, group, key, rule); err != nil {
+			if err := writeRuleBody(bodies, n, group, key, rule, tables); err != nil {
 				return err
 			}
 		}
@@ -380,7 +443,7 @@ func targetCondition(key frameKey) string {
 }
 
 // writeRuleBody emits one rule's argument checks as its own function.
-func writeRuleBody(b *strings.Builder, n int, group string, key frameKey, rule *compiledRule) error {
+func writeRuleBody(b *strings.Builder, n int, group string, key frameKey, rule *compiledRule, tables *exceptionTables) error {
 	b.WriteString(fmt.Sprintf("\n    /// @dev group %s, %s\n", solidityComment(group), solidityComment(rule.sig)))
 	b.WriteString(fmt.Sprintf("    function _rule%d(address signer, address[] calldata linked, bytes calldata payload, FrameContext memory frame)\n", n))
 	mutability := "pure"
@@ -399,13 +462,8 @@ func writeRuleBody(b *strings.Builder, n int, group string, key frameKey, rule *
 	if key.targetClass == "" || key.targetClass == "org" || key.targetClass == "create" || key.targetClass == "deployer" || key.targetClass == "pending" {
 		b.WriteString("        if (frame.complete && (frame.codeOrg != frame.policyOrg || frame.storageOrg != frame.policyOrg)) return OWNERSHIP;\n")
 	}
-	for _, exception := range rule.exceptions {
-		fmt.Fprintf(b, "        if (frame.storageAddress == %s) {\n            for (uint256 ei=0; ei<frame.groups.length; ei++) {\n", solidityAddress(common.HexToAddress(exception.StorageAddress)))
-		var conditions []string
-		for _, group := range exception.Groups {
-			conditions = append(conditions, "frame.groups[ei] == "+GroupID(group).Hex())
-		}
-		fmt.Fprintf(b, "                if (%s) return NO_MATCHING_RULE;\n            }\n        }\n", strings.Join(conditions, " || "))
+	if fn := tables.use(rule.exceptions); fn != "" {
+		fmt.Fprintf(b, "        if (%s(frame)) return NO_MATCHING_RULE;\n", fn)
 	}
 	if key.targetClass == "pending" {
 		b.WriteString("        if ((frame.groupClaim & 3) == 0) return OPERATIONAL_CLAIM;\n")

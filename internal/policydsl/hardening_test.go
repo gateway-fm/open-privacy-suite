@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -33,7 +34,9 @@ func TestBuildRejectsRuntimeLargerThanNodeLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	artifact, err := (&Compiler{Path: path}).Build(t.Context(), v)
-	if artifact != nil || err == nil || !strings.Contains(err.Error(), "runtime bytecode exceeds") {
+	// Assert the sentinel, not the wording: callers classify on ErrPolicyTooLarge
+	// to tell "the author must simplify this" from "the compiler broke".
+	if artifact != nil || !errors.Is(err, ErrPolicyTooLarge) {
 		t.Fatalf("oversized artifact must fail before publication: artifact=%v, error=%v", artifact != nil, err)
 	}
 }
