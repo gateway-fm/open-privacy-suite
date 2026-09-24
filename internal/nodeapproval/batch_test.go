@@ -24,7 +24,7 @@ func batchFixtures(n int) []Approval {
 
 func TestBatchGolden(t *testing.T) {
 	key := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{7}, 32))
-	batch, err := goldenSigner(key).SignBatch(batchFixtures(3))
+	batch, err := goldenSigner(key).SignBatch(batchFixtures(3), DefaultApprovalTTL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestSignerSnapshotIndependentOfDelivery(t *testing.T) {
 	entered := make(chan []Approval, 4)
 	release := make(chan struct{})
 	hook := &hookSigner{Signer: NewEd25519Signer("default", make([]byte, 32)), entered: entered, release: release}
-	s := &Service{signer: hook, queue: make(chan Approval, 64), signed: make(chan Batch, 4), maxBatch: 32, signDone: make(chan struct{}), done: make(chan struct{})}
+	s := &Service{signer: hook, ttl: DefaultApprovalTTL, queue: make(chan Approval, 64), signed: make(chan Batch, 4), maxBatch: 32, signDone: make(chan struct{}), done: make(chan struct{})}
 	s.queue <- batchFixtures(1)[0]
 	go s.signLoop(ctx)
 	defer func() { cancel(); <-s.signDone }()
@@ -89,7 +89,7 @@ func TestSignerSnapshotIndependentOfDelivery(t *testing.T) {
 	}
 	// Blocked crypto must not block Enqueue. These 33 arrive during the first signature.
 	for i := 0; i < 33; i++ {
-		if err := s.Enqueue(&Prepared{}, "principal"); err != nil {
+		if err := s.Enqueue(&Prepared{}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -129,11 +129,11 @@ type hookSigner struct {
 	calls   int
 }
 
-func (h *hookSigner) SignBatch(a []Approval) (Batch, error) {
+func (h *hookSigner) SignBatch(a []Approval, ttl time.Duration) (Batch, error) {
 	h.calls++
 	h.entered <- a
 	if h.calls == 1 {
 		<-h.release
 	}
-	return h.Signer.SignBatch(a)
+	return h.Signer.SignBatch(a, ttl)
 }

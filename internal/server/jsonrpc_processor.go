@@ -1685,7 +1685,7 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 	// Queue only after every OPS gate has passed. Delivery has process lifetime,
 	// runs independently of forwarding, and does not wait for a Reth ACK.
 	if prepared != nil {
-		if err := p.nodeApprovals.Enqueue(prepared, req.UserID); err != nil {
+		if err := p.nodeApprovals.Enqueue(prepared); err != nil {
 			// No transaction was forwarded. Release the registrations made above.
 			for _, addr := range append(runtimeCreateAddrs, rawTxPlainCreateAddr) {
 				if addr != "" {

@@ -30,22 +30,24 @@ type Batch struct {
 	Signature string     `json:"signature"`
 }
 
-// DefaultApprovalTTL is how long a signed approval stays usable unless
-// OPS_APPROVAL_TTL says otherwise; MaxApprovalTTL is the longest OPS will sign.
+// DefaultApprovalTTL is how long a signed approval stays usable unless OPS_APPROVAL_TTL says
+// otherwise. MinApprovalTTL leaves room for a producer's wait window plus a block;
+// MaxApprovalTTL is the longest OPS will sign.
 const (
 	DefaultApprovalTTL = 10 * time.Minute
+	MinApprovalTTL     = 10 * time.Second
 	MaxApprovalTTL     = time.Hour
 )
 
-// configuredApprovalTTL reads OPS_APPROVAL_TTL (a Go duration, 1s to 1h).
+// configuredApprovalTTL reads OPS_APPROVAL_TTL (a Go duration, 10s to 1h).
 func configuredApprovalTTL() (time.Duration, error) {
 	value := os.Getenv("OPS_APPROVAL_TTL")
 	if value == "" {
 		return DefaultApprovalTTL, nil
 	}
 	ttl, err := time.ParseDuration(value)
-	if err != nil || ttl < time.Second || ttl > MaxApprovalTTL {
-		return 0, errors.New("OPS_APPROVAL_TTL must be a duration between 1s and 1h")
+	if err != nil || ttl < MinApprovalTTL || ttl > MaxApprovalTTL {
+		return 0, errors.New("OPS_APPROVAL_TTL must be a duration between 10s and 1h")
 	}
 	return ttl, nil
 }
@@ -102,10 +104,11 @@ func (b Batch) Frame() []byte { return b.frame }
 func (b Batch) Encoded() []byte { return b.encoded }
 
 // Signer produces the batch signature. The interface is the seam for a KMS- or HSM-backed
-// signer later; the producer only ever sees a key id and a signature.
+// signer later; the producer only ever sees a key id and a signature. The lifetime is chosen
+// per batch, because it depends on what the producers accept (wire contract §5).
 type Signer interface {
 	KeyID() string
-	SignBatch(approvals []Approval) (Batch, error)
+	SignBatch(approvals []Approval, ttl time.Duration) (Batch, error)
 }
 
 // Ed25519Signer signs with a software key held by OPS. The seed arrives like every other OPS
@@ -113,21 +116,14 @@ type Signer interface {
 type Ed25519Signer struct {
 	keyID string
 	key   ed25519.PrivateKey
-	ttl   time.Duration
 	now   func() time.Time
 }
 
 func NewEd25519Signer(keyID string, seed []byte) *Ed25519Signer {
-	s := &Ed25519Signer{keyID: keyID, ttl: DefaultApprovalTTL, now: time.Now}
+	s := &Ed25519Signer{keyID: keyID, now: time.Now}
 	if len(seed) == ed25519.SeedSize {
 		s.key = ed25519.NewKeyFromSeed(seed)
 	}
-	return s
-}
-
-// WithTTL sets how long the approvals this signer signs stay usable.
-func (s *Ed25519Signer) WithTTL(ttl time.Duration) *Ed25519Signer {
-	s.ttl = ttl
 	return s
 }
 
@@ -141,15 +137,16 @@ func (s *Ed25519Signer) PublicKey() ed25519.PublicKey {
 	return s.key.Public().(ed25519.PublicKey)
 }
 
-func (s *Ed25519Signer) SignBatch(approvals []Approval) (Batch, error) {
+// SignBatch signs approvals that stay usable for ttl from now.
+func (s *Ed25519Signer) SignBatch(approvals []Approval, ttl time.Duration) (Batch, error) {
 	if s.key == nil {
 		return Batch{}, errors.New("approval signer has no key")
 	}
-	if s.ttl < time.Millisecond {
+	if ttl < time.Millisecond {
 		return Batch{}, errors.New("approval TTL must be positive")
 	}
 	issued := uint64(s.now().UnixMilli())
-	b := Batch{Version: BatchVersion, KeyID: s.keyID, IssuedAt: issued, ExpiresAt: issued + uint64(s.ttl.Milliseconds()), Approvals: append([]Approval(nil), approvals...)}
+	b := Batch{Version: BatchVersion, KeyID: s.keyID, IssuedAt: issued, ExpiresAt: issued + uint64(ttl.Milliseconds()), Approvals: append([]Approval(nil), approvals...)}
 	message, err := b.Message()
 	if err != nil {
 		return Batch{}, err
@@ -162,7 +159,8 @@ func (s *Ed25519Signer) SignBatch(approvals []Approval) (Batch, error) {
 	return b, nil
 }
 
-// SignBatch signs under the key id "default"; fixtures and the harness client use it.
+// SignBatch signs under the key id "default" with the default TTL; fixtures and the harness
+// client use it.
 func SignBatch(key ed25519.PrivateKey, approvals []Approval) (Batch, error) {
-	return (&Ed25519Signer{keyID: "default", key: key, ttl: DefaultApprovalTTL, now: time.Now}).SignBatch(approvals)
+	return (&Ed25519Signer{keyID: "default", key: key, now: time.Now}).SignBatch(approvals, DefaultApprovalTTL)
 }

@@ -30,8 +30,10 @@ type Approval struct {
 	ChainID     uint64      `json:"chain_id"`
 	TxHash      common.Hash `json:"tx_hash"`
 	Fingerprint common.Hash `json:"fingerprint"`
-	Principal   common.Hash `json:"principal"`
-	Signature   string      `json:"signature,omitempty"`
+	// Principal is the reserved field: OPS writes zeros, receivers sign over it and ignore it
+	// (wire contract §2). The golden vectors keep a value there to prove decoders accept any.
+	Principal common.Hash `json:"principal"`
+	Signature string      `json:"signature,omitempty"`
 }
 
 func (a Approval) Message() []byte {
@@ -73,6 +75,7 @@ type Service struct {
 	rpc         *rpc.Client
 	rpcHTTP     *http.Client
 	signer      Signer
+	ttl         time.Duration // OPS_APPROVAL_TTL: how long the approvals signed stay usable
 	address     string
 	queue       chan Approval
 	signed      chan Batch
@@ -131,7 +134,7 @@ func NewWithTransport(url, address string, seed []byte, tc nodehttp.TransportCon
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &Service{hashMode: mode, node: node, hops: newHops(), rpc: client, rpcHTTP: httpClient, signer: NewEd25519Signer(keyID, seed).WithTTL(ttl), address: address, queue: make(chan Approval, 4096), signed: make(chan Batch, 128), maxBatch: maxBatch, cancel: cancel, done: make(chan struct{}), signDone: make(chan struct{})}
+	s := &Service{hashMode: mode, node: node, hops: newHops(), rpc: client, rpcHTTP: httpClient, signer: NewEd25519Signer(keyID, seed), ttl: ttl, address: address, queue: make(chan Approval, 4096), signed: make(chan Batch, 128), maxBatch: maxBatch, cancel: cancel, done: make(chan struct{}), signDone: make(chan struct{})}
 	s.connections.Store(1)
 	go s.signLoop(ctx)
 	go s.deliver(ctx, conn)
@@ -269,10 +272,10 @@ func (s *Service) Prepare(ctx context.Context, raw string) (*Prepared, error) {
 
 // Enqueue is called only AFTER OPS RBAC, trace and compliance gates have passed.
 // It never waits for a node acknowledgement and never resubmits a transaction.
-func (s *Service) Enqueue(p *Prepared, principal string) error {
+func (s *Service) Enqueue(p *Prepared) error {
 	p.Approval.hop = s.hops.add(p.Approval.TxHash)
 	a := p.Approval
-	a.Principal = crypto.Keccak256Hash([]byte(principal))
+	a.Principal = common.Hash{} // reserved: senders write zeros
 	a.Signature = ""
 	if s.closing.Load() {
 		return errors.New("approval sender closed")
@@ -328,7 +331,7 @@ func (s *Service) signLoop(ctx context.Context) {
 func (s *Service) signOne(first Approval, draining bool) bool {
 	approvals := s.takeBatch(first)
 	mark(approvals, func(h *Hop, n int64) { h.SignStart = n })
-	batch, err := s.signer.SignBatch(approvals)
+	batch, err := s.signer.SignBatch(approvals, s.ttl)
 	mark(approvals, func(h *Hop, n int64) { h.SignEnd = n })
 	if err != nil {
 		slog.Error("approval batch signing failed", "error", err)
