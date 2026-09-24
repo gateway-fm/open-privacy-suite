@@ -17,7 +17,7 @@ var (
 
 // packCalldata builds real calldata so the evaluator is exercised against bytes
 // an EVM would actually see.
-func packCalldata(t *testing.T, abiText, method string, args ...any) []byte {
+func packCalldata(t testing.TB, abiText, method string, args ...any) []byte {
 	t.Helper()
 	parsed, err := abi.JSON(strings.NewReader(abiText))
 	if err != nil {
@@ -30,12 +30,12 @@ func packCalldata(t *testing.T, abiText, method string, args ...any) []byte {
 	return data
 }
 
-func transferCalldata(t *testing.T, to common.Address, amount *big.Int) []byte {
+func transferCalldata(t testing.TB, to common.Address, amount *big.Int) []byte {
 	t.Helper()
 	return packCalldata(t, vaultABI, "transfer", to, amount)
 }
 
-func balanceOfCalldata(t *testing.T, owner common.Address) []byte {
+func balanceOfCalldata(t testing.TB, owner common.Address) []byte {
 	t.Helper()
 	return packCalldata(t, vaultABI, "balanceOf", owner)
 }

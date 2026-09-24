@@ -44,7 +44,7 @@ const (
 
 var libraryAddr = common.HexToAddress("0xDDDD000000000000000000000000000000000004")
 
-func abiDigest(t *testing.T, abiText string) string {
+func abiDigest(t testing.TB, abiText string) string {
 	t.Helper()
 	sum := sha256.Sum256([]byte(abiText))
 	return hex.EncodeToString(sum[:])
