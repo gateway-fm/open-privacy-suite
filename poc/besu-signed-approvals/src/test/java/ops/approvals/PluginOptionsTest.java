@@ -37,6 +37,44 @@ class PluginOptionsTest {
         parse("--plugin-ops-approval-max-ttl-ms=600000").maxTtlMs);
   }
 
+  private static PluginOptions valid(final String... more) {
+    final String[] required = {
+      "--plugin-ops-approval-listen=127.0.0.1:0", "--plugin-ops-approval-chain-id=31337", "--plugin-ops-approval-public-key=" + "11".repeat(32)
+    };
+    final String[] args = java.util.Arrays.copyOf(required, required.length + more.length);
+    System.arraycopy(more, 0, args, required.length, more.length);
+    return parse(args);
+  }
+
+  @Test
+  void startUpRefusesMissingOrUnboundedSettings() {
+    valid().validate();
+    valid("--plugin-ops-approval-max-ttl-ms=86400000").validate();
+    for (final String bad :
+        new String[] {
+          "--plugin-ops-approval-max-ttl-ms=86400001",
+          "--plugin-ops-approval-max-ttl-ms=0",
+          "--plugin-ops-approval-capacity=0",
+          "--plugin-ops-approval-wait-ms=-1",
+          "--plugin-ops-approval-max-connections=0",
+          "--plugin-ops-approval-max-concurrent-calls=0",
+          "--plugin-ops-approval-allowed-sources=10.0.0.1/8"
+        }) {
+      assertThrows(IllegalArgumentException.class, () -> valid(bad).validate(), bad);
+    }
+    assertThrows(IllegalArgumentException.class, () -> parse("--plugin-ops-approval-chain-id=31337").validate(), "no listen address, no key");
+  }
+
+  @Test
+  void aKeyIdTrustedTwiceIsAConfigurationError() {
+    // --public-key is the id 'default'; naming 'default' again in --public-keys is ambiguous.
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> valid("--plugin-ops-approval-public-keys=default=" + "22".repeat(32)).trustedKeys());
+    assertThrows(IllegalArgumentException.class, () -> PluginOptions.parseKeys("a=" + "11".repeat(32) + ",a=" + "22".repeat(32)));
+    assertEquals(2, valid("--plugin-ops-approval-public-keys=next=" + "22".repeat(32)).trustedKeys().size());
+  }
+
   @Test
   void theOrphanLifetimeIsGoneExpiryReplacesIt() {
     assertThrows(CommandLine.UnmatchedArgumentException.class, () -> parse("--plugin-ops-approval-orphan-ttl-ms=300000"));

@@ -256,4 +256,30 @@ class ApprovalStoreTest {
     missed.reconcile(Set.of(hash(3)), clock.get());
     assertFalse(put(missed, approval(4, 4), t), "the snapshot made it live");
   }
+
+  @Test
+  void reconcilingNeverResurrectsATransactionThatLeftThePoolAfterTheSnapshot() {
+    final long t = clock.get();
+    // Dropped after the snapshot was taken: the snapshot still lists it, but it is an orphan.
+    final ApprovalStore dropped = store(1);
+    assertTrue(put(dropped, approval(1, 1), t - 60_000));
+    dropped.pooled(hash(1));
+    final long takenAt = clock.get();
+    clock.addAndGet(10);
+    dropped.unpooled(hash(1));
+    dropped.reconcile(Set.of(hash(1)), takenAt);
+    assertTrue(put(dropped, approval(2, 2), t), "the stale snapshot must not make it live again");
+    // Included after the snapshot: it keeps its place, first to go after expired approvals.
+    final ApprovalStore included = store(2);
+    assertTrue(put(included, approval(1, 1), t - 60_000));
+    assertTrue(put(included, approval(2, 2), t - 70_000)); // an older orphan
+    included.pooled(hash(1));
+    final long before = clock.get();
+    clock.addAndGet(10);
+    included.included(hash(1));
+    included.reconcile(Set.of(hash(1)), before);
+    assertTrue(put(included, approval(3, 3), t));
+    assertTrue(included.get(hash(1)).isEmpty(), "the included approval goes before the older orphan");
+    assertTrue(included.get(hash(2)).isPresent());
+  }
 }
