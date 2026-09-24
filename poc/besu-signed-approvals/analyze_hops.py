@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Delivery latency of OPS's approval path, from its own hop marks (recorded on the raw-TCP path).
+"""Delivery latency of the approval path, from OPS's own hop marks.
 
 Reads the file OPS wrote at exit (OPS_APPROVAL_HOPS_FILE): one row per approval with
-nanosecond marks — queued, sign start/end, delivery start, write start/end, and the moment the
-transaction itself was forwarded. Reports the distributions that decide whether transport is a
-cost worth optimising, and whether the approval leaves OPS before the transaction does.
+nanosecond marks — queued, sign start/end, the start of the gRPC Deliver call, the moment the
+producer confirmed it stored the batch, and the moment the transaction itself was forwarded.
+Reports the distributions that decide whether transport is a cost worth optimising, and whether
+the approval is stored before the transaction is forwarded.
 """
 import json
 import statistics
@@ -30,18 +31,18 @@ def dist(values, unit=1000.0):
 
 def analyze(path):
     rows = json.loads(Path(path).read_text())
-    complete = [r for r in rows if r.get("written") and r.get("queued")]
-    out = {"file": str(path), "approvals": len(rows), "with_write_mark": len(complete)}
-    out["queued_to_written"] = dist([r["written"] - r["queued"] for r in complete])
+    complete = [r for r in rows if r.get("stored") and r.get("queued")]
+    out = {"file": str(path), "approvals": len(rows), "with_stored_mark": len(complete)}
+    out["queued_to_stored"] = dist([r["stored"] - r["queued"] for r in complete])
     out["queued_to_sign_start"] = dist([r["sign_start"] - r["queued"] for r in complete if r.get("sign_start")])
     out["sign_duration"] = dist([r["sign_end"] - r["sign_start"] for r in complete if r.get("sign_start") and r.get("sign_end")])
-    out["sign_end_to_written"] = dist([r["written"] - r["sign_end"] for r in complete if r.get("sign_end")])
-    out["write_call"] = dist([r["written"] - r["write_start"] for r in complete if r.get("write_start")])
+    out["sign_end_to_stored"] = dist([r["stored"] - r["sign_end"] for r in complete if r.get("sign_end")])
+    out["deliver_call"] = dist([r["stored"] - r["call_start"] for r in complete if r.get("call_start")])
     forwarded = [r for r in complete if r.get("forward_start")]
-    # Negative = the approval was on the wire before OPS forwarded the transaction.
-    lead = [r["written"] - r["forward_start"] for r in forwarded]
-    out["approval_written_minus_forward_start"] = dist(lead)
-    out["approval_on_wire_before_forward"] = {
+    # Negative = the producer had stored the approval before OPS forwarded the transaction.
+    lead = [r["stored"] - r["forward_start"] for r in forwarded]
+    out["approval_stored_minus_forward_start"] = dist(lead)
+    out["approval_stored_before_forward"] = {
         "n": len(forwarded), "count": sum(1 for v in lead if v <= 0),
         "rate": round(sum(1 for v in lead if v <= 0) / len(forwarded), 4) if forwarded else None}
     return out

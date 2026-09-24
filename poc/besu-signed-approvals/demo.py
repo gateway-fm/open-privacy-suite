@@ -114,8 +114,11 @@ class Stack:
                 DB_MAX_OPEN_CONNS="30")
             env.update(getattr(self, "extra_env", {}))
             if plugin:
-                env.update(OPS_APPROVAL_NODE="besu", OPS_APPROVAL_TARGET=f"127.0.0.1:{self.node.approval_port}",
-                           OPS_APPROVAL_SEED_FILE=str(seed), OPS_APPROVAL_MAX_BATCH="32")
+                env.update(OPS_APPROVAL_NODE="besu", OPS_APPROVAL_TARGETS=f"127.0.0.1:{self.node.approval_port}",
+                           OPS_APPROVAL_SEED_FILE=str(seed), OPS_APPROVAL_MAX_BATCH="32",
+                           # The load runs send hundreds of transactions per second from one identity;
+                           # the per-principal preflight budget (default 20/s) would throttle them.
+                           OPS_APPROVAL_PREFLIGHT_RATE="100000", OPS_APPROVAL_PREFLIGHT_BURST="100000")
             self.opslog = (self.directory / "ops.log").open("w")
             assert (h.ROOT / ".tmp/ops-server").is_file(), "build it first: go build -tags mockauth -o .tmp/ops-server ./cmd/server"
             self.ops = subprocess.Popen([str(h.ROOT / ".tmp/ops-server")], cwd=self.directory, env=env,

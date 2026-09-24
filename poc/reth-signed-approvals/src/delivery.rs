@@ -100,7 +100,7 @@ impl Settings {
             max_connections: number("OPS_APPROVAL_MAX_CONNECTIONS", 32, 1)? as usize,
             max_concurrent_calls: u32::try_from(number(
                 "OPS_APPROVAL_MAX_CONCURRENT_CALLS",
-                64,
+                32,
                 1,
             )?)
             .map_err(|_| "OPS_APPROVAL_MAX_CONCURRENT_CALLS is too large".to_string())?,
@@ -362,7 +362,7 @@ mod tests {
             wait: Duration::from_secs(5),
             allowed_sources: vec![],
             max_connections: 32,
-            max_concurrent_calls: 64,
+            max_concurrent_calls: 32,
             verify_workers: 2,
         }
     }
@@ -735,7 +735,7 @@ mod tests {
                 Duration::from_secs(5),
                 0,
                 32,
-                64,
+                32,
                 2
             )
         );

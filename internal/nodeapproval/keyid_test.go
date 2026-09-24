@@ -34,9 +34,9 @@ func TestBatchNamesItsSigningKey(t *testing.T) {
 	if !ed25519.Verify(ed25519.NewKeyFromSeed(bytes.Repeat([]byte{7}, 32)).Public().(ed25519.PublicKey), message, sig) {
 		t.Fatal("signature does not cover the key id")
 	}
-	// The frame is the message plus the signature, length-prefixed.
-	if got := batch.Frame(); len(got) != 4+len(message)+ed25519.SignatureSize {
-		t.Fatalf("frame length %d", len(got))
+	// The envelope on the wire is the message plus the signature.
+	if got := batch.Encoded(); len(got) != len(message)+ed25519.SignatureSize {
+		t.Fatalf("encoded length %d", len(got))
 	}
 	for _, id := range []string{"", "has space", string(make([]byte, 65))} {
 		if _, err := NewEd25519Signer(id, bytes.Repeat([]byte{7}, 32)).SignBatch(batchFixtures(1), DefaultApprovalTTL); err == nil {

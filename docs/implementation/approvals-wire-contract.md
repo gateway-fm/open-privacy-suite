@@ -98,7 +98,9 @@ confirmed. The contract closes that gap:
 - After a restart the RPC nodes re-announce their pooled transactions, possibly before OPS has
   reconnected. So the receiver counts a transaction's wait window from the later of its pool
   admission and the first `Status` call after boot, and extends it that way for at most 60 s
-  after boot.
+  after boot. With several OPS instances the first `Status` from any of them starts that window;
+  an instance that reconnects more than one wait window later is not covered. In practice every
+  instance reconnects within about a second (§1).
 
 `StatusResponse` also carries the receiver's chain id, trusted key ids, maximum TTL, capacity and
 wait window. OPS signs with a TTL no longer than every lane's maximum and reports a lane whose chain
@@ -149,7 +151,14 @@ or trusted key ids do not match.
 | `--plugin-ops-approval-capacity` | Besu plugin | `100000` | approvals the store holds |
 | `--plugin-ops-approval-wait-ms` | Besu plugin | `5000` | how long a pooled transaction waits for its approval |
 | `--plugin-ops-approval-allowed-sources` | Besu plugin | any | optional comma-separated CIDR list of sources allowed to connect |
-| Same settings | Reth node | as the plugin | named in the node's own configuration |
+| `--plugin-ops-approval-max-connections` | Besu plugin | `32` | open delivery connections; one per OPS instance is the norm |
+| `--plugin-ops-approval-max-concurrent-calls` | Besu plugin | `32` | delivery calls in flight per connection |
+| Same settings | Reth node | as the plugin | environment variables `OPS_APPROVAL_LISTEN`, `OPS_APPROVAL_MAX_TTL_MS`, `OPS_APPROVAL_CAPACITY`, `OPS_APPROVAL_WAIT_MS`, `OPS_APPROVAL_ALLOWED_SOURCES`, `OPS_APPROVAL_MAX_CONNECTIONS`, `OPS_APPROVAL_MAX_CONCURRENT_CALLS` |
+
+Trusted keys are configured as a set of `id=hex` pairs on both receivers
+(`--plugin-ops-approval-public-keys`, `OPS_APPROVAL_PUBLIC_KEYS`). The plugin also accepts a single
+`--plugin-ops-approval-public-key`, trusted under the id `default`; the Reth node has no such
+shorthand.
 
 **Sizing.** Capacity should cover what the OPS instances may redeliver at once plus a grace period
 of fresh traffic: capacity ≥ Σ `OPS_APPROVAL_RETAIN_MAX` + rate × grace. Below that, a full
