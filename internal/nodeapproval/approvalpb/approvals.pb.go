@@ -168,8 +168,12 @@ type StatusResponse struct {
 	// Key ids the receiver trusts, so a sender sees a rotation gap before its
 	// first batch is refused.
 	TrustedKeyIds []string `protobuf:"bytes,3,rep,name=trusted_key_ids,json=trustedKeyIds,proto3" json:"trusted_key_ids,omitempty"`
-	// The longest expires_at - now the receiver accepts, in milliseconds.
-	MaxTtlMs      uint64 `protobuf:"varint,4,opt,name=max_ttl_ms,json=maxTtlMs,proto3" json:"max_ttl_ms,omitempty"`
+	// The longest expires_at - issued_at the receiver accepts, in milliseconds.
+	MaxTtlMs uint64 `protobuf:"varint,4,opt,name=max_ttl_ms,json=maxTtlMs,proto3" json:"max_ttl_ms,omitempty"`
+	// How many approvals the receiver's store holds.
+	Capacity uint64 `protobuf:"varint,5,opt,name=capacity,proto3" json:"capacity,omitempty"`
+	// How long a pooled transaction waits for its approval, in milliseconds.
+	WaitMs        uint64 `protobuf:"varint,6,opt,name=wait_ms,json=waitMs,proto3" json:"wait_ms,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -232,6 +236,20 @@ func (x *StatusResponse) GetMaxTtlMs() uint64 {
 	return 0
 }
 
+func (x *StatusResponse) GetCapacity() uint64 {
+	if x != nil {
+		return x.Capacity
+	}
+	return 0
+}
+
+func (x *StatusResponse) GetWaitMs() uint64 {
+	if x != nil {
+		return x.WaitMs
+	}
+	return 0
+}
+
 var File_ops_approvals_v1_approvals_proto protoreflect.FileDescriptor
 
 const file_ops_approvals_v1_approvals_proto_rawDesc = "" +
@@ -242,13 +260,15 @@ const file_ops_approvals_v1_approvals_proto_rawDesc = "" +
 	"\x0fDeliverResponse\x12\x17\n" +
 	"\aboot_id\x18\x01 \x01(\tR\x06bootId\x12\x16\n" +
 	"\x06stored\x18\x02 \x01(\rR\x06stored\"\x0f\n" +
-	"\rStatusRequest\"\x8a\x01\n" +
+	"\rStatusRequest\"\xbf\x01\n" +
 	"\x0eStatusResponse\x12\x17\n" +
 	"\aboot_id\x18\x01 \x01(\tR\x06bootId\x12\x19\n" +
 	"\bchain_id\x18\x02 \x01(\x04R\achainId\x12&\n" +
 	"\x0ftrusted_key_ids\x18\x03 \x03(\tR\rtrustedKeyIds\x12\x1c\n" +
 	"\n" +
-	"max_ttl_ms\x18\x04 \x01(\x04R\bmaxTtlMs2\xaf\x01\n" +
+	"max_ttl_ms\x18\x04 \x01(\x04R\bmaxTtlMs\x12\x1a\n" +
+	"\bcapacity\x18\x05 \x01(\x04R\bcapacity\x12\x17\n" +
+	"\await_ms\x18\x06 \x01(\x04R\x06waitMs2\xaf\x01\n" +
 	"\x10ApprovalDelivery\x12N\n" +
 	"\aDeliver\x12 .ops.approvals.v1.DeliverRequest\x1a!.ops.approvals.v1.DeliverResponse\x12K\n" +
 	"\x06Status\x12\x1f.ops.approvals.v1.StatusRequest\x1a .ops.approvals.v1.StatusResponseBQ\n" +

@@ -12,6 +12,8 @@ option java_package = "ops.approvals.grpc";
 service ApprovalDelivery {
   // Deliver verifies and stores one signed batch. OK means every approval in
   // the batch is stored; any error means none is. A batch is all or nothing.
+  // A full store answers UNAVAILABLE with the trailer
+  // "ops-approval-reason: store-full".
   rpc Deliver(DeliverRequest) returns (DeliverResponse);
   // Status identifies the receiver. OPS calls it after every (re)connect and
   // resends the batches it retains when the boot id has changed.
@@ -39,6 +41,10 @@ message StatusResponse {
   // Key ids the receiver trusts, so a sender sees a rotation gap before its
   // first batch is refused.
   repeated string trusted_key_ids = 3;
-  // The longest expires_at - now the receiver accepts, in milliseconds.
+  // The longest expires_at - issued_at the receiver accepts, in milliseconds.
   uint64 max_ttl_ms = 4;
+  // How many approvals the receiver's store holds.
+  uint64 capacity = 5;
+  // How long a pooled transaction waits for its approval, in milliseconds.
+  uint64 wait_ms = 6;
 }
