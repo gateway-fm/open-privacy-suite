@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/big"
+	"sort"
 	"strings"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
@@ -176,6 +177,29 @@ type Validated struct {
 // It is a copy so that a display, export or audit path cannot edit the document
 // out from under the compiled rules that are actually enforced.
 func (v *Validated) Policy() *Policy { return v.policy.clone() }
+
+// Groups returns the groups this policy binds, in a deterministic order.
+func (v *Validated) Groups() []string {
+	groups := make([]string, 0, len(v.byGroup))
+	for group := range v.byGroup {
+		groups = append(groups, group)
+	}
+	sort.Strings(groups)
+	return groups
+}
+
+// ForGroup narrows a validated policy to one group's bindings.
+//
+// The result compiles to that group's artifact alone, which is what makes a
+// group's code independent of how many other groups the organisation has. It
+// shares the document, so nothing about the policy is re-interpreted here.
+func (v *Validated) ForGroup(group string) *Validated {
+	index, ok := v.byGroup[group]
+	if !ok {
+		return nil
+	}
+	return &Validated{policy: v.policy, byGroup: map[string]map[frameKey][]*compiledRule{group: index}}
+}
 
 // knownCallTypes is the closed set of frame kinds a rule may name.
 var knownCallTypes = map[CallType]struct{}{

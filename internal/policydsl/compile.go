@@ -127,6 +127,35 @@ type solcOutput struct {
 	} `json:"contracts"`
 }
 
+// BuildPerGroup compiles one artifact per bound group.
+//
+// A frame is decided by the groups its signer belongs to, so an artifact that
+// carries every group makes both its size and the per-frame check grow with
+// the organisation rather than with the group being checked. Compiling each
+// group on its own keeps a group's code the same whether the organisation has
+// three groups or three hundred.
+//
+// The compiler is checked once for the whole set: a partially built set is
+// never returned, because publishing part of a policy would leave frames
+// decided by rules nobody approved together.
+func (c *Compiler) BuildPerGroup(ctx context.Context, v *Validated) (map[string]*Artifact, error) {
+	if v == nil {
+		return nil, fmt.Errorf("policydsl: no validated policy to compile")
+	}
+	if err := c.Available(ctx); err != nil {
+		return nil, err
+	}
+	artifacts := make(map[string]*Artifact, len(v.byGroup))
+	for _, group := range v.Groups() {
+		artifact, err := c.Build(ctx, v.ForGroup(group))
+		if err != nil {
+			return nil, fmt.Errorf("group %s: %w", group, err)
+		}
+		artifacts[group] = artifact
+	}
+	return artifacts, nil
+}
+
 // Build generates Solidity from a validated policy and compiles it.
 //
 // The compiler is checked before use: a build that silently used a different
