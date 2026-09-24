@@ -239,7 +239,12 @@ func configurationError(c *gin.Context, err error) {
 	case errors.Is(err, db.ErrConfigurationConflict):
 		respondClientError(c, http.StatusConflict, err, "configuration conflicts with the current revision state", "admin_configuration: conflict without client text")
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "configuration operation failed"})
+		// An error that matched none of the classes above is a fault, not a
+		// client mistake. The client gets the same opaque message either way,
+		// but it must not vanish: without this line an operator sees a 500
+		// with nothing to act on and nothing in the log to chase.
+		respondInternalErrorAndLog(c, "configuration operation failed",
+			"admin_configuration: unclassified failure", "path", c.FullPath(), "err", err)
 	}
 }
 
