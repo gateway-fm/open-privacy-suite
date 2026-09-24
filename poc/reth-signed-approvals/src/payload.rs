@@ -1,5 +1,5 @@
 use crate::{
-    approvals::{Selected, Store},
+    approvals::{Now, Selected, Store},
     execution::ApprovalFactory,
 };
 use reth_basic_payload_builder::{BuildArguments, BuildOutcome, PayloadBuilder, PayloadConfig};
@@ -60,6 +60,7 @@ where
             .with_skip_state_root(ctx.config().tree_config().skip_state_root());
         if let Some(s) = &self.store {
             s.start(pool.clone());
+            s.follow(ctx.provider().clone());
         }
         Ok(Builder {
             pool,
@@ -116,10 +117,11 @@ where
                         self.pool
                             .best_transactions_with_attributes(attrs)
                             .filter_transactions(move |tx| {
-                                if !store.seen_at(*tx.hash(), tx.timestamp) {
-                                    return false;
-                                }
-                                let Some(approval) = store.get(tx.hash()) else {
+                                let now = Now::current();
+                                store.seen_at(*tx.hash(), tx.timestamp, now);
+                                // An expired approval counts as absent: the transaction
+                                // keeps waiting (contract §6).
+                                let Some(approval) = store.usable(tx.hash(), now.ms) else {
                                     return false;
                                 };
                                 *selection.lock().unwrap() = Some(Selected {
