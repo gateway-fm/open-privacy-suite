@@ -2,7 +2,9 @@ package ops.approvals;
 
 import io.grpc.Status;
 import java.security.SecureRandom;
+import java.util.EnumMap;
 import java.util.HexFormat;
+import java.util.Map;
 import java.util.function.LongSupplier;
 import ops.approvals.grpc.StatusResponse;
 import org.slf4j.Logger;
@@ -20,6 +22,7 @@ public final class ApprovalIngress {
   static final long MAX_ISSUED_AHEAD_MS = 5_000;
   /** The {@code ops-approval-reason} trailer of a refusal by a full store. */
   static final String STORE_FULL = "store-full";
+  private static final long REFUSAL_LOG_INTERVAL_MS = 10_000;
 
   /**
    * What a delivery is answered with: the status code, a description for OPS's log, the approvals
@@ -50,6 +53,7 @@ public final class ApprovalIngress {
   private final LongSupplier clock;
   private final Metrics metrics;
   private final String bootId = newBootId();
+  private final Map<Status.Code, long[]> refusalLog = new EnumMap<>(Status.Code.class);
   private volatile boolean accepting = true;
 
   public ApprovalIngress(
@@ -141,29 +145,40 @@ public final class ApprovalIngress {
       return refuse(Status.Code.FAILED_PRECONDITION, "expired " + (now - batch.expiresAt()) + " ms ago", batch);
     }
     if (!store.putAll(batch.keyId(), batch.issuedAt(), batch.expiresAt(), batch.approvals())) {
-      LOG.warn(
-          "OPS approval batch refused: store full ({} of {}), {} approvals under key id {}",
-          store.size(),
-          store.capacity(),
-          batch.approvals().size(),
-          batch.keyId());
+      logRefusal(Status.Code.UNAVAILABLE, "store full (" + store.size() + " of " + store.capacity() + ")", batch);
       return new Outcome(Status.Code.UNAVAILABLE, "store full", 0, STORE_FULL);
     }
     return new Outcome(Status.Code.OK, "", batch.approvals().size(), null);
   }
 
-  private static Outcome refuse(final Status.Code code, final String detail, final ApprovalBatch.Decoded batch) {
-    if (batch == null) {
-      LOG.warn("OPS approval batch refused ({}): {}", code, detail);
-    } else {
-      LOG.warn(
-          "OPS approval batch refused ({}): {}; {} approvals under key id {}",
-          code,
-          detail,
-          batch.approvals().size(),
-          batch.keyId());
-    }
+  private Outcome refuse(final Status.Code code, final String detail, final ApprovalBatch.Decoded batch) {
+    logRefusal(code, detail, batch);
     return Outcome.refused(code, detail);
+  }
+
+  /**
+   * One WARN per status per interval, counting the rest: a full store under load, or a sender with
+   * a rotated-out key, would otherwise write a line per batch. The batches metric counts them all.
+   */
+  private void logRefusal(final Status.Code code, final String detail, final ApprovalBatch.Decoded batch) {
+    final long now = clock.getAsLong();
+    final long suppressed;
+    synchronized (refusalLog) {
+      final long[] state = refusalLog.computeIfAbsent(code, c -> new long[] {Long.MIN_VALUE / 2, 0});
+      if (now - state[0] < REFUSAL_LOG_INTERVAL_MS) {
+        state[1]++;
+        return;
+      }
+      suppressed = state[1];
+      state[0] = now;
+      state[1] = 0;
+    }
+    LOG.warn(
+        "OPS approval batch refused ({}): {}{}{}",
+        code,
+        detail,
+        batch == null ? "" : "; " + batch.approvals().size() + " approvals under key id " + batch.keyId(),
+        suppressed == 0 ? "" : " (and " + suppressed + " more with this status since the last line)");
   }
 
   /** Who this receiver is. The first call after boot also starts the restart wait window. */

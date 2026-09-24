@@ -102,8 +102,9 @@ test {
 }
 
 jar {
-  // The unshaded classes only; the plugin Besu loads is the shadow JAR below.
-  archiveClassifier = 'thin'
+  // No unshaded JAR: it would carry the plugin's service entry without its bundled libraries, and
+  // copied into plugins/ beside the real one it could load first and halt Besu.
+  enabled = false
 }
 
 shadowJar {

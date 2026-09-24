@@ -28,6 +28,7 @@ import io.netty.handler.codec.http2.Http2GoAwayFrame;
 import io.netty.handler.codec.http2.Http2PingFrame;
 import io.netty.handler.codec.http2.Http2SettingsFrame;
 import java.net.InetSocketAddress;
+import java.net.ServerSocket;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.List;
@@ -67,6 +68,19 @@ class ApprovalServerTest {
   }
 
   private ApprovalServer start(final ApprovalServer.Limits limits, final int capacity) throws Exception {
+    return start(
+        limits,
+        capacity,
+        new ApprovalServer.Metrics() {
+          @Override
+          public void refused(final String reason) {
+            refused.add(reason);
+          }
+        });
+  }
+
+  private ApprovalServer start(final ApprovalServer.Limits limits, final int capacity, final ApprovalServer.Metrics metrics)
+      throws Exception {
     store = new ApprovalStore(capacity, 5_000, System::currentTimeMillis);
     ingress =
         new ApprovalIngress(
@@ -77,17 +91,7 @@ class ApprovalServerTest {
             new WaitWindow(5_000, System.currentTimeMillis()),
             System::currentTimeMillis,
             ApprovalIngress.Metrics.NONE);
-    final ApprovalServer server =
-        new ApprovalServer(
-            new InetSocketAddress("127.0.0.1", 0),
-            ingress,
-            limits,
-            new ApprovalServer.Metrics() {
-              @Override
-              public void refused(final String reason) {
-                refused.add(reason);
-              }
-            });
+    final ApprovalServer server = new ApprovalServer(new InetSocketAddress("127.0.0.1", 0), ingress, limits, metrics);
     server.start();
     closing.push(server);
     return server;
@@ -203,6 +207,37 @@ class ApprovalServerTest {
     assertEquals(0, store.size());
     assertTrue(refused.contains("source"), refused.toString());
     assertEquals(0, server.connections());
+  }
+
+  @Test
+  void aGuardThatThrowsStillRefusesTheConnection() throws Exception {
+    // A failing metrics backend must not turn the source check into an open door.
+    final ApprovalServer server =
+        start(
+            new ApprovalServer.Limits(AllowedSources.parse("10.0.0.0/8"), 32, 32, ApprovalServer.PERMIT_KEEPALIVE_MS),
+            10,
+            new ApprovalServer.Metrics() {
+              @Override
+              public void refused(final String reason) {
+                throw new IllegalStateException("metrics backend down");
+              }
+            });
+    final ApprovalDeliveryGrpc.ApprovalDeliveryBlockingStub stub = client(server).withDeadlineAfter(5, TimeUnit.SECONDS);
+    assertEquals(
+        Status.Code.UNAVAILABLE, refusal(() -> stub.status(StatusRequest.getDefaultInstance())).getStatus().getCode());
+    assertEquals(0, server.connections());
+  }
+
+  @Test
+  void closingReleasesTheListeningPortAtOnce() throws Exception {
+    final ApprovalServer server = start(limits(), 10);
+    client(server).withDeadlineAfter(5, TimeUnit.SECONDS).status(StatusRequest.getDefaultInstance());
+    final int port = server.port();
+    server.close();
+    try (ServerSocket again = new ServerSocket()) {
+      again.setReuseAddress(true); // the accepted connection may linger in TIME_WAIT; the listener may not
+      again.bind(new InetSocketAddress("127.0.0.1", port));
+    }
   }
 
   @Test

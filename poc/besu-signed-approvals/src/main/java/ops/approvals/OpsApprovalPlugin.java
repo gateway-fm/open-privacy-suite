@@ -2,6 +2,7 @@ package ops.approvals;
 
 import com.google.auto.service.AutoService;
 import io.grpc.Status;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
@@ -60,7 +61,7 @@ public class OpsApprovalPlugin implements BesuPlugin {
 
   private final PluginOptions options = new PluginOptions();
   private final AtomicReference<PrepareApprovalRpc> prepare = new AtomicReference<>();
-  private final InclusionTracker inclusions = new InclusionTracker();
+  private InclusionTracker inclusions;
   private ServiceManager services;
   private BlockchainService blockchain;
   private ApprovalStore store;
@@ -103,17 +104,7 @@ public class OpsApprovalPlugin implements BesuPlugin {
   }
 
   private void doStart() throws Exception {
-    if (options.listen == null || options.chainId == null || options.trustedKeys().isEmpty()) {
-      throw new IllegalArgumentException(
-          "--plugin-ops-approval-listen, --plugin-ops-approval-chain-id and at least one trusted key (--plugin-ops-approval-public-key or --plugin-ops-approval-public-keys) are required");
-    }
-    if (options.waitMs < 0
-        || options.capacity < 1
-        || options.maxTtlMs < 1
-        || options.maxConnections < 1
-        || options.maxConcurrentCalls < 1) {
-      throw new IllegalArgumentException("wait-ms >= 0 and capacity, max-ttl-ms, max-connections, max-concurrent-calls >= 1 required");
-    }
+    options.validate();
     final long chainId = options.chainId;
     blockchain = require(BlockchainService.class);
     blockchain
@@ -128,6 +119,8 @@ public class OpsApprovalPlugin implements BesuPlugin {
     // The grace period is the wait window: an approval younger than that may be for a transaction
     // still on its way, so a new approval never evicts it.
     store = new ApprovalStore(options.capacity, options.waitMs, System::currentTimeMillis);
+    // No approval can outlive the longest TTL accepted plus how far ahead it may be issued.
+    inclusions = new InclusionTracker(options.maxTtlMs + ApprovalIngress.MAX_ISSUED_AHEAD_MS);
 
     final MetricsSystem metrics = require(MetricsSystem.class);
     final LabelledMetric<Counter> decisions =
@@ -224,16 +217,19 @@ public class OpsApprovalPlugin implements BesuPlugin {
     final BlockHeader header = block.getBlockHeader();
     final List<Hash> included =
         block.getBlockBody().getTransactions().stream().map(org.hyperledger.besu.datatypes.Transaction::getHash).toList();
-    final long keepUntil =
-        included.stream()
-            .map(store::get)
-            .flatMap(Optional::stream)
-            .mapToLong(ApprovalStore.Stored::expiresAt)
-            .max()
-            .orElse(Long.MIN_VALUE);
-    if (keepUntil > System.currentTimeMillis()) {
-      inclusions.recordIncluded(header.getBlockHash(), header.getParentHash(), header.getNumber(), included, keepUntil);
+    // Every block is recorded, empty or not: finality often lands on one that holds nothing of
+    // ours, and the walk from it must still reach the blocks that do.
+    final List<Hash> approved = new ArrayList<>();
+    long approvalsExpireAt = Long.MIN_VALUE;
+    for (final Hash tx : included) {
+      final Optional<ApprovalStore.Stored> stored = store.get(tx);
+      if (stored.isPresent()) {
+        approved.add(tx);
+        approvalsExpireAt = Math.max(approvalsExpireAt, stored.get().expiresAt());
+      }
     }
+    inclusions.recordIncluded(
+        header.getBlockHash(), header.getParentHash(), header.getNumber(), approved, approvalsExpireAt, System.currentTimeMillis());
     // A canonical block's transactions left the pool: their approvals stay (until finality or
     // expiry) but become the first evictable after expired ones. A fork block's transactions are
     // still pooled and keep theirs live.

@@ -87,6 +87,8 @@ public final class ApprovalStore {
   private final Map<Hash, Entry> entries = new HashMap<>();
   /** Transactions the pool holds, approval or not, with when the pool reported them. */
   private final Map<Hash, Long> pooled = new HashMap<>();
+  /** Transactions that left the pool since the last reconciliation, with when. */
+  private final Map<Hash, Long> left = new HashMap<>();
   private final TreeSet<Slot> byExpiry = new TreeSet<>(ORDER);
   private final TreeSet<Slot> includedByIssue = new TreeSet<>(ORDER);
   private final TreeSet<Slot> orphansByIssue = new TreeSet<>(ORDER);
@@ -232,12 +234,14 @@ public final class ApprovalStore {
   /** The pool admitted this transaction (again, after a reorganisation): its approval is pooled. */
   public synchronized void pooled(final Hash txHash) {
     pooled.put(txHash, clock.getAsLong());
+    left.remove(txHash);
     setState(txHash, State.POOLED);
   }
 
   /** The pool dropped or replaced this transaction: its approval becomes an orphan. */
   public synchronized void unpooled(final Hash txHash) {
     pooled.remove(txHash);
+    left.put(txHash, clock.getAsLong());
     final Entry e = entries.get(txHash);
     if (e != null && e.state == State.POOLED) {
       setState(txHash, State.ORPHAN);
@@ -247,6 +251,7 @@ public final class ApprovalStore {
   /** A canonical block included this transaction: kept for a reorganisation, evictable first. */
   public synchronized void included(final Hash txHash) {
     pooled.remove(txHash);
+    left.put(txHash, clock.getAsLong());
     setState(txHash, State.INCLUDED);
   }
 
@@ -267,9 +272,11 @@ public final class ApprovalStore {
   }
 
   /**
-   * Aligns the pooled set with a snapshot of the pool, in case an event was missed. A transaction
-   * reported pooled after the snapshot was taken stays pooled: a stale snapshot must never turn a
-   * live approval into an evictable one.
+   * Aligns the pooled set with a snapshot of the pool, in case an event was missed. Events newer
+   * than the snapshot win over it: a transaction reported pooled after the snapshot was taken stays
+   * pooled (a stale snapshot must never turn a live approval into an evictable one), and one that
+   * left the pool after it — dropped or included — is not made pooled again. An included approval
+   * is never changed by a snapshot; only the pool's own event returns it to the pool.
    */
   public synchronized void reconcile(final Set<Hash> poolSnapshot, final long takenAt) {
     for (final Hash tx : new ArrayList<>(pooled.keySet())) {
@@ -278,9 +285,15 @@ public final class ApprovalStore {
       }
     }
     for (final Hash tx : poolSnapshot) {
+      final Long leftAt = left.get(tx);
+      final Entry e = entries.get(tx);
+      if ((leftAt != null && leftAt >= takenAt) || (e != null && e.state == State.INCLUDED)) {
+        continue;
+      }
       pooled.putIfAbsent(tx, takenAt);
       setState(tx, State.POOLED);
     }
+    left.values().removeIf(at -> at < takenAt);
   }
 
   public synchronized int size() {

@@ -20,14 +20,17 @@ final class PluginOptions {
   @Option(names = "--plugin-ops-approval-public-keys", description = "trusted OPS signing keys as id=hex[,id=hex...]; a batch names the id that signed it, so rotation is add-then-switch")
   String publicKeys;
 
-  /** The trusted key set from both options; at least one key is required. */
+  /**
+   * The trusted key set from both options; at least one key is required. An id named twice is a
+   * configuration error, not a silent override: which key it means would depend on option order.
+   */
   Map<String, byte[]> trustedKeys() {
     final Map<String, byte[]> keys = new LinkedHashMap<>();
     if (publicKey != null) {
       keys.put("default", Bytes.fromHexString(publicKey).toArrayUnsafe());
     }
     if (publicKeys != null) {
-      keys.putAll(parseKeys(publicKeys));
+      parseKeys(publicKeys).forEach((id, key) -> trust(keys, id, key));
     }
     return keys;
   }
@@ -47,9 +50,15 @@ final class PluginOptions {
       if (key.length != 32) {
         throw new IllegalArgumentException("key '" + id + "' must be 32 bytes");
       }
-      keys.put(id, key);
+      trust(keys, id, key);
     }
     return keys;
+  }
+
+  private static void trust(final Map<String, byte[]> keys, final String id, final byte[] key) {
+    if (keys.putIfAbsent(id, key) != null) {
+      throw new IllegalArgumentException("key id '" + id + "' is trusted twice");
+    }
   }
 
   /** Mirrors nodeapproval.ValidKeyID: 1–64 characters of [A-Za-z0-9._:-]. */
@@ -114,5 +123,24 @@ final class PluginOptions {
 
   AllowedSources allowedSources() {
     return sources == null ? AllowedSources.ANY : AllowedSources.parse(sources);
+  }
+
+  /** The longest maximum TTL accepted: 24 h, far beyond OPS's 1 h, and far from overflowing. */
+  static final long MAX_TTL_LIMIT_MS = 86_400_000;
+
+  /** Fails start-up on a missing, malformed or unbounded setting. */
+  void validate() {
+    if (listen == null || chainId == null || trustedKeys().isEmpty()) {
+      throw new IllegalArgumentException(
+          "--plugin-ops-approval-listen, --plugin-ops-approval-chain-id and at least one trusted key (--plugin-ops-approval-public-key or --plugin-ops-approval-public-keys) are required");
+    }
+    listenAddress();
+    allowedSources();
+    if (waitMs < 0 || capacity < 1 || maxConnections < 1 || maxConcurrentCalls < 1) {
+      throw new IllegalArgumentException("wait-ms >= 0 and capacity, max-connections, max-concurrent-calls >= 1 required");
+    }
+    if (maxTtlMs < 1 || maxTtlMs > MAX_TTL_LIMIT_MS) {
+      throw new IllegalArgumentException("--plugin-ops-approval-max-ttl-ms must be between 1 and " + MAX_TTL_LIMIT_MS);
+    }
   }
 }

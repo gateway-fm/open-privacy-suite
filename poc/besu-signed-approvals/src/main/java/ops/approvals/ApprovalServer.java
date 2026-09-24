@@ -155,28 +155,41 @@ public final class ApprovalServer implements AutoCloseable {
     }
   }
 
+  /**
+   * Stops accepting (calls are answered UNAVAILABLE from here on), lets calls in flight finish for
+   * up to 2 s, then releases the port, the call threads and the event loops, in that order, each
+   * waited for: a restarted producer must be able to rebind at once.
+   */
   @Override
   public void close() {
     ingress.stop();
-    if (server != null) {
-      server.shutdown();
-      try {
+    try {
+      if (server != null) {
+        server.shutdown();
         if (!server.awaitTermination(2, TimeUnit.SECONDS)) {
           server.shutdownNow();
+          server.awaitTermination(1, TimeUnit.SECONDS);
         }
-      } catch (final InterruptedException e) {
-        server.shutdownNow();
-        Thread.currentThread().interrupt();
       }
+      if (calls != null) {
+        calls.shutdown();
+        if (!calls.awaitTermination(1, TimeUnit.SECONDS)) {
+          calls.shutdownNow();
+        }
+      }
+    } catch (final InterruptedException e) {
+      if (server != null) {
+        server.shutdownNow();
+      }
+      if (calls != null) {
+        calls.shutdownNow();
+      }
+      Thread.currentThread().interrupt();
     }
-    if (calls != null) {
-      calls.shutdownNow();
-    }
-    if (io != null) {
-      io.shutdownGracefully(0, 1, TimeUnit.SECONDS);
-    }
-    if (acceptor != null) {
-      acceptor.shutdownGracefully(0, 1, TimeUnit.SECONDS);
+    for (final EventLoopGroup group : new EventLoopGroup[] {io, acceptor}) {
+      if (group != null) {
+        group.shutdownGracefully(0, 1, TimeUnit.SECONDS).awaitUninterruptibly(2, TimeUnit.SECONDS);
+      }
     }
   }
 
@@ -222,9 +235,18 @@ public final class ApprovalServer implements AutoCloseable {
     @Override
     protected int doReadMessages(final List<Object> buf) throws Exception {
       final int read = super.doReadMessages(buf);
-      if (read > 0 && buf.get(buf.size() - 1) instanceof Channel child && !admit.test(child)) {
-        buf.remove(buf.size() - 1);
-        child.unsafe().closeForcibly();
+      if (read > 0 && buf.get(buf.size() - 1) instanceof Channel child) {
+        boolean admitted;
+        try {
+          admitted = admit.test(child);
+        } catch (final Throwable t) {
+          // Netty would still hand the accepted child on after an exception here: fail closed.
+          admitted = false;
+        }
+        if (!admitted) {
+          buf.remove(buf.size() - 1);
+          child.unsafe().closeForcibly();
+        }
       }
       return read;
     }
