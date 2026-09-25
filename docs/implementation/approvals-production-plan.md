@@ -56,6 +56,11 @@ Numbers are measured unless marked *estimate*. File references are to
    and transactions went through RPC nodes: the approval stream would then be the only connection
    OPS opens to the sequencer, and reversing it would leave the sequencer with no inbound
    connection from OPS. That is a later hardening option, not part of this plan.
+1d. **Persistence must not gate forwarding or approval delivery (25 September).** Keep database
+   writes, commit waits and persistence batching timers off both paths. The planned recovery
+   store writes signed batches asynchronously; only committed records survive an OPS crash.
+   This leaves a recovery gap and requires performance measurements at several thousand TPS;
+   background work is not a guarantee of zero overhead. Details and validation are in §5.1.
 2. ~~Key custody and signature scheme~~ — **decided and implemented (22 September).** Keep Ed25519
    as a **software key delivered like every other OPS secret** — environment or a Secrets
    Manager–mounted file (IRSA/CSI), never a config file, exactly the policy `internal/config/file.go`
@@ -276,7 +281,7 @@ Consequences for §3:
   would produce indistinguishable microsecond figures. §3.4 is reduced accordingly.
 - **What can still cost 500 ms or 5 s is delivery *failure*** — a dropped batch, a broken
   connection during a burst, a full store — which is the fire-and-forget row of §2. That is a
-  reliability property (acknowledgements, redelivery, durable outbox), not a transport-speed
+  reliability property (acknowledgements, redelivery, recovery storage), not a transport-speed
   one, and it argues for a transport with replies for that reason alone.
 - The recommendation in §3.3 stands, on grounds of reliability, TLS, peer authentication,
   fan-out and operability — not speed.
@@ -386,10 +391,11 @@ The CTO's PoC topology (18 September) fixes the vocabulary: **one Besu sequencer
 Reth and Erigon RPC nodes as the transaction submission channels.**
 
 **a) Several OPS instances.** Each instance holds its own gRPC channel to the sequencer (OPS dials,
-§3.3), so no fan-in and no shared component in the delivery path; a Postgres outbox is per
-instance's durability, not a bus. Per-instance signing keys (with `key_id` and a key set on the
-plugin) give attribution and independent rotation. The same transaction reaching two instances
-(client retry across the LB) yields two approvals for one hash; the store keeps the newer —
+§3.3), so no fan-in and no shared component in the delivery path. Each instance's planned
+Postgres recovery store persists asynchronously (§5.1); it is not a bus. Per-instance signing
+keys (with `key_id` and a key set on the plugin) give attribution and independent rotation.
+The same transaction reaching two instances (client retry across the LB) yields two approvals
+for one hash; the store keeps the newer —
 harmless at execution, only the audit attribution can flip.
 
 **b) The sequencer, optionally a standby.** Approvals must reach every node that may build the
@@ -425,7 +431,7 @@ continue to pass the Go, Java and Rust tests and both real-node scenario suites.
 |---|---|---|
 | Network facts and measurements | Maru finality/build-window source review (§0.1b); direct and follower TCP baseline; unary gRPC microbenchmark and end-to-end load run (§3.5) | Operator deployment/change process; comparable Reth measurements on the gRPC path; failure injection under sustained load |
 | Transport | Shared `.proto`, envelope v2, unary gRPC on both receivers, signature/status checks, all-or-nothing batches, per-producer delivery lanes and backoff | TLS remains explicitly postponed (§0.3) |
-| Restart recovery | OPS retains signed batches in memory and resends on a changed producer boot id; receivers provide a bounded restart wait window | Postgres outbox: a joint OPS/producer restart still loses approvals. Transaction resubmission/reconciliation after a reorg remains separate work |
+| Restart recovery | OPS retains signed batches in memory and resends on a changed producer boot id; receivers provide a bounded restart wait window | Asynchronous Postgres recovery store (§5.1): a joint OPS/producer restart currently loses approvals; background persistence will recover committed records only. Transaction resubmission/reconciliation after a reorg remains separate work |
 | Keys and lifetime | Key sets, key ids, signed expiry, deterministic replacement, finality release and bounded stores; TTL floor of 10 s on sender and receivers | Secret deployment and rotation procedure exercised in the target environment; capacity sizing for all OPS instances |
 | Ingress protection | Explicit source list required, connection/call caps, preface and idle limits; OPS preflight limiting with Redis and bounded local fallback | Deployment network rules and authentication for `ops_prepareApproval`; test the controls in the deployed topology |
 | Observability | Delivery/receiver metrics, no-ready-producer 503 before preflight, audit rows for approval refusals | Alerts, readiness policy, and sampling/retention for producer decision logs |
@@ -436,6 +442,43 @@ The review follow-up closes the source-list/idle-connection lockout, minimum-TTL
 gaps. Restart scenarios must keep OPS's real delivery service alive while restarting the producer,
 then observe its automatic redelivery; a fixture that calls `Deliver` itself does not demonstrate
 that recovery. Each node's README records the tested scenario and how to reproduce it.
+
+### 5.1 Persistence without waiting on storage
+
+**Planned, not implemented.** The performance requirement is to preserve the current forwarding
+and delivery paths: `Enqueue` offers to a bounded memory queue, the request proceeds to forward,
+and the signer publishes signed batches for independent producer lanes. Adding persistence must
+not make any of those steps wait for a database operation, a disk flush or a persistence batch
+to fill. Keeping only the HTTP handler asynchronous is insufficient: delaying the signer or a
+delivery lane can still delay inclusion or fill the approval queue.
+
+- A separate worker persists signed batches in bulk. Its flush interval and batch size must not
+  delay publication to producer lanes; delivery retains its immediate snapshot batching. Database I/O
+  must run outside locks used by signing, retention and delivery.
+- Bound the persistence backlog, worker concurrency and database connection budget. Isolate its
+  pool from request-serving database work; this still shares database CPU and I/O, so resource
+  contention must be measured. A slow or unavailable store must not stall live approval delivery.
+- Buffer exhaustion must not block the signer or forwarding, or grow memory without a limit.
+  Any records omitted from persistence reduce crash recovery coverage and must be counted and
+  alerted on. Report pending records, oldest pending age, commit lag and persistence failures;
+  preserve all existing authorization and approval validation gates.
+- Recovery covers only committed records that are still valid. A crash before commit can lose
+  recent approvals; a database outage or backlog can widen that gap beyond the configured flush
+  interval. This design does not promise lossless recovery of every forwarded transaction.
+  Requiring that guarantee would require a durable acknowledgement before forwarding and would
+  be a different latency/durability decision.
+- Retain recoverable records through their useful lifetime; a delivery acknowledgement alone
+  must not delete them because that producer may restart. Replay preserves the signed bytes and
+  original expiry and never extends validity. Recovery work must yield to fresh approvals.
+
+Before enabling persistence, compare it disabled and enabled with the same hardware, traffic,
+concurrency and node configuration on both Besu and Reth. Exercise several thousand TPS, bursts,
+and the saturation point; include slow commits, database disconnection, a full persistence buffer
+and restart recovery under load. Record request and approval-delivery p50/p95/p99, time to receipt,
+accepted and included TPS, errors, queue depth, CPU, allocations/GC, database load and recovery lag.
+Existing lower-rate transport measurements do not establish the persistence cost at these rates.
+Report measured deltas and variability; a numerical regression budget remains to be agreed before
+rollout. Do not describe asynchronous persistence as having zero performance impact without data.
 
 ## 6. Compliance notes
 
@@ -449,7 +492,7 @@ that recovery. Each node's README records the tested scenario and how to reprodu
 - Phases 3–4 change access control (key rotation; mTLS identities once TLS lands) and 6 adds detective
   signals and a new log source on the sequencer (A.8.15 logging) — change-management
   documentation for ISO 27001 / Vanta.
-- The Postgres outbox is a new table: expand-only migration with the `privacy_proxy_app` GRANT
+- The Postgres recovery store is a new table: expand-only migration with the `privacy_proxy_app` GRANT
   block, per repository policy.
 - Installing the plugin on the sequencer is a change to the Lineth operator's component and goes
   through their change process, not only ours.
