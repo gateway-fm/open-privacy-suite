@@ -151,3 +151,22 @@ TypeScript build, release benchmark, and Clippy on the benchmark with
 |---|---|
 | ops | `dac5f1442568bd1ab63f9a77e985d3c49c9d72727ec3a6b642d81fa6c2bb28c5` |
 | reth | `2707c2dce6acced20ee49b0ddefe80d9cc918134af98c0931192c7d45f5d129e` |
+
+## Review fixes and verification
+
+The follow-up review found that the production Nginx proxy still used its
+60-second read timeout, despite the API allowing five minutes for artifact-set
+compilation. Both production and E2E `/api/` proxy configurations now allow
+330 seconds, covering compilation and the API's 15-second response margin.
+
+An isolated Nginx container loaded the production configuration with a local
+dummy upstream that waited 65 seconds before responding. The fixed configuration
+returned HTTP 201 after 65.00 seconds; an otherwise identical control without the
+timeout setting returned HTTP 504 after 60.01 seconds. Nginx syntax validation
+also passed for both production and E2E configurations. This verifies proxy
+timeout behavior; it does not repeat the full compilation or live-stack tests
+above. The temporary container and dummy upstream were removed afterward.
+
+The generated TypeScript SDK was regenerated from the checked-in OpenAPI spec
+to include `ExecutionDiff.artifacts`. `npm --prefix sdk test` passed the generated
+code drift check, SDK build, type checks and all 11 runtime tests.
