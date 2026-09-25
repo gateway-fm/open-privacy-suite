@@ -20,7 +20,26 @@ python3 poc/besu-signed-approvals/demo.py bench      # the numbers below, ~6 min
 Requirements: Docker (PostgreSQL 15 and Redis 7 containers, removed on exit), JDK 25, Go, Python 3,
 Foundry `cast`, solc 0.8.35, and the Besu 26.8.1 distribution under `.tmp/besu-dist/`. Everything is
 created fresh per run and torn down afterwards; the OPS log, the node log and `evidence/demo.json`
-are kept.
+are kept. The [2026-09-25 follow-up run](evidence/review-followups-2026-09-25/demo.json) passed all
+four checks with the current plugin and real OPS sender.
+
+All demo producers explicitly allow delivery from `127.0.0.1/32`; the plugin requires an allowed
+source list. Its receiver TTL limit accepts 10 s to 24 h (default 1 h), and OPS signs for 10 s to 1 h
+(default 10 minutes), shortened to the receiver's reported maximum. Delivery connections must finish
+the HTTP/2 preface within 5 s and carry a call at least every 30 s; OPS polls `Status` every second.
+
+The automatic recovery check is a separate scenario using the same `nodeapproval.Service` as this
+server. It keeps that sender alive, restarts Besu on the same delivery address, re-announces the
+transaction and verifies that OPS detects the new boot id, redelivers and restores inclusion itself:
+
+```sh
+python3 poc/besu-signed-approvals/run.py restart_resend_restores_inclusion
+```
+
+There is no manual approval resend in this check. The evidence includes the changed boot id, sender
+recovery/confirmation counters and a successful transaction receipt. Set `OPS_BESU_HOME` to a private
+copy of the Besu distribution and `OPS_EVIDENCE_DIR` to a fresh output directory to preserve earlier
+runs; see the [reproduction instructions](README.md#reproduce).
 
 ## What the four steps show
 

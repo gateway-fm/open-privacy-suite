@@ -1,0 +1,170 @@
+[
+  {
+    "test": "approval_before_transaction_included",
+    "passed": true,
+    "hash": "0x6a043a1667ad307c143462bd590d142e28a7ea71e53aa1deb5d9c8ebdfcffb35",
+    "fingerprint": "0x35dd67c6ce7ebb6b7bfb0402f051eec5b9c2334befb059f08a4dd4562547fd79"
+  },
+  {
+    "test": "go_fingerprint_over_besu_calltracer_matches_plugin",
+    "passed": true,
+    "plugin": "0x5c941c6a3eab19f7b363da86fd18f102d2cb85f286a069d8eda4591a8abcbf36",
+    "go": {
+      "fingerprint": "0x5c941c6a3eab19f7b363da86fd18f102d2cb85f286a069d8eda4591a8abcbf36"
+    }
+  },
+  {
+    "test": "transaction_before_approval_waits_then_included",
+    "passed": true,
+    "wait_rounds": 3
+  },
+  {
+    "test": "unapproved_transaction_dropped_after_wait",
+    "passed": true,
+    "hash": "0x6a043a1667ad307c143462bd590d142e28a7ea71e53aa1deb5d9c8ebdfcffb35"
+  },
+  {
+    "test": "same_block_target_change_excludes_stale_approval",
+    "passed": true,
+    "denial": "deny tx=0x6a043a1667ad307c143462bd590d142e28a7ea71e53aa1deb5d9c8ebdfcffb35 reason=OPS_APPROVAL_MISMATCH detail=approved 0x35dd67c6ce7ebb6b7bfb0402f051eec5b9c233"
+  },
+  {
+    "test": "redirected_call_excluded_even_when_application_catches",
+    "passed": true
+  },
+  {
+    "test": "delegatecall_bound_to_caller_storage",
+    "passed": true,
+    "inner": {
+      "type": "DELEGATECALL",
+      "from": "0x0000000000000000000000000000000000001100",
+      "to": "0x0000000000000000000000000000000000001300",
+      "input": "0x5284a2450000000000000000000000000000000000000000000000000000000000000003",
+      "output": "0x",
+      "logs": [
+        {
+          "address": "0x0000000000000000000000000000000000001100",
+          "topics": [
+            "0x2a4c0836f0899d4ca8a13ae15d769f0d0d3bdf2401c0afde8a60c80070b912fb"
+          ],
+          "data": "0x0000000000000000000000000000000000000000000000000000000000000003"
+        }
+      ],
+      "value": "0x0",
+      "calls": []
+    }
+  },
+  {
+    "test": "mismatching_fingerprint_excluded_and_dropped",
+    "passed": true
+  },
+  {
+    "test": "refused_deliveries_answer_their_status_codes_and_store_nothing_duplicates_idempotent",
+    "passed": true,
+    "codes": {
+      "garbage": "INVALID_ARGUMENT",
+      "untrusted key id": "PERMISSION_DENIED",
+      "flipped signature byte": "UNAUTHENTICATED",
+      "another key under a trusted id": "UNAUTHENTICATED",
+      "approval for chain 1": "INVALID_ARGUMENT",
+      "TTL of 2 h, maximum 1 h": "INVALID_ARGUMENT",
+      "issued 60 s ahead": "FAILED_PRECONDITION",
+      "expired": "FAILED_PRECONDITION",
+      "store full": "UNAVAILABLE"
+    },
+    "batches": {
+      "OK": 2.0,
+      "INVALID_ARGUMENT": 3.0,
+      "PERMISSION_DENIED": 1.0,
+      "UNAUTHENTICATED": 2.0,
+      "FAILED_PRECONDITION": 2.0,
+      "UNAVAILABLE": 1.0
+    }
+  },
+  {
+    "test": "eight_counter_increments_approved_against_one_state_all_included",
+    "passed": true
+  },
+  {
+    "test": "deployment_approved_and_included",
+    "passed": true,
+    "created": "0x8464135c8f25da09e49bc8782676a84730c318bc"
+  },
+  {
+    "test": "runtime_create_create2_and_selfdestruct_included",
+    "passed": true
+  },
+  {
+    "test": "plugin_state_snapshot_matches_the_mined_state",
+    "passed": true,
+    "checked": 6
+  },
+  {
+    "test": "strict_approval_denied_when_touched_state_changed",
+    "passed": true,
+    "denial": "deny tx=0xa25285bcce8e6f55412b5f32a8e3698d18fd39afd92e3a188d054ad5bc077bb9 reason=OPS_APPROVAL_MISMATCH detail=approved 0x56675cc44247506927"
+  },
+  {
+    "test": "approved_call_that_gains_a_create_is_denied_by_the_producer",
+    "passed": true,
+    "denial": "deny tx=0xdcfb3c8df8275bb26ae2b45376e55deeb6c5294b6e9eb193e5eae07cd12fcd8e reason=OPS_APPROVAL_UNSUPPORTED detail=approval mode 3, execution requires 0"
+  },
+  {
+    "test": "same_signed_transaction_included_after_new_preflight_following_a_mismatch",
+    "passed": true
+  },
+  {
+    "test": "restart_drops_approvals_resubmission_after_new_preflight_included",
+    "passed": true
+  },
+  {
+    "test": "reorg_returns_transactions_to_the_pool_with_their_approvals_intact",
+    "passed": true,
+    "orphaned": "0x43d0ba8e380df73fabf91c2eb3e5bc27cd93410316429015e4123b41e5996d53",
+    "reincluded_at": "0x2a5fbb9e89d77dd94758d5cd0f1f7693ca84af758dd545db1aa98f2c94582833",
+    "readded_by_besu": [],
+    "resubmitted": [
+      "0x6a043a1667ad307c143462bd590d142e28a7ea71e53aa1deb5d9c8ebdfcffb35",
+      "0xc6afc33029599365e1015b665ebcb8ad0cbb25303de732b4d432f89ac1f5564d"
+    ]
+  },
+  {
+    "test": "gate_works_beside_lineth_transaction_pool_validator",
+    "passed": true,
+    "besu": "besu/v26.8.1/osx-aarch_64/openjdk-java-25"
+  },
+  {
+    "test": "gate_works_beside_lineth_sequencer_selector_on_osaka",
+    "passed": true
+  },
+  {
+    "test": "lineth_sequencer_selector_loads_but_needs_an_osaka_chain",
+    "passed": true,
+    "outcome": "engine_forkchoiceUpdatedV2: HTTP 400 b'{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32600,\"message\":\"Invalid Request\"}}'"
+  },
+  {
+    "test": "missing_plugin_or_configuration_refuses_to_start",
+    "passed": true
+  },
+  {
+    "test": "precompile_staticcall_and_plain_value_transfer_included",
+    "passed": true,
+    "precompile": "0x0000000000000000000000000000000000000004"
+  },
+  {
+    "test": "expired_approval_counts_as_absent_transaction_dropped_not_included",
+    "passed": true,
+    "late": "expired 6410 ms ago"
+  },
+  {
+    "test": "restart_live_ops_status_redelivers_retained_batch_and_restores_inclusion",
+    "passed": true,
+    "boot_before": "639eb3ccbe6edffcad0187a840fc9258",
+    "boot_after": "51158ccf35ee28a47ad73bd96387c44f",
+    "same_sender_process": true,
+    "sender_redeliveries": 1,
+    "sender_confirmed_batches": 2,
+    "hash": "0x6a043a1667ad307c143462bd590d142e28a7ea71e53aa1deb5d9c8ebdfcffb35",
+    "receipt_status": "0x1"
+  }
+]

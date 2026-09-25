@@ -74,7 +74,7 @@ def osaka_genesis():
     acceptance-test genesis (evidence/besu-osaka-reference-genesis.json, taken from the pinned Besu
     commit); only osakaTime moves to 0 so the chain is Osaka from the first block.
     """
-    reference = json.loads((EVIDENCE / "besu-osaka-reference-genesis.json").read_text())
+    reference = json.loads((HERE / "evidence/besu-osaka-reference-genesis.json").read_text())
     genesis = json.loads((EVIDENCE / "genesis.json").read_text())
     genesis["config"] = {**genesis["config"], **reference["config"], "osakaTime": 0, "chainId": CHAIN_ID}
     for address, account in reference.get("alloc", {}).items():
@@ -128,11 +128,19 @@ def prepare():
     }
     (EVIDENCE / "genesis.json").write_text(json.dumps(genesis, indent=2) + "\n")
     subprocess.check_call(["go", "build", "-o", str(CLIENT), "./poc/besu-signed-approvals/client"], cwd=ROOT)
-    for home in (BESU_HOME, LINEA_HOME):
-        if home.joinpath("bin/besu").is_file():
-            plugins = home / "plugins"
-            plugins.mkdir(exist_ok=True)
-            shutil.copy(PLUGIN_JAR, plugins / PLUGIN_JAR.name)
+    plugins = BESU_HOME / "plugins"
+    plugins.mkdir(exist_ok=True)
+    shutil.copy(PLUGIN_JAR, plugins / PLUGIN_JAR.name)
+
+
+def write_evidence_log(source, destination):
+    """Keep machine-local checkout, distribution, JDK and temporary paths out of shared evidence."""
+    content = source.read_text(errors="replace")
+    paths = {ROOT: "<repo>", BESU_HOME: "<besu>", LINEA_HOME: "<linea-besu>",
+             JAVA_HOME: "<jdk>", Path.home(): "<home>"}
+    for path, replacement in sorted(paths.items(), key=lambda pair: len(str(pair[0])), reverse=True):
+        content = content.replace(str(path), replacement)
+    destination.write_text(content)
 
 
 def b64(data):
@@ -470,5 +478,5 @@ class Node:
 
     def close(self):
         self.stop()
-        (EVIDENCE / f"{self.name}.log").write_bytes(self.log_path.read_bytes())
+        write_evidence_log(self.log_path, EVIDENCE / f"{self.name}.log")
         (EVIDENCE / f"{self.name}-rpc.json").write_text(json.dumps(self.records, indent=1) + "\n")

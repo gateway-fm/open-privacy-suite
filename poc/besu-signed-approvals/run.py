@@ -12,24 +12,31 @@ RESULTS = []
 
 
 class Client:
-    """Plays OPS against the node through the Go fixture client: internal/nodeapproval's preflight
-    (Besu mode) and batch signing, and delivery over the gRPC contract (ApprovalDelivery) — one
-    Deliver per batch, whose status is the confirmation."""
+    """The real OPS sender: preflight, Enqueue, signing, delivery, retention and Status polling.
+    The raw signer/Deliver escape hatch is used only by malformed/refused delivery scenarios."""
 
-    def __init__(self, node):
+    def __init__(self, node, ttl="10m"):
         self.node = node
         self.last = None
+        self.log_path = node.directory / f"{node.name}-sender.log"
+        self.log = self.log_path.open("w")
+        env = {k: v for k, v in os.environ.items() if not k.startswith("OPS_APPROVAL_")}
+        env.update(OPS_APPROVAL_NODE="besu", OPS_APPROVAL_TTL=ttl)
         self.process = subprocess.Popen([str(h.CLIENT), node.rpc_url, f"127.0.0.1:{node.approval_port}"],
-                                        stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                        text=True, env=dict(os.environ, OPS_APPROVAL_NODE="besu"))
-        # OPS calls Status whenever its connection becomes ready; the receiver's wait window after
-        # boot counts from that first call.
-        self.boot_id = self.status()["boot_id"]
+                                        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.log,
+                                        text=True, env=env)
+        try:
+            self.wait_metric("target_connected", 1)
+        except BaseException:
+            self.close()
+            raise
 
     def _ask(self, query):
         self.process.stdin.write(json.dumps(query) + "\n")
         self.process.stdin.flush()
-        return json.loads(self.process.stdout.readline())
+        answer = self.process.stdout.readline()
+        assert answer, self.log_path.read_text()
+        return json.loads(answer)
 
     def prepare(self, tx):
         result = self._ask({"raw": tx["raw"]})
@@ -41,8 +48,7 @@ class Client:
         return self._ask({"raw": tx["raw"]})
 
     def batch(self, approvals, **signing):
-        """The signed envelope: now with OPS's default TTL, or per `ttl_ms`, `issued_at`,
-        `expires_at`, `key_id`, `seed`."""
+        """Raw envelope for a negative case the production sender cannot create."""
         result = self._ask({"approvals": approvals if isinstance(approvals, list) else [approvals], **signing})
         assert "error" not in result, result
         return bytes.fromhex(result["envelope"])
@@ -51,18 +57,38 @@ class Client:
         return self._ask({"fingerprint": {"calls": calls, "pre": pre}})
 
     def deliver(self, envelope):
-        """One Deliver call: {'code': 'OK', 'boot_id', 'stored'} or {'code', 'message', 'reason'}."""
+        """Raw Deliver for malformed/refused delivery cases only."""
         return self._ask({"deliver": envelope.hex()})
 
-    def status(self, wait_ms=0):
-        result = self._ask({"status": True, "wait_ms": wait_ms})
-        assert result["code"] == "OK", result
-        return result
+    def metric(self, name, **labels):
+        result = self._ask({"metrics": True})
+        assert "error" not in result, result
+        rows = result.get("privacyproxy_approval_" + name, [])
+        return sum(row["value"] for row in rows
+                   if all(row["labels"].get(k) == v for k, v in labels.items()))
 
-    def send(self, approvals, expect="OK", **signing):
-        result = self.deliver(self.batch(approvals, **signing))
-        assert result["code"] == expect, result
-        return result
+    def wait_metric(self, name, minimum, timeout=15, **labels):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            value = self.metric(name, **labels)
+            if value >= minimum:
+                return value
+            time.sleep(0.05)
+        raise AssertionError(f"sender {name}{labels}: {value} < {minimum}\n{self.log_path.read_text()}")
+
+    def send(self, approvals):
+        approvals = approvals if isinstance(approvals, list) else [approvals]
+        stored = self.node.metric("ops_approval_approvals_stored_total")
+        result = self._ask({"enqueue": approvals, "wait_ms": 15_000})
+        assert result == {"enqueued": len(approvals)}, result
+        # Enqueue never waits for confirmation. The fixture waits at this assertion boundary so
+        # scenarios that require approval-before-transaction do not depend on a scheduler sleep.
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            if self.node.metric("ops_approval_approvals_stored_total") >= stored + len(approvals):
+                return result
+            time.sleep(0.05)
+        raise AssertionError("OPS did not deliver queued approvals\n" + self.log_path.read_text())
 
     def approve(self, tx):
         a = self.prepare(tx)
@@ -71,8 +97,17 @@ class Client:
 
     def close(self):
         self.process.stdin.close()
-        self.process.wait(timeout=5)
-        self.process.stdout.close()
+        try:
+            self.process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            self.process.kill()
+            self.process.wait(timeout=5)
+            raise
+        finally:
+            self.process.stdout.close()
+            self.log.close()
+            h.write_evidence_log(self.log_path, h.EVIDENCE / f"{self.log_path.stem}.log")
+        assert self.process.returncode == 0, self.log_path.read_text()
 
 
 @contextlib.contextmanager
@@ -263,21 +298,23 @@ def bad_deliveries():
         n.submit(tx)
         n.make_block([])
         assert n.in_pool(tx["hash"]), "no refused batch may unblock the transaction"
-        duplicates = c.send([a, a])  # duplicates within one batch and a re-delivery are harmless
-        assert duplicates["stored"] == 2 and duplicates["boot_id"] == c.boot_id, duplicates
+        duplicates = c.send([a, a])  # duplicates and a repeat enqueue are harmless
+        assert duplicates["enqueued"] == 2, duplicates
         c.send(a)
         assert n.metric("ops_approval_store_size") == 1, "one transaction, one slot"
         n.make_block([tx])
         assert n.receipt(tx["hash"])["status"] == "0x1"
         batches = {code: n.metric("ops_approval_batches_total", status=code)
                    for code in ("OK", "INVALID_ARGUMENT", "PERMISSION_DENIED", "UNAUTHENTICATED", "FAILED_PRECONDITION", "UNAVAILABLE")}
-        assert batches == {"OK": 2, "INVALID_ARGUMENT": 3, "PERMISSION_DENIED": 1, "UNAUTHENTICATED": 2,
-                           "FAILED_PRECONDITION": 2, "UNAVAILABLE": 1}, batches
+        assert batches["OK"] in (2, 3), batches  # the signer may split the two duplicate enqueues
+        assert {k: v for k, v in batches.items() if k != "OK"} == {
+            "INVALID_ARGUMENT": 3, "PERMISSION_DENIED": 1, "UNAUTHENTICATED": 2,
+            "FAILED_PRECONDITION": 2, "UNAVAILABLE": 1}, batches
         assert n.metric("ops_approval_approvals_stored_total") == 3
         # Every candidate rebuild (~500 ms) decides again, so a transaction is counted once per build.
         decisions = {d: n.metric("ops_approval_decisions_total", decision=d) for d in ("allow", "wait", "drop", "deny")}
         assert decisions["allow"] >= 1 and decisions["wait"] >= 1 and decisions["drop"] == decisions["deny"] == 0, decisions
-        assert n.metric("ops_approval_connections") == 1
+        assert n.metric("ops_approval_connections") == 2  # OPS lane plus the negative-case raw connection
         record("refused_deliveries_answer_their_status_codes_and_store_nothing_duplicates_idempotent",
                codes=codes, batches=batches)
 
@@ -624,15 +661,14 @@ def reorg_keeps_approvals():
 def expired_approval_not_included():
     """An approval is usable while now < expires_at (wire contract §6): one that expires before its
     transaction is built counts as absent, so the transaction waits, is dropped when the wait window
-    ends, and nothing of it reaches the chain. The store evicts the expired approval, and the same
-    batch delivered again is refused as too late."""
-    with node("expired", wait_ms=2000) as n, contextlib.closing(Client(n)) as c:
+    ends, and nothing of it reaches the chain. The store evicts the expired approval, and an
+    explicitly expired envelope is refused as too late."""
+    with node("expired", wait_ms=2000) as n, contextlib.closing(Client(n, ttl="10s")) as c:
         tx = n.raw(h.ALICE, h.ROUTER, "run(uint256)", 7)
-        envelope = c.batch(c.prepare(tx), ttl_ms=2_000)
-        confirmed = c.deliver(envelope)
-        assert confirmed["code"] == "OK" and confirmed["stored"] == 1, confirmed
+        approval = c.approve(tx)
+        issued_before = int(time.time() * 1000)
         assert n.metric("ops_approval_store_size") == 1
-        time.sleep(2.0)  # expired; the store sweeps expired approvals every second
+        time.sleep(10.1)  # OPS's minimum TTL; the store sweeps expired approvals every second
         for _ in range(50):
             if n.metric("ops_approval_store_size") == 0:
                 break
@@ -651,7 +687,7 @@ def expired_approval_not_included():
         assert not n.in_pool(tx["hash"]) and n.receipt(tx["hash"]) is None
         assert (n.nonce(h.ALICE), n.balance(h.ALICE)) == before and n.storage(h.VAULT_A) == 0
         assert any(f"drop tx={tx['hash']}" in d for d in n.decisions()), n.decisions()
-        late = c.deliver(envelope)
+        late = c.deliver(c.batch(approval, issued_at=issued_before, expires_at=issued_before + 10_000))
         assert late["code"] == "FAILED_PRECONDITION", late
         # Positive control: the same signed transaction with a fresh approval is included.
         c.approve(tx)
@@ -660,9 +696,9 @@ def expired_approval_not_included():
         assert n.receipt(tx["hash"])["status"] == "0x1" and n.storage(h.VAULT_A) == 7
         # Pooled while its approval was still valid, built after it expired: selection decides.
         pooled = n.raw(h.ADMIN, h.ROUTER, "run(uint256)", 5)
-        assert c.send(c.prepare(pooled), ttl_ms=2_000)["stored"] == 1
+        assert c.send(c.prepare(pooled))["enqueued"] == 1
         n.submit(pooled)
-        time.sleep(2.2)  # expired, and past the 2 s wait window
+        time.sleep(10.1)  # expired, and past the 2 s wait window
         n.make_block([])
         for _ in range(40):
             if not n.in_pool(pooled["hash"]):
@@ -675,36 +711,41 @@ def expired_approval_not_included():
 
 
 def restart_resend_restores_inclusion():
-    """The store is memory only, so a restart loses approvals OPS already had confirmed; the boot id
-    tells OPS (wire contract §4). The transaction is re-announced to the restarted producer before
-    OPS reconnects: it keeps waiting, because after boot the wait counts from OPS's first Status
-    call; that call shows the new boot id, and resending the retained batch — the same bytes, no new
-    preflight — restores inclusion."""
-    with node("resend-a", wait_ms=1500) as n:
-        c = Client(n)  # one OPS lane, kept across the producer's restart
-        try:
+    """Keep nodeapproval.Service alive across a producer restart. Only its own Status polling and
+    retention may cause redelivery: the harness never calls Status, Deliver or Enqueue again."""
+    c = None
+    try:
+        with node("resend-a", wait_ms=1500) as n:
+            c = Client(n)
             tx = n.raw(h.ALICE, h.ROUTER, "run(uint256)", 7)
-            envelope = c.batch(c.prepare(tx))
-            confirmed = c.deliver(envelope)
-            assert confirmed["code"] == "OK" and confirmed["boot_id"] == c.boot_id, confirmed
+            c.approve(tx)
+            c.wait_metric("batches_total", 1, code="OK")
+            assert c.metric("retained") == 1
+            assert c.metric("redeliveries_total") == 0
+            sender_pid = c.process.pid
             directory, port = n.directory, n.approval_port
-        except BaseException:
+        with node("resend-b", wait_ms=1500, directory=directory, approval_port=port) as n:
+            n.submit(tx)  # an RPC node re-announces it once the producer is available
+            assert c.process.poll() is None and c.process.pid == sender_pid
+            c.wait_metric("redeliveries_total", 1)
+            c.wait_metric("batches_total", 2, code="OK")
+            assert n.metric("ops_approval_approvals_stored_total") == 1
+            restarts = [json.loads(line) for line in c.log_path.read_text().splitlines()
+                        if "approval producer restarted;" in line]
+            assert len(restarts) == 1, restarts
+            event = restarts[0]
+            assert event["boot_id"] != event["previous_boot_id"] and event["batches"] == 1, event
+            n.make_block([tx])
+            assert n.receipt(tx["hash"])["status"] == "0x1" and n.storage(h.VAULT_A) == 7
+            assert not any(f"drop tx={tx['hash']}" in d for d in n.decisions()), n.decisions()
+            record("restart_live_ops_status_redelivers_retained_batch_and_restores_inclusion",
+                   boot_before=event["previous_boot_id"], boot_after=event["boot_id"],
+                   same_sender_process=True, sender_redeliveries=c.metric("redeliveries_total"),
+                   sender_confirmed_batches=c.metric("batches_total", code="OK"),
+                   hash=tx["hash"], receipt_status=n.receipt(tx["hash"])["status"])
+    finally:
+        if c is not None:
             c.close()
-            raise
-    with contextlib.closing(c), node("resend-b", wait_ms=1500, directory=directory, approval_port=port) as n:
-        n.submit(tx)  # an RPC node re-announces it at once
-        time.sleep(2.0)  # past the ordinary 1.5 s window
-        n.make_block([])
-        assert n.in_pool(tx["hash"]), "no Status call since boot: the transaction must keep waiting"
-        assert not any(f"drop tx={tx['hash']}" in d for d in n.decisions())
-        status = c.status(wait_ms=15_000)  # the lane reconnects to the same address
-        assert status["boot_id"] != confirmed["boot_id"], (status, confirmed)
-        resent = c.deliver(envelope)
-        assert resent["code"] == "OK" and resent["boot_id"] == status["boot_id"], resent
-        n.make_block([tx])
-        assert n.receipt(tx["hash"])["status"] == "0x1" and n.storage(h.VAULT_A) == 7
-        record("restart_new_boot_id_resend_of_the_retained_batch_restores_inclusion",
-               boot_before=confirmed["boot_id"], boot_after=status["boot_id"])
 
 
 SCENARIOS = {f.__name__: f for f in (
