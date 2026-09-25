@@ -531,6 +531,30 @@ func TestALaneThatStopsBeingReadyNoLongerShortensTheTTL(t *testing.T) {
 	waitUntil(t, 5*time.Second, "the standby's maximum is forgotten", func() bool { return s.signingTTL() == 10*time.Minute })
 }
 
+// A misconfigured producer cannot keep accepting preflights or shorten every other producer's
+// approvals after OPS has learned the chain of the transactions it approves.
+func TestAProducerForAnotherChainIsNotReadyAndDoesNotShortenTheTTL(t *testing.T) {
+	p := newProducer(t, "producer:1", "boot")
+	s := startDelivery(t, 10*time.Minute, testDelivery(p))
+	waitReady(t, s)
+	enqueue(t, s, txHashes(1, 1)...)
+	p.set(func(p *producer) {
+		p.chain = 1
+		p.maxTTLms = uint64(MinApprovalTTL.Milliseconds())
+	})
+	waitUntil(t, 2*time.Second, "the wrong chain is not ready", func() bool {
+		return value(t, s.metrics.mismatches.WithLabelValues(p.name, "chain_id")) >= 1 && !s.Accepting()
+	})
+	if got := s.signingTTL(); got != 10*time.Minute {
+		t.Fatalf("wrong-chain producer shortened the signing TTL to %v", got)
+	}
+	p.set(func(p *producer) { p.chain = 31337 })
+	waitReady(t, s)
+	if got := s.signingTTL(); got != MinApprovalTTL {
+		t.Fatalf("recovered producer's maximum TTL was not applied: %v", got)
+	}
+}
+
 // waitCounted waits until OPS has counted want batches with code for target. OPS counts a batch
 // when the producer's answer arrives, which can be after a producer-side check already succeeded.
 func waitCounted(t *testing.T, s *Service, target, code string, want float64) {
