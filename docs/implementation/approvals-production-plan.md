@@ -1,6 +1,8 @@
 # Signed approvals: from PoC to production
 
-**Status:** plan, revised after the critic pass of 22 September (24 findings; blockers 1–2 below are folded in). Items marked *fixed* landed on this branch on 22 September. **Date:** 22 September 2026. **Owner:** Ivan Beliakov.
+**Status:** implementation in progress, updated 25 September 2026. The gRPC delivery contract is
+implemented in OPS, Besu and Reth. This is not yet a production release; §5 distinguishes the
+completed work from the remaining requirements. **Owner:** Ivan Beliakov.
 **Scope:** the signed-approvals gate (preflight in OPS, fingerprint check in the block producer)
 for the current OPS version. The in-node policy runtime is OPS v2 and is not discussed here.
 
@@ -66,8 +68,8 @@ Numbers are measured unless marked *estimate*. File references are to
    `--public-key` is the `default` id); OPS signs through a `Signer` interface so a KMS/HSM-backed
    ECDSA signer can be added without touching the wire. Rotation is add-then-switch: add the new
    key to the plugin, switch OPS's `OPS_APPROVAL_KEY_ID`/seed, remove the old key — no
-   simultaneous restart. Still open: expiry (`issued_at`/`expires_at`), which needs the same
-   transport-independent envelope work and is scheduled with the `.proto`.
+   simultaneous restart. Signed `issued_at`/`expires_at` and expiry enforcement are now implemented
+   on both receivers with the shared `.proto` and golden vectors.
 3. ~~TLS termination~~ — **postponed (24 September): plaintext gRPC on the internal network for
    now**, like the rest of OPS's internal traffic (the OPS → node JSON-RPC path already carries
    the raw transactions). Nothing secret crosses the channel and the Ed25519 signature protects
@@ -88,9 +90,8 @@ Numbers are measured unless marked *estimate*. File references are to
 5. ~~Reth~~ — **decided (24 September): both Besu and Reth ship.** Reth is faster and widely used, and it is
    where the performance story can be told; Besu covers Besu-based stacks such as Lineth. Both targets share the OPS side (`internal/nodeapproval`) and implement the same
    delivery contract (§3.6) — so every transport change lands in Java and in Rust, and CI runs a
-   lane per target. Starting point: the Reth PoC (`poc/reth-signed-approvals/`) is still on
-   envelope v1 — the v2 port is parked in `patches/reth-poc-envelope-v2.patch`, four type errors
-   left.
+   lane per target. Both PoCs now use envelope v2, the trusted key set, signed expiry and the
+   gRPC delivery service. Packaging, CI and updated comparative performance measurements remain.
 6. ~~Preflight placement~~ — **decided (24 September): on the sequencer for now.** A dedicated
    Besu replica running the plugin's RPC stays possible later (with 1c's hardening option); the
    plugin's preflight is a local simulation on the node's own head state and needs nothing from
@@ -103,8 +104,9 @@ Numbers are measured unless marked *estimate*. File references are to
 
 OPS receives `eth_sendRawTransaction`, runs RBAC, simulates the transaction on a Besu node
 (`ops_prepareApproval`, the plugin's RPC), validates the observed call tree against policy,
-signs an approval `(chain, tx hash, fingerprint, principal)` and delivers it to the block
-producer; then forwards the transaction. The producer's plugin refuses to include a
+queues an approval `(chain, tx hash, fingerprint)` for asynchronous signing and delivery to the
+block producer, then forwards the transaction without waiting for delivery. The envelope carries
+the key id and expiry; the former principal field is reserved and sent as zeros. The producer refuses to include a
 transaction without an approval, and refuses one whose actual execution fingerprint differs
 from the approved one — before commit, so a divergent transaction never enters the block.
 
@@ -118,6 +120,10 @@ from the approved one — before commit, so a divergent transaction never enters
 Not corners: the fingerprint encoders, the selector's veto semantics, the metrics that exist.
 
 ## 2. Where the PoC cut corners
+
+This table records the earlier TCP PoC and the findings that motivated the work. Its descriptions
+of missing acknowledgements, expiry, multiple targets and health signals are historical; the
+current implementation and outstanding work are in §5 and the wire contract.
 
 | Corner | Where | Consequence | Fix |
 |---|---|---|---|
@@ -356,8 +362,10 @@ not request-path ones — written down before the `.proto`:
 - **One call per batch.** The call returns only after the plugin has verified the signature and
   stored the batch, so its status is the confirmation. Calls are independent and multiplexed on
   one connection: no batch id, no head-of-line blocking, no ack messages.
-- **Status codes.** `OK` — stored. `RESOURCE_EXHAUSTED` — store full; OPS keeps the batch and
-  retries with backoff. `UNAVAILABLE` / `DEADLINE_EXCEEDED` — retry with backoff.
+- **Status codes.** `OK` — stored. `UNAVAILABLE` with trailer `ops-approval-reason: store-full`
+  means store full; OPS keeps the batch and retries with backoff. Other `UNAVAILABLE` /
+  `DEADLINE_EXCEEDED` failures also retry with backoff. `RESOURCE_EXHAUSTED`, `OUT_OF_RANGE` and
+  `UNIMPLEMENTED` are permanent gRPC failures, not store-capacity signals.
   `UNAUTHENTICATED` / `PERMISSION_DENIED` / `INVALID_ARGUMENT` — bad signature, untrusted key id,
   wrong chain or malformed batch: no retry, counted and alerted on OPS (a configuration fault,
   e.g. a key not yet in the plugin's set).
@@ -367,8 +375,8 @@ not request-path ones — written down before the `.proto`:
   pooled transactions after a restart and `waitMs` counts from pool admission (`getAddedAt`), so
   the resend must land within `waitMs` of the plugin coming up — OPS probes on channel reconnect
   rather than waiting for the next batch; alternatively `waitMs` counts from plugin readiness.
-- **Ordering** — none required across batches; the store is keyed by transaction hash and a
-  newer approval replaces an older one.
+- **Ordering** — none required across batches; the store is keyed by transaction hash and keeps
+  the greatest `(issued_at, key id, fingerprint)` tuple, as specified in the wire contract.
 - **Decisions** — `allow`/`deny(reason)`/`timeout` stay on the sequencer (decision log and
   metrics, shipped by the logging pipeline); they are internal and never reach the user.
 
@@ -410,47 +418,24 @@ does not consult approvals. Every producer must run the plugin.
 
 ## 5. Order of work
 
-Independently shippable; each ends with the 22-scenario suite green.
+The following status supersedes the historical gaps in §2. Changes to the shared protocol must
+continue to pass the Go, Java and Rust tests and both real-node scenario suites.
 
-0. **Lineth facts first**: Maru's finalized/safe semantics and lag; candidate-build cadence on
-   the target configuration; the operator's change process for adding a plugin to the sequencer.
-   §3.5 and `5c0c609` rest on these.
-1. **Baseline** (§3.5) — done, both layouts: 62–64 µs median delivery, race rate 0.
-2. **Reduced benchmark** (§3.4′): write-failure red test **done** (`ca4976b`); gossip layout
-   **done** (`f41e2ef`); still to do: capacity red test, reorg-with-lagging-finality scenario, one
-   gRPC no-regression run with an uncapped sample, and the §3.4′ bench re-run in the decided
-   unary shape (one call per batch) before its latency is quoted.
-2a. **Cheap, safe fixes that need no transport decision**: ~~backoff with jitter; drain on close;
-   configurable hop cap~~ (`b874c0f`); **cheap overflow path** in `ApprovalStore` — event-driven
-   liveness from the pool's `TransactionAdded`/`Dropped` listeners, insertion order, a grace period
-   for approvals whose transaction may still be on its way, no pool scan and no sort on overflow
-   (a cached pool *query* was tried first and rejected by its own test: a stale view can evict a
-   live approval); `FORK` blocks recorded in the tracker; tracked depth given a basis (`5b134ca`);
-   the reorg-with-lagging-finality scenario `reorg_keeps_approvals` (passes; full suite pending).
-3. **Transport + durability**: `.proto` **including envelope v2** (`key_id`, `issued_at`,
-   `expires_at` — one wire migration, not two); gRPC unary per batch (plaintext; mTLS later, §0.3) at Besu's grpc
-   version; OPS dials the sequencer; status-code handling and boot-id redelivery (§3.6); Postgres
-   outbox (expand-only, with the `privacy_proxy_app` GRANT block); certificate lifecycle.
-4. **Keys**: ~~key set on the plugin~~ (done, envelope v2); Secrets Manager via IRSA scoped to the
-   one secret ARN (deployment); rotation procedure documented in the plugin README; per-instance
-   keys are now one `OPS_APPROVAL_KEY_ID` per instance plus one entry in the plugin's key set.
-5. **Lifecycle**: ~~release on finality~~ (done, `5c0c609`); expiry honoured by the selector;
-   global rate limit on preflight; `ops_prepareApproval` behind network policy or Besu RPC auth
-   (documented, `bd0a93d`; enforcement is deployment).
-6. **Observability** — a prerequisite for putting 3 on Lineth, not a follow-up: connected
-   gauges both sides; delivery lag; race rate; 503 rate; decision counts; alerts; readiness
-   reflects delivery. The per-transaction `OPS_APPROVAL_DECISION`/`TIMING` INFO lines are a new
-   log source on the sequencer (two lines per allowed transaction) — make them sampled or
-   metric-only, and treat retention/shipping as a logging-control change.
-7. **Packaging and CI** — also earlier than it looks, since it is what lets 3–6 survive a Besu
-   bump: plugin build and release from this repository under its own tag (decision 0.4); per-Besu-version scenario lane, nightly; grpc
-   and Netty versions pinned to Besu's; compatibility note per Lineth Besu bump.
-7r. **Reth parity** (decision 0.5): ~~commit the Reth PoC into this branch~~ (done); finish envelope v2 with
-   the key set; the gRPC delivery service on the Reth side with the same status codes and boot
-   id; the scenario suite on Reth; a CI lane; and a Reth performance run on the production path
-   with the same workloads as Besu, so the numbers can be compared and quoted.
-8. **Scope extensions**: 2930/4844; 7702 with the envelope extension; preflight replica
-   (decision 0.6) if the sequencer load says so.
+| Work | Completed on this branch | Remaining |
+|---|---|---|
+| Network facts and measurements | Maru finality/build-window source review (§0.1b); direct and follower TCP baseline; unary gRPC microbenchmark and end-to-end load run (§3.5) | Operator deployment/change process; comparable Reth measurements on the gRPC path; failure injection under sustained load |
+| Transport | Shared `.proto`, envelope v2, unary gRPC on both receivers, signature/status checks, all-or-nothing batches, per-producer delivery lanes and backoff | TLS remains explicitly postponed (§0.3) |
+| Restart recovery | OPS retains signed batches in memory and resends on a changed producer boot id; receivers provide a bounded restart wait window | Postgres outbox: a joint OPS/producer restart still loses approvals. Transaction resubmission/reconciliation after a reorg remains separate work |
+| Keys and lifetime | Key sets, key ids, signed expiry, deterministic replacement, finality release and bounded stores; TTL floor of 10 s on sender and receivers | Secret deployment and rotation procedure exercised in the target environment; capacity sizing for all OPS instances |
+| Ingress protection | Explicit source list required, connection/call caps, preface and idle limits; OPS preflight limiting with Redis and bounded local fallback | Deployment network rules and authentication for `ops_prepareApproval`; test the controls in the deployed topology |
+| Observability | Delivery/receiver metrics, no-ready-producer 503 before preflight, audit rows for approval refusals | Alerts, readiness policy, and sampling/retention for producer decision logs |
+| Packaging and CI | Besu dependencies pinned; JAR packaging check prevents bundled classes from shadowing Besu; shared wire vectors and scenario harnesses | Move supported components out of `poc/`; versioned plugin release; per-Besu-version and Reth CI lanes and upgrade compatibility records |
+| Scope extensions | Protected legacy and EIP-1559 transactions; deployments use strict fingerprints | EIP-2930/4844/7702 support and separate preflight URL remain outside the current implementation |
+
+The review follow-up closes the source-list/idle-connection lockout, minimum-TTL and refusal-audit
+gaps. Restart scenarios must keep OPS's real delivery service alive while restarting the producer,
+then observe its automatic redelivery; a fixture that calls `Deliver` itself does not demonstrate
+that recovery. Each node's README records the tested scenario and how to reproduce it.
 
 ## 6. Compliance notes
 
