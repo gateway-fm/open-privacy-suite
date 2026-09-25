@@ -216,12 +216,13 @@ func (s *Service) ready(chain uint64, now time.Time) bool {
 	return false
 }
 
-// Accepting reports whether some producer is ready to take approvals, whatever its chain. The
-// request path asks before it spends a preflight on the node; Enqueue then checks the chain.
+// Accepting reports whether some producer is ready for the chain OPS has learned. Until the
+// first Enqueue establishes the chain, readiness depends on Status alone; Enqueue checks it.
 func (s *Service) Accepting() bool {
 	now := time.Now().UnixNano()
+	chain := s.chainID.Load()
 	for _, l := range s.lanes {
-		if now < l.readyUntil.Load() {
+		if now < l.readyUntil.Load() && (chain == 0 || l.readyChain.Load() == chain) {
 			return true
 		}
 	}
@@ -233,8 +234,9 @@ func (s *Service) Accepting() bool {
 func (s *Service) signingTTL() time.Duration {
 	ttl := s.ttl
 	now := time.Now().UnixNano()
+	chain := s.chainID.Load()
 	for _, l := range s.lanes {
-		if now >= l.readyUntil.Load() {
+		if now >= l.readyUntil.Load() || (chain != 0 && l.readyChain.Load() != chain) {
 			continue // only a ready producer's maximum counts (wire contract §4)
 		}
 		if ms := l.maxTTL.Load(); ms > 0 && time.Duration(ms)*time.Millisecond < ttl {
@@ -737,7 +739,9 @@ func (l *lane) status(stop context.Context, gen uint64) {
 	if !trusted {
 		l.mismatch("key_id", now, "key_id", keyID, "trusted_key_ids", st.GetTrustedKeyIds())
 	}
-	if chain := l.s.chainID.Load(); chain != 0 && st.GetChainId() != chain {
+	chain := l.s.chainID.Load()
+	matchingChain := chain == 0 || st.GetChainId() == chain
+	if !matchingChain {
 		l.mismatch("chain_id", now, "chain_id", chain, "producer_chain_id", st.GetChainId())
 	}
 	// A maximum below MinApprovalTTL would have OPS sign approvals that expire inside the wait
@@ -748,12 +752,13 @@ func (l *lane) status(stop context.Context, gen uint64) {
 		l.mismatch("max_ttl", now, "max_ttl_ms", st.GetMaxTtlMs(), "minimum_ms", MinApprovalTTL.Milliseconds())
 		maxTTL = 0
 	}
-	l.maxTTL.Store(int64(maxTTL))
-	if trusted && usable {
+	if trusted && usable && matchingChain {
+		l.maxTTL.Store(int64(maxTTL))
 		l.readyChain.Store(st.GetChainId())
 		l.readyUntil.Store(now.Add(l.readyWindow).UnixNano())
 	} else {
 		l.readyUntil.Store(0)
+		l.maxTTL.Store(0)
 	}
 	l.observeBoot(gen, st.GetBootId())
 }
