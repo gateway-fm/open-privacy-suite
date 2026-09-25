@@ -39,9 +39,8 @@ const AT: i64 = 1_800_000_010;
 /// Forwarding contract: if calldata is longer than a plain `transfer(address,uint256)`
 /// call (68 bytes), CALL itself with the calldata minus its last 32 bytes; otherwise stop.
 /// Every level is one checked frame, so `68 + 32·k` bytes of calldata give `k + 1` frames.
-const FORWARDER: [u8; 32] = hex!(
-    "36604410600857005b366000600037600060006020360360006000305af15000"
-);
+const FORWARDER: [u8; 32] =
+    hex!("36604410600857005b366000600037600060006020360360006000305af15000");
 
 fn fixture() -> Value {
     serde_json::from_str(include_str!(
@@ -213,7 +212,11 @@ fn policy_check_cost_per_frame() {
                 let started = Instant::now();
                 let result = evm.transact_raw(tx_env(signer, contract, nested)).unwrap();
                 let elapsed = started.elapsed();
-                assert!(result.result.is_success(), "baseline failed: {:?}", result.result);
+                assert!(
+                    result.result.is_success(),
+                    "baseline failed: {:?}",
+                    result.result
+                );
                 if i >= warmup {
                     baseline += elapsed;
                 }
@@ -230,7 +233,11 @@ fn policy_check_cost_per_frame() {
                 let started = Instant::now();
                 let result = evm.transact_raw(tx).unwrap();
                 let elapsed = started.elapsed();
-                assert!(result.result.is_success(), "policy denied or failed: {:?}", result.result);
+                assert!(
+                    result.result.is_success(),
+                    "policy denied or failed: {:?}",
+                    result.result
+                );
                 if i == warmup - 1 {
                     timing.take_samples();
                 }
@@ -255,13 +262,186 @@ fn policy_check_cost_per_frame() {
         }
     }
     if let Ok(path) = std::env::var("OPS_FRAME_COST_REPORT") {
-        std::fs::write(&path, serde_json::to_vec_pretty(&json!({
-            "schema": 1,
-            "binary": "in-process test, --release",
-            "policy_fixture": "internal/policydsl/testdata/lifecycle-v1.json",
-            "rounds_per_config": rounds,
-            "results": report,
-        })).unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            serde_json::to_vec_pretty(&json!({
+                "schema": 1,
+                "binary": "in-process test, --release",
+                "policy_fixture": "internal/policydsl/testdata/lifecycle-v1.json",
+                "rounds_per_config": rounds,
+                "results": report,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
         println!("report written to {path}");
+    }
+}
+
+/// Measure the exact 60 artifacts compiled by the real HTTP acceptance run.
+/// OPS_GROUP_COST_FIXTURE points at group-cost-fixture.json from that run.
+/// Setup/signing/index construction are outside the timed frame evaluation.
+#[test]
+#[ignore = "live artifact measurement; requires OPS_GROUP_COST_FIXTURE"]
+fn group_policy_check_cost() {
+    let path = std::env::var("OPS_GROUP_COST_FIXTURE").expect("run group_acceptance.py first");
+    let fixture: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    let org = fixture["org"].as_str().unwrap();
+    let signer: Address = fixture["signer"].as_str().unwrap().parse().unwrap();
+    let target: Address = fixture["target"].as_str().unwrap().parse().unwrap();
+    let groups = fixture["groups"].as_array().unwrap();
+    assert_eq!(groups.len(), 60);
+    let mut base = db(signer, target);
+    base.insert_account_info(
+        target,
+        AccountInfo {
+            code_hash: keccak256([0]),
+            code: Some(Bytecode::new_raw(Bytes::from_static(&[0]))),
+            ..Default::default()
+        },
+    );
+    let warmup = 100;
+    let rounds = 1000;
+    let mut report = Vec::new();
+    // Compare directory sizes while retaining exactly the same caller groups.
+    for directory_groups in [7, 60] {
+        for memberships in [1, 2, 5, 10, 11, 12, 20, 40, 60] {
+            if memberships > directory_groups {
+                continue;
+            }
+            let selected: Vec<_> = groups
+                .iter()
+                .take(directory_groups - 1)
+                .chain(std::iter::once(&groups[59]))
+                .collect();
+            let caller_groups: Vec<_> = selected
+                .iter()
+                .take(memberships - 1)
+                .copied()
+                .chain(std::iter::once(&groups[59]))
+                .collect();
+            let snapshot = json!({
+                "network": {"chain_id":31337,"deployment_id":"live-group-cost"},
+                "issued_at":1800000000i64,"expires_at":1800000060i64,"version":1,
+                "principals":[{"id":"fixture_principal","banned":false,"kyc":true,
+                    "linked_addresses":[signer],"memberships":caller_groups.iter().map(|g|
+                        json!({"group_id":g,"expires_at":0})).collect::<Vec<_>>()}],
+                "groups":selected.iter().map(|g|json!({"id":g,"org_id":org,"claims":0,
+                    "org_admin":false,"contract_claims":[]})).collect::<Vec<_>>(),
+                "contracts":[{"address":target,"org_id":org,"shared_infrastructure":false,
+                    "code_hash":"","deployer_principal_id":"","pending":false}],
+                "policies":selected.iter().map(|g| {
+                    let a = &fixture["artifacts"][g.as_str().unwrap()];
+                    json!({"org_id":org,"group_id":g,"revision":1,"policy_digest":a["policy_digest"],
+                        "runtime_digest":a["runtime_digest"],"bytecode":a["runtime_bytecode"]})
+                }).collect::<Vec<_>>(), "sanctions":[]
+            });
+            let payload = serde_json::to_vec(&snapshot).unwrap();
+            let key = SigningKey::from_bytes(&[7; 32]);
+            let mut signed = b"OPS_NODE_POLICY_V1\0".to_vec();
+            for part in [b"snapshot".as_slice(), b"ops", &payload] {
+                signed.extend_from_slice(&(part.len() as u32).to_be_bytes());
+                signed.extend_from_slice(part);
+            }
+            let envelope = serde_json::to_vec(&json!({"version":1,"kind":"snapshot","key_id":"ops",
+                "payload":STANDARD.encode(&payload),"signature":STANDARD.encode(key.sign(&signed).to_bytes())})).unwrap();
+            let stream = FactStream::new(Verifier::new(
+                serde_json::from_value::<Network>(snapshot["network"].clone()).unwrap(),
+                BTreeMap::from([("ops".into(), key.verifying_key())]),
+            ));
+            stream.accept("snapshot", &envelope, AT).unwrap();
+            let facts = stream.pin(AT, 1).unwrap();
+            #[derive(Debug)]
+            struct GroupIdentity {
+                org: String,
+                signer: Address,
+            }
+            impl IdentityResolver for GroupIdentity {
+                fn resolve(
+                    &self,
+                    binding: &ExecutionBinding,
+                    _: &TxEnv,
+                ) -> Result<ExecutionIdentity, String> {
+                    Ok(ExecutionIdentity {
+                        principal_id: "fixture_principal".into(),
+                        org_id: self.org.clone(),
+                        context_id: "group-cost".into(),
+                        signer: self.signer,
+                        binding: binding.clone(),
+                        min_snapshot_version: 1,
+                    })
+                }
+            }
+            let (factory, timing) = PolicyFactory::new(
+                Arc::new(PinnedPolicySnapshot::new(
+                    facts.version(),
+                    facts.digest(),
+                    Arc::new(FactsPolicy::new(facts, AT).unwrap()),
+                )),
+                Arc::new(GroupIdentity {
+                    org: org.into(),
+                    signer,
+                }),
+            )
+            .timed();
+            for (mode, selector) in [("allow-first", "d09de08a"), ("allow-last", "3fa4f245")] {
+                let mut outcomes = Vec::new();
+                timing.take_samples();
+                for i in 0..warmup + rounds {
+                    let tx = TxEnv::builder()
+                        .caller(signer)
+                        .to(target)
+                        .data(Bytes::from(hex::decode(selector).unwrap()))
+                        .gas_limit(30_000_000)
+                        .gas_price(0)
+                        .build()
+                        .unwrap();
+                    let result =
+                        factory
+                            .create_evm(base.clone(), env())
+                            .transact_raw(PolicyTx::bound(
+                                tx,
+                                ExecutionBinding::Transaction(B256::from(U256::from(i as u64))),
+                            ));
+                    let ok = result.is_ok_and(|r| r.result.is_success());
+                    if i == warmup - 1 {
+                        timing.take_samples();
+                    }
+                    if i >= warmup {
+                        outcomes.push(ok);
+                    }
+                }
+                assert!(
+                    outcomes.iter().all(|v| *v == outcomes[0]),
+                    "unstable verdict"
+                );
+                if mode == "allow-first" || memberships <= 2 {
+                    assert!(outcomes[0]);
+                }
+                let samples = timing.take_samples();
+                assert_eq!(samples.len(), rounds);
+                if !outcomes[0] {
+                    assert!(
+                        samples.iter().all(|s| s.gas == 100_000),
+                        "a measurement may deny only at the shared gas limit"
+                    );
+                }
+                let row = json!({"directory_groups":directory_groups,"memberships":memberships,
+                    "mode":mode,"allowed":outcomes[0],"frame":summary(&samples)});
+                println!("{row}");
+                report.push(row);
+            }
+        }
+    }
+    if let Ok(path) = std::env::var("OPS_GROUP_COST_REPORT") {
+        std::fs::write(
+            path,
+            serde_json::to_vec_pretty(&json!({
+                "binary":"in-process --release", "rounds_per_config":rounds,"warmup":warmup,
+                "policy_gas_limit":100000,"results":report,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
     }
 }

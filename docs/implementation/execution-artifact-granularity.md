@@ -205,3 +205,9 @@ Verified locally on 2026-09-25:
   reth-sdk -- -D warnings`; `go vet` for the five affected Go packages.
 - Cross-group deployer exceptions and the real HTTP compilation deadline test.
 - `make api-spec` regenerated the API reference successfully.
+- Fresh native OPS/Reth full-stack acceptance, 60-group activation and finalized
+  execution, grant removal, candidate isolation, empty-set recovery and restart
+  persistence. Release measurements using the live compiled artifacts confirm
+  that unrelated groups do not increase evaluation cost, while callers scanning
+  many artifacts can exhaust the shared gas budget. See the
+  [live evidence and measured limits](evidence/per-group-live-2026-09-25.md).

@@ -137,14 +137,14 @@ def record_builds(state):
     save(state)
 
 
-def http(url, body=None, token=None, method=None, extra_headers=None):
+def http(url, body=None, token=None, method=None, extra_headers=None, timeout=20):
     headers = {"Content-Type": "application/json"}
     if token:
         headers["Authorization"] = "Bearer "+token
     headers.update(extra_headers or {})
     req = urllib.request.Request(url, json.dumps(body).encode() if body is not None else None, headers, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=20) as response:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
             raw = response.read()
             try:
                 return response.status, json.loads(raw) if raw else None

@@ -108,6 +108,36 @@ Use their mock login identities to inspect configuration sources and revisions
 in the OPS UI. The completed acceptance intentionally leaves the operator's
 execution binding denied so revocation is visible and reviewable.
 
+## Per-group acceptance and cost measurement
+
+After baseline acceptance, run the group scenario against the same isolated
+stack and its freshly built OPS/Reth binaries:
+
+```sh
+python3 scripts/ops-reth-stack/group_acceptance.py "$STACK"
+OPS_GROUP_COST_FIXTURE="$STACK/group-cost-fixture.json" \
+OPS_GROUP_COST_REPORT="$STACK/group-cost.json" \
+  cargo test --release --locked --manifest-path node/reth/Cargo.toml \
+  --features reth-sdk --test frame_cost group_policy_check_cost -- --ignored --nocapture
+python3 scripts/ops-reth-stack/stack.py restart "$STACK"
+```
+
+This creates 60 groups through reviewed configuration, compiles and activates
+their complete execution document, and waits for a signed transaction to be
+included and reconciled. It checks grant union, membership removal, artifact
+replacement, candidate isolation, and empty-set recovery. The original revoked
+policy is restored before the ordinary restart assertions run.
+
+`group-acceptance.json` records 20 serial RPC samples per configuration, after
+three warmups. Requests are paced outside the timing window. `group-cost.json`
+isolates preparation and EVM policy evaluation using the exact artifacts
+returned by that live API run, with 1,000 samples after 100 warmups. Directory
+sizes of seven and sixty distinguish unrelated groups from caller memberships.
+The in-process benchmark uses a STOP application contract; it measures policy
+cost, not network throughput or application execution. Both measurements record
+denial when the shared 100,000 policy-gas budget is exhausted; an organization
+with 60 groups does not imply that a caller can scan all 60 within that budget.
+
 ## Runtime boundaries and current limits
 
 This is a development harness, not the production network layout. PostgreSQL,

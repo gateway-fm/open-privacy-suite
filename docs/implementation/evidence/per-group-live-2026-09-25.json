@@ -1,0 +1,941 @@
+{
+  "date": "2026-09-25",
+  "implementationCommit": "214ab2cd",
+  "host": {
+    "cpu": "Apple M2 Max",
+    "memoryGiB": 32,
+    "os": "macOS 26.6.1",
+    "architecture": "arm64"
+  },
+  "baseline": {
+    "checks": [
+      "bootstrap organization and two named human administrators",
+      "create group through reviewed source; self approval rejected",
+      "onboard user, verify KYC, and prove signer ownership",
+      "import, compile, independently activate and publish baseline execution policy",
+      "scoped signed CREATE finalized and registered by OPS reconciliation",
+      "adopt deployed contract and ABI into reviewed registry source",
+      "authorized transaction and live eth_call execute on Reth",
+      "same linked signer keeps distinct principal permissions and transaction status privacy",
+      "indexer transaction and emitted event visible through authenticated OPS explorer API",
+      "explorer OAuth code exchange, HttpOnly session and authenticated BFF transaction read",
+      "recordParty permits the current linked party and denies after an actual on-chain party change",
+      "reviewed rule revocation denies the next transaction after node synchronization"
+    ],
+    "stack": "ops-reth-022e7f0ce3",
+    "binaryDigests": {
+      "reth": "2707c2dce6acced20ee49b0ddefe80d9cc918134af98c0931192c7d45f5d129e",
+      "ops": "dac5f1442568bd1ab63f9a77e985d3c49c9d72727ec3a6b642d81fa6c2bb28c5",
+      "indexer": "5852f828805f9286e1935051e71a15f7a0634e50d7f67994510e0567edc1d788",
+      "explorer-api": "27e1e80d0e868f9110ab130ec6b708aafbb01bf7c04810183743b6f2d68e9639"
+    },
+    "orgId": "db3e6069-7f7f-4651-bc1b-4abfc4cb8fb0",
+    "groupId": "6ee23623-c42a-458b-a57a-67e0b3526403",
+    "principals": {
+      "author": "a9f685d5-c9ec-403a-bbdf-410226a10b48",
+      "reviewer": "57445312-2234-442f-85ec-436f3cd75335",
+      "user": "aa2f090d-00e5-4b98-9bb9-8050f26f17dd",
+      "other": "5c9e76c5-3c5a-4cd7-8f17-1e3720d238da"
+    },
+    "policyDigest": "sha256:bb63b881ca258aec2f7f45cb9f0107db04148370e20d8c507b82591eb3988f38",
+    "deployment": "0x03e987a0992e626b354497dfc636180d2f6290e574469b68d2e2eae68aba1754",
+    "contract": "0xf2e246bb76df876cef8b38ae84130f4f55de395b",
+    "call": "0xf5c2e3185e18a4bc7f69b514d984f2b761c7d9ddd9b1916a861b309f27cb7261",
+    "recordParty": {
+      "allowedTransaction": "0x689e3933ee9bed2f97c635833b83b3b85cf9ed01e304c73da8b10d19b50512af",
+      "partyChange": "0x7edef5a1c437c60a2b5a92eaae1671a6609c23b36fa389bc0543d3e7d59ad0af",
+      "abiDigest": "a71a173c35e0bcf86fde741e9077c05b46ab154c0607a8790e57a18ed2e7d834"
+    },
+    "activeRevisionId": "67775e00-d103-44cb-becb-62953662b2ed",
+    "activePolicyDigest": "sha256:8d8c4f536207379b61d2b41eea3a1be6e1ef57140dbf0012b7b5cedebb958627",
+    "denied": "0x59988c4239bffa99026349b598cbb704714b97f8c827d9b34caa09005378f071",
+    "verifiedAt": "2026-09-25T09:08:45.212651+00:00",
+    "elapsedSeconds": 28.14,
+    "restartVerified": true
+  },
+  "groups": {
+    "checks": [
+      "60-group document compiled, independently activated, published and executed",
+      "any-group grant union and live membership revocation enforce current facts",
+      "candidate replacement is isolated; activation removes absent group artifacts",
+      "live RPC latency measured across 1, 2, 5, 10, 20, 40 and 60 group memberships",
+      "empty set denies execution; scoped candidate diagnostics can recover it"
+    ],
+    "latency": [
+      {
+        "membershipsWithArtifacts": 1,
+        "mode": "allow-first",
+        "samples": 20,
+        "allowed": true,
+        "medianMs": 11.194,
+        "p95Ms": 49.898
+      },
+      {
+        "membershipsWithArtifacts": 1,
+        "mode": "allow-last",
+        "samples": 20,
+        "allowed": true,
+        "medianMs": 11.169,
+        "p95Ms": 67.087
+      },
+      {
+        "membershipsWithArtifacts": 2,
+        "mode": "allow-first",
+        "samples": 20,
+        "allowed": true,
+        "medianMs": 10.87,
+        "p95Ms": 82.52
+      },
+      {
+        "membershipsWithArtifacts": 2,
+        "mode": "allow-last",
+        "samples": 20,
+        "allowed": true,
+        "medianMs": 10.61,
+        "p95Ms": 57.206
+      },
+      {
+        "membershipsWithArtifacts": 5,
+        "mode": "allow-first",
+        "samples": 20,
+        "allowed": true,
+        "medianMs": 11.667,
+        "p95Ms": 59.952
+      },
+      {
+        "membershipsWithArtifacts": 5,
+        "mode": "allow-last",
+        "samples": 20,
+        "allowed": true,
+        "medianMs": 10.207,
+        "p95Ms": 64.293
+      },
+      {
+        "membershipsWithArtifacts": 10,
+        "mode": "allow-first",
+        "samples": 20,
+        "allowed": true,
+        "medianMs": 9.417,
+        "p95Ms": 110.199
+      },
+      {
+        "membershipsWithArtifacts": 10,
+        "mode": "allow-last",
+        "samples": 20,
+        "allowed": true,
+        "medianMs": 11.103,
+        "p95Ms": 71.169
+      },
+      {
+        "membershipsWithArtifacts": 20,
+        "mode": "allow-first",
+        "samples": 20,
+        "allowed": true,
+        "medianMs": 12.269,
+        "p95Ms": 58.498
+      },
+      {
+        "membershipsWithArtifacts": 20,
+        "mode": "allow-last",
+        "samples": 20,
+        "allowed": false,
+        "medianMs": 13.444,
+        "p95Ms": 98.369,
+        "error": {
+          "status": 403,
+          "response": {
+            "error": "request rejected by execution node",
+            "reason": "node_rejected"
+          }
+        }
+      },
+      {
+        "membershipsWithArtifacts": 40,
+        "mode": "allow-first",
+        "samples": 20,
+        "allowed": true,
+        "medianMs": 13.016,
+        "p95Ms": 174.212
+      },
+      {
+        "membershipsWithArtifacts": 40,
+        "mode": "allow-last",
+        "samples": 20,
+        "allowed": false,
+        "medianMs": 11.485,
+        "p95Ms": 155.836,
+        "error": {
+          "status": 403,
+          "response": {
+            "error": "request rejected by execution node",
+            "reason": "node_rejected"
+          }
+        }
+      },
+      {
+        "membershipsWithArtifacts": 60,
+        "mode": "allow-first",
+        "samples": 20,
+        "allowed": true,
+        "medianMs": 12.185,
+        "p95Ms": 166.309
+      },
+      {
+        "membershipsWithArtifacts": 60,
+        "mode": "allow-last",
+        "samples": 20,
+        "allowed": false,
+        "medianMs": 13.359,
+        "p95Ms": 129.29,
+        "error": {
+          "status": 403,
+          "response": {
+            "error": "request rejected by execution node",
+            "reason": "node_rejected"
+          }
+        }
+      }
+    ],
+    "binaryDigests": {
+      "reth": "2707c2dce6acced20ee49b0ddefe80d9cc918134af98c0931192c7d45f5d129e",
+      "ops": "dac5f1442568bd1ab63f9a77e985d3c49c9d72727ec3a6b642d81fa6c2bb28c5",
+      "indexer": "5852f828805f9286e1935051e71a15f7a0634e50d7f67994510e0567edc1d788",
+      "explorer-api": "27e1e80d0e868f9110ab130ec6b708aafbb01bf7c04810183743b6f2d68e9639"
+    },
+    "compileSeconds": [
+      {
+        "kind": "groups",
+        "seconds": 0.015,
+        "revision": "f3694e22-4b0c-4458-abda-2dfdfee2474a"
+      },
+      {
+        "kind": "execution-rules",
+        "seconds": 29.254,
+        "revision": "edb748fb-312f-4122-a198-8cbc0bb03d29"
+      },
+      {
+        "kind": "execution-rules",
+        "seconds": 0.774,
+        "revision": "a04fd920-d710-499d-af3e-999e85aa8566"
+      },
+      {
+        "kind": "execution-rules",
+        "seconds": 28.718,
+        "revision": "e74ca053-3361-44bc-8a7d-a820d324b00f"
+      },
+      {
+        "kind": "execution-rules",
+        "seconds": 0.339,
+        "revision": "8169b5c7-4216-4a43-b739-f10e45b71134"
+      },
+      {
+        "kind": "execution-rules",
+        "seconds": 0.836,
+        "revision": "ef94e9d4-5c08-471a-9b4b-241f47af8ef7"
+      },
+      {
+        "kind": "execution-rules",
+        "seconds": 1.764,
+        "revision": "67775e00-d103-44cb-becb-62953662b2ed"
+      }
+    ],
+    "artifacts": {
+      "count": 60,
+      "minBytes": 3077,
+      "maxBytes": 3305,
+      "totalBytes": 184848
+    },
+    "finalizedTransaction": "0x9fede4887b5212d84d95478917f60d289c53b0a95e7ff307939a8b28ec622d48"
+  },
+  "benchmark": {
+    "binary": "in-process --release",
+    "policy_gas_limit": 100000,
+    "results": [
+      {
+        "allowed": true,
+        "directory_groups": 7,
+        "frame": {
+          "check_us": {
+            "max": 38.875,
+            "mean": 22.938461,
+            "p50": 23.0,
+            "p95": 26.625,
+            "p99": 26.875
+          },
+          "evaluate_us": {
+            "mean": 20.461628,
+            "p50": 20.541,
+            "p95": 23.791,
+            "p99": 24.0
+          },
+          "gas_per_check_mean": 6529.0,
+          "prepare_us": {
+            "mean": 2.476833,
+            "p50": 2.458,
+            "p95": 2.875
+          },
+          "samples": 1000
+        },
+        "memberships": 1,
+        "mode": "allow-first"
+      },
+      {
+        "allowed": true,
+        "directory_groups": 7,
+        "frame": {
+          "check_us": {
+            "max": 25.625,
+            "mean": 18.764995,
+            "p50": 18.541,
+            "p95": 20.708,
+            "p99": 23.042
+          },
+          "evaluate_us": {
+            "mean": 16.73175,
+            "p50": 16.5,
+            "p95": 18.542,
+            "p99": 20.667
+          },
+          "gas_per_check_mean": 6291.0,
+          "prepare_us": {
+            "mean": 2.033245,
+            "p50": 2.042,
+            "p95": 2.208
+          },
+          "samples": 1000
+        },
+        "memberships": 1,
+        "mode": "allow-last"
+      },
+      {
+        "allowed": true,
+        "directory_groups": 7,
+        "frame": {
+          "check_us": {
+            "max": 29.792,
+            "mean": 17.173284,
+            "p50": 16.75,
+            "p95": 20.583,
+            "p99": 24.0
+          },
+          "evaluate_us": {
+            "mean": 14.99668,
+            "p50": 14.625,
+            "p95": 18.25,
+            "p99": 21.625
+          },
+          "gas_per_check_mean": 6304.0,
+          "prepare_us": {
+            "mean": 2.1766039999999998,
+            "p50": 2.125,
+            "p95": 2.25
+          },
+          "samples": 1000
+        },
+        "memberships": 2,
+        "mode": "allow-first"
+      },
+      {
+        "allowed": true,
+        "directory_groups": 7,
+        "frame": {
+          "check_us": {
+            "max": 50.541,
+            "mean": 32.61526,
+            "p50": 32.25,
+            "p95": 35.459,
+            "p99": 39.875
+          },
+          "evaluate_us": {
+            "mean": 30.496793,
+            "p50": 30.167,
+            "p95": 32.666,
+            "p99": 37.75
+          },
+          "gas_per_check_mean": 13141.0,
+          "prepare_us": {
+            "mean": 2.118467,
+            "p50": 2.084,
+            "p95": 2.167
+          },
+          "samples": 1000
+        },
+        "memberships": 2,
+        "mode": "allow-last"
+      },
+      {
+        "allowed": true,
+        "directory_groups": 7,
+        "frame": {
+          "check_us": {
+            "max": 28.416,
+            "mean": 17.805241000000002,
+            "p50": 17.666,
+            "p95": 17.917,
+            "p99": 22.125
+          },
+          "evaluate_us": {
+            "mean": 14.725658,
+            "p50": 14.584,
+            "p95": 14.792,
+            "p99": 18.667
+          },
+          "gas_per_check_mean": 6340.0,
+          "prepare_us": {
+            "mean": 3.079583,
+            "p50": 3.042,
+            "p95": 3.125
+          },
+          "samples": 1000
+        },
+        "memberships": 5,
+        "mode": "allow-first"
+      },
+      {
+        "allowed": true,
+        "directory_groups": 7,
+        "frame": {
+          "check_us": {
+            "max": 101.25,
+            "mean": 81.67508000000001,
+            "p50": 80.542,
+            "p95": 89.166,
+            "p99": 95.458
+          },
+          "evaluate_us": {
+            "mean": 78.612166,
+            "p50": 77.541,
+            "p95": 85.959,
+            "p99": 92.458
+          },
+          "gas_per_check_mean": 36820.0,
+          "prepare_us": {
+            "mean": 3.062914,
+            "p50": 3.041,
+            "p95": 3.125
+          },
+          "samples": 1000
+        },
+        "memberships": 5,
+        "mode": "allow-last"
+      },
+      {
+        "allowed": true,
+        "directory_groups": 60,
+        "frame": {
+          "check_us": {
+            "max": 35.166,
+            "mean": 17.865111000000002,
+            "p50": 17.333,
+            "p95": 21.208,
+            "p99": 22.291
+          },
+          "evaluate_us": {
+            "mean": 16.060280000000002,
+            "p50": 15.583,
+            "p95": 19.25,
+            "p99": 20.041
+          },
+          "gas_per_check_mean": 6529.0,
+          "prepare_us": {
+            "mean": 1.8048309999999999,
+            "p50": 1.75,
+            "p95": 2.208
+          },
+          "samples": 1000
+        },
+        "memberships": 1,
+        "mode": "allow-first"
+      },
+      {
+        "allowed": true,
+        "directory_groups": 60,
+        "frame": {
+          "check_us": {
+            "max": 29.542,
+            "mean": 17.150755,
+            "p50": 16.792,
+            "p95": 20.167,
+            "p99": 25.333
+          },
+          "evaluate_us": {
+            "mean": 15.392693999999999,
+            "p50": 15.083,
+            "p95": 17.292,
+            "p99": 23.458
+          },
+          "gas_per_check_mean": 6291.0,
+          "prepare_us": {
+            "mean": 1.7580609999999999,
+            "p50": 1.709,
+            "p95": 1.75
+          },
+          "samples": 1000
+        },
+        "memberships": 1,
+        "mode": "allow-last"
+      },
+      {
+        "allowed": true,
+        "directory_groups": 60,
+        "frame": {
+          "check_us": {
+            "max": 27.292,
+            "mean": 16.620209,
+            "p50": 16.5,
+            "p95": 16.708,
+            "p99": 20.459
+          },
+          "evaluate_us": {
+            "mean": 14.601169,
+            "p50": 14.5,
+            "p95": 14.667,
+            "p99": 18.334
+          },
+          "gas_per_check_mean": 6304.0,
+          "prepare_us": {
+            "mean": 2.01904,
+            "p50": 2.0,
+            "p95": 2.042
+          },
+          "samples": 1000
+        },
+        "memberships": 2,
+        "mode": "allow-first"
+      },
+      {
+        "allowed": true,
+        "directory_groups": 60,
+        "frame": {
+          "check_us": {
+            "max": 49.958,
+            "mean": 32.381776,
+            "p50": 32.125,
+            "p95": 34.458,
+            "p99": 39.709
+          },
+          "evaluate_us": {
+            "mean": 30.328325,
+            "p50": 30.083,
+            "p95": 32.084,
+            "p99": 37.584
+          },
+          "gas_per_check_mean": 13141.0,
+          "prepare_us": {
+            "mean": 2.053451,
+            "p50": 2.042,
+            "p95": 2.125
+          },
+          "samples": 1000
+        },
+        "memberships": 2,
+        "mode": "allow-last"
+      },
+      {
+        "allowed": true,
+        "directory_groups": 60,
+        "frame": {
+          "check_us": {
+            "max": 123.125,
+            "mean": 17.743704,
+            "p50": 17.542,
+            "p95": 18.833,
+            "p99": 23.792
+          },
+          "evaluate_us": {
+            "mean": 14.661199,
+            "p50": 14.542,
+            "p95": 15.5,
+            "p99": 18.667
+          },
+          "gas_per_check_mean": 6340.0,
+          "prepare_us": {
+            "mean": 3.0825050000000003,
+            "p50": 3.0,
+            "p95": 3.209
+          },
+          "samples": 1000
+        },
+        "memberships": 5,
+        "mode": "allow-first"
+      },
+      {
+        "allowed": true,
+        "directory_groups": 60,
+        "frame": {
+          "check_us": {
+            "max": 127.709,
+            "mean": 82.409914,
+            "p50": 81.709,
+            "p95": 87.75,
+            "p99": 95.791
+          },
+          "evaluate_us": {
+            "mean": 79.304402,
+            "p50": 78.667,
+            "p95": 84.333,
+            "p99": 92.625
+          },
+          "gas_per_check_mean": 36820.0,
+          "prepare_us": {
+            "mean": 3.105512,
+            "p50": 3.0,
+            "p95": 3.25
+          },
+          "samples": 1000
+        },
+        "memberships": 5,
+        "mode": "allow-last"
+      },
+      {
+        "allowed": true,
+        "directory_groups": 60,
+        "frame": {
+          "check_us": {
+            "max": 40.0,
+            "mean": 19.519133,
+            "p50": 19.292,
+            "p95": 20.375,
+            "p99": 23.125
+          },
+          "evaluate_us": {
+            "mean": 14.849373,
+            "p50": 14.667,
+            "p95": 15.5,
+            "p99": 17.875
+          },
+          "gas_per_check_mean": 6402.0,
+          "prepare_us": {
+            "mean": 4.66976,
+            "p50": 4.625,
+            "p95": 4.875
+          },
+          "samples": 1000
+        },
+        "memberships": 10,
+        "mode": "allow-first"
+      },
+      {
+        "allowed": true,
+        "directory_groups": 60,
+        "frame": {
+          "check_us": {
+            "max": 226.583,
+            "mean": 174.871025,
+            "p50": 172.958,
+            "p95": 188.625,
+            "p99": 206.208
+          },
+          "evaluate_us": {
+            "mean": 170.023426,
+            "p50": 168.167,
+            "p95": 183.333,
+            "p99": 201.25
+          },
+          "gas_per_check_mean": 86745.0,
+          "prepare_us": {
+            "mean": 4.847599,
+            "p50": 4.708,
+            "p95": 5.75
+          },
+          "samples": 1000
+        },
+        "memberships": 10,
+        "mode": "allow-last"
+      },
+      {
+        "allowed": true,
+        "directory_groups": 60,
+        "frame": {
+          "check_us": {
+            "max": 35.75,
+            "mean": 20.163143,
+            "p50": 19.833,
+            "p95": 21.958,
+            "p99": 25.083
+          },
+          "evaluate_us": {
+            "mean": 15.124023999999999,
+            "p50": 14.875,
+            "p95": 15.833,
+            "p99": 19.75
+          },
+          "gas_per_check_mean": 6415.0,
+          "prepare_us": {
+            "mean": 5.0391189999999995,
+            "p50": 4.959,
+            "p95": 5.208
+          },
+          "samples": 1000
+        },
+        "memberships": 11,
+        "mode": "allow-first"
+      },
+      {
+        "allowed": true,
+        "directory_groups": 60,
+        "frame": {
+          "check_us": {
+            "max": 273.917,
+            "mean": 193.94628500000002,
+            "p50": 191.125,
+            "p95": 205.958,
+            "p99": 225.166
+          },
+          "evaluate_us": {
+            "mean": 188.863909,
+            "p50": 185.667,
+            "p95": 200.666,
+            "p99": 218.875
+          },
+          "gas_per_check_mean": 98305.0,
+          "prepare_us": {
+            "mean": 5.082376,
+            "p50": 4.958,
+            "p95": 5.5
+          },
+          "samples": 1000
+        },
+        "memberships": 11,
+        "mode": "allow-last"
+      },
+      {
+        "allowed": true,
+        "directory_groups": 60,
+        "frame": {
+          "check_us": {
+            "max": 40.875,
+            "mean": 20.053828000000003,
+            "p50": 19.791,
+            "p95": 20.833,
+            "p99": 26.25
+          },
+          "evaluate_us": {
+            "mean": 14.821584999999999,
+            "p50": 14.625,
+            "p95": 15.084,
+            "p99": 18.917
+          },
+          "gas_per_check_mean": 6427.0,
+          "prepare_us": {
+            "mean": 5.232243,
+            "p50": 5.125,
+            "p95": 5.25
+          },
+          "samples": 1000
+        },
+        "memberships": 12,
+        "mode": "allow-first"
+      },
+      {
+        "allowed": false,
+        "directory_groups": 60,
+        "frame": {
+          "check_us": {
+            "max": 232.167,
+            "mean": 192.56562100000002,
+            "p50": 190.166,
+            "p95": 205.541,
+            "p99": 220.167
+          },
+          "evaluate_us": {
+            "mean": 187.300414,
+            "p50": 184.959,
+            "p95": 200.208,
+            "p99": 213.166
+          },
+          "gas_per_check_mean": 100000.0,
+          "prepare_us": {
+            "mean": 5.265207,
+            "p50": 5.167,
+            "p95": 5.375
+          },
+          "samples": 1000
+        },
+        "memberships": 12,
+        "mode": "allow-last"
+      },
+      {
+        "allowed": true,
+        "directory_groups": 60,
+        "frame": {
+          "check_us": {
+            "max": 31.875,
+            "mean": 22.525033999999998,
+            "p50": 22.291,
+            "p95": 24.125,
+            "p99": 27.958
+          },
+          "evaluate_us": {
+            "mean": 14.826065,
+            "p50": 14.667,
+            "p95": 15.292,
+            "p99": 18.709
+          },
+          "gas_per_check_mean": 6527.0,
+          "prepare_us": {
+            "mean": 7.698969,
+            "p50": 7.625,
+            "p95": 7.792
+          },
+          "samples": 1000
+        },
+        "memberships": 20,
+        "mode": "allow-first"
+      },
+      {
+        "allowed": false,
+        "directory_groups": 60,
+        "frame": {
+          "check_us": {
+            "max": 335.334,
+            "mean": 176.819122,
+            "p50": 174.25,
+            "p95": 190.917,
+            "p99": 209.709
+          },
+          "evaluate_us": {
+            "mean": 168.938366,
+            "p50": 166.584,
+            "p95": 182.584,
+            "p99": 198.916
+          },
+          "gas_per_check_mean": 100000.0,
+          "prepare_us": {
+            "mean": 7.880756,
+            "p50": 7.667,
+            "p95": 8.708
+          },
+          "samples": 1000
+        },
+        "memberships": 20,
+        "mode": "allow-last"
+      },
+      {
+        "allowed": true,
+        "directory_groups": 60,
+        "frame": {
+          "check_us": {
+            "max": 50.833,
+            "mean": 28.676454000000003,
+            "p50": 28.25,
+            "p95": 32.625,
+            "p99": 35.834
+          },
+          "evaluate_us": {
+            "mean": 15.023367,
+            "p50": 14.792,
+            "p95": 17.666,
+            "p99": 20.208
+          },
+          "gas_per_check_mean": 6781.0,
+          "prepare_us": {
+            "mean": 13.653087,
+            "p50": 13.5,
+            "p95": 15.333
+          },
+          "samples": 1000
+        },
+        "memberships": 40,
+        "mode": "allow-first"
+      },
+      {
+        "allowed": false,
+        "directory_groups": 60,
+        "frame": {
+          "check_us": {
+            "max": 197.625,
+            "mean": 163.55392600000002,
+            "p50": 161.375,
+            "p95": 171.917,
+            "p99": 179.125
+          },
+          "evaluate_us": {
+            "mean": 149.68222599999999,
+            "p50": 147.708,
+            "p95": 157.791,
+            "p99": 163.709
+          },
+          "gas_per_check_mean": 100000.0,
+          "prepare_us": {
+            "mean": 13.8717,
+            "p50": 13.584,
+            "p95": 15.334
+          },
+          "samples": 1000
+        },
+        "memberships": 40,
+        "mode": "allow-last"
+      },
+      {
+        "allowed": true,
+        "directory_groups": 60,
+        "frame": {
+          "check_us": {
+            "max": 111.958,
+            "mean": 35.525413,
+            "p50": 34.959,
+            "p95": 37.792,
+            "p99": 41.959
+          },
+          "evaluate_us": {
+            "mean": 15.514588,
+            "p50": 15.292,
+            "p95": 16.125,
+            "p99": 18.75
+          },
+          "gas_per_check_mean": 7041.0,
+          "prepare_us": {
+            "mean": 20.010825,
+            "p50": 19.625,
+            "p95": 20.75
+          },
+          "samples": 1000
+        },
+        "memberships": 60,
+        "mode": "allow-first"
+      },
+      {
+        "allowed": false,
+        "directory_groups": 60,
+        "frame": {
+          "check_us": {
+            "max": 192.459,
+            "mean": 151.989506,
+            "p50": 149.375,
+            "p95": 159.542,
+            "p99": 175.75
+          },
+          "evaluate_us": {
+            "mean": 132.131942,
+            "p50": 129.875,
+            "p95": 138.916,
+            "p99": 148.0
+          },
+          "gas_per_check_mean": 100000.0,
+          "prepare_us": {
+            "mean": 19.857564,
+            "p50": 19.459,
+            "p95": 21.125
+          },
+          "samples": 1000
+        },
+        "memberships": 60,
+        "mode": "allow-last"
+      }
+    ],
+    "rounds_per_config": 1000,
+    "warmup": 100
+  },
+  "sdk": {
+    "stack": "ops-reth-022e7f0ce3",
+    "orgId": "db3e6069-7f7f-4651-bc1b-4abfc4cb8fb0",
+    "checks": [
+      "named human authentication through generated routes and real refresh rotation",
+      "live readiness and scoped active execution context",
+      "explicit audited human diagnostic reaches live Reth candidate evaluator",
+      "revoked active rule returns execution denial through SDK RPC",
+      "finalized own transaction status and shared-signer principal isolation"
+    ]
+  }
+}
