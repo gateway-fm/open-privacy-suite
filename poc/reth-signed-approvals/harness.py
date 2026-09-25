@@ -96,7 +96,7 @@ def b64(data):
 
 
 class Node:
-    def __init__(self, name, disabled=False, wait_ms=5000, reverting_foreign=False, directory=None, fork="shanghai"):
+    def __init__(self, name, disabled=False, wait_ms=5000, reverting_foreign=False, directory=None, fork="shanghai", approval_port=None):
         self.name = name
         self.fork = fork
         self.directory = Path(directory) if directory else Path(tempfile.mkdtemp(prefix=name + "-", dir=SCRATCH))
@@ -137,10 +137,11 @@ class Node:
             args.extend(["--builder.gaslimit", str(int(gas_limit))])
         if connections := os.environ.get("OPS_POC_RPC_MAX_CONNECTIONS"):
             args.extend(["--rpc.max-connections", str(int(connections))])
-        self.approval_port = unused_port()
+        self.approval_port = approval_port if approval_port is not None else unused_port()
         env = dict(os.environ, OPS_APPROVALS="0" if disabled else "1", RUST_LOG="info",
                    OPS_APPROVAL_WAIT_MS=str(wait_ms), OPS_APPROVAL_CHAIN_ID="31337",
                    OPS_APPROVAL_LISTEN=f"127.0.0.1:{self.approval_port}",
+                   OPS_APPROVAL_ALLOWED_SOURCES="127.0.0.1/32",
                    OPS_APPROVAL_PUBLIC_KEYS="default=ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c")
         if os.environ.get("OPS_TRACE_HOPS")=="1":env["OPS_APPROVAL_HOPS_FILE"]=str(EVIDENCE/(name+"-node-hops.json"))
         # Keep module stderr records separate: Reth stdout can otherwise interleave

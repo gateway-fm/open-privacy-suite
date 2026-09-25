@@ -1,22 +1,16 @@
-// Test fixture standing in for OPS in the Reth harness: it prepares approvals with the real
-// preflight, signs batches with the fixture key and delivers them over the approval gRPC service
-// (docs/implementation/approvals-wire-contract.md). Authorization itself is exercised separately
-// through the real OPS processor + PostgreSQL.
+// Test fixture standing in for OPS in the Reth harness. Connected clients use nodeapproval.New
+// and Enqueue: OPS owns signing, TTL negotiation, delivery, retries, retention and boot recovery.
+// Authorization itself is exercised separately through the real OPS processor + PostgreSQL.
 //
 // Usage: approval-client <rpc-url> [<approval host:port>]
+// One JSON request per stdin line, one JSON reply per stdout line:
 //
-// With a delivery target it connects and calls Status first, as OPS does when a lane becomes
-// ready. Then one JSON request per stdin line, one JSON reply per stdout line:
+// {"raw": "0x…"}       preflight → {"Approval": {…}}
+// {"enqueue": […]}     enqueue prepared approvals with the real OPS sender
+// {"metrics": true}    observe the sender without making receiver calls
 //
-//	{"raw": "0x…"}                          preflight → {"Approval": {…}}
-//	{"approvals": […], "ttl_ms": n}         sign a batch → the batch and its "envelope" (hex);
-//	                                        "issued_at"/"expires_at" (Unix ms) override the times
-//	{"deliver": {batch}}                    Deliver the batch's fields under its signature
-//	{"envelope": "hex"}                     Deliver these bytes as they are
-//	{"status": true}                        Status
-//
-// Deliver and Status reply {"code": "OK" | "INVALID_ARGUMENT" | …} plus the response fields,
-// or "message" and the "ops-approval-reason" trailer as "reason".
+// Deliberately invalid authentication/expiry tests alone use fixture_approvals to sign custom
+// times, fixture_deliver to send altered batch fields, or fixture_envelope for malformed bytes.
 package main
 
 import (
@@ -33,6 +27,7 @@ import (
 	"unicode"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/prometheus/client_golang/prometheus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -46,13 +41,14 @@ import (
 
 type request struct {
 	Raw       string                  `json:"raw"`
-	Approvals []nodeapproval.Approval `json:"approvals"`
+	Approvals []nodeapproval.Approval `json:"fixture_approvals"`
 	TTLMs     uint64                  `json:"ttl_ms"`
 	IssuedAt  uint64                  `json:"issued_at"`
 	ExpiresAt uint64                  `json:"expires_at"`
-	Deliver   *nodeapproval.Batch     `json:"deliver"`
-	Envelope  *string                 `json:"envelope"`
-	Status    bool                    `json:"status"`
+	Deliver   *nodeapproval.Batch     `json:"fixture_deliver"`
+	Envelope  *string                 `json:"fixture_envelope"`
+	Enqueue   []nodeapproval.Approval `json:"enqueue"`
+	Metrics   bool                    `json:"metrics"`
 }
 
 type signed struct {
@@ -60,27 +56,63 @@ type signed struct {
 	Envelope string `json:"envelope"`
 }
 
-func main() {
-	key := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{7}, 32))
-	pre, err := nodeapproval.NewPreflight(os.Args[1])
-	if err != nil {
-		panic(err)
+type client struct {
+	service  *nodeapproval.Service
+	registry *prometheus.Registry
+	key      ed25519.PrivateKey
+	conn     *grpc.ClientConn
+	lane     approvalpb.ApprovalDeliveryClient
+}
+
+func newClient(url, target string) (*client, error) {
+	seed := bytes.Repeat([]byte{7}, ed25519.SeedSize)
+	var service *nodeapproval.Service
+	var err error
+	if target == "" {
+		service, err = nodeapproval.NewPreflight(url)
+	} else {
+		service, err = nodeapproval.New(url, target, seed)
 	}
-	defer pre.Close()
-	var lane approvalpb.ApprovalDeliveryClient
-	if len(os.Args) > 2 {
-		conn, err := grpc.NewClient(os.Args[2],
+	if err != nil {
+		return nil, err
+	}
+	c := &client{service: service, key: ed25519.NewKeyFromSeed(seed), registry: prometheus.NewRegistry()}
+	c.registry.MustRegister(service)
+	if target != "" {
+		// NewClient is lazy: ordinary approvals open only OPS's own lane. The separate raw
+		// connection is dialled only when an invalid fixture explicitly requests Deliver.
+		c.conn, err = grpc.NewClient(target,
 			grpc.WithTransportCredentials(insecure.NewCredentials()),
 			grpc.WithKeepaliveParams(keepalive.ClientParameters{Time: 20 * time.Second, Timeout: 5 * time.Second, PermitWithoutStream: true}))
 		if err != nil {
-			panic(err)
+			service.Close()
+			return nil, err
 		}
-		defer conn.Close()
-		lane = approvalpb.NewApprovalDeliveryClient(conn)
-		if reply := callStatus(lane, grpc.WaitForReady(true)); reply["code"] != "OK" {
-			panic(reply)
-		}
+		c.lane = approvalpb.NewApprovalDeliveryClient(c.conn)
 	}
+	return c, nil
+}
+
+func (c *client) close() {
+	c.service.Close()
+	if c.conn != nil {
+		_ = c.conn.Close()
+	}
+}
+
+func main() {
+	if len(os.Args) < 2 || len(os.Args) > 3 {
+		panic("usage: approval-client <rpc-url> [<approval host:port>]")
+	}
+	var target string
+	if len(os.Args) == 3 {
+		target = os.Args[2]
+	}
+	c, err := newClient(os.Args[1], target)
+	if err != nil {
+		panic(err)
+	}
+	defer c.close()
 	scan := bufio.NewScanner(os.Stdin)
 	scan.Buffer(make([]byte, 4096), 1<<20)
 	out := json.NewEncoder(os.Stdout)
@@ -89,7 +121,7 @@ func main() {
 		if err := json.Unmarshal(scan.Bytes(), &q); err != nil {
 			panic(err)
 		}
-		reply, err := handle(pre, lane, key, q)
+		reply, err := c.handle(q)
 		if err != nil {
 			reply = map[string]any{"error": err.Error()}
 		}
@@ -97,37 +129,77 @@ func main() {
 			panic(err)
 		}
 	}
+	if err := scan.Err(); err != nil {
+		panic(err)
+	}
 }
 
-func handle(pre *nodeapproval.Service, lane approvalpb.ApprovalDeliveryClient, key ed25519.PrivateKey, q request) (any, error) {
-	needLane := q.Deliver != nil || q.Envelope != nil || q.Status
-	if needLane && lane == nil {
+func (c *client) handle(q request) (any, error) {
+	needLane := q.Deliver != nil || q.Envelope != nil || q.Enqueue != nil
+	if needLane && c.lane == nil {
 		return nil, errors.New("no delivery target")
 	}
 	switch {
+	case q.Enqueue != nil:
+		// The harness can submit immediately after construction. Wait for OPS's own initial
+		// Status handshake; a failed enqueue has not signed or sent anything.
+		deadline := time.Now().Add(10 * time.Second)
+		for i := range q.Enqueue {
+			for {
+				err := c.service.Enqueue(&nodeapproval.Prepared{Approval: q.Enqueue[i]})
+				if err == nil {
+					break
+				}
+				if err.Error() != "no approval producer is ready" || time.Now().After(deadline) {
+					return nil, err
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+		}
+		return map[string]any{"code": "QUEUED", "queued": len(q.Enqueue)}, nil
+	case q.Metrics:
+		families, err := c.registry.Gather()
+		if err != nil {
+			return nil, err
+		}
+		result := map[string]float64{}
+		for _, family := range families {
+			for _, metric := range family.Metric {
+				name := family.GetName()
+				for _, label := range metric.Label {
+					if label.GetName() == "code" {
+						name += "/" + label.GetValue()
+					}
+				}
+				if metric.Counter != nil {
+					result[name] += metric.Counter.GetValue()
+				}
+				if metric.Gauge != nil {
+					result[name] += metric.Gauge.GetValue()
+				}
+			}
+		}
+		return result, nil
 	case q.Approvals != nil:
-		return sign(key, q)
+		return sign(c.key, q)
 	case q.Deliver != nil:
 		envelope, err := encode(*q.Deliver)
 		if err != nil {
 			return nil, err
 		}
-		return deliver(lane, envelope), nil
+		return deliver(c.lane, envelope), nil
 	case q.Envelope != nil:
 		envelope, err := hex.DecodeString(strings.TrimPrefix(*q.Envelope, "0x"))
 		if err != nil {
 			return nil, err
 		}
-		return deliver(lane, envelope), nil
-	case q.Status:
-		return callStatus(lane), nil
+		return deliver(c.lane, envelope), nil
 	default:
-		return pre.Prepare(context.Background(), q.Raw)
+		return c.service.Prepare(context.Background(), q.Raw)
 	}
 }
 
-// sign signs like OPS: key id "default", the reserved field zero, a 10-minute TTL unless the
-// request sets the times.
+// sign creates authentication/expiry boundary fixtures; normal approvals use Service.Enqueue.
 func sign(key ed25519.PrivateKey, q request) (signed, error) {
 	approvals := append([]nodeapproval.Approval(nil), q.Approvals...)
 	for i := range approvals {
@@ -183,24 +255,6 @@ func deliver(lane approvalpb.ApprovalDeliveryClient, envelope []byte) map[string
 		return reply
 	}
 	return map[string]any{"code": "OK", "boot_id": resp.GetBootId(), "stored": resp.GetStored()}
-}
-
-func callStatus(lane approvalpb.ApprovalDeliveryClient, opts ...grpc.CallOption) map[string]any {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	resp, err := lane.Status(ctx, &approvalpb.StatusRequest{}, opts...)
-	if err != nil {
-		return map[string]any{"code": codeName(status.Code(err)), "message": status.Convert(err).Message()}
-	}
-	return map[string]any{
-		"code":            "OK",
-		"boot_id":         resp.GetBootId(),
-		"chain_id":        resp.GetChainId(),
-		"trusted_key_ids": resp.GetTrustedKeyIds(),
-		"max_ttl_ms":      resp.GetMaxTtlMs(),
-		"capacity":        resp.GetCapacity(),
-		"wait_ms":         resp.GetWaitMs(),
-	}
 }
 
 // codeName spells a status code the way the contract does: INVALID_ARGUMENT, not InvalidArgument.
