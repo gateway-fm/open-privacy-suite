@@ -13,10 +13,11 @@ import (
 // its signed identity envelope. Verifiers hash those bytes before decoding them;
 // they never reconstruct an equivalent JSON document in another language.
 type SimulationRequest struct {
-	Method          string          `json:"method"`
-	Params          json.RawMessage `json:"params"`
-	DryRun          bool            `json:"dry_run"`
-	CandidatePolicy *PolicyArtifact `json:"candidate_policy"`
+	Method            string            `json:"method"`
+	Params            json.RawMessage   `json:"params"`
+	DryRun            bool              `json:"dry_run"`
+	CandidatePolicy   *PolicyArtifact   `json:"candidate_policy"`
+	CandidatePolicies *[]PolicyArtifact `json:"candidate_policies,omitempty" wireoptional:"true"`
 }
 
 func EncodeSimulation(request SimulationRequest) ([]byte, error) {
@@ -51,6 +52,19 @@ func ParseSimulation(request []byte, expectedHash string) (SimulationRequest, er
 	}
 	if out.CandidatePolicy != nil && !validPolicyArtifact(*out.CandidatePolicy) {
 		return SimulationRequest{}, ErrIdentity
+	}
+	if out.CandidatePolicies != nil {
+		if out.CandidatePolicy != nil {
+			return SimulationRequest{}, ErrIdentity
+		}
+		seen := map[string]bool{}
+		for i, candidate := range *out.CandidatePolicies {
+			first := (*out.CandidatePolicies)[0]
+			if !validPolicyArtifact(candidate) || candidate.GroupID == "" || seen[candidate.GroupID] || (i > 0 && (candidate.OrgID != first.OrgID || candidate.Revision != first.Revision || candidate.PolicyDigest != first.PolicyDigest)) {
+				return SimulationRequest{}, ErrIdentity
+			}
+			seen[candidate.GroupID] = true
+		}
 	}
 	switch out.Method {
 	case "eth_call", "eth_estimateGas", "debug_traceCall":

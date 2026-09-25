@@ -5,9 +5,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"time"
 
 	"privacy-proxy/internal/nodepolicy"
+	"privacy-proxy/internal/policydsl"
 )
 
 // ExportNodePolicySnapshot reads the watermark first under repeatable-read so
@@ -163,13 +165,33 @@ func exportNodeFacts(ctx context.Context, q DBTX, out *nodepolicy.Snapshot) erro
 	if err != nil {
 		return err
 	}
-	err = nodePolicyRows(ctx, q, `SELECT org_id::text,revision,policy_digest,runtime_digest,runtime_bytecode
+	err = nodePolicyRows(ctx, q, `SELECT org_id::text,revision,policy_digest,runtime_digest,runtime_bytecode,artifact_set
         FROM execution_policy_revisions WHERE status='active' ORDER BY org_id`, func(r *sql.Rows) error {
 		var p nodepolicy.PolicyArtifact
-		if err := r.Scan(&p.OrgID, &p.Revision, &p.PolicyDigest, &p.RuntimeDigest, &p.Bytecode); err != nil {
+		var raw []byte
+		if err := r.Scan(&p.OrgID, &p.Revision, &p.PolicyDigest, &p.RuntimeDigest, &p.Bytecode, &raw); err != nil {
 			return err
 		}
-		out.Policies = append(out.Policies, p)
+		if raw == nil {
+			out.Policies = append(out.Policies, p)
+		} else {
+			set, err := policydsl.DecodeArtifactSet(raw)
+			if err != nil {
+				return err
+			}
+			if set.PolicyDigest != p.PolicyDigest {
+				return fmt.Errorf("execution artifact document mismatch")
+			}
+			groups := make([]string, 0, len(set.Groups))
+			for group := range set.Groups {
+				groups = append(groups, group)
+			}
+			sort.Strings(groups)
+			for _, group := range groups {
+				a := set.Groups[group]
+				out.Policies = append(out.Policies, nodepolicy.PolicyArtifact{OrgID: p.OrgID, GroupID: group, Revision: p.Revision, PolicyDigest: a.PolicyDigest, RuntimeDigest: a.RuntimeDigest, Bytecode: a.RuntimeBytecode})
+			}
+		}
 		return nil
 	})
 	if err != nil {

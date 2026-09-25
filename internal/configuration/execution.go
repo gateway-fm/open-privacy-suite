@@ -62,16 +62,17 @@ func normalizeExecution(spec *ExecutionSpec) error {
 }
 
 type ExecutionDiff struct {
-	Before                     *policydsl.Policy         `json:"before"`
-	After                      *policydsl.Policy         `json:"after"`
-	Changes                    []ExecutionChange         `json:"changes"`
-	PreviousProjectionID       string                    `json:"previousProjectionId"`
-	PreviousProjectionRevision int64                     `json:"previousProjectionRevision"`
-	ProjectionRevision         int64                     `json:"projectionRevision"`
-	PolicyDigest               string                    `json:"policyDigest"`
-	RuntimeDigest              string                    `json:"runtimeDigest"`
-	SourceDigest               string                    `json:"sourceDigest"`
-	Migration                  *ExecutionMigrationReview `json:"migration,omitempty"`
+	Artifacts                  map[string]*policydsl.Artifact `json:"artifacts"`
+	Before                     *policydsl.Policy              `json:"before"`
+	After                      *policydsl.Policy              `json:"after"`
+	Changes                    []ExecutionChange              `json:"changes"`
+	PreviousProjectionID       string                         `json:"previousProjectionId"`
+	PreviousProjectionRevision int64                          `json:"previousProjectionRevision"`
+	ProjectionRevision         int64                          `json:"projectionRevision"`
+	PolicyDigest               string                         `json:"policyDigest"`
+	RuntimeDigest              string                         `json:"runtimeDigest"`
+	SourceDigest               string                         `json:"sourceDigest"`
+	Migration                  *ExecutionMigrationReview      `json:"migration,omitempty"`
 }
 
 // ExecutionChange shows a binding's complete before/after rules so review never

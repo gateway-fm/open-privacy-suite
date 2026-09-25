@@ -170,11 +170,19 @@ func (f *Feed) Apply(v Verifier, wire []byte) error {
 	return nil
 }
 
-func principalKey(p Principal) string   { return p.ID }
-func groupKey(g Group) string           { return g.ID }
-func contractKey(c Contract) string     { return c.Address }
-func policyKey(p PolicyArtifact) string { return p.OrgID }
-func sanctionKey(s Sanction) string     { return s.OrgID + ":" + s.Address }
+func principalKey(p Principal) string { return p.ID }
+func groupKey(g Group) string         { return g.ID }
+func contractKey(c Contract) string   { return c.Address }
+
+// The NUL separator cannot occur in either identifier. Keep legacy org-only
+// keys unchanged so an upgrade can delete previously published artifacts.
+func policyKey(p PolicyArtifact) string {
+	if p.GroupID == "" {
+		return p.OrgID
+	}
+	return p.OrgID + "\x00" + p.GroupID
+}
+func sanctionKey(s Sanction) string { return s.OrgID + ":" + s.Address }
 
 func applyDelta(base Snapshot, d Delta) (Snapshot, error) {
 	out := cloneSnapshot(base)

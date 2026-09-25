@@ -160,7 +160,7 @@ fn main() -> eyre::Result<()> {
             let pinned=simulation_runtime.pin_simulation(identity,now());
             Box::pin(async move {
                 let pinned=pinned?;
-                let (factory,candidate_report)=if let Some(candidate)=&request.candidate_policy {let (factory,report)=pinned.candidate_factory(candidate,&org)?;(factory,Some(report))} else {(pinned.factory(),None)};
+                let (factory,candidate_report)=if let Some(candidates)=&request.candidate_policies {let (factory,report)=pinned.candidate_set_factory(candidates,&org)?;(factory,Some(report))} else if let Some(candidate)=&request.candidate_policy {let (factory,report)=pinned.candidate_factory(candidate,&org)?;(factory,Some(report))} else {(pinned.factory(),None)};
                 let transaction:TransactionRequest=serde_json::from_value(request.params[0].clone()).map_err(|_|"invalid simulation transaction")?;
                 let block:BlockId=request.params.get(1).filter(|v|!v.is_null()).map(|v|serde_json::from_value(v.clone())).transpose().map_err(|_|"invalid simulation block")?.unwrap_or_default();
                 // A signed principal authorizes execution of existing code,

@@ -150,6 +150,8 @@ pub struct Sanction {
 #[serde(deny_unknown_fields)]
 pub struct PolicyArtifact {
     pub org_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub group_id: String,
     pub revision: u64,
     pub policy_digest: String,
     pub runtime_digest: String,
@@ -280,6 +282,8 @@ pub struct SimulationRequest {
     pub dry_run: bool,
     #[serde(deserialize_with = "required_nullable")]
     pub candidate_policy: Option<PolicyArtifact>,
+    #[serde(default)]
+    pub candidate_policies: Option<Vec<PolicyArtifact>>,
 }
 
 fn required_nullable<'de, D: serde::Deserializer<'de>>(
@@ -310,6 +314,24 @@ pub fn parse_simulation(
     }
     if let Some(candidate) = &parsed.candidate_policy {
         validate_artifact(candidate)?;
+    }
+    if let Some(candidates) = &parsed.candidate_policies {
+        if parsed.candidate_policy.is_some() {
+            return Err("ambiguous candidate policy".into());
+        }
+        let mut groups = HashSet::new();
+        for candidate in candidates {
+            validate_artifact(candidate)?;
+            let first = &candidates[0];
+            if candidate.group_id.is_empty()
+                || !groups.insert(&candidate.group_id)
+                || candidate.org_id != first.org_id
+                || candidate.revision != first.revision
+                || candidate.policy_digest != first.policy_digest
+            {
+                return Err("invalid candidate artifact set".into());
+            }
+        }
     }
     let empty_override = |value: &serde_json::Value| {
         value.is_null() || value.as_object().is_some_and(|fields| fields.is_empty())
@@ -422,8 +444,20 @@ pub(crate) fn validate_snapshot(snapshot: &Snapshot) -> Result<(), String> {
         }
     }
     let mut policies = HashSet::new();
+    let mut org_policies: std::collections::HashMap<&str, &PolicyArtifact> =
+        std::collections::HashMap::new();
     for artifact in &snapshot.policies {
-        if !policies.insert(&artifact.org_id) || validate_artifact(artifact).is_err() {
+        if let Some(previous) = org_policies.insert(&artifact.org_id, artifact)
+            && (previous.group_id.is_empty()
+                || artifact.group_id.is_empty()
+                || previous.revision != artifact.revision
+                || previous.policy_digest != artifact.policy_digest)
+        {
+            return Err(invalid());
+        }
+        if !policies.insert((&artifact.org_id, &artifact.group_id))
+            || validate_artifact(artifact).is_err()
+        {
             return Err(invalid());
         }
     }
@@ -441,6 +475,7 @@ pub(crate) fn validate_snapshot(snapshot: &Snapshot) -> Result<(), String> {
 
 pub(crate) fn validate_artifact(artifact: &PolicyArtifact) -> Result<(), String> {
     if !identifier(&artifact.org_id)
+        || (!artifact.group_id.is_empty() && !identifier(&artifact.group_id))
         || artifact.revision == 0
         || artifact.bytecode.is_empty()
         || artifact.bytecode.len() > 24576

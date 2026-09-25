@@ -90,7 +90,7 @@ func compileConfigurationExecution(ctx context.Context, q DBTX, doc *configurati
 		slog.Warn("execution-rules submission refused: no usable pinned compiler", "pinned_version", policydsl.SolidityVersion, "err", err)
 		return nil, ConfigurationUnavailable("execution rules are compiled with Solidity %s and this deployment has no usable compiler: install it and point POLICY_SOLC at it", policydsl.SolidityVersion)
 	}
-	artifact, err := compiler.Build(ctx, validated)
+	artifact, err := compiler.BuildSet(ctx, validated)
 	if errors.Is(err, policydsl.ErrPolicyTooLarge) {
 		// The document is well formed; it just does not fit in a contract.
 		// That is the author's to resolve, so say so rather than reporting a
@@ -435,11 +435,12 @@ func prepareConfigurationExecution(ctx context.Context, q DBTX, view *Configurat
 	if candidate == nil {
 		return ConfigurationConflict("execution candidate missing")
 	}
-	artifact, err := verifyExecutionArtifact(candidate.Artifact, validated)
+	artifacts, err := verifyExecutionArtifacts(candidate.Artifact, validated)
 	if err != nil {
 		return err
 	}
-	diff := &configuration.ExecutionDiff{Before: before, After: p, Changes: configuration.ExecutionChanges(before, p), PolicyDigest: artifact.PolicyDigest, RuntimeDigest: artifact.RuntimeDigest, SourceDigest: artifact.SourceDigest, Migration: migration}
+	sourceDigest, runtimeDigest := artifacts.Digests()
+	diff := &configuration.ExecutionDiff{Before: before, After: p, Changes: configuration.ExecutionChanges(before, p), PolicyDigest: artifacts.PolicyDigest, RuntimeDigest: runtimeDigest, SourceDigest: sourceDigest, Artifacts: artifacts.Groups, Migration: migration}
 	if previous != nil {
 		diff.PreviousProjectionID = previous.ID
 		diff.PreviousProjectionRevision = previous.Revision
@@ -449,6 +450,40 @@ func prepareConfigurationExecution(ctx context.Context, q DBTX, view *Configurat
 	}
 	view.ExecutionDiff = diff
 	return nil
+}
+
+func verifyExecutionArtifacts(raw []byte, validated *policydsl.Validated) (*policydsl.ArtifactSet, error) {
+	set, err := policydsl.DecodeArtifactSet(raw)
+	if err != nil {
+		return nil, ConfigurationConflict("compiled execution artifact set is missing or invalid")
+	}
+	digest, err := policydsl.CanonicalDigest(validated.Policy())
+	if err != nil {
+		return nil, err
+	}
+	if digest != set.PolicyDigest {
+		return nil, ConfigurationConflict("compiled execution document digest differs")
+	}
+	if set.Groups[""] == nil && len(set.Groups) != len(validated.Groups()) {
+		return nil, ConfigurationConflict("compiled execution artifact group set differs")
+	}
+	for group, artifact := range set.Groups {
+		v := validated
+		if group != "" {
+			v = validated.ForGroup(group)
+		}
+		if v == nil {
+			return nil, ConfigurationConflict("compiled execution artifact has an unknown group")
+		}
+		encoded, err := json.Marshal(artifact)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := verifyExecutionArtifact(encoded, v); err != nil {
+			return nil, err
+		}
+	}
+	return set, nil
 }
 
 func verifyExecutionArtifact(raw []byte, validated *policydsl.Validated) (*policydsl.Artifact, error) {
@@ -487,9 +522,19 @@ func projectConfigurationExecution(ctx context.Context, tx *Tx, view *Configurat
 	if candidate == nil {
 		return ConfigurationConflict("execution projection candidate missing")
 	}
-	var artifact policydsl.Artifact
-	if err := json.Unmarshal(candidate.Artifact, &artifact); err != nil {
+	set, err := policydsl.DecodeArtifactSet(candidate.Artifact)
+	if err != nil {
 		return err
+	}
+	// Retain legacy columns for previously approved single-artifact revisions.
+	// Grouped revisions carry their complete immutable set in artifact_set;
+	// empty runtime bytes must never be mistaken for a runnable org contract.
+	artifact := set.Groups[""]
+	var artifactSet any
+	if artifact == nil {
+		sourceDigest, runtimeDigest := set.Digests()
+		artifact = &policydsl.Artifact{PolicyDigest: set.PolicyDigest, SourceDigest: sourceDigest, RuntimeDigest: runtimeDigest, RuntimeBytecode: []byte{}}
+		artifactSet = []byte(candidate.Artifact)
 	}
 	compiler, err := json.Marshal(artifact.Compiler)
 	if err != nil {
@@ -502,7 +547,7 @@ func projectConfigurationExecution(ctx context.Context, tx *Tx, view *Configurat
 	if _, err := tx.tx.ExecContext(ctx, `UPDATE execution_policy_revisions SET status='superseded' WHERE org_id=$1 AND status='active'`, view.Scope.ID); err != nil {
 		return err
 	}
-	_, err = tx.tx.ExecContext(ctx, `INSERT INTO execution_policy_revisions(id,org_id,revision,base_revision,status,source,policy_digest,solidity_source,solidity_digest,runtime_bytecode,runtime_digest,compiler,created_by,created_at,activated_by,activated_at)
- VALUES($1,$2,$3,$4,'active',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW())`, candidate.ID, view.Scope.ID, diff.ProjectionRevision, diff.PreviousProjectionRevision, string(source), artifact.PolicyDigest, artifact.Source, artifact.SourceDigest, artifact.RuntimeBytecode, artifact.RuntimeDigest, compiler, candidate.CreatedBy, candidate.CreatedAt, view.Actor.UserID)
+	_, err = tx.tx.ExecContext(ctx, `INSERT INTO execution_policy_revisions(id,org_id,revision,base_revision,status,source,policy_digest,solidity_source,solidity_digest,runtime_bytecode,runtime_digest,compiler,created_by,created_at,activated_by,activated_at,artifact_set)
+ VALUES($1,$2,$3,$4,'active',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW(),$15)`, candidate.ID, view.Scope.ID, diff.ProjectionRevision, diff.PreviousProjectionRevision, string(source), artifact.PolicyDigest, artifact.Source, artifact.SourceDigest, artifact.RuntimeBytecode, artifact.RuntimeDigest, compiler, candidate.CreatedBy, candidate.CreatedAt, view.Actor.UserID, artifactSet)
 	return err
 }

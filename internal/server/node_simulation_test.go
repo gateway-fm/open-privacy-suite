@@ -187,8 +187,12 @@ func TestNodeCandidatePreviewAllowsReadonlySelfAndNeverImpersonation(t *testing.
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	require.Equal(t, 1, n.calls)
 	require.False(t, n.request.DryRun)
-	require.NotNil(t, n.request.CandidatePolicy)
-	require.Equal(t, f.orgID, n.request.CandidatePolicy.OrgID)
+	require.Nil(t, n.request.CandidatePolicy)
+	require.NotNil(t, n.request.CandidatePolicies)
+	for _, candidate := range *n.request.CandidatePolicies {
+		require.Equal(t, f.orgID, candidate.OrgID)
+		require.NotEmpty(t, candidate.GroupID)
+	}
 	request["dryRun"] = true
 	response = f.request(t, f.readonly, http.MethodPost, path, request)
 	require.Equal(t, http.StatusForbidden, response.Code, response.Body.String())

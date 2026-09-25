@@ -4,7 +4,7 @@
 use crate::{
     context::{
         CodeKind, CreatedContract, ExecutionIdentity, FrameKind, FramePolicy, ObservedCall,
-        PolicyInvocation,
+        PolicyInvocation, PolicyPlan,
     },
     stream::AppliedFacts,
     wire::{Contract, PolicyArtifact, validate_artifact},
@@ -26,7 +26,7 @@ pub struct FactsPolicy {
     principals: HashMap<String, usize>,
     groups: HashMap<String, usize>,
     contracts: HashMap<Address, usize>,
-    policies: HashMap<String, (B256, Bytes)>,
+    policies: HashMap<(String, String), (B256, Bytes)>,
 }
 
 impl FactsPolicy {
@@ -58,7 +58,7 @@ impl FactsPolicy {
             .iter()
             .map(|p| {
                 Ok((
-                    p.org_id.clone(),
+                    (p.org_id.clone(), p.group_id.clone()),
                     (
                         format!("0x{}", p.policy_digest)
                             .parse()
@@ -86,20 +86,63 @@ impl FactsPolicy {
     /// Ephemeral simulation override. The signed stream and its immutable facts
     /// remain untouched; only the selected organization's program is replaced.
     pub fn with_candidate(mut self, candidate: &PolicyArtifact, org: &str) -> Result<Self, String> {
-        validate_artifact(candidate)?;
-        if candidate.org_id != org || !self.policies.contains_key(org) {
+        self.replace_candidates(std::slice::from_ref(candidate), org)?;
+        Ok(self)
+    }
+    pub fn with_candidates(
+        mut self,
+        candidates: &[PolicyArtifact],
+        org: &str,
+    ) -> Result<Self, String> {
+        self.replace_candidates(candidates, org)?;
+        Ok(self)
+    }
+    fn known_org(&self, org: &str) -> bool {
+        // A reviewed deny-all document has an empty artifact set. Diagnostic
+        // scope comes from the directory, independently of whether any active
+        // group grants execution; ordinary execution still needs an artifact.
+        self.facts
+            .snapshot()
+            .groups
+            .iter()
+            .any(|group| group.org_id == org)
+    }
+    fn replace_candidates(
+        &mut self,
+        candidates: &[PolicyArtifact],
+        org: &str,
+    ) -> Result<(), String> {
+        if !self.known_org(org) {
             return Err("candidate policy organization mismatch".into());
         }
-        self.policies.insert(
-            org.into(),
-            (
-                format!("0x{}", candidate.policy_digest)
-                    .parse()
-                    .map_err(|_| "invalid candidate digest")?,
-                Bytes::copy_from_slice(&candidate.bytecode),
-            ),
-        );
-        Ok(self)
+        let mut next = HashMap::new();
+        for candidate in candidates {
+            validate_artifact(candidate)?;
+            if candidate.org_id != org
+                || next.contains_key(&(org.to_owned(), candidate.group_id.clone()))
+            {
+                return Err("candidate policy organization or group mismatch".into());
+            }
+            if let Some(first) = candidates.first()
+                && (candidate.policy_digest != first.policy_digest
+                    || candidate.revision != first.revision
+                    || (candidates.len() > 1 && candidate.group_id.is_empty()))
+            {
+                return Err("inconsistent candidate artifact set".into());
+            }
+            next.insert(
+                (org.to_owned(), candidate.group_id.clone()),
+                (
+                    format!("0x{}", candidate.policy_digest)
+                        .parse()
+                        .map_err(|_| "invalid candidate digest")?,
+                    Bytes::copy_from_slice(&candidate.bytecode),
+                ),
+            );
+        }
+        self.policies.retain(|(owner, _), _| owner != org);
+        self.policies.extend(next);
+        Ok(())
     }
     fn owner<'a>(&'a self, address: Address, created: &'a [CreatedContract]) -> &'a str {
         self.contract(address)
@@ -139,7 +182,7 @@ impl FramePolicy for FactsPolicy {
         if !principal
             .linked_addresses
             .contains(&format!("{:#x}", identity.signer))
-            || !self.policies.contains_key(&identity.org_id)
+            || !self.known_org(&identity.org_id)
         {
             return Err("invalid diagnostic principal scope".into());
         }
@@ -229,6 +272,19 @@ impl FramePolicy for FactsPolicy {
         call: &ObservedCall,
         created: &[CreatedContract],
     ) -> Result<PolicyInvocation, String> {
+        let mut plan = self.prepare_all(identity, call, created)?;
+        if plan.invocations.len() != 1 {
+            return Err("execution requires the full group artifact set".into());
+        }
+        Ok(plan.invocations.remove(0))
+    }
+
+    fn prepare_all(
+        &self,
+        identity: &ExecutionIdentity,
+        call: &ObservedCall,
+        created: &[CreatedContract],
+    ) -> Result<PolicyPlan, String> {
         if identity.min_snapshot_version == 0
             || identity.min_snapshot_version > self.facts.version()
         {
@@ -295,10 +351,6 @@ impl FramePolicy for FactsPolicy {
         {
             return Err("execution frame is sanctioned".into());
         }
-        let (revision, bytecode) = self
-            .policies
-            .get(policy_org)
-            .ok_or("missing active execution policy")?;
         groups.retain(|g| g.org_id == policy_org);
         groups.sort_by(|a, b| a.id.cmp(&b.id));
         let group_claims = groups
@@ -380,10 +432,32 @@ impl FramePolicy for FactsPolicy {
                 depth: U256::from(call.depth),
             },
         };
-        Ok(PolicyInvocation {
-            revision: *revision,
-            bytecode: bytecode.clone(),
-            calldata: input.abi_encode().into(),
+        let calldata: Bytes = input.abi_encode().into();
+        let legacy = self.policies.get(&(policy_org.to_owned(), String::new()));
+        let selected = if let Some(artifact) = legacy {
+            vec![artifact]
+        } else {
+            groups
+                .iter()
+                .filter_map(|group| {
+                    self.policies
+                        .get(&(policy_org.to_owned(), group.id.clone()))
+                })
+                .collect()
+        };
+        if selected.is_empty() {
+            return Err("missing applicable execution policy".into());
+        }
+        Ok(PolicyPlan {
+            per_group: legacy.is_none(),
+            invocations: selected
+                .into_iter()
+                .map(|(revision, bytecode)| PolicyInvocation {
+                    revision: *revision,
+                    bytecode: bytecode.clone(),
+                    calldata: calldata.clone(),
+                })
+                .collect(),
         })
     }
 }

@@ -326,7 +326,13 @@ fn apply_delta(previous: &Snapshot, delta: &Delta) -> Result<Snapshot, String> {
         &mut next.policies,
         &delta.upserts.policies,
         &delta.deletes.policies,
-        |p| p.org_id.clone(),
+        |p| {
+            if p.group_id.is_empty() {
+                p.org_id.clone()
+            } else {
+                format!("{}\0{}", p.org_id, p.group_id)
+            }
+        },
     )?;
     let deleted_sanctions = delta
         .deletes

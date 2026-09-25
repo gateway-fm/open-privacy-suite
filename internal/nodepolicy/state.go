@@ -81,6 +81,7 @@ type Sanction struct {
 
 type PolicyArtifact struct {
 	OrgID         string `json:"org_id"`
+	GroupID       string `json:"group_id,omitempty" wireoptional:"true"` // Empty only for previously approved org artifacts.
 	Revision      uint64 `json:"revision"`
 	PolicyDigest  string `json:"policy_digest"`
 	RuntimeDigest string `json:"runtime_digest"`
@@ -155,11 +156,16 @@ func Pin(s Snapshot) (*PinnedSnapshot, error) {
 		seen[c.Address] = true
 	}
 	seen = map[string]bool{}
+	orgPolicies := map[string]PolicyArtifact{}
 	for _, artifact := range s.Policies {
-		if !validPolicyArtifact(artifact) || seen[artifact.OrgID] {
+		if !validPolicyArtifact(artifact) || seen[policyKey(artifact)] {
 			return nil, ErrSnapshot
 		}
-		seen[artifact.OrgID] = true
+		if previous, ok := orgPolicies[artifact.OrgID]; ok && (previous.GroupID == "" || artifact.GroupID == "" || previous.Revision != artifact.Revision || previous.PolicyDigest != artifact.PolicyDigest) {
+			return nil, ErrSnapshot
+		}
+		orgPolicies[artifact.OrgID] = artifact
+		seen[policyKey(artifact)] = true
 	}
 	seen = map[string]bool{}
 	for _, sanction := range s.Sanctions {
@@ -173,7 +179,7 @@ func Pin(s Snapshot) (*PinnedSnapshot, error) {
 }
 
 func validPolicyArtifact(artifact PolicyArtifact) bool {
-	if !identifier(artifact.OrgID) || artifact.Revision == 0 || len(artifact.Bytecode) == 0 || len(artifact.Bytecode) > 24576 || !hexDigest(artifact.PolicyDigest) || !hexDigest(artifact.RuntimeDigest) {
+	if !identifier(artifact.OrgID) || (artifact.GroupID != "" && !identifier(artifact.GroupID)) || artifact.Revision == 0 || len(artifact.Bytecode) == 0 || len(artifact.Bytecode) > 24576 || !hexDigest(artifact.PolicyDigest) || !hexDigest(artifact.RuntimeDigest) {
 		return false
 	}
 	digest := sha256.Sum256(artifact.Bytecode)

@@ -29,6 +29,14 @@ func TestDeploymentOwnershipClassesAndMembershipExceptions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	grouped, err := requireCompiler(t).BuildPerGroup(t.Context(), v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	groupEvaluator, err := NewEVMEvaluator(grouped[groupID])
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, tc := range []struct {
 		name                       string
 		deployer, pending, member  bool
@@ -64,7 +72,7 @@ func TestDeploymentOwnershipClassesAndMembershipExceptions(t *testing.T) {
 				frame.Calldata = append(common.FromHex("0x3659cfe6"), common.LeftPadBytes(libraryAddr.Bytes(), 32)...)
 				frame.UpgradeTargetOrg = orgID
 			}
-			for label, got := range map[string]Decision{"reference": v.Evaluate(ctx, []Frame{frame}), "EVM": e.Evaluate(orgID, ctx, []Frame{frame})} {
+			for label, got := range map[string]Decision{"reference": v.Evaluate(ctx, []Frame{frame}), "EVM": e.Evaluate(orgID, ctx, []Frame{frame}), "per-group EVM": groupEvaluator.Evaluate(orgID, ctx, []Frame{frame})} {
 				if got.Allowed != tc.want {
 					t.Fatalf("%s: %+v", label, got)
 				}

@@ -241,6 +241,7 @@ func exactFields(b []byte, t reflect.Type) error {
 			return err
 		}
 		allowed := map[string]reflect.Type{}
+		optional := map[string]bool{}
 		var collect func(reflect.Type)
 		collect = func(st reflect.Type) {
 			for i := 0; i < st.NumField(); i++ {
@@ -252,12 +253,13 @@ func exactFields(b []byte, t reflect.Type) error {
 				name := strings.Split(f.Tag.Get("json"), ",")[0]
 				if name != "" && name != "-" {
 					allowed[name] = f.Type
+					optional[name] = f.Tag.Get("wireoptional") == "true"
 				}
 			}
 		}
 		collect(t)
 		for name := range allowed {
-			if _, ok := fields[name]; !ok {
+			if _, ok := fields[name]; !ok && !optional[name] {
 				return ErrEnvelope
 			}
 		}
@@ -269,6 +271,7 @@ func exactFields(b []byte, t reflect.Type) error {
 			// Explicit pointer fields model nullable values (for example a
 			// pending transaction's block). The field itself remains required;
 			// non-pointer facts and the root document still reject null.
+			// Only explicitly tagged protocol extensions may be absent.
 			if ft.Kind() == reflect.Pointer && bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
 				continue
 			}

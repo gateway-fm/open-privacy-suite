@@ -164,6 +164,13 @@ func (c *Client) Simulate(ctx context.Context, identity, request []byte) (json.R
 	if err != nil {
 		return nil, err
 	}
+	if parsed.CandidatePolicies != nil {
+		for _, candidate := range *parsed.CandidatePolicies {
+			if candidate.OrgID != submitted.OrgID {
+				return nil, ErrIdentity
+			}
+		}
+	}
 	if parsed.CandidatePolicy != nil && parsed.CandidatePolicy.OrgID != submitted.OrgID {
 		return nil, ErrIdentity
 	}

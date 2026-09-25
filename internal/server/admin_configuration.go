@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"slices"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -15,6 +16,7 @@ import (
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/configuration"
 	"privacy-proxy/internal/db"
+	"privacy-proxy/internal/policydsl"
 )
 
 func (s *Server) registerConfigurationRoutes(api *gin.RouterGroup) {
@@ -344,6 +346,7 @@ func (s *Server) getConfigurationContext(c *gin.Context) {
 }
 
 // @Summary Submit a complete configuration source document
+// @Description Execution rules compile to a reviewed artifact set, keyed by group, for the whole organization document. Each artifact must fit the runtime size limit.
 // @Tags Admin: Configuration
 // @Accept json
 // @Produce json
@@ -388,7 +391,21 @@ func (s *Server) submitConfigurationRevision(c *gin.Context) {
 			return
 		}
 	}
-	revision, err := s.db.SubmitConfigurationRevision(c.Request.Context(), raw, actor)
+	ctx := c.Request.Context()
+	if kind == configuration.ExecutionRules {
+		// Per-group compilation can outlast the normal 30s API write deadline.
+		// Bound the complete request and leave time to return a compiler error;
+		// cancellation still aborts the transaction without storing a partial set.
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, policydsl.ArtifactSetBuildTimeout)
+		defer cancel()
+		deadline, _ := ctx.Deadline()
+		if err := http.NewResponseController(c.Writer).SetWriteDeadline(deadline.Add(15 * time.Second)); err != nil && !errors.Is(err, http.ErrNotSupported) {
+			configurationError(c, err)
+			return
+		}
+	}
+	revision, err := s.db.SubmitConfigurationRevision(ctx, raw, actor)
 	if err != nil {
 		configurationError(c, err)
 		return
@@ -510,6 +527,7 @@ func (s *Server) simulateConfigurationRevision(c *gin.Context) {
 }
 
 // @Summary Activate reviewed configuration revisions atomically
+// @Description Execution activation publishes the complete approved group artifact set atomically, removing artifacts for bindings omitted from the replacement.
 // @Tags Admin: Configuration
 // @Accept json
 // @Produce json

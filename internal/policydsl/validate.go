@@ -168,8 +168,9 @@ type frameKey struct {
 // argument decoding are done here, at activation time, so that evaluating a
 // frame is a map lookup and a comparison rather than a JSON and ABI parse.
 type Validated struct {
-	policy  *Policy
-	byGroup map[string]map[frameKey][]*compiledRule
+	policy   *Policy
+	byGroup  map[string]map[frameKey][]*compiledRule
+	perGroup bool
 }
 
 // Policy returns a copy of the document this was built from.
@@ -198,7 +199,7 @@ func (v *Validated) ForGroup(group string) *Validated {
 	if !ok {
 		return nil
 	}
-	return &Validated{policy: v.policy, byGroup: map[string]map[frameKey][]*compiledRule{group: index}}
+	return &Validated{policy: v.policy, byGroup: map[string]map[frameKey][]*compiledRule{group: index}, perGroup: true}
 }
 
 // knownCallTypes is the closed set of frame kinds a rule may name.

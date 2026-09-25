@@ -400,6 +400,21 @@ impl ExecutionHandle {
         Ok(self.factory().candidate(snapshot))
     }
 
+    pub fn candidate_set_factory(
+        &self,
+        candidates: &[PolicyArtifact],
+        org: &str,
+    ) -> Result<(PolicyFactory, Arc<DiagnosticReport>), String> {
+        let adapter =
+            FactsPolicy::new(self.facts.clone(), self.at)?.with_candidates(candidates, org)?;
+        let snapshot = Arc::new(PinnedPolicySnapshot::new(
+            self.facts.version(),
+            self.facts.digest(),
+            Arc::new(adapter),
+        ));
+        Ok(self.factory().candidate(snapshot))
+    }
+
     pub fn persist(&self, archive: &ArtifactStore, block: &BlockDescriptor) -> Result<(), String> {
         if block.network != self.network || block.timestamp != self.at as u64 {
             return Err("produced block execution context mismatch".into());

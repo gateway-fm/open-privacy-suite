@@ -39,8 +39,10 @@ func TestConfigurationExecutionCompilesDeclaredSiblingsAndProjectsApprovedArtifa
 	draft, err := d.SubmitConfigurationRevision(ctx, source, author)
 	require.NoError(t, err)
 	require.NotEmpty(t, draft.Artifact, "draft must retain actual compiled artifact")
-	var artifact policydsl.Artifact
-	require.NoError(t, json.Unmarshal(draft.Artifact, &artifact))
+	set, err := policydsl.DecodeArtifactSet(draft.Artifact)
+	require.NoError(t, err)
+	artifact := set.Groups[group.ID]
+	require.NotNil(t, artifact)
 	require.NotEmpty(t, artifact.RuntimeBytecode)
 	allow := func(context.Context, *Tx, ConfigurationActivation) error { return nil }
 	_, err = d.ActivateConfigurationRevisions(ctx, scope, []string{draft.ID}, reviewer, allow)
@@ -51,8 +53,10 @@ func TestConfigurationExecutionCompilesDeclaredSiblingsAndProjectsApprovedArtifa
 	projection, err := d.GetActiveExecutionPolicy(ctx, scope.ID)
 	require.NoError(t, err)
 	require.Equal(t, draft.ID, projection.ID)
-	require.Equal(t, artifact.RuntimeDigest, projection.RuntimeDigest)
-	require.Equal(t, artifact.RuntimeBytecode, projection.RuntimeBytecode)
+	projectedSet, err := policydsl.DecodeArtifactSet(projection.ArtifactSet)
+	require.NoError(t, err)
+	require.Equal(t, artifact, projectedSet.Groups[group.ID])
+	require.Empty(t, projection.RuntimeBytecode)
 	exported, err := d.GetConfigurationContext(ctx, scope, configuration.ExecutionRules)
 	require.NoError(t, err)
 	require.Equal(t, draft.Revision, exported.Source.BaseRevision)
@@ -172,8 +176,8 @@ func TestConfigurationExecutionKeepsIndependentRevisionSequencesAndAtomicAudit(t
 	require.Greater(t, current, version, "activation must atomically dirty the node fact stream")
 	var auditValue []byte
 	require.NoError(t, d.Conn().QueryRowContext(ctx, `SELECT new_value FROM rbac_audit_log WHERE resource_id=$1`, draft.ID).Scan(&auditValue))
-	require.Contains(t, string(auditValue), artifact.RuntimeDigest)
-	require.Contains(t, string(auditValue), "runtime_bytecode", "reviewed artifact must be retained in the same audit transaction")
+	require.Contains(t, string(auditValue), artifact.PolicyDigest)
+	require.Contains(t, string(auditValue), `"groups":{}`, "even a deny-all artifact set must be retained in the audit transaction")
 }
 
 func TestConfigurationExecutionLegacyRestrictionRequiresExplicitMigration(t *testing.T) {

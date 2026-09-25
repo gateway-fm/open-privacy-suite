@@ -170,10 +170,17 @@ func GenerateSolidity(v *Validated) (string, error) {
 
 	b.WriteString("        }\n\n")
 	b.WriteString("        if (worst != NO_MATCHING_RULE) return worst;\n")
-	b.WriteString("        if (frame.kind == 4 || frame.kind == 5) return UNSUPPORTED_CREATE;\n")
-	b.WriteString("        if (frame.complete && (frame.codeOrg != frame.policyOrg || frame.storageOrg != frame.policyOrg)) return OWNERSHIP;\n")
-	b.WriteString("        if (payload.length < 4) return MALFORMED_CALLDATA;\n")
-	b.WriteString("        return worst;\n")
+	// A group with no matching rule must not hide a specific denial from a
+	// later group. Tag only the common fallback; the node combines in group
+	// order and removes the tag after trying the signer's applicable groups.
+	fallback := ""
+	if v.perGroup {
+		fallback = "256 + "
+	}
+	fmt.Fprintf(&b, "        if (frame.kind == 4 || frame.kind == 5) return %sUNSUPPORTED_CREATE;\n", fallback)
+	fmt.Fprintf(&b, "        if (frame.complete && (frame.codeOrg != frame.policyOrg || frame.storageOrg != frame.policyOrg)) return %sOWNERSHIP;\n", fallback)
+	fmt.Fprintf(&b, "        if (payload.length < 4) return %sMALFORMED_CALLDATA;\n", fallback)
+	fmt.Fprintf(&b, "        return %sworst;\n", fallback)
 	b.WriteString("    }\n")
 	b.WriteString(bodies.String())
 	tables.write(&b)

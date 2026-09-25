@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"slices"
+	"sort"
 	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -177,11 +178,25 @@ func (s *Server) executeNodePreview(c *gin.Context, req apimodels.NodeSimulation
 				}
 			}
 		}
-		var artifact policydsl.Artifact
-		if json.Unmarshal(candidate.Artifact, &artifact) != nil {
+		set, err := policydsl.DecodeArtifactSet(candidate.Artifact)
+		if err != nil {
 			return fail(http.StatusServiceUnavailable, "compiled revision unavailable")
 		}
-		request.CandidatePolicy = &nodepolicy.PolicyArtifact{OrgID: org, Revision: uint64(candidate.Revision), PolicyDigest: artifact.PolicyDigest, RuntimeDigest: artifact.RuntimeDigest, Bytecode: artifact.RuntimeBytecode}
+		if artifact := set.Groups[""]; artifact != nil {
+			request.CandidatePolicy = &nodepolicy.PolicyArtifact{OrgID: org, Revision: uint64(candidate.Revision), PolicyDigest: artifact.PolicyDigest, RuntimeDigest: artifact.RuntimeDigest, Bytecode: artifact.RuntimeBytecode}
+		} else {
+			groups := make([]string, 0, len(set.Groups))
+			for group := range set.Groups {
+				groups = append(groups, group)
+			}
+			sort.Strings(groups)
+			candidates := make([]nodepolicy.PolicyArtifact, 0, len(groups))
+			for _, group := range groups {
+				artifact := set.Groups[group]
+				candidates = append(candidates, nodepolicy.PolicyArtifact{OrgID: org, GroupID: group, Revision: uint64(candidate.Revision), PolicyDigest: artifact.PolicyDigest, RuntimeDigest: artifact.RuntimeDigest, Bytecode: artifact.RuntimeBytecode})
+			}
+			request.CandidatePolicies = &candidates
+		}
 	}
 	wire, err := nodepolicy.EncodeSimulation(request)
 	if err != nil {

@@ -32,6 +32,19 @@ with current approval authority must activate it. Read-only administrators and
 service principals can prepare ordinary drafts and reviews. Approver trust and
 platform documents require a human author and a separate human approver.
 
+An execution-rules revision remains one organization document containing all of
+its group bindings. Review includes a compiled artifact for each bound group;
+one approval activates the complete set together. Removing a binding removes
+that group's execution rules. A caller needs an allowing rule in at least one
+of their current groups; nested calls are checked separately.
+
+Each group's compiled rules must fit the contract size limit. Adding other
+groups no longer consumes that group's limit. If one group is too large,
+simplify its rules before submitting. Compilation of large group sets can take
+up to five minutes. Deploy the updated OPS and Reth versions
+together before activating grouped revisions; older nodes reject the new feed.
+Previously approved organization-wide artifacts remain valid until replaced.
+
 Cross-stream dependencies are pinned by digest. Supply sibling revision IDs to
 review and activate a related bundle together, such as an ABI and its execution
 rules. Editing the selected bundle invalidates its review. Stale base revisions

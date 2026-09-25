@@ -33,6 +33,11 @@ const (
 // is prepared, never while a request is being served, so this is generous.
 const buildTimeout = 60 * time.Second
 
+// ArtifactSetBuildTimeout bounds compilation of the complete reviewed set.
+// HTTP submission gives this work its own deadline: large sets legitimately
+// take longer than the ordinary API write timeout.
+const ArtifactSetBuildTimeout = 5 * time.Minute
+
 // Artifact is a built policy: the source that was generated, the bytecode it
 // produced, and everything needed to reproduce and review the pair.
 //
@@ -135,13 +140,15 @@ type solcOutput struct {
 // group on its own keeps a group's code the same whether the organisation has
 // three groups or three hundred.
 //
-// The compiler is checked once for the whole set: a partially built set is
-// never returned, because publishing part of a policy would leave frames
+// Every artifact uses the pinned compiler. A partially built set is never
+// returned, because publishing part of a policy would leave frames
 // decided by rules nobody approved together.
 func (c *Compiler) BuildPerGroup(ctx context.Context, v *Validated) (map[string]*Artifact, error) {
 	if v == nil {
 		return nil, fmt.Errorf("policydsl: no validated policy to compile")
 	}
+	ctx, cancel := context.WithTimeout(ctx, ArtifactSetBuildTimeout)
+	defer cancel()
 	if err := c.Available(ctx); err != nil {
 		return nil, err
 	}

@@ -56,7 +56,8 @@ type ExecutionPolicyRevision struct {
 	RuntimeBytecode []byte `json:"-"`
 	RuntimeDigest   string `json:"runtime_digest"`
 
-	Compiler policydsl.CompilerSettings `json:"compiler"`
+	Compiler    policydsl.CompilerSettings `json:"compiler"`
+	ArtifactSet json.RawMessage            `json:"artifact_set,omitempty"`
 
 	CreatedBy   *string    `json:"created_by,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`
@@ -67,20 +68,22 @@ type ExecutionPolicyRevision struct {
 const executionPolicyColumns = `
     id, org_id, revision, status, source, policy_digest,
     solidity_source, solidity_digest, runtime_bytecode, runtime_digest,
-    compiler, created_by, created_at, activated_by, activated_at, base_revision`
+    compiler, created_by, created_at, activated_by, activated_at, base_revision, artifact_set`
 
 func scanExecutionPolicy(scan func(dest ...any) error) (*ExecutionPolicyRevision, error) {
 	var (
-		rev      ExecutionPolicyRevision
-		compiler []byte
+		rev         ExecutionPolicyRevision
+		compiler    []byte
+		artifactSet []byte
 	)
 	if err := scan(
 		&rev.ID, &rev.OrgID, &rev.Revision, &rev.Status, &rev.Source, &rev.PolicyDigest,
 		&rev.SoliditySource, &rev.SolidityDigest, &rev.RuntimeBytecode, &rev.RuntimeDigest,
-		&compiler, &rev.CreatedBy, &rev.CreatedAt, &rev.ActivatedBy, &rev.ActivatedAt, &rev.BaseRevision,
+		&compiler, &rev.CreatedBy, &rev.CreatedAt, &rev.ActivatedBy, &rev.ActivatedAt, &rev.BaseRevision, &artifactSet,
 	); err != nil {
 		return nil, err
 	}
+	rev.ArtifactSet = artifactSet
 	if len(compiler) > 0 {
 		if err := json.Unmarshal(compiler, &rev.Compiler); err != nil {
 			return nil, fmt.Errorf("reading compiler settings: %w", err)

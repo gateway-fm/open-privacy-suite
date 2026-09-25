@@ -569,7 +569,8 @@ impl<CTX: ContextTr + Host> PolicyInspector<CTX> {
         let prepared = self.snapshot.prepare(identity, observed, &self.created);
         let prepared_at = started.map(|_| Instant::now());
         self.last_gas = 0;
-        let active = prepared.and_then(|invocation| self.evaluate(context, invocation, observed));
+        let active =
+            prepared.and_then(|invocation| self.evaluate_all(context, invocation, observed));
         if let (Some(timing), Some(started), Some(prepared_at)) =
             (&self.timing, started, prepared_at)
         {
@@ -593,7 +594,7 @@ impl<CTX: ContextTr + Host> PolicyInspector<CTX> {
                     observed,
                     &self.created,
                 )
-                .and_then(|invocation| self.evaluate(context, invocation, observed));
+                .and_then(|invocation| self.evaluate_all(context, invocation, observed));
             self.evaluating_candidate = false;
             self.candidate_calls.push(CallRecord {
                 depth: observed.depth,
@@ -613,6 +614,36 @@ impl<CTX: ContextTr + Host> PolicyInspector<CTX> {
         active
     }
 
+    fn evaluate_all(
+        &mut self,
+        context: &mut CTX,
+        plan: crate::context::PolicyPlan,
+        guarded: &ObservedCall,
+    ) -> Result<u64, String> {
+        let mut specific = None;
+        let mut fallback = 1;
+        let mut remaining_gas = POLICY_GAS;
+        if plan.invocations.is_empty() {
+            return Err("missing execution artifacts".into());
+        }
+        for invocation in plan.invocations {
+            // Errors remain fail-closed even if another group might grant access.
+            let (reason, spent) = self.evaluate(context, invocation, guarded, remaining_gas)?;
+            remaining_gas = remaining_gas.saturating_sub(spent);
+            if reason == 0 {
+                return Ok(0);
+            }
+            if plan.per_group && (257..=266).contains(&reason) {
+                fallback = reason - 256;
+            } else if reason <= 10 {
+                specific.get_or_insert(reason);
+            } else {
+                return Err("unknown policy result".into());
+            }
+        }
+        Ok(specific.unwrap_or(fallback))
+    }
+
     /// Executes `check(...)` on the policy contract as a static frame of the live EVM.
     ///
     /// The frame sees the journal exactly as the application's pending call will. Everything
@@ -623,12 +654,13 @@ impl<CTX: ContextTr + Host> PolicyInspector<CTX> {
         context: &mut CTX,
         invocation: PolicyInvocation,
         guarded: &ObservedCall,
-    ) -> Result<u64, String> {
+        gas_limit: u64,
+    ) -> Result<(u64, u64), String> {
         let checkpoint = context.journal_mut().checkpoint();
         let buffer = context.local().shared_memory_buffer().clone();
         let memory_len = buffer.borrow().len();
 
-        let outcome = self.run_policy_frame(context, invocation, guarded);
+        let outcome = self.run_policy_frame(context, invocation, guarded, gas_limit);
 
         buffer.borrow_mut().truncate(memory_len);
         context.journal_mut().checkpoint_revert(checkpoint);
@@ -643,7 +675,9 @@ impl<CTX: ContextTr + Host> PolicyInspector<CTX> {
         let result = match outcome? {
             FrameResult::Call(outcome) => {
                 if !self.evaluating_candidate {
-                    self.last_gas = outcome.result.gas.total_gas_spent();
+                    self.last_gas = self
+                        .last_gas
+                        .saturating_add(outcome.result.gas.total_gas_spent());
                 }
                 outcome.result
             }
@@ -659,6 +693,7 @@ impl<CTX: ContextTr + Host> PolicyInspector<CTX> {
             return Err("malformed policy result".into());
         }
         u64::try_from(U256::from_be_slice(&result.output))
+            .map(|reason| (reason, result.gas.total_gas_spent()))
             .map_err(|_| "out-of-range policy result".into())
     }
 
@@ -667,6 +702,7 @@ impl<CTX: ContextTr + Host> PolicyInspector<CTX> {
         context: &mut CTX,
         invocation: PolicyInvocation,
         guarded: &ObservedCall,
+        gas_limit: u64,
     ) -> Result<FrameResult, String> {
         let code = Bytecode::new_raw_checked(invocation.bytecode.clone())
             .map_err(|_| "malformed private policy bytecode".to_owned())?;
@@ -690,7 +726,7 @@ impl<CTX: ContextTr + Host> PolicyInspector<CTX> {
             frame_input: FrameInput::Call(Box::new(CallInputs {
                 input: CallInput::Bytes(invocation.calldata),
                 return_memory_offset: 0..0,
-                gas_limit: POLICY_GAS,
+                gas_limit,
                 reservoir: 0,
                 bytecode_address: POLICY,
                 known_bytecode: (code_hash, code),

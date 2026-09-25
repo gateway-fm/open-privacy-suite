@@ -3945,6 +3945,12 @@
                     "after": {
                         "$ref": "#/components/schemas/privacy-proxy_internal_policydsl.Policy"
                     },
+                    "artifacts": {
+                        "additionalProperties": {
+                            "$ref": "#/components/schemas/privacy-proxy_internal_policydsl.Artifact"
+                        },
+                        "type": "object"
+                    },
                     "before": {
                         "$ref": "#/components/schemas/privacy-proxy_internal_policydsl.Policy"
                     },
@@ -11616,6 +11622,7 @@
                 ]
             },
             "post": {
+                "description": "Execution rules compile to a reviewed artifact set, keyed by group, for the whole organization document. Each artifact must fit the runtime size limit.",
                 "parameters": [
                     {
                         "description": "Organization UUID",
@@ -11772,6 +11779,7 @@
         },
         "/api/v1/admin/orgs/{org_id}/configuration/{kind}/revisions/{revision_id}/activate": {
             "post": {
+                "description": "Execution activation publishes the complete approved group artifact set atomically, removing artifacts for bindings omitted from the replacement.",
                 "parameters": [
                     {
                         "description": "Organization UUID",

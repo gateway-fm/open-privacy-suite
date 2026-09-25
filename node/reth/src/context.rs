@@ -82,6 +82,12 @@ pub struct PolicyInvocation {
     pub calldata: Bytes,
 }
 
+#[derive(Clone, Debug)]
+pub struct PolicyPlan {
+    pub invocations: Vec<PolicyInvocation>,
+    pub per_group: bool,
+}
+
 /// A creation observed by the EVM in this execution. The inspector keeps this
 /// overlay on the same rollback boundaries as application state.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -116,6 +122,18 @@ pub trait FramePolicy: Debug + Send + Sync {
         _created: &[CreatedContract],
     ) -> Result<PolicyInvocation, String> {
         self.prepare(identity, call)
+    }
+
+    fn prepare_all(
+        &self,
+        identity: &ExecutionIdentity,
+        call: &ObservedCall,
+        created: &[CreatedContract],
+    ) -> Result<PolicyPlan, String> {
+        Ok(PolicyPlan {
+            invocations: vec![self.prepare_with_creations(identity, call, created)?],
+            per_group: false,
+        })
     }
 
     fn authorize_policy_read(
@@ -177,8 +195,8 @@ impl PinnedPolicySnapshot {
         identity: &ExecutionIdentity,
         call: &ObservedCall,
         created: &[CreatedContract],
-    ) -> Result<PolicyInvocation, String> {
-        self.policy.prepare_with_creations(identity, call, created)
+    ) -> Result<PolicyPlan, String> {
+        self.policy.prepare_all(identity, call, created)
     }
 
     pub(crate) fn authorize_policy_read(

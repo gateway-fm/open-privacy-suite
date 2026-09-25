@@ -7,6 +7,13 @@ and its gas, storage journal, access warming, and trace frames are isolated from
 application execution. A denied inner frame vetoes the entire transaction even
 when application code catches the revert.
 
+Execution rules are published as one artifact per bound group. The guard runs
+only the signer's current groups in the target policy organization, in sorted
+order, until one permits the frame. The complete set shares the frame's 100,000
+gas budget, and failures deny execution. A pinned snapshot cannot mix revisions
+or legacy org-wide artifacts with grouped artifacts for the same organization.
+Upgrade OPS and this node together before activating grouped revisions.
+
 Reth is pinned to **v2.5.2**, commit
 `5a6940e351fed80458fe6c9da8581cbe4b8bd036`. Preparation refuses tracked source
 modifications and reuses the research checkout when available:
