@@ -84,10 +84,12 @@ final class PluginOptions {
   @Option(names = "--plugin-ops-approval-capacity", description = "approvals the store holds (default: ${DEFAULT-VALUE})")
   int capacity = 100_000;
 
-  @Option(names = "--plugin-ops-approval-max-ttl-ms", description = "longest expires_at - issued_at of a batch accepted, in ms (default: ${DEFAULT-VALUE})")
+  @Option(names = "--plugin-ops-approval-max-ttl-ms", description = "longest expires_at - issued_at of a batch accepted, in ms, 10 s to 24 h (default: ${DEFAULT-VALUE})")
   long maxTtlMs = 3_600_000;
 
-  @Option(names = "--plugin-ops-approval-allowed-sources", description = "comma-separated CIDR blocks allowed to connect for delivery (default: any; a network rule must still let only OPS reach the port)")
+  @Option(
+      names = "--plugin-ops-approval-allowed-sources",
+      description = "who may connect for delivery (required): comma-separated CIDR blocks, or 'any' to rely on the network rule that must let only OPS reach the port")
   String sources;
 
   @Option(names = "--plugin-ops-approval-max-connections", description = "open delivery connections at most, one per OPS instance is the norm (default: ${DEFAULT-VALUE})")
@@ -121,10 +123,23 @@ final class PluginOptions {
     return new InetSocketAddress(host, port);
   }
 
+  /**
+   * Who may connect. There is no default: an operator who relies on the network rule alone says so
+   * with {@code any}, rather than getting it by leaving the option out.
+   */
   AllowedSources allowedSources() {
-    return sources == null ? AllowedSources.ANY : AllowedSources.parse(sources);
+    if (sources == null) {
+      throw new IllegalArgumentException(
+          "--plugin-ops-approval-allowed-sources is required: the CIDR blocks the OPS instances connect from, or 'any' to rely on the network rule alone");
+    }
+    return AllowedSources.parse(sources);
   }
 
+  /**
+   * The shortest maximum TTL accepted: OPS's shortest TTL, which leaves room for the wait window
+   * plus a block. Below it every approval OPS signs would be refused or expire while it waits.
+   */
+  static final long MIN_TTL_LIMIT_MS = 10_000;
   /** The longest maximum TTL accepted: 24 h, far beyond OPS's 1 h, and far from overflowing. */
   static final long MAX_TTL_LIMIT_MS = 86_400_000;
 
@@ -139,8 +154,9 @@ final class PluginOptions {
     if (waitMs < 0 || capacity < 1 || maxConnections < 1 || maxConcurrentCalls < 1) {
       throw new IllegalArgumentException("wait-ms >= 0 and capacity, max-connections, max-concurrent-calls >= 1 required");
     }
-    if (maxTtlMs < 1 || maxTtlMs > MAX_TTL_LIMIT_MS) {
-      throw new IllegalArgumentException("--plugin-ops-approval-max-ttl-ms must be between 1 and " + MAX_TTL_LIMIT_MS);
+    if (maxTtlMs < MIN_TTL_LIMIT_MS || maxTtlMs > MAX_TTL_LIMIT_MS) {
+      throw new IllegalArgumentException(
+          "--plugin-ops-approval-max-ttl-ms must be between " + MIN_TTL_LIMIT_MS + " and " + MAX_TTL_LIMIT_MS);
     }
   }
 }

@@ -8,11 +8,14 @@ import java.util.List;
 
 /**
  * The source addresses allowed to open a delivery connection ({@code
- * --plugin-ops-approval-allowed-sources}): CIDR blocks, or anyone when the option is not set. A
- * defence in depth behind the network rule that must let only OPS reach the port.
+ * --plugin-ops-approval-allowed-sources}, required): CIDR blocks, or {@code any}, which leaves it to
+ * the network rule that must let only OPS reach the port. A defence in depth behind that rule.
  */
 final class AllowedSources {
-  static final AllowedSources ANY = new AllowedSources(List.of(), "any");
+  /** The spelling of "every source": explicit, so no configuration gets it by omission. */
+  static final String ANY_SPEC = "any";
+
+  static final AllowedSources ANY = new AllowedSources(List.of(), ANY_SPEC);
 
   private record Block(byte[] network, int prefix) {
     boolean contains(final byte[] address) {
@@ -41,16 +44,22 @@ final class AllowedSources {
   }
 
   /**
-   * Parses a comma-separated list of {@code address[/prefix]} with literal IPv4 or IPv6 addresses;
-   * a bare address is a single host. Host bits set below the prefix are refused, not masked: they
-   * usually mean a typo in a security setting.
+   * Parses {@code any}, or a comma-separated list of {@code address[/prefix]} with literal IPv4 or
+   * IPv6 addresses; a bare address is a single host. Host bits set below the prefix are refused, not
+   * masked: they usually mean a typo in a security setting. So is {@code any} beside a block.
    */
   static AllowedSources parse(final String spec) {
+    if (spec.trim().equals(ANY_SPEC)) {
+      return ANY;
+    }
     final List<Block> blocks = new ArrayList<>();
     for (final String raw : spec.split(",", -1)) {
       final String entry = raw.trim();
       if (entry.isEmpty()) {
         throw new IllegalArgumentException("empty entry in allowed sources '" + spec + "'");
+      }
+      if (entry.equals(ANY_SPEC)) {
+        throw new IllegalArgumentException("'any' allows every source and cannot be combined with blocks: '" + spec + "'");
       }
       final int slash = entry.indexOf('/');
       final byte[] network = literal(slash < 0 ? entry : entry.substring(0, slash)).getAddress();

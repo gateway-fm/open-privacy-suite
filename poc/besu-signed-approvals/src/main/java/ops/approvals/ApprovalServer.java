@@ -34,8 +34,10 @@ import org.slf4j.LoggerFactory;
  * The {@code ops.approvals.v1.ApprovalDelivery} service OPS dials: one unary {@code Deliver} per
  * batch, whose status is the confirmation, and {@code Status} for the boot id (wire contract §1,
  * §3, §4). Plaintext HTTP/2 on grpc-java and Netty exactly as Besu ships them; only OPS may reach
- * the port (a network rule), and the optional allowed-sources list and the connection cap refuse
- * anyone else at accept time, before HTTP/2 sees a byte.
+ * the port (a network rule), and the allowed-sources list and the connection cap refuse anyone else
+ * at accept time, before HTTP/2 sees a byte. A connection that does not complete the HTTP/2 preface
+ * within 5 s, or carries no call for 30 s, is closed, so nobody who gets through can hold the slots
+ * OPS reconnects into.
  */
 public final class ApprovalServer implements AutoCloseable {
   private static final Logger LOG = LoggerFactory.getLogger(ApprovalServer.class);
@@ -45,6 +47,8 @@ public final class ApprovalServer implements AutoCloseable {
   static final long PERMIT_KEEPALIVE_MS = 10_000;
   /** A connection must complete its HTTP/2 preface within this, or it is closed. */
   static final long HANDSHAKE_TIMEOUT_MS = 5_000;
+  /** A connection that has carried no call for this long is closed; OPS calls Status every second. */
+  static final long MAX_CONNECTION_IDLE_MS = 30_000;
   /** Verification is CPU work of ~0.1 ms a batch: two threads, off Netty's I/O threads. */
   private static final int CALL_THREADS = 2;
   private static final int IO_THREADS = 2;
@@ -56,8 +60,10 @@ public final class ApprovalServer implements AutoCloseable {
    * @param maxConnections open connections at most; one per OPS instance is the norm
    * @param maxConcurrentCalls calls in flight per connection (HTTP/2 streams); OPS bounds its own
    * @param permitKeepAliveMs the shortest ping interval tolerated, calls in flight or not
+   * @param maxConnectionIdleMs how long a connection may carry no call before it is closed
    */
-  public record Limits(AllowedSources sources, int maxConnections, int maxConcurrentCalls, long permitKeepAliveMs) {}
+  public record Limits(
+      AllowedSources sources, int maxConnections, int maxConcurrentCalls, long permitKeepAliveMs, long maxConnectionIdleMs) {}
 
   /** Connection refusals; a no-op implementation is used in tests. */
   public interface Metrics {
@@ -105,7 +111,11 @@ public final class ApprovalServer implements AutoCloseable {
               .maxConcurrentCallsPerConnection(limits.maxConcurrentCalls())
               .permitKeepAliveTime(limits.permitKeepAliveMs(), TimeUnit.MILLISECONDS)
               .permitKeepAliveWithoutCalls(true)
+              // A peer that reaches the port must not hold a connection slot for nothing: no
+              // HTTP/2 preface within 5 s, or no call for the idle limit, closes the connection.
+              // Keepalive pings are not calls; OPS's Status every second is.
               .handshakeTimeout(HANDSHAKE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+              .maxConnectionIdle(limits.maxConnectionIdleMs(), TimeUnit.MILLISECONDS)
               .build()
               .start();
     } catch (final IOException | RuntimeException e) {

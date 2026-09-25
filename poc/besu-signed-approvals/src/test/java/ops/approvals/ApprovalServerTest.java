@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.google.protobuf.ByteString;
+import io.grpc.ConnectivityState;
 import io.grpc.ManagedChannel;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
@@ -27,8 +28,10 @@ import io.netty.handler.codec.http2.Http2FrameCodecBuilder;
 import io.netty.handler.codec.http2.Http2GoAwayFrame;
 import io.netty.handler.codec.http2.Http2PingFrame;
 import io.netty.handler.codec.http2.Http2SettingsFrame;
+import java.io.InputStream;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
+import java.net.Socket;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.List;
@@ -64,7 +67,13 @@ class ApprovalServerTest {
   }
 
   private static ApprovalServer.Limits limits() {
-    return new ApprovalServer.Limits(AllowedSources.ANY, 32, 32, ApprovalServer.PERMIT_KEEPALIVE_MS);
+    return limits(AllowedSources.ANY, 32);
+  }
+
+  /** The production timings: keepalive pings every 10 s permitted, idle connections closed at 30 s. */
+  private static ApprovalServer.Limits limits(final AllowedSources sources, final int maxConnections) {
+    return new ApprovalServer.Limits(
+        sources, maxConnections, 32, ApprovalServer.PERMIT_KEEPALIVE_MS, ApprovalServer.MAX_CONNECTION_IDLE_MS);
   }
 
   private ApprovalServer start(final ApprovalServer.Limits limits, final int capacity) throws Exception {
@@ -200,7 +209,7 @@ class ApprovalServerTest {
   @Test
   void aSourceOutsideTheAllowedListIsDisconnectedBeforeAnyCall() throws Exception {
     final ApprovalServer server =
-        start(new ApprovalServer.Limits(AllowedSources.parse("10.0.0.0/8"), 32, 32, ApprovalServer.PERMIT_KEEPALIVE_MS), 10);
+        start(limits(AllowedSources.parse("10.0.0.0/8"), 32), 10);
     final ApprovalDeliveryGrpc.ApprovalDeliveryBlockingStub stub = client(server).withDeadlineAfter(5, TimeUnit.SECONDS);
     assertEquals(
         Status.Code.UNAVAILABLE, refusal(() -> stub.status(StatusRequest.getDefaultInstance())).getStatus().getCode());
@@ -214,7 +223,7 @@ class ApprovalServerTest {
     // A failing metrics backend must not turn the source check into an open door.
     final ApprovalServer server =
         start(
-            new ApprovalServer.Limits(AllowedSources.parse("10.0.0.0/8"), 32, 32, ApprovalServer.PERMIT_KEEPALIVE_MS),
+            limits(AllowedSources.parse("10.0.0.0/8"), 32),
             10,
             new ApprovalServer.Metrics() {
               @Override
@@ -243,7 +252,7 @@ class ApprovalServerTest {
   @Test
   void connectionsBeyondTheCapAreRefusedUntilOneCloses() throws Exception {
     final ApprovalServer server =
-        start(new ApprovalServer.Limits(AllowedSources.parse("127.0.0.0/8"), 1, 32, ApprovalServer.PERMIT_KEEPALIVE_MS), 10);
+        start(limits(AllowedSources.parse("127.0.0.0/8"), 1), 10);
     final ManagedChannel first = NettyChannelBuilder.forAddress("127.0.0.1", server.port()).usePlaintext().build();
     try {
       ApprovalDeliveryGrpc.newBlockingStub(first).withDeadlineAfter(5, TimeUnit.SECONDS).status(StatusRequest.getDefaultInstance());
@@ -267,7 +276,7 @@ class ApprovalServerTest {
   @Test
   void anIdleConnectionMayPingAtThePermittedRateButNoFaster() throws Exception {
     final long permit = 300;
-    final ApprovalServer server = start(new ApprovalServer.Limits(AllowedSources.ANY, 4, 7, permit), 10);
+    final ApprovalServer server = start(new ApprovalServer.Limits(AllowedSources.ANY, 4, 7, permit, ApprovalServer.MAX_CONNECTION_IDLE_MS), 10);
     try (Http2Probe probe = new Http2Probe(server.port())) {
       assertEquals(7L, probe.settings.get(5, TimeUnit.SECONDS), "SETTINGS advertise the concurrent call cap");
       for (int i = 0; i < 5; i++) {
@@ -289,10 +298,121 @@ class ApprovalServerTest {
     assertEquals(ApprovalServer.PERMIT_KEEPALIVE_MS, 10_000, "the contract: pings every 10 s are permitted");
   }
 
+  /** grpc-java raises a shorter idle limit to one second; the tests use that floor. */
+  private static final long IDLE_MS = 1_000;
+
+  @Test
+  void aConnectionThatKeepsCallingOutlivesTheIdleLimitAndLosesItOnceItStops() throws Exception {
+    final ApprovalServer server = start(new ApprovalServer.Limits(AllowedSources.ANY, 4, 32, ApprovalServer.PERMIT_KEEPALIVE_MS, IDLE_MS), 10);
+    final ManagedChannel channel = NettyChannelBuilder.forAddress("127.0.0.1", server.port()).usePlaintext().build();
+    closing.push(
+        () -> {
+          channel.shutdownNow();
+          channel.awaitTermination(5, TimeUnit.SECONDS);
+        });
+    final ApprovalDeliveryGrpc.ApprovalDeliveryBlockingStub stub = ApprovalDeliveryGrpc.newBlockingStub(channel);
+    stub.withDeadlineAfter(5, TimeUnit.SECONDS).status(StatusRequest.getDefaultInstance());
+    assertEquals(ConnectivityState.READY, channel.getState(false));
+    final List<ConnectivityState> left = new CopyOnWriteArrayList<>();
+    follow(channel, ConnectivityState.READY, left);
+
+    // OPS calls Status every second against a 30 s limit; here a call every 200 ms for three limits.
+    final long busyUntil = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(3 * IDLE_MS);
+    long lastCallStarted = System.nanoTime();
+    while (System.nanoTime() < busyUntil) {
+      lastCallStarted = System.nanoTime();
+      stub.withDeadlineAfter(5, TimeUnit.SECONDS).status(StatusRequest.getDefaultInstance());
+      Thread.sleep(IDLE_MS / 5);
+    }
+    assertEquals(List.of(), left, "a connection that keeps calling is never closed for idleness");
+    assertEquals(1, server.connections());
+
+    // Idle time starts after the last call, including the final sleep above. Measuring from
+    // here would subtract that sleep and incorrectly report a correctly timed close as early.
+    final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+    while (left.isEmpty() && System.nanoTime() < deadline) {
+      Thread.sleep(10);
+    }
+    assertEquals(ConnectivityState.IDLE, left.isEmpty() ? null : left.get(0), "the server closed the idle connection");
+    assertTrue(System.nanoTime() - lastCallStarted >= TimeUnit.MILLISECONDS.toNanos(IDLE_MS * 9 / 10), "not before the limit");
+    awaitConnections(server, 0);
+  }
+
+  @Test
+  void aConnectionThatNeverCallsLosesItsSlotAtTheIdleLimit() throws Exception {
+    // One slot, held by a peer that completed the HTTP/2 preface and then says nothing: OPS's
+    // reconnect is refused until the idle limit frees the slot.
+    final ApprovalServer server = start(new ApprovalServer.Limits(AllowedSources.ANY, 1, 32, ApprovalServer.PERMIT_KEEPALIVE_MS, IDLE_MS), 10);
+    try (Http2Probe squatter = new Http2Probe(server.port())) {
+      final long opened = System.nanoTime();
+      squatter.settings.get(5, TimeUnit.SECONDS);
+      assertEquals(1, server.connections());
+      final ManagedChannel refusedChannel = NettyChannelBuilder.forAddress("127.0.0.1", server.port()).usePlaintext().build();
+      try {
+        assertEquals(
+            Status.Code.UNAVAILABLE,
+            refusal(() -> ApprovalDeliveryGrpc.newBlockingStub(refusedChannel).withDeadlineAfter(5, TimeUnit.SECONDS).status(StatusRequest.getDefaultInstance()))
+                .getStatus()
+                .getCode());
+        assertTrue(refused.contains("limit"), refused.toString());
+      } finally {
+        refusedChannel.shutdownNow(); // its reconnect attempts would race for the slot below
+        refusedChannel.awaitTermination(5, TimeUnit.SECONDS);
+      }
+      assertEquals(Http2Error.NO_ERROR.code(), squatter.goAway.get(10, TimeUnit.SECONDS), "a graceful GOAWAY for idleness");
+      squatter.closed.get(10, TimeUnit.SECONDS);
+      assertTrue(System.nanoTime() - opened >= TimeUnit.MILLISECONDS.toNanos(IDLE_MS * 9 / 10), "not before the limit");
+    }
+    awaitConnections(server, 0);
+    client(server).withDeadlineAfter(5, TimeUnit.SECONDS).status(StatusRequest.getDefaultInstance());
+    assertEquals(30_000, ApprovalServer.MAX_CONNECTION_IDLE_MS, "the contract: no call for 30 s closes a connection");
+  }
+
+  @Test
+  void aConnectionThatNeverSendsThePrefaceLosesItsSlotAfterFiveSeconds() throws Exception {
+    final ApprovalServer server = start(limits(AllowedSources.ANY, 1), 10);
+    try (Socket silent = new Socket("127.0.0.1", server.port())) {
+      final long opened = System.nanoTime();
+      silent.setSoTimeout(15_000);
+      awaitConnections(server, 1);
+      final InputStream in = silent.getInputStream();
+      while (in.read() >= 0) {
+        // the server's own SETTINGS, then nothing until it closes
+      }
+      final long heldMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - opened);
+      assertTrue(heldMs >= ApprovalServer.HANDSHAKE_TIMEOUT_MS - 500 && heldMs < ApprovalServer.HANDSHAKE_TIMEOUT_MS + 3_000, heldMs + " ms");
+    }
+    awaitConnections(server, 0);
+    client(server).withDeadlineAfter(5, TimeUnit.SECONDS).status(StatusRequest.getDefaultInstance());
+    assertEquals(5_000, ApprovalServer.HANDSHAKE_TIMEOUT_MS, "the contract: the HTTP/2 preface within 5 s");
+  }
+
+  private static void awaitConnections(final ApprovalServer server, final int expected) throws InterruptedException {
+    final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+    while (server.connections() != expected && System.nanoTime() < deadline) {
+      Thread.sleep(10);
+    }
+    assertEquals(expected, server.connections());
+  }
+
+  /** Records every state the channel moves to after {@code from}, until it shuts down. */
+  private static void follow(final ManagedChannel channel, final ConnectivityState from, final List<ConnectivityState> seen) {
+    channel.notifyWhenStateChanged(
+        from,
+        () -> {
+          final ConnectivityState now = channel.getState(false);
+          seen.add(now);
+          if (now != ConnectivityState.SHUTDOWN) {
+            follow(channel, now, seen);
+          }
+        });
+  }
+
   /** An HTTP/2 connection that makes no call at all: only SETTINGS and PING frames. */
   private static final class Http2Probe implements AutoCloseable {
     final CompletableFuture<Long> settings = new CompletableFuture<>();
     final CompletableFuture<Long> goAway = new CompletableFuture<>();
+    final CompletableFuture<Void> closed = new CompletableFuture<>();
     final AtomicInteger acks = new AtomicInteger();
     private final EventLoopGroup group = new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
     private final Channel channel;
@@ -326,6 +446,7 @@ class ApprovalServerTest {
               .connect("127.0.0.1", port)
               .sync()
               .channel();
+      channel.closeFuture().addListener(done -> closed.complete(null));
     }
 
     void ping(final long content) {
@@ -334,8 +455,13 @@ class ApprovalServerTest {
 
     @Override
     public void close() {
-      channel.close().syncUninterruptibly();
-      group.shutdownGracefully(0, 1, TimeUnit.SECONDS).syncUninterruptibly();
+      try {
+        assertTrue(channel.close().awaitUninterruptibly(5, TimeUnit.SECONDS), "probe channel closed");
+      } finally {
+        assertTrue(
+            group.shutdownGracefully(0, 1, TimeUnit.SECONDS).awaitUninterruptibly(5, TimeUnit.SECONDS),
+            "probe event loop stopped");
+      }
     }
   }
 }

@@ -181,7 +181,11 @@ public class OpsApprovalPlugin implements BesuPlugin {
             options.listenAddress(),
             ingress,
             new ApprovalServer.Limits(
-                options.allowedSources(), options.maxConnections, options.maxConcurrentCalls, ApprovalServer.PERMIT_KEEPALIVE_MS),
+                options.allowedSources(),
+                options.maxConnections,
+                options.maxConcurrentCalls,
+                ApprovalServer.PERMIT_KEEPALIVE_MS,
+                ApprovalServer.MAX_CONNECTION_IDLE_MS),
             new ApprovalServer.Metrics() {
               @Override
               public void refused(final String reason) {
