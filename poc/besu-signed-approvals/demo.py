@@ -13,7 +13,6 @@ import http.client
 import json
 import os
 from pathlib import Path
-import shutil
 import statistics
 import subprocess
 import time
@@ -199,7 +198,7 @@ class Stack:
                 self.ops.kill()
                 self.ops.wait(timeout=5)
             self.opslog.close()
-            shutil.copy2(self.directory / "ops.log", h.EVIDENCE / (self.name + "-ops.log"))
+            h.write_evidence_log(self.directory / "ops.log", h.EVIDENCE / (self.name + "-ops.log"))
         if self.nodes is not None:
             self.nodes.close()
         elif self.node is not None:
@@ -276,7 +275,7 @@ def story(stack, pause=False):
     print("PASS - deployed and registered to Bank A:", created, flush=True)
 
     (h.EVIDENCE / "demo.json").write_text(json.dumps(out, indent=2) + "\n")
-    print("\nAll four steps passed. Evidence: poc/besu-signed-approvals/evidence/demo.json", flush=True)
+    print(f"\nAll four steps passed. Evidence: {h.EVIDENCE / 'demo.json'}", flush=True)
 
 
 def bench(count=128, samples=3, concurrency=16):
