@@ -112,9 +112,10 @@ the TTL; OPS forgets a lane's reported values when it stops being ready.
 - Signs with the TTL from `OPS_APPROVAL_TTL` (10 s to 1 h, default 10 minutes; the minimum leaves
   room for the wait window plus a block), shortened to the smallest maximum TTL its lanes report.
 - Retains every signed batch until its `expires_at`, up to a cap; beyond the cap the oldest batches
-  are dropped first and counted. Retention is in memory: a joint restart of OPS and a producer loses
-  the approvals of pooled transactions. The planned asynchronous recovery store (plan §5.1)
-  will recover committed records only; a crash before persistence commits can still lose approvals.
+  are dropped first and counted. Retention is in memory: an OPS crash can lose undelivered
+  approvals; even delivered approvals can be lost if OPS and the producer both restart, together
+  or successively while the transaction is pending. Durable storage is deferred (plan §5.1).
+  If no usable copy remains, recovery can require client resubmission through OPS and fresh approval.
 - With several producers configured (a standby sequencer), sends every batch to each of them
   independently: one producer failing does not hold back another.
 - Backs off per lane: while a lane refuses (store full, unavailable), only one probe call is in
@@ -123,10 +124,9 @@ the TTL; OPS forgets a lane's reported values when it stops being ready.
 - Forwards the transaction without waiting for any confirmation (plan §0 1a). When no lane is
   ready — none connected with a matching `Status` in the last few seconds — `Enqueue` fails and the
   client gets 503 rather than a forwarded transaction that cannot be approved.
-- Future persistence must not gate forwarding, signing or approval delivery (plan §0 1d, §5.1).
-  Background storage batching must not introduce a delivery timer or a wait for a database commit.
-  Persistence is not implemented on this branch; its performance and crash recovery gap must be
-  measured before rollout.
+- Durable approval storage is not required for the current release (plan §0 1d, §5.1). If a future
+  recovery requirement justifies it, persistence must not gate forwarding, signing or delivery;
+  its resource cost and remaining crash recovery gap must be measured before rollout.
 
 ## 6. Receiver behaviour at execution and in the store
 
