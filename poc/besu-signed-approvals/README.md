@@ -4,6 +4,10 @@ Branch `poc/ops-besu-signed-approvals`. Companion to the Reth PoC (`poc/ops-reth
 and the [Besu/Lineth research](../../docs/research/dsl-policy-and-node-enforcement/ops-besu-integration-2026-09-14/RESEARCH.md).
 Plan and decisions: [PLAN.md](PLAN.md).
 
+[5,000/sec performance and retention measurements](../approval-performance/README.md):
+four verification workers kept approval delivery current on the measured host; full-stack
+5,000 committed TPS remains unproven. Includes memory sizing and restart under fresh traffic.
+
 **Result: the signed-approval gate runs as one plugin JAR on unmodified Besu 26.8.1 — the version
 Lineth pins — and passed the full integration suite (25 checks) on a real node, including the same-block target
 change, caught inner failures, delegatecall, forged fingerprints, a call that turns into a CREATE after
@@ -131,7 +135,7 @@ recorded runs remain intact below.
 
 Earlier evidence: [tests.json](evidence/tests.json), per-scenario node logs (`evidence/*.log`, decision lines
 `OPS_APPROVAL_DECISION allow|wait|drop|deny`), RPC transcripts (`evidence/*-rpc.json`), genesis and
-compiled fixtures. Unit tests: 99 Java (`gradle build`: Go golden fingerprints and Go-signed batches,
+compiled fixtures. Unit tests: 100 Java (`gradle build`: Go golden fingerprints and Go-signed batches,
 canonical JSON, the state snapshot, selector fail-closed paths; the status code of every contract check
 and their order, all-or-nothing, the boot id and `Status`; the store's replacement rule, expiry,
 eviction order, youth from `issued_at` and room counted before eviction, also as random operation
@@ -270,6 +274,7 @@ options (wire contract §7):
 --plugin-ops-approval-allowed-sources=CIDR[,CIDR]   required; use any explicitly to rely on network rules
 --plugin-ops-approval-max-connections=32        open delivery connections
 --plugin-ops-approval-max-concurrent-calls=32   calls in flight per connection
+--plugin-ops-approval-verify-workers=2         verification workers, 1 to 32
 ```
 
 The orphan lifetime is gone (expiry replaces it), and so are the raw-TCP frame limits: the gRPC
@@ -278,6 +283,12 @@ HTTP/2 preface within 5 s, and closes connections with no calls for 30 s. These 
 not CLI options. Keepalive pings are permitted every 10 s with no call in flight (OPS pings every
 20 s), but pings do not reset the idle timeout. OPS's own `Status` call every second keeps its lane
 active. Every harness producer explicitly allows only `127.0.0.1/32`.
+
+Verification workers are separate from network I/O. The default remains two. If approval
+delivery falls behind under sustained load, test a larger pool against the CPU budget of the
+producer; more workers can compete with transaction execution. The maximum batch size of 32
+does not mean arrivals are actually grouped in batches of 32. Size against the measured batch
+rate and confirmation latency, not only approvals accepted into OPS's memory queue.
 
 OPS: `OPS_APPROVAL_NODE=besu`, the plugin's listen address as a delivery target
 (`OPS_APPROVAL_TARGETS`, wire contract §7), `OPS_APPROVAL_SEED_FILE` as before; the node's

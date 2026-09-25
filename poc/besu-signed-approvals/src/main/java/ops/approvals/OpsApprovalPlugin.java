@@ -191,11 +191,12 @@ public class OpsApprovalPlugin implements BesuPlugin {
               public void refused(final String reason) {
                 refused.labels(reason).inc();
               }
-            });
+            },
+            options.verifyWorkers);
     server.start();
     metrics.createIntegerGauge(CATEGORY, "connections", "open approval delivery connections", server::connections);
     LOG.info(
-        "OPS approval gate active: listen={} port={} boot_id={} chain={} trusted_keys={} wait_ms={} capacity={} max_ttl_ms={} allowed_sources={} max_connections={}",
+        "OPS approval gate active: listen={} port={} boot_id={} chain={} trusted_keys={} wait_ms={} capacity={} max_ttl_ms={} allowed_sources={} max_connections={} verify_workers={}",
         options.listen,
         server.port(),
         ingress.bootId(),
@@ -205,7 +206,8 @@ public class OpsApprovalPlugin implements BesuPlugin {
         options.capacity,
         options.maxTtlMs,
         options.allowedSources(),
-        options.maxConnections);
+        options.maxConnections,
+        options.verifyWorkers);
   }
 
   private void onBlockAdded(final AddedBlockContext block) {

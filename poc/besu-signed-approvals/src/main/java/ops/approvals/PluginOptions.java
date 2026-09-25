@@ -98,6 +98,9 @@ final class PluginOptions {
   @Option(names = "--plugin-ops-approval-max-concurrent-calls", description = "delivery calls in flight per connection (default: ${DEFAULT-VALUE})")
   int maxConcurrentCalls = 32;
 
+  @Option(names = "--plugin-ops-approval-verify-workers", description = "approval verification workers, 1 to 32; tune against measured load and available CPU (default: ${DEFAULT-VALUE})")
+  int verifyWorkers = ApprovalServer.DEFAULT_VERIFY_WORKERS;
+
   /** {@code host:port}, or {@code [v6-address]:port}. */
   InetSocketAddress listenAddress() {
     final int colon = listen == null ? -1 : listen.lastIndexOf(':');
@@ -157,6 +160,9 @@ final class PluginOptions {
     if (maxTtlMs < MIN_TTL_LIMIT_MS || maxTtlMs > MAX_TTL_LIMIT_MS) {
       throw new IllegalArgumentException(
           "--plugin-ops-approval-max-ttl-ms must be between " + MIN_TTL_LIMIT_MS + " and " + MAX_TTL_LIMIT_MS);
+    }
+    if (verifyWorkers < 1 || verifyWorkers > ApprovalServer.MAX_VERIFY_WORKERS) {
+      throw new IllegalArgumentException("--plugin-ops-approval-verify-workers must be between 1 and " + ApprovalServer.MAX_VERIFY_WORKERS);
     }
   }
 }

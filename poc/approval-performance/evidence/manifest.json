@@ -1,0 +1,28 @@
+{
+  "measured_date": "2026-09-25",
+  "source_base_commit": "927a6e5c",
+  "source_changes": "Besu configurable verification workers and benchmark fixtures in the commit containing this manifest; OPS production code unchanged.",
+  "hardware": {
+    "cpu": "Apple M2 Max",
+    "cores": 12,
+    "ram_gib": 32,
+    "os": "macOS 26.6.1 arm64",
+    "isolation": "Shared workstation; unrelated services left running. Timed cases sequential."
+  },
+  "versions": {
+    "go": "1.25.13",
+    "jdk": "25.0.4.1+1",
+    "besu": "26.8.1",
+    "reth_upstream_commit": "5a6940e351fed80458fe6c9da8581cbe4b8bd036",
+    "loadgenerator_upstream_commit": "d24667e23b010ded9a1d2e80f4d90741c6ab51f2"
+  },
+  "binaries_sha256": {
+    "ops-server": "52e96a0a6671a3a692e278d158bcac1cdb93bd18a4d96b57b6b7f808c0fdde8e",
+    "approval-performance-driver": "2a8a54bf4df92b3913b6377426eaa5c5b743e8d107e0d94ef356a38b5ec01b8e",
+    "gasstorm-loadgen": "852492618d2cb9b1c096e50af7bf87283749f0ed0c189a68fb3715085657022e",
+    "ops-besu-approvals.jar": "3a5c5e9a33180728af1121a55dec1b36eca03297ae9058331cc479051569e52e",
+    "ops-reth-approvals-poc": "47e9d0891091f5863a803b4aa3ce306f2a7881f3eb272160df3efcfbbaeea36d"
+  },
+  "baseline_besu_plugin_note": "besu-on-5000 used the earlier plugin build without the verification-worker CLI setting, fixed at two workers. Its binary checksum was not captured. All other published gate-on Besu cases used the configurable build below.",
+  "evidence_note": "Detailed local reports, metrics and per-hash receipts remain under .tmp/approval-performance/<case>; results.json contains their checksums and aggregates. Absolute machine paths and bulk transaction data are excluded. Binary digests identify the measured artifacts, not a reproducible-build guarantee."
+}

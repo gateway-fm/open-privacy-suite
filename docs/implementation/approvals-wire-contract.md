@@ -161,16 +161,22 @@ the TTL; OPS forgets a lane's reported values when it stops being ready.
 | `--plugin-ops-approval-allowed-sources` | Besu plugin | — (required) | comma-separated CIDR list of sources allowed to connect, or `any` to rely on the network rule alone |
 | `--plugin-ops-approval-max-connections` | Besu plugin | `32` | open delivery connections; one per OPS instance is the norm |
 | `--plugin-ops-approval-max-concurrent-calls` | Besu plugin | `32` | delivery calls in flight per connection |
-| Same settings | Reth node | as the plugin | environment variables `OPS_APPROVAL_LISTEN`, `OPS_APPROVAL_MAX_TTL_MS`, `OPS_APPROVAL_CAPACITY`, `OPS_APPROVAL_WAIT_MS`, `OPS_APPROVAL_ALLOWED_SOURCES`, `OPS_APPROVAL_MAX_CONNECTIONS`, `OPS_APPROVAL_MAX_CONCURRENT_CALLS` |
+| `--plugin-ops-approval-verify-workers` | Besu plugin | `2` | verification workers, 1 to 32; tune against available CPU and measured batch rate |
+| Same settings | Reth node | as the plugin | environment variables `OPS_APPROVAL_LISTEN`, `OPS_APPROVAL_MAX_TTL_MS`, `OPS_APPROVAL_CAPACITY`, `OPS_APPROVAL_WAIT_MS`, `OPS_APPROVAL_ALLOWED_SOURCES`, `OPS_APPROVAL_MAX_CONNECTIONS`, `OPS_APPROVAL_MAX_CONCURRENT_CALLS`, `OPS_APPROVAL_VERIFY_WORKERS` |
 
 Trusted keys are configured as a set of `id=hex` pairs on both receivers
 (`--plugin-ops-approval-public-keys`, `OPS_APPROVAL_PUBLIC_KEYS`). The plugin also accepts a single
 `--plugin-ops-approval-public-key`, trusted under the id `default`; the Reth node has no such
 shorthand.
 
-**Sizing.** Capacity should cover what the OPS instances may redeliver at once plus a grace period
-of fresh traffic: capacity ≥ Σ `OPS_APPROVAL_RETAIN_MAX` + rate × grace. Below that, a full
-redelivery is absorbed by evicting its old approvals first (§6) rather than refusing fresh ones.
+**Sizing.** If full replay of a retained set is desired, receiver capacity must cover that set
+from all OPS instances plus fresh approvals retained during recovery. OPS also needs space for
+fresh arrivals while it walks its recovery history: once its own cap is full, new approvals can
+evict older entries before replay reaches them. Increasing a cap that is allowed to fill does
+not by itself guarantee replay of every old approval. Recovery prioritizes fresh traffic and the
+newest retained approvals; expiry and capacity still apply. Measure the recovery time of pending
+transactions as well as the replay counters, and size for the intended pending-transaction age
+and arrival rate. Worker and call limits affect the speed of delivery, independently of capacity.
 
 ## 8. Versioning
 

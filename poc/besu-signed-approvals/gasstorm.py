@@ -51,7 +51,7 @@ def prepare():
 class LoadStack(Stack):
     """The demo stack, seeded for ten wallets under one identity and a higher request ceiling."""
 
-    def __init__(self, name, plugin=True, topology="single"):
+    def __init__(self, name, plugin=True, topology="single", ops_env=None, node_options=None):
         self.extra_env = {"MAX_CONCURRENT_REQUESTS": "5000"}
         self.topology = topology
         if plugin:
@@ -59,11 +59,12 @@ class LoadStack(Stack):
             self.hops_file = h.EVIDENCE / "gasstorm" / (name + "-hops.json")
             self.extra_env["OPS_APPROVAL_HOPS_FILE"] = str(self.hops_file)
             self.extra_env["OPS_APPROVAL_HOPS_LIMIT"] = "200000"  # the whole run, not its first 8,192
+        self.extra_env.update(ops_env or {})
         factory = None
         if topology == "follower":
             from topology import Pair
             factory = lambda n, p: Pair(n, plugin=p)
-        super().__init__(name, plugin=plugin, node_factory=factory)
+        super().__init__(name, plugin=plugin, node_factory=factory, node_options=node_options)
 
     def seed(self):
         self.org = self.admin("POST", "/orgs", {"slug": "loadtest", "name": "Load test"})["id"]
