@@ -57,6 +57,7 @@ impl EvmFactory for ApprovalFactory {
             legacy: self.legacy,
             verify: self.verify,
             scratch: Vec::with_capacity(2048),
+            clock: crate::approvals::unix_ms,
         }
     }
 }
@@ -110,6 +111,7 @@ pub struct ApprovalEvm<DB: Database, I> {
     legacy: bool,
     verify: bool,
     scratch: Vec<u8>,
+    clock: fn() -> u64,
 }
 impl<DB: Database, I: Inspector<EthEvmContext<DB>>> Evm for ApprovalEvm<DB, I> {
     type DB = DB;
@@ -134,6 +136,7 @@ impl<DB: Database, I: Inspector<EthEvmContext<DB>>> Evm for ApprovalEvm<DB, I> {
         let selected = self.selection.lock().unwrap().take().ok_or_else(|| {
             EVMError::Transaction(ApprovalTxError::Denied("missing selection".into()))
         })?;
+        self.require_unexpired(selected.approval.expires_at)?;
         if !selected.approval.valid_mode()
             || selected.approval.chain_id != self.chain_id()
             || selected.sender != tx.caller
@@ -155,6 +158,9 @@ impl<DB: Database, I: Inspector<EthEvmContext<DB>>> Evm for ApprovalEvm<DB, I> {
         let basefee = self.inner.block().basefee as u128;
         let price = tx.effective_gas_price(basefee);
         let result = self.inner.transact_raw(tx).map_err(map_error)?;
+        // The provisional EVM execution may cross the signed deadline. Never return its state
+        // for commit once the selected approval has expired.
+        self.require_unexpired(selected.approval.expires_at)?;
         timer.lap(1);
         let gas = U256::from(result.result.tx_gas_used());
         let fees = direct::Fees {
@@ -210,6 +216,7 @@ impl<DB: Database, I: Inspector<EthEvmContext<DB>>> Evm for ApprovalEvm<DB, I> {
                     "call fingerprint mismatch".into(),
                 )));
             }
+            self.require_unexpired(selected.approval.expires_at)?;
             return Ok(result);
         }
         let fast = if self.legacy {
@@ -285,6 +292,7 @@ impl<DB: Database, I: Inspector<EthEvmContext<DB>>> Evm for ApprovalEvm<DB, I> {
                 "execution fingerprint mismatch".into(),
             )));
         }
+        self.require_unexpired(selected.approval.expires_at)?;
         Ok(result)
     }
     fn transact_system_call(
@@ -310,6 +318,19 @@ impl<DB: Database, I: Inspector<EthEvmContext<DB>>> Evm for ApprovalEvm<DB, I> {
     fn components_mut(&mut self) -> (&mut DB, &mut I, &mut PrecompilesMap) {
         let (db, i, p) = self.inner.components_mut();
         (db, &mut i.1.1, p)
+    }
+}
+impl<DB: Database, I> ApprovalEvm<DB, I> {
+    fn require_unexpired(
+        &self,
+        expires_at: u64,
+    ) -> Result<(), EVMError<DB::Error, ApprovalTxError>> {
+        if (self.clock)() >= expires_at {
+            return Err(EVMError::Transaction(ApprovalTxError::Denied(
+                "approval expired".into(),
+            )));
+        }
+        Ok(())
     }
 }
 struct RefDb<'a, D>(RefCell<&'a mut D>);
@@ -359,5 +380,103 @@ fn map_error<D>(error: EVMError<D>) -> EVMError<D, ApprovalTxError> {
         EVMError::Database(e) => EVMError::Database(e),
         EVMError::Custom(e) => EVMError::Custom(e),
         EVMError::CustomAny(e) => EVMError::CustomAny(e),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::approvals::{Approval, Selected};
+    use alloy_evm::revm::database::InMemoryDB;
+    use alloy_primitives::TxKind;
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    };
+
+    #[test]
+    fn expiry_during_execution_vetoes_the_provisional_result_in_both_modes() {
+        static CLOCK: AtomicU64 = AtomicU64::new(0);
+        struct AdvanceClock;
+        impl<DB: Database> Inspector<EthEvmContext<DB>> for AdvanceClock {
+            fn call_end(&mut self, _: &mut EthEvmContext<DB>, _: &CallInputs, _: &mut CallOutcome) {
+                CLOCK.store(10, Ordering::SeqCst);
+            }
+        }
+        for (mode, expires_at) in [(0, 10), (0, 11), (3, 10), (3, 11)] {
+            CLOCK.store(9, Ordering::SeqCst);
+            let sender = Address::with_last_byte(1);
+            let selection = Arc::new(Mutex::new(Some(Selected {
+                approval: Approval {
+                    hash_mode: mode,
+                    chain_id: 1,
+                    tx_hash: B256::ZERO,
+                    fingerprint: if mode == 0 {
+                        // Strict fingerprint of this zero-value transfer with the sender nonce
+                        // advancing from zero to one and no fee or application-state changes.
+                        "217b497205c80ce4d1b6afe618da66ada0cdb089f9eed0e4e9fca4382af85ef7"
+                            .parse()
+                            .unwrap()
+                    } else {
+                        call_hash::fingerprint(
+                            &alloy_rpc_types_trace::geth::CallFrame {
+                                from: sender,
+                                to: Some(Address::with_last_byte(100)),
+                                typ: "CALL".into(),
+                                ..Default::default()
+                            },
+                            |_| Ok(alloy_primitives::KECCAK256_EMPTY),
+                            &mut vec![],
+                            &mut profile::Timer::new(false),
+                        )
+                        .unwrap()
+                    },
+                    key_id: "default".into(),
+                    issued_at: 0,
+                    expires_at,
+                },
+                sender,
+                nonce: 0,
+            })));
+            let factory = ApprovalFactory {
+                selection,
+                profile: None,
+                legacy: false,
+                verify: false,
+            };
+            let mut db = InMemoryDB::default();
+            db.insert_account_info(
+                sender,
+                AccountInfo {
+                    balance: U256::from(1_000_000),
+                    ..Default::default()
+                },
+            );
+            let mut evm = factory.create_evm_with_inspector(db, EvmEnv::default(), AdvanceClock);
+            evm.clock = || CLOCK.load(Ordering::SeqCst);
+            let result = evm.transact_raw(TxEnv {
+                caller: sender,
+                kind: TxKind::Call(Address::with_last_byte(100)),
+                gas_limit: 30_000,
+                gas_price: 0,
+                ..Default::default()
+            });
+            assert_eq!(
+                CLOCK.load(Ordering::SeqCst),
+                10,
+                "the provisional execution ran"
+            );
+            if expires_at == 10 {
+                assert!(
+                    matches!(result, Err(EVMError::Transaction(ApprovalTxError::Denied(ref reason))) if reason == "approval expired"),
+                    "{result:?}"
+                );
+            } else {
+                assert!(
+                    result.is_ok(),
+                    "an otherwise identical unexpired approval commits: {result:?}"
+                );
+            }
+        }
     }
 }

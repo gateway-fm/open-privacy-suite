@@ -16,7 +16,7 @@ use std::{
     io,
     net::IpAddr,
     pin::Pin,
-    sync::Arc,
+    sync::{Arc, Mutex},
     task::{Context, Poll},
     time::{Duration, Instant},
 };
@@ -24,6 +24,7 @@ use tokio::{
     io::{AsyncRead, AsyncWrite, ReadBuf},
     net::{TcpListener, TcpStream},
     sync::{OwnedSemaphorePermit, Semaphore},
+    time::{Instant as TokioInstant, Sleep},
 };
 use tokio_stream::{Stream, StreamExt};
 use tonic::{
@@ -31,7 +32,7 @@ use tonic::{
     metadata::MetadataValue,
     transport::{
         Server,
-        server::{Connected, TcpConnectInfo, TcpIncoming},
+        server::{Connected, TcpIncoming},
     },
 };
 
@@ -52,7 +53,7 @@ pub struct Settings {
     pub trust: Trust,
     pub capacity: usize,
     pub wait: Duration,
-    /// Sources allowed to connect; empty means any.
+    /// Sources allowed to connect; empty is the explicit `any` policy.
     pub allowed_sources: Vec<IpNet>,
     pub max_connections: usize,
     /// Concurrent calls per connection (HTTP/2 `SETTINGS_MAX_CONCURRENT_STREAMS`).
@@ -81,6 +82,10 @@ impl Settings {
         if verify_workers > 32 {
             return Err("OPS_APPROVAL_VERIFY_WORKERS must be at most 32".into());
         }
+        let max_ttl_ms = number("OPS_APPROVAL_MAX_TTL_MS", 3_600_000, 10_000)?;
+        if max_ttl_ms > 86_400_000 {
+            return Err("OPS_APPROVAL_MAX_TTL_MS must be at most 86400000".into());
+        }
         Ok(Self {
             listen: required("OPS_APPROVAL_LISTEN")?,
             trust: Trust {
@@ -90,12 +95,11 @@ impl Settings {
                     .map_err(|_| "OPS_APPROVAL_CHAIN_ID must be a whole number".to_string())?,
                 keys: parse_key_set(&required("OPS_APPROVAL_PUBLIC_KEYS")?)
                     .map_err(|e| format!("OPS_APPROVAL_PUBLIC_KEYS: {e}"))?,
-                max_ttl_ms: number("OPS_APPROVAL_MAX_TTL_MS", 3_600_000, 1)?,
+                max_ttl_ms,
             },
             capacity: number("OPS_APPROVAL_CAPACITY", 100_000, 1)? as usize,
             wait: Duration::from_millis(number("OPS_APPROVAL_WAIT_MS", 5_000, 0)?),
-            allowed_sources: get("OPS_APPROVAL_ALLOWED_SOURCES")
-                .map_or(Ok(vec![]), |spec| parse_sources(&spec))
+            allowed_sources: parse_sources(&required("OPS_APPROVAL_ALLOWED_SOURCES")?)
                 .map_err(|e| format!("OPS_APPROVAL_ALLOWED_SOURCES: {e}"))?,
             max_connections: number("OPS_APPROVAL_MAX_CONNECTIONS", 32, 1)? as usize,
             max_concurrent_calls: u32::try_from(number(
@@ -111,6 +115,9 @@ impl Settings {
 
 /// `a.b.c.d/n`, `a:b::c/n` or a bare address, comma-separated.
 pub fn parse_sources(spec: &str) -> Result<Vec<IpNet>, String> {
+    if spec.trim() == "any" {
+        return Ok(vec![]);
+    }
     spec.split(',')
         .map(str::trim)
         .map(|entry| {
@@ -223,6 +230,7 @@ impl ApprovalDelivery for Delivery {
         &self,
         request: Request<DeliverRequest>,
     ) -> Result<Response<DeliverResponse>, Status> {
+        CallActivity::record(&request);
         let input = Input {
             bytes: request.into_inner().batch,
             received: if self.profile { crate::hops::now() } else { 0 },
@@ -237,7 +245,11 @@ impl ApprovalDelivery for Delivery {
         }
     }
 
-    async fn status(&self, _: Request<StatusRequest>) -> Result<Response<StatusResponse>, Status> {
+    async fn status(
+        &self,
+        request: Request<StatusRequest>,
+    ) -> Result<Response<StatusResponse>, Status> {
+        CallActivity::record(&request);
         self.store.status_seen(Now::current());
         Ok(Response::new(self.status.clone()))
     }
@@ -250,6 +262,25 @@ pub async fn serve(
     settings: &Settings,
     shutdown: impl Future<Output = ()>,
 ) -> Result<(), tonic::transport::Error> {
+    serve_with_timeouts(
+        listener,
+        delivery,
+        settings,
+        shutdown,
+        Duration::from_secs(5),
+        Duration::from_secs(30),
+    )
+    .await
+}
+
+async fn serve_with_timeouts(
+    listener: TcpListener,
+    delivery: Delivery,
+    settings: &Settings,
+    shutdown: impl Future<Output = ()>,
+    preface_timeout: Duration,
+    idle_timeout: Duration,
+) -> Result<(), tonic::transport::Error> {
     let service =
         ApprovalDeliveryServer::new(delivery).max_decoding_message_size(MAX_REQUEST_BYTES);
     Server::builder()
@@ -260,6 +291,8 @@ pub async fn serve(
                 listener,
                 settings.allowed_sources.clone(),
                 settings.max_connections,
+                preface_timeout,
+                idle_timeout,
             ),
             shutdown,
         )
@@ -271,6 +304,8 @@ fn incoming(
     listener: TcpListener,
     allowed: Vec<IpNet>,
     max: usize,
+    preface_timeout: Duration,
+    idle_timeout: Duration,
 ) -> impl Stream<Item = io::Result<Connection>> {
     let permits = Arc::new(Semaphore::new(max));
     TcpIncoming::from(listener)
@@ -289,22 +324,85 @@ fn incoming(
                 tracing::debug!(%source, "approval delivery connection above the cap");
                 return None;
             };
-            Some(Ok(Connection {
+            Some(Ok(Connection::new(
                 stream,
-                _permit: permit,
-            }))
+                permit,
+                preface_timeout,
+                idle_timeout,
+            )))
         })
 }
 
-/// An admitted connection; its permit returns to the cap when the connection closes.
+/// Only application calls count as activity: HTTP/2 pings cannot hold a slot forever.
+#[derive(Clone, Debug)]
+struct CallActivity(Arc<Mutex<TokioInstant>>);
+impl CallActivity {
+    fn record<T>(request: &Request<T>) {
+        if let Some(activity) = request.extensions().get::<Self>() {
+            *activity.0.lock().unwrap() = TokioInstant::now();
+        }
+    }
+}
+
+/// An admitted connection; its permit returns to the cap when the connection closes. The timer
+/// wakes the transport even when the peer sends nothing, including an incomplete HTTP/2 preface.
 struct Connection {
     stream: TcpStream,
     _permit: OwnedSemaphorePermit,
+    /// HTTP/2 magic plus the first SETTINGS header. Its payload completes the client preface.
+    preface_header: [u8; 33],
+    preface_read: usize,
+    preface_end: Option<usize>,
+    calls: CallActivity,
+    deadline: Pin<Box<Sleep>>,
+    idle_timeout: Duration,
+}
+impl Connection {
+    fn new(
+        stream: TcpStream,
+        permit: OwnedSemaphorePermit,
+        preface: Duration,
+        idle: Duration,
+    ) -> Self {
+        Self {
+            stream,
+            _permit: permit,
+            preface_header: [0; 33],
+            preface_read: 0,
+            preface_end: None,
+            calls: CallActivity(Arc::new(Mutex::new(TokioInstant::now()))),
+            deadline: Box::pin(tokio::time::sleep(preface)),
+            idle_timeout: idle,
+        }
+    }
+
+    fn poll_deadline(&mut self, cx: &mut Context<'_>) -> io::Result<()> {
+        if self.deadline.as_mut().poll(cx).is_ready() {
+            if self.preface_complete() {
+                let next = *self.calls.0.lock().unwrap() + self.idle_timeout;
+                if next > TokioInstant::now() {
+                    self.deadline.as_mut().reset(next);
+                    // Register the read task for the updated deadline even if the socket is quiet.
+                    let _ = self.deadline.as_mut().poll(cx);
+                    return Ok(());
+                }
+            }
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "approval connection idle",
+            ));
+        }
+        Ok(())
+    }
+
+    fn preface_complete(&self) -> bool {
+        self.preface_end.is_some_and(|end| self.preface_read >= end)
+    }
 }
 impl Connected for Connection {
-    type ConnectInfo = TcpConnectInfo;
-    fn connect_info(&self) -> TcpConnectInfo {
-        self.stream.connect_info()
+    type ConnectInfo = CallActivity;
+    fn connect_info(&self) -> CallActivity {
+        self.calls.clone()
     }
 }
 impl AsyncRead for Connection {
@@ -313,7 +411,39 @@ impl AsyncRead for Connection {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.get_mut().stream).poll_read(cx, buf)
+        let this = self.get_mut();
+        this.poll_deadline(cx)?;
+        let before = buf.filled().len();
+        let result = Pin::new(&mut this.stream).poll_read(cx, buf);
+        if !this.preface_complete() {
+            let bytes = &buf.filled()[before..];
+            if this.preface_read < this.preface_header.len() {
+                let copied = bytes
+                    .len()
+                    .min(this.preface_header.len() - this.preface_read);
+                this.preface_header[this.preface_read..this.preface_read + copied]
+                    .copy_from_slice(&bytes[..copied]);
+            }
+            this.preface_read += bytes.len();
+            if this.preface_read >= this.preface_header.len() && this.preface_end.is_none() {
+                let length = u32::from_be_bytes([
+                    0,
+                    this.preface_header[24],
+                    this.preface_header[25],
+                    this.preface_header[26],
+                ]);
+                // The h2 transport validates frame type, flags, stream and payload. This only
+                // measures completeness so a partial SETTINGS frame retains the 5 s deadline.
+                this.preface_end = Some(this.preface_header.len() + length as usize);
+            }
+            if this.preface_complete() {
+                let now = TokioInstant::now();
+                *this.calls.0.lock().unwrap() = now;
+                this.deadline.as_mut().reset(now + this.idle_timeout);
+                let _ = this.deadline.as_mut().poll(cx);
+            }
+        }
+        result
     }
 }
 impl AsyncWrite for Connection {
@@ -375,15 +505,30 @@ mod tests {
 
     /// A receiver on loopback whose clock stands at the golden vectors' `issued_at`.
     async fn start(settings: Settings) -> Receiver {
+        start_with_timeouts(settings, Duration::from_secs(5), Duration::from_secs(30)).await
+    }
+
+    async fn start_with_timeouts(
+        settings: Settings,
+        preface: Duration,
+        idle: Duration,
+    ) -> Receiver {
         let listener = TcpListener::bind(&settings.listen).await.unwrap();
         let address = listener.local_addr().unwrap();
         let store = Arc::new(Store::new(settings.wait, settings.capacity, Instant::now()));
         let boot_id = boot_id().unwrap();
         let delivery = Delivery::new(&settings, store.clone(), boot_id.clone(), || ISSUED).unwrap();
         tokio::spawn(async move {
-            serve(listener, delivery, &settings, std::future::pending())
-                .await
-                .unwrap()
+            serve_with_timeouts(
+                listener,
+                delivery,
+                &settings,
+                std::future::pending(),
+                preface,
+                idle,
+            )
+            .await
+            .unwrap()
         });
         Receiver {
             address,
@@ -581,6 +726,109 @@ mod tests {
         assert_eq!(send.current_max_send_streams(), 3);
     }
 
+    #[tokio::test]
+    async fn bare_and_partial_prefaces_cannot_hold_the_connection_slot() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        for partial in [
+            b"".as_slice(),
+            b"PRI * HTTP/2.0\r\n",
+            b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n",
+            // SETTINGS advertises a six-byte payload, but sends only five bytes.
+            b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n\0\0\x06\x04\0\0\0\0\0\0\x03\0\0\0",
+        ] {
+            let r = start_with_timeouts(
+                Settings {
+                    max_connections: 1,
+                    ..settings()
+                },
+                Duration::from_millis(50),
+                Duration::from_secs(1),
+            )
+            .await;
+            let mut tcp = TcpStream::connect(r.address).await.unwrap();
+            tcp.write_all(partial).await.unwrap();
+            let mut output = vec![];
+            tokio::time::timeout(Duration::from_millis(500), tcp.read_to_end(&mut output))
+                .await
+                .expect("silent connection must close")
+                .unwrap();
+            assert!(
+                client(r.address)
+                    .await
+                    .status(StatusRequest {})
+                    .await
+                    .is_ok()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn pings_do_not_keep_a_connection_without_calls_alive() {
+        let r = start_with_timeouts(
+            Settings {
+                max_connections: 1,
+                ..settings()
+            },
+            Duration::from_millis(100),
+            Duration::from_millis(150),
+        )
+        .await;
+        let (_send, mut pings, connection) = h2_connection(r.address).await;
+        pings.ping(h2::Ping::opaque()).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        pings.ping(h2::Ping::opaque()).await.unwrap();
+        tokio::time::timeout(Duration::from_millis(150), connection)
+            .await
+            .expect("pings must not reset the no-call deadline")
+            .unwrap()
+            .unwrap();
+        assert!(
+            client(r.address)
+                .await
+                .status(StatusRequest {})
+                .await
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn periodic_status_calls_keep_the_same_connection_alive() {
+        let r = start_with_timeouts(
+            Settings {
+                max_connections: 1,
+                ..settings()
+            },
+            Duration::from_millis(100),
+            Duration::from_millis(200),
+        )
+        .await;
+        let (mut send, _pings, connection) = h2_connection(r.address).await;
+        for _ in 0..6 {
+            let request = http::Request::post(format!(
+                "http://{}/ops.approvals.v1.ApprovalDelivery/Status",
+                r.address
+            ))
+            .header("content-type", "application/grpc")
+            .header("te", "trailers")
+            .body(())
+            .unwrap();
+            send = send.ready().await.unwrap();
+            let (response, mut body) = send.send_request(request, false).unwrap();
+            body.send_data(prost::bytes::Bytes::from_static(&[0; 5]), true)
+                .unwrap();
+            let mut response = response.await.unwrap().into_body();
+            while let Some(chunk) = response.data().await {
+                chunk.unwrap();
+            }
+            assert_eq!(
+                response.trailers().await.unwrap().unwrap()["grpc-status"],
+                "0"
+            );
+            tokio::time::sleep(Duration::from_millis(80)).await;
+            assert!(!connection.is_finished());
+        }
+    }
+
     /// Whether the receiver closes a new connection without a word: an accepted one answers the
     /// HTTP/2 client preface with its SETTINGS frame.
     async fn refused_connection(address: SocketAddr) -> bool {
@@ -702,6 +950,7 @@ mod tests {
             ("OPS_APPROVAL_LISTEN", "127.0.0.1:9000".to_string()),
             ("OPS_APPROVAL_CHAIN_ID", "31337".to_string()),
             ("OPS_APPROVAL_PUBLIC_KEYS", format!("default={key}")),
+            ("OPS_APPROVAL_ALLOWED_SOURCES", "any".to_string()),
         ];
         let lookup = |extra: &[(&'static str, &'static str)]| {
             let vars: Vec<(String, String)> = base
@@ -759,13 +1008,28 @@ mod tests {
             (600_000, 7, Duration::from_millis(1200), 4, 16)
         );
         assert!(s.allowed_sources[1].contains(&"::1".parse::<IpAddr>().unwrap()));
+        for ttl in ["10000", "86400000"] {
+            assert!(lookup(&[("OPS_APPROVAL_MAX_TTL_MS", ttl)]).is_ok());
+        }
+        assert!(
+            Settings::from_lookup(|name| {
+                base.iter()
+                    .find(|(key, _)| *key == name && name != "OPS_APPROVAL_ALLOWED_SOURCES")
+                    .map(|(_, value)| value.clone())
+            })
+            .is_err()
+        );
         for bad in [
             ("OPS_APPROVAL_PUBLIC_KEYS", "default=00"),
             ("OPS_APPROVAL_CHAIN_ID", "main"),
             ("OPS_APPROVAL_MAX_TTL_MS", "0"),
+            ("OPS_APPROVAL_MAX_TTL_MS", "9999"),
+            ("OPS_APPROVAL_MAX_TTL_MS", "86400001"),
             ("OPS_APPROVAL_CAPACITY", "0"),
             ("OPS_APPROVAL_ALLOWED_SOURCES", "10.0.0.0/33"),
             ("OPS_APPROVAL_ALLOWED_SOURCES", ""),
+            ("OPS_APPROVAL_ALLOWED_SOURCES", "   "),
+            ("OPS_APPROVAL_ALLOWED_SOURCES", "any,127.0.0.1/32"),
             ("OPS_APPROVAL_MAX_CONNECTIONS", "0"),
             ("OPS_APPROVAL_MAX_CONCURRENT_CALLS", "-1"),
             ("OPS_APPROVAL_VERIFY_WORKERS", "33"),
