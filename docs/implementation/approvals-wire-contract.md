@@ -127,6 +127,8 @@ the TTL; OPS forgets a lane's reported values when it stops being ready.
 
 - An approval is usable while now < `expires_at`. An expired approval counts as absent: the
   transaction waits and is dropped when the wait window ends.
+- Receivers recheck expiry after provisional execution and before returning its result for commit;
+  execution that crosses the signed deadline is excluded, including its nonce and fee changes.
 - The store keeps an approval until its `expires_at` or until the block that included its
   transaction is final, whichever comes first. Expiry replaces the separate orphan lifetime, and the
   number of included blocks tracked is bounded by the TTL.
