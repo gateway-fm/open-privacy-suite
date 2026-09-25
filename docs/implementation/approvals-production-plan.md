@@ -434,9 +434,9 @@ continue to pass the Go, Java and Rust tests and both real-node scenario suites.
 
 | Work | Completed on this branch | Remaining |
 |---|---|---|
-| Network facts and measurements | Maru finality/build-window source review (§0.1b); direct and follower TCP baseline; unary gRPC microbenchmark and end-to-end load run (§3.5) | Measurements at the target sustained TPS on both Besu and Reth, including tail latency, receipt success, capacity pressure and failure injection; operator deployment/change process |
+| Network facts and measurements | Maru finality/build-window source review (§0.1b); direct and follower TCP baseline; unary gRPC microbenchmark and end-to-end load run (§3.5); [5,000/sec delivery, full-stack load, heap sizing and restart measurements](../../poc/approval-performance/README.md) | Full-stack 5,000 committed TPS remains unproven; validate tail latency, receipt success and recovery on production hardware and transaction mixes; operator deployment/change process |
 | Transport | Shared `.proto`, envelope v2, unary gRPC on both receivers, signature/status checks, all-or-nothing batches, per-producer delivery lanes and backoff | TLS remains explicitly postponed (§0.3) |
-| Restart recovery | OPS retains signed batches in memory and resends on a changed producer boot id; receivers provide a bounded restart wait window | Validate shutdown draining, retention capacity and client receipt-check/retry procedures under load, including successive OPS/producer restarts. Durable approval storage is deferred (§5.1); automatic transaction reconciliation remains separate work |
+| Restart recovery | OPS retains signed batches in memory and resends on a changed producer boot id; receivers provide a bounded restart wait window; real pending transaction recovered on both nodes amid fresh 5,000/sec approval traffic | Full-cache replay can lose older approvals to eviction; validate oldest pending age, shutdown draining and client receipt-check/retry procedures under load, including successive OPS/producer restarts. Durable approval storage is deferred (§5.1); automatic transaction reconciliation remains separate work |
 | Keys and lifetime | Key sets, key ids, signed expiry, deterministic replacement, finality release and bounded stores; TTL floor of 10 s on sender and receivers | Secret deployment and rotation procedure exercised in the target environment; capacity sizing for all OPS instances |
 | Ingress protection | Explicit source list required, connection/call caps, preface and idle limits; OPS preflight limiting with Redis and bounded local fallback | Deployment network rules and authentication for `ops_prepareApproval`; test the controls in the deployed topology |
 | Observability | Delivery/receiver metrics, no-ready-producer 503 before preflight, audit rows for approval refusals | Alerts, readiness policy, and sampling/retention for producer decision logs |
@@ -466,6 +466,11 @@ capacity limit. A delivery acknowledgement is not a reason to discard OPS's reco
 Capacity and expiry are separate limits: the default 100,000 retained approvals represent about
 20 seconds of history at a sustained 5,000 TPS, even with a 10-minute signed TTL. Size retention
 for the intended recovery window and measure memory use, eviction and recovery behavior under load.
+The [local retention matrix](../../poc/approval-performance/README.md#memory-and-history-sizing)
+measures about 682 live heap bytes per approval at batch size one, before process and GC
+headroom. Paced 5,000/sec traffic formed batches close to one approval. A history duration is
+not a downtime guarantee: fresh arrivals can evict older entries while restart replay is still
+walking the retained set. These measurements do not change the default cap or add persistence.
 
 The immediate work is to validate graceful shutdown draining, receipt monitoring and client
 retry/reapproval, including abrupt shutdown and successive restarts. Automatic transaction

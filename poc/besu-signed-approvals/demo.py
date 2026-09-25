@@ -48,7 +48,7 @@ class Stack:
 
     ADMIN_TOKEN = "ops-besu-local-demo-only"
 
-    def __init__(self, name, plugin=True, linea=False, node_factory=None):
+    def __init__(self, name, plugin=True, linea=False, node_factory=None, node_options=None):
         self.name = name
         self.plugin = plugin
         self.containers = []
@@ -89,7 +89,7 @@ class Stack:
                 forward_url = self.nodes.followers()[0].rpc_url
             else:
                 self.node = h.Node(name, plugin=plugin, wait_ms=5000,
-                                   linea_plugins=[h.LINEA_POOL_PLUGIN] if linea else ())
+                                   linea_plugins=[h.LINEA_POOL_PLUGIN] if linea else (), **(node_options or {}))
                 forward_url = self.node.rpc_url
             port = h.unused_port()
             self.url = f"http://127.0.0.1:{port}"

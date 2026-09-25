@@ -49,8 +49,9 @@ public final class ApprovalServer implements AutoCloseable {
   static final long HANDSHAKE_TIMEOUT_MS = 5_000;
   /** A connection that has carried no call for this long is closed; OPS calls Status every second. */
   static final long MAX_CONNECTION_IDLE_MS = 30_000;
-  /** Verification is CPU work of ~0.1 ms a batch: two threads, off Netty's I/O threads. */
-  private static final int CALL_THREADS = 2;
+  /** Verification runs off Netty's I/O threads; size the pool for the measured batch rate. */
+  static final int DEFAULT_VERIFY_WORKERS = 2;
+  static final int MAX_VERIFY_WORKERS = 32;
   private static final int IO_THREADS = 2;
   private static final long REFUSAL_LOG_INTERVAL_MS = 60_000;
   static final Metadata.Key<String> REASON = Metadata.Key.of("ops-approval-reason", Metadata.ASCII_STRING_MARSHALLER);
@@ -77,6 +78,7 @@ public final class ApprovalServer implements AutoCloseable {
   private final ApprovalIngress ingress;
   private final Limits limits;
   private final Metrics metrics;
+  private final int verifyWorkers;
   private final AtomicInteger connections = new AtomicInteger();
   private final AtomicLong lastRefusalLogged = new AtomicLong();
   private EventLoopGroup acceptor;
@@ -85,16 +87,24 @@ public final class ApprovalServer implements AutoCloseable {
   private Server server;
 
   public ApprovalServer(final InetSocketAddress bind, final ApprovalIngress ingress, final Limits limits, final Metrics metrics) {
+    this(bind, ingress, limits, metrics, DEFAULT_VERIFY_WORKERS);
+  }
+
+  public ApprovalServer(final InetSocketAddress bind, final ApprovalIngress ingress, final Limits limits, final Metrics metrics, final int verifyWorkers) {
+    if (verifyWorkers < 1 || verifyWorkers > MAX_VERIFY_WORKERS) {
+      throw new IllegalArgumentException("approval verify workers must be between 1 and " + MAX_VERIFY_WORKERS);
+    }
     this.bind = bind;
     this.ingress = ingress;
     this.limits = limits;
     this.metrics = metrics;
+    this.verifyWorkers = verifyWorkers;
   }
 
   public void start() throws IOException {
     acceptor = new MultiThreadIoEventLoopGroup(1, new DefaultThreadFactory("ops-approval-accept", true), NioIoHandler.newFactory());
     io = new MultiThreadIoEventLoopGroup(IO_THREADS, new DefaultThreadFactory("ops-approval-io", true), NioIoHandler.newFactory());
-    calls = Executors.newFixedThreadPool(CALL_THREADS, Thread.ofPlatform().name("ops-approval-call-", 1).daemon(true).factory());
+    calls = Executors.newFixedThreadPool(verifyWorkers, Thread.ofPlatform().name("ops-approval-call-", 1).daemon(true).factory());
     try {
       server =
           NettyServerBuilder.forAddress(bind)

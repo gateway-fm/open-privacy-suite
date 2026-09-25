@@ -34,6 +34,7 @@ class PluginOptionsTest {
     assertEquals(5_000, options.waitMs);
     assertEquals(32, options.maxConnections);
     assertEquals(32, options.maxConcurrentCalls);
+    assertEquals(2, options.verifyWorkers);
     assertEquals(
         600_000,
         parse("--plugin-ops-approval-max-ttl-ms=600000").maxTtlMs);
@@ -68,11 +69,22 @@ class PluginOptionsTest {
           "--plugin-ops-approval-wait-ms=-1",
           "--plugin-ops-approval-max-connections=0",
           "--plugin-ops-approval-max-concurrent-calls=0",
+          "--plugin-ops-approval-verify-workers=0",
+          "--plugin-ops-approval-verify-workers=33",
           "--plugin-ops-approval-allowed-sources=10.0.0.1/8"
         }) {
       assertThrows(IllegalArgumentException.class, () -> valid(bad).validate(), bad);
     }
     assertThrows(IllegalArgumentException.class, () -> parse("--plugin-ops-approval-chain-id=31337").validate(), "no listen address, no key");
+  }
+
+  @Test
+  void verificationWorkersHaveABoundedOperatorSetting() {
+    for (final int workers : new int[] {1, 4, 32}) {
+      final PluginOptions options = valid("--plugin-ops-approval-verify-workers=" + workers);
+      options.validate();
+      assertEquals(workers, options.verifyWorkers);
+    }
   }
 
   @Test
