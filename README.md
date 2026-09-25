@@ -2,6 +2,11 @@
 
 A privacy-preserving JSON-RPC proxy for Ethereum nodes with ZK-proof authentication and hierarchical RBAC.
 
+**Continuing the OPS V2 DSL/Reth PoC?** Start with the
+[agent handoff](docs/implementation/ops-v2-agent-handoff.md) for the accepted
+architecture, specifications, code map, test evidence and remaining limits.
+Use its guarded-Reth runbook for this branch's acceptance checks.
+
 ## Quick Start
 
 **Evaluating the product?** One command brings up a self-contained demo —

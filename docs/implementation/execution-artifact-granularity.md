@@ -2,7 +2,8 @@
 
 Status: implemented. One organization document still receives one review and
 one atomic activation. The compiler emits a set keyed by group; OPS stores and
-publishes that set, and the Reth guard selects the signer's applicable groups.
+publishes that set, and the Reth guard selects the authenticated principal's
+applicable groups. Shared signing addresses do not merge principals' permissions.
 
 ## The problem
 
@@ -154,9 +155,12 @@ and the pinned compiler settings. The activation audit retains every artifact.
 The review's `sourceDigest` and `runtimeDigest` are digests of the sorted
 `groupID -> digest` manifests; each artifact also retains its own digests.
 
-Submission has a five-minute compilation budget and a matching HTTP write
-deadline, so an ordinary 30-second API timeout cannot hide a successfully
-compiled draft from its author. Failure or cancellation stores no partial set.
+Submission has a five-minute compilation budget and an HTTP write deadline
+with a further 15-second response margin. The production and E2E Nginx `/api/`
+proxies use `proxy_read_timeout 330s`; extending only the API deadline would
+still leave the default proxy timeout at 60 seconds. Failure or cancellation
+stores no partial set. The [review-fix evidence](evidence/per-group-live-2026-09-25.md#review-fixes-and-verification)
+records the delayed-upstream regression check.
 
 Migration 081 adds `execution_policy_revisions.artifact_set`. The complete set
 is written alongside the active projection, audit and publication watermark in
