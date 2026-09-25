@@ -38,7 +38,7 @@ def benchmark(samples=9, batch=32, profile=False):
                             approvals.append(approval)
                             txs.append(tx)
                         if mode != "baseline":
-                            c.send(c.batch(approvals))
+                            c.send(approvals)
                         for tx in txs:
                             n.submit(tx)
                         before = len(r.timings(n))

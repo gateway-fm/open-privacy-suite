@@ -1,0 +1,218 @@
+{
+  "date": "2026-09-25",
+  "scope": "Final Reth node correctness suite and batch authentication with persistent real OPS sender lanes; no throughput benchmark.",
+  "reth_commit": "5a6940e351fed80458fe6c9da8581cbe4b8bd036",
+  "scenario_count": 23,
+  "scenarios": [
+    {
+      "test": "same_org_nested_call_executes",
+      "passed": true
+    },
+    {
+      "test": "delegatecall_uses_caller_storage",
+      "passed": true
+    },
+    {
+      "test": "EIP1559_signed_transaction",
+      "passed": true
+    },
+    {
+      "test": "same_block_cross_org_divergence",
+      "passed": true
+    },
+    {
+      "test": "caught_call_cannot_bypass",
+      "passed": true
+    },
+    {
+      "test": "same_org_storage_divergence",
+      "passed": true
+    },
+    {
+      "test": "stock_control_executes_cross_org",
+      "passed": true
+    },
+    {
+      "test": "no_write_cross_org_call_denied_despite_identical_return_and_storage",
+      "passed": true
+    },
+    {
+      "test": "fingerprint_zero_deletion_unchanged_write_and_read",
+      "passed": true
+    },
+    {
+      "test": "fingerprint_log_positions_dynamic_output_and_caught_revert",
+      "passed": true
+    },
+    {
+      "test": "waiting_tx_does_not_block_ready_sender",
+      "passed": true
+    },
+    {
+      "test": "timeout_then_client_retry_same_signed_tx",
+      "passed": true
+    },
+    {
+      "test": "128_missing_approvals_do_not_block_ready_sender",
+      "passed": true
+    },
+    {
+      "test": "forged_signature_denied_then_valid_retry",
+      "passed": true
+    },
+    {
+      "test": "expired_approval_is_absent_at_the_gate_then_fresh_approval_is_used",
+      "passed": true
+    },
+    {
+      "test": "approval_expiring_before_arrival_drops_the_transaction_and_refused_batches_store_nothing",
+      "passed": true
+    },
+    {
+      "test": "actual_restart_loses_approval_then_client_retry_succeeds",
+      "passed": true
+    },
+    {
+      "test": "persistent_OPS_sender_automatically_redelivers_after_Reth_restart",
+      "passed": true,
+      "redeliveries": 1,
+      "delivered_batches": 2,
+      "receiver_verified": 1
+    },
+    {
+      "test": "reorg_returns_the_transaction_and_its_kept_approval_includes_it_again",
+      "passed": true
+    },
+    {
+      "test": "historical_import_without_approvals",
+      "passed": true
+    },
+    {
+      "test": "OPS_signer_batches_authorize_32_independent_transactions",
+      "passed": true
+    },
+    {
+      "test": "divergent_member_does_not_cancel_other_batch_member",
+      "passed": true
+    },
+    {
+      "test": "tampering_rejects_entire_batch_then_late_valid_retry_succeeds",
+      "passed": true
+    }
+  ],
+  "sender_regressions": [
+    {
+      "test": "TestNormalClientUsesOPSSigningTTLAndAutomaticBootRedelivery",
+      "passed": true,
+      "race_detector": true
+    },
+    {
+      "test": "TestConfirmationBarrierCountsMembersAcrossRealOPSBatches",
+      "passed": true,
+      "race_detector": true,
+      "approvals": 70,
+      "minimum_batches": 3
+    }
+  ],
+  "call_hash_scenario_count": 19,
+  "call_hash_scenarios": [
+    {
+      "test": "counter_strict",
+      "passed": true,
+      "approved": 64,
+      "confirmed": 1,
+      "total": 1
+    },
+    {
+      "test": "counter_calls",
+      "passed": true,
+      "approved": 64,
+      "confirmed": 64,
+      "total": 64
+    },
+    {
+      "test": "shared_token_balances",
+      "passed": true,
+      "confirmed": 64
+    },
+    {
+      "test": "three_nested_shared_counters",
+      "passed": true,
+      "confirmed": 32
+    },
+    {
+      "test": "precompile_call_identity",
+      "passed": true
+    },
+    {
+      "test": "reject_changed_argument",
+      "passed": true
+    },
+    {
+      "test": "reject_changed_extra_call",
+      "passed": true
+    },
+    {
+      "test": "reject_changed_unexpected_create",
+      "passed": true
+    },
+    {
+      "test": "reject_changed_executed_code",
+      "passed": true
+    },
+    {
+      "test": "reject_changed_native_value",
+      "passed": true
+    },
+    {
+      "test": "calls_cross_org_redirect",
+      "passed": true
+    },
+    {
+      "test": "calls_caught_foreign_redirect",
+      "passed": true
+    },
+    {
+      "test": "no_write_cross_org_call_denied_despite_identical_return_and_storage",
+      "passed": true
+    },
+    {
+      "test": "documented_limit_internal_accounting_can_change",
+      "passed": true,
+      "preflight_increment": 0,
+      "executed_increment": 120
+    },
+    {
+      "test": "reject_tampered_mode_0",
+      "passed": true
+    },
+    {
+      "test": "reject_tampered_mode_42",
+      "passed": true
+    },
+    {
+      "test": "same_org_nested_call_executes",
+      "passed": true
+    },
+    {
+      "test": "delegatecall_uses_caller_storage",
+      "passed": true
+    },
+    {
+      "test": "EIP1559_signed_transaction",
+      "passed": true
+    }
+  ],
+  "real_ops_integration": {
+    "test": "real_OPS_DB_RBAC_trace_signature_forwarding_and_Reth_commit",
+    "passed": true,
+    "database": "isolated postgres:15-alpine testcontainer",
+    "subtests": [
+      "foreign_contract_denied",
+      "same_signer_different_DID_denied",
+      "nested_foreign_contract_denied_by_DB_trace_validator",
+      "same_org_signed_and_forwarded"
+    ],
+    "included_in_canonical_block": true
+  }
+}

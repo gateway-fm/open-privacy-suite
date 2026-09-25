@@ -17,7 +17,7 @@ def counter_comparison(count=64):
             txs=[n.raw(h.ALICE,h.VAULT_A,'note(uint256)',1,nonce=i) for i in range(count)]
             approvals=[c.prepare(tx) for tx in txs]
             assert {a.get('hash_mode',0) for a in approvals}==({3} if mode=='calls' else {0})
-            c.send(c.batch(approvals[:32]));c.send(c.batch(approvals[32:]))
+            c.send(approvals)
             for tx in txs:n.submit(tx)
             included=txs if mode=='calls' else txs[:1]
             n.make_block(included,denied=None if mode=='calls' else txs[1])
@@ -36,7 +36,7 @@ def shared_token_and_nested_counters():
             start=nonce(n,sender)
             txs += [n.raw(sender,h.CALL_HASH_TOKEN,'transfer(address,uint256)',to,1,nonce=start+i) for i in range(32)]
         approvals=[c.prepare(tx) for tx in txs]
-        for i in range(0,len(txs),32):c.send(c.batch(approvals[i:i+32]))
+        c.send(approvals)
         for tx in txs:n.submit(tx)
         n.make_block(txs)
         for tx in txs:receipt(n,tx)
@@ -46,7 +46,7 @@ def shared_token_and_nested_counters():
         r.record('shared_token_balances',confirmed=len(txs))
         start=nonce(n,h.ALICE)
         txs=[n.raw(h.ALICE,h.ROUTER,'run(uint256)',1,nonce=start+i) for i in range(32)]
-        c.send(c.batch([c.prepare(tx) for tx in txs]))
+        c.send([c.prepare(tx) for tx in txs])
         for tx in txs:n.submit(tx)
         n.make_block(txs)
         assert storage(n,h.VAULT_A)==32 and storage(n,h.ROUTER)==32 and storage(n,h.RELAY,1)==32
@@ -88,12 +88,12 @@ def documented_limit_and_mode_tampering():
         r.record('documented_limit_internal_accounting_can_change',preflight_increment=0,executed_increment=120)
     for mode in [0,42]:
         with r.node('tamper-mode-'+str(mode),wait_ms=100) as n,contextlib.closing(r.Client(n,hash_mode='calls')) as c:
-            tx=n.raw(h.ALICE,h.CALL_HASH_CASES,'tick()');batch=c.batch([c.prepare(tx)])
+            tx=n.raw(h.ALICE,h.CALL_HASH_CASES,'tick()');batch=c.fixture_batch([c.prepare(tx)])
             if mode==0:
                 # Relabelled strict after signing: the signed domain no longer matches.
-                c.send(dict(batch,approvals=[dict(batch['approvals'][0],hash_mode=0)]),expect='UNAUTHENTICATED')
+                c.send_fixture(dict(batch,approvals=[dict(batch['approvals'][0],hash_mode=0)]),expect='UNAUTHENTICATED')
             else:
-                c.send_envelope(r.with_member_domain(batch['envelope'],0,b'OPS_APPROVAL_V9\0'),expect='INVALID_ARGUMENT')
+                c.send_fixture_envelope(r.with_member_domain(batch['envelope'],0,b'OPS_APPROVAL_V9\0'),expect='INVALID_ARGUMENT')
             n.submit(tx)
             time.sleep(.2);n.make_block([])
             assert n.rpc('eth_getTransactionReceipt',tx['hash']) is None and storage(n,h.CALL_HASH_CASES)==0
