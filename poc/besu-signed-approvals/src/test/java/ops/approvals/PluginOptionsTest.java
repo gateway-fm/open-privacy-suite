@@ -8,6 +8,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.net.Inet6Address;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import picocli.CommandLine;
 
@@ -31,29 +34,36 @@ class PluginOptionsTest {
     assertEquals(5_000, options.waitMs);
     assertEquals(32, options.maxConnections);
     assertEquals(32, options.maxConcurrentCalls);
-    assertTrue(options.allowedSources().allowsAny());
     assertEquals(
         600_000,
         parse("--plugin-ops-approval-max-ttl-ms=600000").maxTtlMs);
   }
 
+  private static final String[] REQUIRED = {
+    "--plugin-ops-approval-listen=127.0.0.1:0",
+    "--plugin-ops-approval-chain-id=31337",
+    "--plugin-ops-approval-public-key=" + "11".repeat(32),
+    "--plugin-ops-approval-allowed-sources=127.0.0.1/32"
+  };
+
+  /** The required options plus {@code more}; an option named in {@code more} replaces its required value. */
   private static PluginOptions valid(final String... more) {
-    final String[] required = {
-      "--plugin-ops-approval-listen=127.0.0.1:0", "--plugin-ops-approval-chain-id=31337", "--plugin-ops-approval-public-key=" + "11".repeat(32)
-    };
-    final String[] args = java.util.Arrays.copyOf(required, required.length + more.length);
-    System.arraycopy(more, 0, args, required.length, more.length);
-    return parse(args);
+    final List<String> args = new ArrayList<>();
+    for (final String required : REQUIRED) {
+      final String name = required.substring(0, required.indexOf('=') + 1);
+      if (Arrays.stream(more).noneMatch(option -> option.startsWith(name))) {
+        args.add(required);
+      }
+    }
+    args.addAll(List.of(more));
+    return parse(args.toArray(String[]::new));
   }
 
   @Test
   void startUpRefusesMissingOrUnboundedSettings() {
     valid().validate();
-    valid("--plugin-ops-approval-max-ttl-ms=86400000").validate();
     for (final String bad :
         new String[] {
-          "--plugin-ops-approval-max-ttl-ms=86400001",
-          "--plugin-ops-approval-max-ttl-ms=0",
           "--plugin-ops-approval-capacity=0",
           "--plugin-ops-approval-wait-ms=-1",
           "--plugin-ops-approval-max-connections=0",
@@ -63,6 +73,34 @@ class PluginOptionsTest {
       assertThrows(IllegalArgumentException.class, () -> valid(bad).validate(), bad);
     }
     assertThrows(IllegalArgumentException.class, () -> parse("--plugin-ops-approval-chain-id=31337").validate(), "no listen address, no key");
+  }
+
+  @Test
+  void theMaximumTtlIsBetweenTenSecondsAndADay() {
+    // OPS signs for 10 s at the shortest: room for the wait window plus a block (wire contract §5).
+    valid("--plugin-ops-approval-max-ttl-ms=10000").validate();
+    valid("--plugin-ops-approval-max-ttl-ms=86400000").validate();
+    for (final String ms : new String[] {"9999", "1", "0", "-1", "86400001"}) {
+      final IllegalArgumentException refused =
+          assertThrows(IllegalArgumentException.class, () -> valid("--plugin-ops-approval-max-ttl-ms=" + ms).validate(), ms);
+      assertEquals("--plugin-ops-approval-max-ttl-ms must be between 10000 and 86400000", refused.getMessage());
+    }
+  }
+
+  @Test
+  void startUpRefusesAMissingSourceListAnyMustBeSaid() {
+    final String[] withoutSources = Arrays.copyOf(REQUIRED, REQUIRED.length - 1);
+    final IllegalArgumentException missing = assertThrows(IllegalArgumentException.class, () -> parse(withoutSources).validate());
+    assertTrue(missing.getMessage().startsWith("--plugin-ops-approval-allowed-sources is required"), missing.getMessage());
+    assertThrows(IllegalArgumentException.class, () -> parse().allowedSources(), "no default: not even any");
+
+    final AllowedSources any = valid("--plugin-ops-approval-allowed-sources= any ").allowedSources();
+    assertTrue(any.allowsAny());
+    assertTrue(any.allows(ip("203.0.113.9")));
+    assertTrue(any.allows(ip("2001:db8::1")));
+    assertEquals("any", any.toString());
+    valid("--plugin-ops-approval-allowed-sources=any").validate();
+    assertFalse(valid().allowedSources().allowsAny());
   }
 
   @Test
@@ -119,7 +157,12 @@ class PluginOptionsTest {
 
   @Test
   void refusesMalformedSourceLists() {
-    for (final String bad : new String[] {"", "10.0.0.0/33", "10.0.0.1/8", "example.com", "10.0.0.0/8,,", "10.0.0.0/-1", "::1/129"}) {
+    for (final String bad :
+        new String[] {
+          "", "10.0.0.0/33", "10.0.0.1/8", "example.com", "10.0.0.0/8,,", "10.0.0.0/-1", "::1/129",
+          // any means every source: beside a block it would say two things at once
+          "any,10.0.0.0/8", "10.0.0.0/8, any", "ANY"
+        }) {
       assertThrows(IllegalArgumentException.class, () -> AllowedSources.parse(bad), "'" + bad + "'");
     }
   }
