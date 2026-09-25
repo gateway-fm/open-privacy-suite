@@ -11,8 +11,45 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/prometheus/client_golang/prometheus"
 	"google.golang.org/grpc/codes"
 )
+
+func TestConfirmedApprovalsCountMembersAfterSuccessIncludingRedelivery(t *testing.T) {
+	p := newProducer(t, "producer:1", "boot-a")
+	p.set(func(p *producer) { p.always = codes.Unavailable })
+	s := startDelivery(t, time.Minute, testDelivery(p))
+	waitReady(t, s)
+	registry := prometheus.NewRegistry()
+	registry.MustRegister(s)
+	confirmed := func() float64 {
+		families, err := registry.Gather()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, family := range families {
+			if family.GetName() == "privacyproxy_approval_confirmed_total" {
+				return family.GetMetric()[0].GetCounter().GetValue()
+			}
+		}
+		return 0
+	}
+	hashes := txHashes(1, 3)
+	s.publish(signedBatch(t, time.Minute, hashes...))
+	waitUntil(t, 2*time.Second, "a retryable refusal", func() bool {
+		return value(t, s.metrics.retries.WithLabelValues(p.name)) >= 1
+	})
+	if got := confirmed(); got != 0 {
+		t.Fatalf("refused approvals counted as confirmed: %v", got)
+	}
+	p.set(func(p *producer) { p.always = codes.OK })
+	waitUntil(t, 2*time.Second, "three approvals confirmed in one batch", func() bool { return confirmed() == 3 })
+	p.restart("boot-b")
+	waitUntil(t, 3*time.Second, "the redelivery confirmed three more approvals", func() bool { return confirmed() == 6 })
+	if !p.holds("boot-b", hashes...) {
+		t.Fatal("confirmation preceded storage on the restarted producer")
+	}
+}
 
 func TestDeliveryConfirmsEachBatchOnOneConnection(t *testing.T) {
 	p := newProducer(t, "producer-a:1", "boot-a")

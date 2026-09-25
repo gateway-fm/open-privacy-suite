@@ -22,6 +22,7 @@ const (
 // target label is bounded.
 type deliveryMetrics struct {
 	batches      *prometheus.CounterVec
+	confirmed    *prometheus.CounterVec
 	retries      *prometheus.CounterVec
 	dropped      *prometheus.CounterVec
 	redeliveries *prometheus.CounterVec
@@ -41,6 +42,11 @@ func newDeliveryMetrics() *deliveryMetrics {
 			Name:      "approval_batches_total",
 			Help:      "Deliver calls by target and gRPC status code; a full store (UNAVAILABLE with ops-approval-reason: store-full) counts as StoreFull.",
 		}, []string{"target", "code"}),
+		confirmed: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: metricsNamespace,
+			Name:      "approval_confirmed_total",
+			Help:      "Approval members confirmed stored by successful Deliver replies with the expected count, by target; includes duplicates and redelivery.",
+		}, []string{"target"}),
 		retries: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: metricsNamespace,
 			Name:      "approval_retries_total",
@@ -96,7 +102,7 @@ func newDeliveryMetrics() *deliveryMetrics {
 }
 
 func (m *deliveryMetrics) collectors() []prometheus.Collector {
-	return []prometheus.Collector{m.batches, m.retries, m.dropped, m.redeliveries, m.mismatches, m.inFlight,
+	return []prometheus.Collector{m.batches, m.confirmed, m.retries, m.dropped, m.redeliveries, m.mismatches, m.inFlight,
 		m.connected, m.latency, m.retained, m.evicted, m.refused}
 }
 

@@ -349,6 +349,7 @@ func newLane(s *Service, index int, target string, cfg deliveryConfig) (*lane, e
 	m := s.metrics
 	m.connected.WithLabelValues(target).Set(0)
 	m.inFlight.WithLabelValues(target).Set(0)
+	m.confirmed.WithLabelValues(target)
 	m.retries.WithLabelValues(target)
 	m.redeliveries.WithLabelValues(target)
 	m.latency.WithLabelValues(target)
@@ -511,6 +512,8 @@ func (l *lane) send(stop context.Context, j *job) {
 				slog.Warn("approval producer confirmed a batch with a different count", "target", l.target,
 					"approvals", len(e.batch.Approvals), "stored", resp.GetStored(), "suppressed", held)
 			}
+		} else {
+			l.s.metrics.confirmed.WithLabelValues(l.target).Add(float64(len(e.batch.Approvals)))
 		}
 		l.observeBoot(gen, resp.GetBootId())
 		l.settle(j, outcomeDone, now)
