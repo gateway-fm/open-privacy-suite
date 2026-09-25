@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -110,6 +111,11 @@ func (p *Proxy) Forward(reqBody []byte) ([]byte, int, error) {
 	return p.ForwardWithAPIKey(reqBody, "", "")
 }
 
+// ForwardContext forwards a JSON-RPC request with caller cancellation.
+func (p *Proxy) ForwardContext(ctx context.Context, reqBody []byte) ([]byte, int, error) {
+	return p.forwardWithAPIKeyHeaderContext(ctx, reqBody, DefaultAPIKeyHeader, "", "")
+}
+
 // ForwardWithAPIKey forwards a JSON-RPC request with an optional API key
 // for upstream RPC proxy authentication. If apiKey is non-empty it is sent
 // as a Bearer token in the Authorization header. If clientIP is non-empty,
@@ -126,7 +132,17 @@ func (p *Proxy) ForwardWithAPIKey(reqBody []byte, apiKey string, clientIP string
 // for the exact rules — "Authorization" is sent as "Bearer <key>"; any
 // other header name sends the raw key value.
 func (p *Proxy) ForwardWithAPIKeyHeader(reqBody []byte, headerName, apiKey, clientIP string) ([]byte, int, error) {
-	req, err := http.NewRequest("POST", p.targetURL, bytes.NewReader(reqBody))
+	return p.forwardWithAPIKeyHeaderContext(context.Background(), reqBody, headerName, apiKey, clientIP)
+}
+
+// ForwardWithAPIKeyHeaderContext forwards a request with an upstream credential
+// and caller cancellation.
+func (p *Proxy) ForwardWithAPIKeyHeaderContext(ctx context.Context, reqBody []byte, headerName, apiKey, clientIP string) ([]byte, int, error) {
+	return p.forwardWithAPIKeyHeaderContext(ctx, reqBody, headerName, apiKey, clientIP)
+}
+
+func (p *Proxy) forwardWithAPIKeyHeaderContext(ctx context.Context, reqBody []byte, headerName, apiKey, clientIP string) ([]byte, int, error) {
+	req, err := http.NewRequestWithContext(ctx, "POST", p.targetURL, bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, http.StatusInternalServerError, fmt.Errorf("failed to create request: %w", err)
 	}

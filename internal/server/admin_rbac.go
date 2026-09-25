@@ -40,6 +40,7 @@ func (s *Server) registerRBACRoutes(api *gin.RouterGroup) {
 	// only; super-admin tokens are rejected inside the handler. See
 	// admin_dry_run.go for threat-model rationale.
 	api.POST("/orgs/:org_id/dry-run", s.handleDryRun)
+
 	api.POST("/orgs/:org_id/contracts/sync-check", s.checkContractsOnChain)
 	api.POST("/orgs/:org_id/contracts/sync-delete", s.deleteStaleContracts)
 	api.GET("/orgs/:org_id/contracts/grant-summary", s.getContractGrantSummary)

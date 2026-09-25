@@ -171,6 +171,8 @@ func CanonicalizeRoute(path string) RouteClass {
 // precise machine-readable source.
 func AuthForPath(path string) string {
 	switch {
+	case path == "/api/v1/admin/cross-org-authorization-oracle":
+		return "Dedicated cross-org oracle token + private network"
 	case strings.HasPrefix(path, "/api/v1/admin"):
 		return "Admin token + private network"
 	case strings.HasPrefix(path, "/api/v1/explorer"):

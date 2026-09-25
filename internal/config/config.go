@@ -14,6 +14,9 @@ import (
 	"strings"
 	"time"
 
+	"crypto/subtle"
+	"github.com/google/uuid"
+
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/netguard"
 	"privacy-proxy/internal/proxy"
@@ -307,16 +310,19 @@ type Config struct {
 	BillionsCredentialQueryFile string         // env BILLIONS_CREDENTIAL_QUERY_FILE — path to JSON file with the credential query
 	BillionsCredentialQuery     map[string]any // Parsed from BillionsCredentialQueryFile at startup
 
-	AdminAPIToken          string              // Shared token required for admin API access (required in production). FULL super-admin: reads + writes + platform/fleet. Held by trusted ops / MCP.
-	OperatorAPIToken       string              // RD-1132: optional restricted "operator/onboarder" token. Platform-only — create/manage orgs + mint org admins; NO per-org tenant reads or mutations. For a 3rd-party onboarder that should not see/touch tenant data.
-	ENSResolverURL         string              // Ethereum mainnet RPC URL for ENS resolution
-	CORSAllowedOrigins     string              // Comma-separated list of allowed origins, or "*" for all (default: "*" in dev)
-	MockSignatures         bool                // If true, accept any signature without verification (dev/demo only, NEVER in production)
-	AllowMockLogin         bool                // If true, accept mock JWZ tokens for testing (dev/demo only, NEVER in production)
-	OAuthFirstPartyClients map[string]string   // RD-993 + RD-1006: client_id → bcrypt-hashed client_secret. Each first-party client must carry a secret; the proxy verifies it at /oauth/token. Empty map = no client gets silent SSO; falls back to interactive Privado flow.
-	DemoAutoAuthDelay      time.Duration       // Auto-complete auth sessions for demo recording (0 = disabled, forced off in production)
-	ExtraRPCNamespacesFile string              // Path to JSON file with additional RPC method namespaces (e.g. Linea's linea_*)
-	ExtraRPCNamespaces     *ExtraRPCNamespaces // Parsed from ExtraRPCNamespacesFile
+	AdminAPIToken                     string              // Shared token required for admin API access (required in production). FULL super-admin: reads + writes + platform/fleet. Held by trusted ops / MCP.
+	OperatorAPIToken                  string              // RD-1132: optional restricted "operator/onboarder" token. Platform-only — create/manage orgs + mint org admins; NO per-org tenant reads or mutations. For a 3rd-party onboarder that should not see/touch tenant data.
+	CrossOrgAuthorizationOracleMode   string              // disabled (default), verdict_only, or full_simulation.
+	CrossOrgAuthorizationOracleToken  string              // Dedicated credential; must differ from admin/operator tokens.
+	CrossOrgAuthorizationOracleOrgIDs []string            // Explicit organization allowlist for service-to-subject authority.
+	ENSResolverURL                    string              // Ethereum mainnet RPC URL for ENS resolution
+	CORSAllowedOrigins                string              // Comma-separated list of allowed origins, or "*" for all (default: "*" in dev)
+	MockSignatures                    bool                // If true, accept any signature without verification (dev/demo only, NEVER in production)
+	AllowMockLogin                    bool                // If true, accept mock JWZ tokens for testing (dev/demo only, NEVER in production)
+	OAuthFirstPartyClients            map[string]string   // RD-993 + RD-1006: client_id → bcrypt-hashed client_secret. Each first-party client must carry a secret; the proxy verifies it at /oauth/token. Empty map = no client gets silent SSO; falls back to interactive Privado flow.
+	DemoAutoAuthDelay                 time.Duration       // Auto-complete auth sessions for demo recording (0 = disabled, forced off in production)
+	ExtraRPCNamespacesFile            string              // Path to JSON file with additional RPC method namespaces (e.g. Linea's linea_*)
+	ExtraRPCNamespaces                *ExtraRPCNamespaces // Parsed from ExtraRPCNamespacesFile
 
 	// Runtime tracing configuration
 	TraceCacheTTL         time.Duration // TTL for trace result cache (default: 10s)
@@ -780,6 +786,9 @@ func Load() *Config {
 		BillionsCredentialQuery:             billionsQuery,
 		AdminAPIToken:                       getEnv("ADMIN_API_TOKEN", ""),
 		OperatorAPIToken:                    getEnv("OPERATOR_API_TOKEN", ""),
+		CrossOrgAuthorizationOracleMode:     strings.ToLower(getEnv("CROSS_ORG_AUTHORIZATION_ORACLE_MODE", "disabled")),
+		CrossOrgAuthorizationOracleToken:    getEnv("CROSS_ORG_AUTHORIZATION_ORACLE_TOKEN", ""),
+		CrossOrgAuthorizationOracleOrgIDs:   getSliceEnv("CROSS_ORG_AUTHORIZATION_ORACLE_ORG_IDS", ","),
 		ENSResolverURL:                      getEnv("ENS_RESOLVER_URL", "https://eth.llamarpc.com"), // Public mainnet RPC
 		CORSAllowedOrigins:                  corsOrigins,
 		MockSignatures:                      mockSigs,
@@ -942,6 +951,9 @@ func (c *Config) Validate() error {
 			return err
 		}
 	}
+	if err := c.validateCrossOrgAuthorizationOracle(); err != nil {
+		return err
+	}
 
 	if !c.IsProduction() {
 		return nil // Development mode allows auto-generated values
@@ -1009,6 +1021,49 @@ func (c *Config) Validate() error {
 		slog.Warn("AUDIT_DATABASE_URL is not set in production: the append-only audit database is DERIVED on the same server reusing DATABASE_URL's owner credentials, so the INSERT-only seal is not enforced. Provision a separate audit DB and set AUDIT_DATABASE_URL to its restricted-role DSN (RD-1164 #18).")
 	}
 
+	return nil
+}
+
+func (c *Config) validateCrossOrgAuthorizationOracle() error {
+	mode := strings.ToLower(strings.TrimSpace(c.CrossOrgAuthorizationOracleMode))
+	switch mode {
+	case "", "disabled":
+		return nil
+	case "verdict_only", "full_simulation":
+	default:
+		return fmt.Errorf("CROSS_ORG_AUTHORIZATION_ORACLE_MODE must be disabled, verdict_only, or full_simulation (got %q)", c.CrossOrgAuthorizationOracleMode)
+	}
+
+	token := strings.TrimSpace(c.CrossOrgAuthorizationOracleToken)
+	if token == "" {
+		return errors.New("CROSS_ORG_AUTHORIZATION_ORACLE_TOKEN is required when the cross-org authorization oracle is enabled")
+	}
+	if adminToken := strings.TrimSpace(c.AdminAPIToken); adminToken != "" &&
+		subtle.ConstantTimeCompare([]byte(token), []byte(adminToken)) == 1 {
+		return errors.New("CROSS_ORG_AUTHORIZATION_ORACLE_TOKEN must differ from ADMIN_API_TOKEN")
+	}
+	if operatorToken := strings.TrimSpace(c.OperatorAPIToken); operatorToken != "" &&
+		subtle.ConstantTimeCompare([]byte(token), []byte(operatorToken)) == 1 {
+		return errors.New("CROSS_ORG_AUTHORIZATION_ORACLE_TOKEN must differ from OPERATOR_API_TOKEN")
+	}
+	if len(c.CrossOrgAuthorizationOracleOrgIDs) == 0 {
+		return errors.New("CROSS_ORG_AUTHORIZATION_ORACLE_ORG_IDS must contain at least one organization when the oracle is enabled")
+	}
+	seen := make(map[string]struct{}, len(c.CrossOrgAuthorizationOracleOrgIDs))
+	canonicalOrgIDs := make([]string, 0, len(c.CrossOrgAuthorizationOracleOrgIDs))
+	for _, rawID := range c.CrossOrgAuthorizationOracleOrgIDs {
+		parsedID, err := uuid.Parse(strings.TrimSpace(rawID))
+		if err != nil {
+			return fmt.Errorf("CROSS_ORG_AUTHORIZATION_ORACLE_ORG_IDS contains invalid organization ID %q", rawID)
+		}
+		id := parsedID.String()
+		if _, ok := seen[id]; ok {
+			return fmt.Errorf("CROSS_ORG_AUTHORIZATION_ORACLE_ORG_IDS contains duplicate organization ID %q", id)
+		}
+		seen[id] = struct{}{}
+		canonicalOrgIDs = append(canonicalOrgIDs, id)
+	}
+	c.CrossOrgAuthorizationOracleOrgIDs = canonicalOrgIDs
 	return nil
 }
 

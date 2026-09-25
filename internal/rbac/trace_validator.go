@@ -288,8 +288,9 @@ func (v *TraceValidator) ValidateTrace(
 			return nil, fmt.Errorf("failed to check shared infrastructure: %w", err)
 		}
 		if sharedRow != nil {
-			if target.Type == "DELEGATECALL" {
-				slog.Debug("trace denied: DELEGATECALL into shared infrastructure",
+			if target.Type == "DELEGATECALL" || target.Type == "CALLCODE" {
+				slog.Debug("trace denied: context-sharing call into shared infrastructure",
+					"call_type", target.Type,
 					"address", addr)
 				return &TraceValidationResult{
 					Allowed:      false,

@@ -78,6 +78,10 @@ func setupTestServerForRBAC(t *testing.T) *testServerRBAC {
 	// place; a later test that re-uses the same DID sees the stale link
 	// and the parity assertions fail. Per-test reset closes the leak.
 	conn.ExecContext(ctx, "DELETE FROM eth_address_links")
+	// Same hazard as eth_address_links above: policy_check_log is keyed by
+	// subject_did/subject_address, not a FK, so tests reusing a literal DID
+	// accumulate rows across the package and break row-count assertions.
+	conn.ExecContext(ctx, "DELETE FROM policy_check_log")
 
 	t.Cleanup(func() {
 		database.Close()
@@ -491,7 +495,7 @@ func TestGroupAccessValidation(t *testing.T) {
 		// Write methods no longer require a "write" claim — method allowlist is the gate
 		body := map[string]any{
 			"allowed_methods": []string{"eth_call", "eth_sendTransaction"},
-			"claims":  []string{},
+			"claims":          []string{},
 		}
 		jsonBody, _ := json.Marshal(body)
 
@@ -508,7 +512,7 @@ func TestGroupAccessValidation(t *testing.T) {
 		// Read methods no longer require a "read" claim — method allowlist is the gate
 		body := map[string]any{
 			"allowed_methods": []string{"eth_call", "eth_getBalance"},
-			"claims":  []string{},
+			"claims":          []string{},
 		}
 		jsonBody, _ := json.Marshal(body)
 
@@ -528,7 +532,7 @@ func TestGroupAccessValidation(t *testing.T) {
 		// ValidateTrace enforce access).
 		body := map[string]any{
 			"allowed_methods": []string{"debug_traceTransaction"},
-			"claims":  []string{},
+			"claims":          []string{},
 		}
 		jsonBody, _ := json.Marshal(body)
 
@@ -544,7 +548,7 @@ func TestGroupAccessValidation(t *testing.T) {
 	t.Run("AcceptsMethodsWithNoClaims", func(t *testing.T) {
 		body := map[string]any{
 			"allowed_methods": []string{"eth_call", "eth_sendTransaction"},
-			"claims":  []string{},
+			"claims":          []string{},
 		}
 		jsonBody, _ := json.Marshal(body)
 
@@ -560,7 +564,7 @@ func TestGroupAccessValidation(t *testing.T) {
 	t.Run("AcceptsEmptyMethodsList", func(t *testing.T) {
 		body := map[string]any{
 			"allowed_methods": []string{},
-			"claims":  []string{},
+			"claims":          []string{},
 		}
 		jsonBody, _ := json.Marshal(body)
 
@@ -576,7 +580,7 @@ func TestGroupAccessValidation(t *testing.T) {
 	t.Run("AcceptsUnknownMethodsWithoutClaims", func(t *testing.T) {
 		body := map[string]any{
 			"allowed_methods": []string{"some_unknown_method", "another_custom_method"},
-			"claims":  []string{}, // No claims needed for unknown methods
+			"claims":          []string{}, // No claims needed for unknown methods
 		}
 		jsonBody, _ := json.Marshal(body)
 
@@ -1006,7 +1010,7 @@ func TestAccessCheckAPI(t *testing.T) {
 	// Set group access with allowed methods
 	accessBody := map[string]any{
 		"allowed_methods": []string{"eth_call", "eth_getBalance"},
-		"claims":  []string{"read"},
+		"claims":          []string{"read"},
 	}
 	accessJson, _ := json.Marshal(accessBody)
 	accessReq := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/orgs/%s/groups/%s/access", org.ID, group.ID), bytes.NewReader(accessJson))

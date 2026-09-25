@@ -14,6 +14,15 @@ The Open Privacy Suite implements a **multi-tenant RBAC** system that protects b
 node access. Organizations define fine-grained permissions for users accessing JSON-RPC methods and
 smart contracts.
 
+<Callout type="warning" title="Cross-organization authorization oracle">
+The cross-org oracle is disabled by default. Enabling it requires a dedicated
+`CROSS_ORG_AUTHORIZATION_ORACLE_TOKEN`, distinct from admin/operator tokens,
+and an explicit `CROSS_ORG_AUTHORIZATION_ORACLE_ORG_IDS` allowlist. Calls use
+`POST /api/v1/admin/cross-org-authorization-oracle` and the
+`X-Cross-Org-Authorization-Oracle-Token` header. Even `verdict_only` reveals
+policy information and must be treated as a cross-tenant trust boundary.
+</Callout>
+
 **Key features:**
 
 - **Multi-tenant** -- multiple independent organizations with isolated permission sets
@@ -129,6 +138,29 @@ Banning revokes the target's refresh tokens immediately, and a banned user is re
 In the dashboard the Ban control on your own account is inert and states the reason — as a tooltip on the user list row, and as help text beside the toggle on the user detail page. Both remain reachable by keyboard, so the explanation is not mouse-only. As always the server-side check is the boundary; the UI only avoids offering an action that would fail.
 
 To ban an admin, have another admin in the same organization do it, or use the full admin token.
+
+---
+
+## Cross-Organization Authorization Oracle
+
+`POST /api/v1/admin/cross-org-authorization-oracle` lets an explicitly trusted service test a JSON-RPC operation before submission.
+It is disabled by default. When enabled, use the dedicated `CROSS_ORG_AUTHORIZATION_ORACLE_TOKEN` in the
+`X-Cross-Org-Authorization-Oracle-Token` header. Admin, operator, and JWT credentials cannot use this endpoint.
+
+The request identifies one subject by DID or linked Ethereum address. An optional `org_id` selects the organization.
+A supplied `from` address must link to the subject. In `verdict_only` mode the response contains only `allowed` and a safe
+reason category; `full_simulation` additionally returns authorized trace artifacts.
+
+The endpoint checks RBAC and nested EVM calls with `debug_traceCall`. Write operations also use a side-effect-free compliance preview.
+The preview does not send a transaction, write a compliance log, or consume a travel-rule record.
+
+The upstream node must support `debug_traceCall`. The endpoint fails closed when tracing is unavailable or exceeds five seconds.
+Trace checks use the same upstream RPC credential and configured shared budget as live calls; timeout and concurrency limits also protect resources.
+`debug_traceCall` and `debug_traceTransaction` are not supported. The endpoint also uses the authenticated-request concurrency limit.
+
+Each returned allow or deny verdict writes a row to `policy_check_log`. Body or subject validation failures return an HTTP error without an audit row; an invalid operation (for example an undecodable raw transaction) returns an HTTP error and is still audited with reason `decode_error`.
+
+This endpoint predicts privacy and compliance acceptance. It does not predict EVM success, gas use, nonce validity, or later state changes.
 
 ---
 

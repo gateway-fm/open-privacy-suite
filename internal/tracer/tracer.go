@@ -200,6 +200,9 @@ func ParseCallTraceResult(raw json.RawMessage) (*TraceResult, error) {
 	if err := json.Unmarshal(raw, &frame); err != nil {
 		return nil, fmt.Errorf("failed to parse trace result: %w", err)
 	}
+	if !validRootCallFrameType(frame.Type) {
+		return nil, fmt.Errorf("failed to parse trace result: invalid root call frame type %q", frame.Type)
+	}
 
 	result := &TraceResult{
 		CallTargets: make([]CallTarget, 0),
@@ -216,6 +219,22 @@ func ParseCallTraceResult(raw json.RawMessage) (*TraceResult, error) {
 	return result, nil
 }
 
+func validRootCallFrameType(frameType string) bool {
+	switch frameType {
+	case "CALL", "CALLCODE", "DELEGATECALL", "STATICCALL", "CREATE", "CREATE2":
+		return true
+	default:
+		return false
+	}
+}
+
+func validNestedCallFrameType(frameType string) bool {
+	if validRootCallFrameType(frameType) {
+		return true
+	}
+	return frameType == "SELFDESTRUCT"
+}
+
 // extractCallTargets recursively extracts all call targets from a call frame.
 const maxTraceDepth = 256 // Prevent stack overflow from malicious/deeply nested traces
 
@@ -230,9 +249,19 @@ func (t *Tracer) extractCallTargets(frame *callFrame, result *TraceResult, depth
 	if depth > maxTraceDepth {
 		return ErrTraceDepthExceeded
 	}
+	if depth == 0 {
+		if !validRootCallFrameType(frame.Type) {
+			return fmt.Errorf("invalid root call frame type %q at depth %d", frame.Type, depth)
+		}
+	} else if !validNestedCallFrameType(frame.Type) {
+		return fmt.Errorf("invalid nested call frame type %q at depth %d", frame.Type, depth)
+	}
+	if callFrameRequiresTarget(frame.Type) && strings.TrimSpace(frame.To) == "" {
+		return fmt.Errorf("invalid %s call frame at depth %d: missing target address", frame.Type, depth)
+	}
 	// Check the type and add to result
 	switch frame.Type {
-	case "CALL", "DELEGATECALL", "STATICCALL":
+	case "CALL", "CALLCODE", "DELEGATECALL", "STATICCALL":
 		result.CallTargets = append(result.CallTargets, CallTarget{
 			Type:  frame.Type,
 			From:  frame.From,
@@ -264,6 +293,15 @@ func (t *Tracer) extractCallTargets(frame *callFrame, result *TraceResult, depth
 		}
 	}
 	return nil
+}
+
+func callFrameRequiresTarget(frameType string) bool {
+	switch frameType {
+	case "CALL", "CALLCODE", "DELEGATECALL", "STATICCALL":
+		return true
+	default:
+		return false
+	}
 }
 
 // TraceTransaction traces an already-mined transaction by hash using debug_traceTransaction.

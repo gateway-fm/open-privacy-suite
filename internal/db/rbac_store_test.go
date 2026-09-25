@@ -523,6 +523,56 @@ func TestMembership_CRUD(t *testing.T) {
 		}
 	})
 
+	t.Run("ListActiveUserMembershipsWithDetails", func(t *testing.T) {
+		// Active user: one non-expiring membership, one expired membership in
+		// a second org. The complete listing keeps both; the active listing
+		// drops the expired one (authorization/trace boundary).
+		activeUser := &rbac.User{ID: uuid.New().String(), ExternalID: "did:active-filter:user", KYC: true, Metadata: map[string]interface{}{}}
+		if err := database.CreateUser(ctx, activeUser); err != nil {
+			t.Fatalf("CreateUser() error = %v", err)
+		}
+
+		secondOrg := &rbac.Organization{ID: uuid.New().String(), Slug: "active-filter-org-" + uuid.New().String()[:8], Name: "Second Org", Settings: map[string]interface{}{}}
+		if err := database.CreateOrganization(ctx, secondOrg); err != nil {
+			t.Fatalf("CreateOrganization() error = %v", err)
+		}
+		secondGroup := &rbac.Group{ID: uuid.New().String(), OrgID: secondOrg.ID, Slug: "active-filter-grp-" + uuid.New().String()[:8], Name: "Second Group", Path: "active-filter", Depth: 0}
+		if err := database.CreateGroup(ctx, secondGroup); err != nil {
+			t.Fatalf("CreateGroup() error = %v", err)
+		}
+
+		if err := database.CreateMembership(ctx, &rbac.UserMembership{
+			ID: uuid.New().String(), UserID: activeUser.ID, GroupID: group.ID, Source: rbac.MembershipSourceAdmin,
+		}); err != nil {
+			t.Fatalf("CreateMembership(active) error = %v", err)
+		}
+		pastTime := time.Now().Add(-1 * time.Hour)
+		if err := database.CreateMembership(ctx, &rbac.UserMembership{
+			ID: uuid.New().String(), UserID: activeUser.ID, GroupID: secondGroup.ID, Source: rbac.MembershipSourceAdmin, ExpiresAt: &pastTime,
+		}); err != nil {
+			t.Fatalf("CreateMembership(expired) error = %v", err)
+		}
+
+		all, err := database.ListUserMembershipsWithDetails(ctx, activeUser.ID)
+		if err != nil {
+			t.Fatalf("ListUserMembershipsWithDetails() error = %v", err)
+		}
+		if len(all) != 2 {
+			t.Errorf("ListUserMembershipsWithDetails() = %d memberships, want 2 (complete listing keeps expired rows)", len(all))
+		}
+
+		active, err := database.ListActiveUserMembershipsWithDetails(ctx, activeUser.ID)
+		if err != nil {
+			t.Fatalf("ListActiveUserMembershipsWithDetails() error = %v", err)
+		}
+		if len(active) != 1 {
+			t.Fatalf("ListActiveUserMembershipsWithDetails() = %d memberships, want 1 (expired excluded)", len(active))
+		}
+		if active[0].Group == nil || active[0].Group.OrgID != org.ID {
+			t.Error("ListActiveUserMembershipsWithDetails() kept the wrong membership (expired one must be dropped)")
+		}
+	})
+
 	t.Run("ListGroupMembers", func(t *testing.T) {
 		members, err := database.ListGroupMembers(ctx, group.ID)
 		if err != nil {

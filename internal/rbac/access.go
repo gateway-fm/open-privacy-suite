@@ -710,7 +710,7 @@ func (c *AccessController) checkHistoricalStateQuery(ctx context.Context, req *A
 // stays NULL / super-admin-only, matching pre-org denials. It never returns
 // an org the caller is not a member of.
 func (c *AccessController) callerOrgForDenial(ctx context.Context, req *AccessCheckRequest, user *User) string {
-	memberships, err := c.store.ListUserMembershipsWithDetails(ctx, user.ID)
+	memberships, err := c.store.ListActiveUserMembershipsWithDetails(ctx, user.ID)
 	if err != nil || len(memberships) == 0 {
 		return ""
 	}
@@ -732,10 +732,30 @@ func (c *AccessController) callerOrgForDenial(ctx context.Context, req *AccessCh
 }
 
 func (c *AccessController) resolveOrgContextForRequest(ctx context.Context, req *AccessCheckRequest, user *User) (*Organization, *OrgContext, *AccessCheckResult, bool, error) {
-	// Create OrgContext - handles cross-org isolation from the start
-	// This replaces the scattered getUserOrganizationIDs + getOrgContextForTarget calls
 	targetAddr := strings.ToLower(strings.TrimSpace(req.TargetAddress))
-	orgCtx, err := NewOrgContext(ctx, c.store, user, targetAddr)
+	// Explicitly scoped callers (notably org-admin dry-run) must never build
+	// context from a foreign target. Start from the selected organization and
+	// reject a registered target owned elsewhere before loading that
+	// organization's record or policy.
+	var orgCtx *OrgContext
+	var err error
+	if req.OrgID != "" {
+		orgCtx, err = NewOrgContextForOrg(ctx, c.store, user, req.OrgID)
+		if err == nil && targetAddr != "" {
+			var ownerOrgID string
+			ownerOrgID, err = orgCtx.OwnerOrgID(ctx, targetAddr)
+			if err == nil && ownerOrgID != "" && ownerOrgID != req.OrgID {
+				return nil, nil, &AccessCheckResult{
+					Allowed: false,
+					Reason:  ErrContractAccessDenied,
+					OrgID:   req.OrgID,
+					UserID:  user.ID,
+				}, true, nil
+			}
+		}
+	} else {
+		orgCtx, err = NewOrgContext(ctx, c.store, user, targetAddr)
+	}
 	if err != nil {
 		// Cross-org violation detected (e.g., contract belongs to org user is not member of).
 		// Attribute the denial to the caller's own org when unambiguous
@@ -1441,12 +1461,12 @@ var ReadOpsMap = map[string]bool{
 	// Node keystore accounts — may expose signer addresses on private PoA networks
 	"eth_accounts": true,
 	// Log filters — functionally equivalent to eth_getLogs, same auth requirement
-	"eth_newfilter":                    true,
-	"eth_newblockfilter":               true,
-	"eth_newpendingtransactionfilter":  true,
-	"eth_getfilterchanges":             true,
-	"eth_getfilterlogs":                true,
-	"eth_uninstallfilter":              true,
+	"eth_newfilter":                   true,
+	"eth_newblockfilter":              true,
+	"eth_newpendingtransactionfilter": true,
+	"eth_getfilterchanges":            true,
+	"eth_getfilterlogs":               true,
+	"eth_uninstallfilter":             true,
 	// Block contents (include transaction lists with from/to/value)
 	"eth_getblockbyhash":                   true,
 	"eth_getblockbynumber":                 true,
@@ -1457,9 +1477,9 @@ var ReadOpsMap = map[string]bool{
 	"eth_getunclecountbyblockhash":         true,
 	"eth_getunclecountbyblocknumber":       true,
 	// Transaction details (sender, receiver, value, input data)
-	"eth_gettransactionbyhash":                 true,
-	"eth_gettransactionbyblockhashandindex":    true,
-	"eth_gettransactionbyblocknumberandindex":  true,
+	"eth_gettransactionbyhash":                true,
+	"eth_gettransactionbyblockhashandindex":   true,
+	"eth_gettransactionbyblocknumberandindex": true,
 	// Receipts (logs, status, contract address)
 	"eth_gettransactionreceipt": true,
 	"eth_getblockreceipts":      true, // Block receipts (same privacy requirements as eth_getLogs)
@@ -1649,7 +1669,7 @@ func accessGetFunctionRule(access *ContractAccess, selector string) *FunctionRul
 
 // getUserOrganizationIDs returns the set of organization IDs the user is a member of.
 func (c *AccessController) getUserOrganizationIDs(ctx context.Context, userID string) (map[string]bool, error) {
-	memberships, err := c.store.ListUserMembershipsWithDetails(ctx, userID)
+	memberships, err := c.store.ListActiveUserMembershipsWithDetails(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user memberships: %w", err)
 	}
@@ -1669,7 +1689,7 @@ func (c *AccessController) getUserOrganizationIDs(ctx context.Context, userID st
 // This is used for unregistered contract access where permissions are resolved
 // for one org but deploy claims may exist in another.
 func (c *AccessController) userHasDeployClaimInAnyOrg(ctx context.Context, userID string) (bool, error) {
-	memberships, err := c.store.ListUserMembershipsWithDetails(ctx, userID)
+	memberships, err := c.store.ListActiveUserMembershipsWithDetails(ctx, userID)
 	if err != nil {
 		return false, err
 	}
@@ -1693,7 +1713,7 @@ func (c *AccessController) userHasDeployClaimInAnyOrg(ctx context.Context, userI
 // GetUserOrgIDs returns all org IDs the user belongs to.
 // Used by response filters to resolve permissions across all orgs.
 func (c *AccessController) GetUserOrgIDs(ctx context.Context, userID string) ([]string, error) {
-	memberships, err := c.store.ListUserMembershipsWithDetails(ctx, userID)
+	memberships, err := c.store.ListActiveUserMembershipsWithDetails(ctx, userID)
 	if err != nil {
 		return nil, err
 	}

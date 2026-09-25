@@ -701,11 +701,6 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	// mints to the viewer left them unable to see their own tx.
 	wireExplorerRedactor(s.explorerRedactor, database, s.rbacAccessCtrl, explorerBackend, cfg.ExplorerPseudonymKey)
 
-	// Start background explorer DB reconnection if initial connection failed
-	if cfg.ExplorerDatabaseURL != "" && explorerSQL == nil {
-		go s.explorerReconnectLoop(cfg.ExplorerDatabaseURL, database, cfg.IndexerURL)
-	}
-
 	// The JSON-RPC processor is constructed AFTER the compliance / audit /
 	// visibility blocks below, once every dependency exists, so it is fully
 	// wired at construction — no post-construction Set* step to forget
@@ -724,7 +719,6 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		if !cfg.DisableCoinGecko {
 			priceSvc := pricing.NewService(database, database, cfg.PriceFetchInterval)
 			priceSvc.SetMetrics(m.PricingFetchesTotal, m.PricingFetchDuration, m.PricingConsecutiveFailures)
-			priceSvc.Start()
 			s.priceService = priceSvc
 		} else {
 			slog.Info("CoinGecko price fetching is DISABLED")
@@ -754,6 +748,38 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	}
 	rbacAuditChain := audit.NewHashChain(rbacAuditSeed)
 	database.SetRBACAuditChain(rbacAuditChain)
+
+	// This audit is mandatory when the cross-tenant oracle is enabled. Perform
+	// it before starting any background worker so a failed write can abort
+	// construction without leaking goroutines or other live resources.
+	if s.crossOrgAuthorizationOracleEnabled() {
+		slog.Warn("CROSS-ORG AUTHORIZATION ORACLE ENABLED: the dedicated caller can query policy across the configured organization allowlist",
+			"mode", cfg.CrossOrgAuthorizationOracleMode,
+			"allowed_org_count", len(cfg.CrossOrgAuthorizationOracleOrgIDs))
+		if err := database.CreateAuditLog(context.Background(), &rbac.AuditLogEntry{
+			ActorExternalID: "system:startup",
+			Action:          "cross_org_oracle.enabled",
+			ResourceType:    "configuration",
+			ResourceName:    "cross_org_authorization_oracle",
+			NewValue: map[string]any{
+				"mode":              cfg.CrossOrgAuthorizationOracleMode,
+				"allowed_org_count": len(cfg.CrossOrgAuthorizationOracleOrgIDs),
+				"allowed_org_ids":   cfg.CrossOrgAuthorizationOracleOrgIDs,
+			},
+		}); err != nil {
+			s.Stop()
+			return nil, fmt.Errorf("audit enabled cross-org authorization oracle configuration: %w", err)
+		}
+	}
+
+	// Start workers only after the mandatory oracle audit succeeds. The
+	// explorer reconnect loop has no construction-time cancellation handle.
+	if cfg.ExplorerDatabaseURL != "" && explorerSQL == nil {
+		go s.explorerReconnectLoop(cfg.ExplorerDatabaseURL, database, cfg.IndexerURL)
+	}
+	if s.priceService != nil {
+		s.priceService.Start()
+	}
 
 	// Initialize SIEM forwarder if webhook URL is configured.
 	// RD-950: NewSIEMForwarder now applies the SSRF guard at construction
@@ -1021,7 +1047,6 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	if cfg.AdminAPIToken == "" {
 		slog.Warn("ADMIN_API_TOKEN is not set - admin API is unprotected, any request from the private network will be accepted without authentication")
 	}
-
 	// Startup registration is done: from here on the registries are read
 	// lock-free by request handlers, so any further RegisterExtraNamespaces
 	// call is a data race and panics (RD-1262). Armed only on the success
@@ -1208,6 +1233,15 @@ func (s *Server) setupRouter() *gin.Engine {
 	orgScope := s.orgScopingMiddleware()
 	apiV1 := router.Group("/api/v1")
 	{
+		oracle := apiV1.Group("/admin")
+		oracle.Use(
+			middleware.BodyLimit(MaxRequestBodySize),
+			s.localhostOnlyMiddleware(),
+			s.crossOrgAuthorizationOracleAuthMiddleware(),
+			s.crossOrgAuthorizationOracleLimitMiddleware(),
+		)
+		oracle.POST("/cross-org-authorization-oracle", s.handlePolicyCheck)
+
 		// Admin endpoints - private network + token auth + org scoping
 		admin := apiV1.Group("/admin")
 		admin.Use(middleware.BodyLimit(MaxRequestBodySize), s.localhostOnlyMiddleware(), adminAuth, orgScope)
@@ -1723,6 +1757,73 @@ func (s *Server) adminAuthMiddleware() gin.HandlerFunc {
 
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "admin authentication required"})
 		c.Abort()
+	}
+}
+
+func (s *Server) crossOrgAuthorizationOracleEnabled() bool {
+	if s == nil || s.config == nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(s.config.CrossOrgAuthorizationOracleMode)) {
+	case "verdict_only", "full_simulation":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Server) crossOrgAuthorizationOracleAuthMiddleware() gin.HandlerFunc {
+	expectedToken := ""
+	enabled := s.crossOrgAuthorizationOracleEnabled()
+	if s != nil && s.config != nil {
+		expectedToken = strings.TrimSpace(s.config.CrossOrgAuthorizationOracleToken)
+	}
+	return func(c *gin.Context) {
+		if !enabled {
+			c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": "not found"})
+			return
+		}
+		provided := strings.TrimSpace(c.GetHeader("X-Cross-Org-Authorization-Oracle-Token"))
+		if expectedToken == "" || provided == "" ||
+			subtle.ConstantTimeCompare([]byte(provided), []byte(expectedToken)) != 1 {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid or missing cross-org authorization oracle token"})
+			return
+		}
+		c.Set("auth_method", "cross_org_authorization_oracle_token")
+		c.Next()
+	}
+}
+
+// crossOrgAuthorizationOracleLimitMiddleware covers the entire authenticated
+// oracle request, including subject/RBAC denials and non-EVM methods. The
+// simulation path has additional trace-specific controls.
+func (s *Server) crossOrgAuthorizationOracleLimitMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if s.jsonrpcProcessor == nil {
+			c.Next()
+			return
+		}
+		limitKey := crossOrgOracleLimitKey(c.ClientIP())
+		limiter := s.jsonrpcProcessor.concurrencyLimiter
+		if limiter != nil && !limiter.TryAcquire(limitKey) {
+			respondTooManyRequests(c, "policy-check capacity exhausted; retry later")
+			c.Abort()
+			return
+		}
+		if limiter != nil {
+			defer limiter.Release(limitKey)
+		}
+		if rateLimiter := s.jsonrpcProcessor.rateLimiter; rateLimiter != nil {
+			// Match the live debug-trace budget (jsonrpc_trace.go): nil limits are
+			// treated as unlimited and would make this endpoint unrategated.
+			rps, daily := 1, 100
+			if allowed, _ := rateLimiter.CheckAndIncrement(limitKey, &rps, &daily); !allowed {
+				respondTooManyRequests(c, "policy-check rate limit exhausted; retry later")
+				c.Abort()
+				return
+			}
+		}
+		c.Next()
 	}
 }
 

@@ -36,6 +36,27 @@ var nullableProperties = map[string][]string{
 	"privacy-proxy_internal_apimodels.ContractGrantUpdateRequest": {"functions"},
 }
 
+// subjectSchema is the policy-check subject, rewritten to mutually exclusive
+// oneOf alternatives: exactly one of did or address is required. swag cannot
+// express the either/or runtime contract from the two optional Go fields, so
+// generated clients otherwise see both as optional and combinable.
+const subjectSchema = "internal_server.policyCheckSubject"
+const policyCheckRequestSchema = "internal_server.policyCheckRequest"
+const crossOrgOraclePath = "/api/v1/admin/cross-org-authorization-oracle"
+
+var subjectOneOf = []any{
+	map[string]any{
+		"type":       "object",
+		"properties": map[string]any{"did": map[string]any{"type": "string"}},
+		"required":   []any{"did"},
+	},
+	map[string]any{
+		"type":       "object",
+		"properties": map[string]any{"address": map[string]any{"type": "string"}},
+		"required":   []any{"address"},
+	},
+}
+
 func main() {
 	jsonPath := "internal/server/apispec/swagger.json"
 	yamlPath := "internal/server/apispec/swagger.yaml"
@@ -47,7 +68,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "api-spec-postprocess: %s: %v\n", yamlPath, err)
 		os.Exit(1)
 	}
-	fmt.Printf("api-spec-postprocess: %d schema(s) made nullable in %s + %s\n",
+	fmt.Printf("api-spec-postprocess: %d schema(s) made nullable, subject oneOf applied in %s + %s\n",
 		len(nullableProperties), jsonPath, yamlPath)
 }
 
@@ -91,6 +112,21 @@ func patchJSON(path string) error {
 		}
 	}
 
+	// Subject oneOf rewrite (idempotent: a schema already carrying oneOf is
+	// left alone).
+	subject, err := dig[map[string]any](schemas, subjectSchema)
+	if err != nil {
+		return err
+	}
+	if _, already := subject["oneOf"]; !already {
+		delete(subject, "properties")
+		delete(subject, "type")
+		subject["oneOf"] = subjectOneOf
+	}
+	if err := patchCrossOrgOracleRequestBody(doc); err != nil {
+		return err
+	}
+
 	// Canonical serialization: sorted keys, 4-space indent, HTML-escaped —
 	// the same shape swag's own marshaling produces for nested objects.
 	out, err := json.MarshalIndent(doc, "", "    ")
@@ -121,7 +157,171 @@ func patchYAML(path string) error {
 			}
 		}
 	}
+	lines, err = patchYAMLSubjectOneOf(lines)
+	if err != nil {
+		return err
+	}
+	lines, err = patchYAMLCrossOrgOracleRequestBody(lines)
+	if err != nil {
+		return err
+	}
 	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
+}
+
+// patchCrossOrgOracleRequestBody replaces swag's broken requestBody oneOf
+// (unconstrained object + policyCheckRequest) with a direct schema ref.
+func patchCrossOrgOracleRequestBody(doc map[string]any) error {
+	paths, err := dig[map[string]any](doc, "paths")
+	if err != nil {
+		return err
+	}
+	post, err := dig[map[string]any](paths, crossOrgOraclePath, "post")
+	if err != nil {
+		return err
+	}
+	requestBody, err := dig[map[string]any](post, "requestBody")
+	if err != nil {
+		return err
+	}
+	content, err := dig[map[string]any](requestBody, "content")
+	if err != nil {
+		return err
+	}
+	jsonContent, err := dig[map[string]any](content, "application/json")
+	if err != nil {
+		return err
+	}
+	schema, err := dig[map[string]any](jsonContent, "schema")
+	if err != nil {
+		return err
+	}
+	if ref, ok := schema["$ref"].(string); ok && strings.HasSuffix(ref, policyCheckRequestSchema) {
+		return nil
+	}
+	oneOf, ok := schema["oneOf"].([]any)
+	if !ok || len(oneOf) != 2 {
+		return fmt.Errorf("path %q post requestBody: expected swag oneOf wrapper", crossOrgOraclePath)
+	}
+	for _, branch := range oneOf {
+		asMap, ok := branch.(map[string]any)
+		if !ok {
+			continue
+		}
+		ref, ok := asMap["$ref"].(string)
+		if ok && strings.HasSuffix(ref, policyCheckRequestSchema) {
+			jsonContent["schema"] = map[string]any{
+				"$ref": "#/components/schemas/" + policyCheckRequestSchema,
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("path %q post requestBody: policyCheckRequest branch not found", crossOrgOraclePath)
+}
+
+func patchYAMLCrossOrgOracleRequestBody(lines []string) ([]string, error) {
+	anchor := "  " + crossOrgOraclePath + ":"
+	at := -1
+	for i, line := range lines {
+		if line == anchor {
+			at = i
+			break
+		}
+	}
+	if at == -1 {
+		return nil, fmt.Errorf("yaml: path %q not found", crossOrgOraclePath)
+	}
+	want := []string{
+		"            schema:",
+		"              oneOf:",
+		"              - type: object",
+		"              - $ref: '#/components/schemas/" + policyCheckRequestSchema + "'",
+		"                description: subject, operation, and optional org_id",
+		"                summary: request",
+	}
+	replacement := []string{
+		"            schema:",
+		"              $ref: '#/components/schemas/" + policyCheckRequestSchema + "'",
+	}
+	// Idempotent re-run.
+	for i := at; i < len(lines)-1; i++ {
+		if lines[i] == replacement[0] && lines[i+1] == replacement[1] {
+			return lines, nil
+		}
+	}
+	for i := at; i < len(lines)-len(want); i++ {
+		match := true
+		for j, w := range want {
+			if lines[i+j] != w {
+				match = false
+				break
+			}
+		}
+		if !match {
+			continue
+		}
+		out := make([]string, 0, len(lines)-len(want)+len(replacement))
+		out = append(out, lines[:i]...)
+		out = append(out, replacement...)
+		out = append(out, lines[i+len(want):]...)
+		return out, nil
+	}
+	return nil, fmt.Errorf("yaml: path %q: cross-org oracle requestBody oneOf block not found", crossOrgOraclePath)
+}
+
+// patchYAMLSubjectOneOf replaces the policyCheckSubject object body with its
+// mutually exclusive oneOf alternatives and returns the updated line slice.
+// The generated block is fixed (schema key at 4 spaces, "properties:" at 8,
+// address/did at 10, "type: object" closing at 6), so the replacement is an
+// exact anchored swap that fails loudly if swag changes its layout.
+func patchYAMLSubjectOneOf(lines []string) ([]string, error) {
+	anchor := "    " + subjectSchema + ":"
+	at := -1
+	for i, line := range lines {
+		if line == anchor {
+			at = i
+			break
+		}
+	}
+	if at == -1 {
+		return nil, fmt.Errorf("yaml: schema %q not found", subjectSchema)
+	}
+	// Idempotent re-run: already rewritten.
+	if at+1 < len(lines) && strings.HasPrefix(lines[at+1], "      oneOf:") {
+		return lines, nil
+	}
+	want := []string{
+		"      properties:",
+		"        address:",
+		"          type: string",
+		"        did:",
+		"          type: string",
+		"      type: object",
+	}
+	for j, w := range want {
+		if at+1+j >= len(lines) || lines[at+1+j] != w {
+			return nil, fmt.Errorf("yaml: schema %q: unexpected generated body at line %d (got %q, want %q)", subjectSchema, at+2+j, lines[at+1+j], w)
+		}
+	}
+	replacement := []string{
+		"      oneOf:",
+		"      - properties:",
+		"          did:",
+		"            type: string",
+		"        required:",
+		"        - did",
+		"        type: object",
+		"      - properties:",
+		"          address:",
+		"            type: string",
+		"        required:",
+		"        - address",
+		"        type: object",
+	}
+	out := make([]string, 0, len(lines)-len(want)+len(replacement))
+	out = append(out, lines[:at+1]...)
+	out = append(out, replacement...)
+	out = append(out, lines[at+1+len(want):]...)
+	return out, nil
 }
 
 // patchYAMLProperty rewrites `type: <scalar>` to a [<scalar>, "null"] block
@@ -200,4 +400,3 @@ func containsNull(types []any) bool {
 	}
 	return false
 }
-

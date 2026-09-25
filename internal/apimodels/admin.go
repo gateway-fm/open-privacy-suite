@@ -26,7 +26,7 @@ type DryRunRPCBlock struct {
 // pass-through fields as free-form JSON values. Wire shape is identical.
 // Spec-only; never constructed at runtime.
 type DryRunResponseDoc struct {
-	Decision          string `json:"decision" example:"allow"`
+	Decision          string `json:"decision" enums:"allow,deny,indeterminate" example:"allow"`
 	Reason            string `json:"reason,omitempty"`
 	Response          any    `json:"response,omitempty"`
 	Trace             any    `json:"trace,omitempty"`

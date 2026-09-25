@@ -180,6 +180,9 @@ services:
       - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required in privacy mode}
       - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET is required in privacy mode}
       - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:?ADMIN_API_TOKEN is required in privacy mode (bootstrap admin credential)}
+      - CROSS_ORG_AUTHORIZATION_ORACLE_MODE=${CROSS_ORG_AUTHORIZATION_ORACLE_MODE:-disabled}
+      - CROSS_ORG_AUTHORIZATION_ORACLE_TOKEN=${CROSS_ORG_AUTHORIZATION_ORACLE_TOKEN:-}
+      - CROSS_ORG_AUTHORIZATION_ORACLE_ORG_IDS=${CROSS_ORG_AUTHORIZATION_ORACLE_ORG_IDS:-}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required in privacy mode}@redis:6379
       - ENABLE_TRAVEL_RULE=true
       - EXTRA_RPC_NAMESPACES_FILE=${EXTRA_RPC_NAMESPACES_FILE:-}  # Path to JSON file with chain-specific RPC methods (opt-in; empty = skip)

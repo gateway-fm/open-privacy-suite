@@ -289,7 +289,7 @@ func (oc *OrgContext) CheckDefaultClaimsAllowed(ctx context.Context, address str
 
 // GetUserOrgIDs returns the set of organization IDs the user belongs to.
 func GetUserOrgIDs(ctx context.Context, store Store, userID string) (map[string]bool, error) {
-	memberships, err := store.ListUserMembershipsWithDetails(ctx, userID)
+	memberships, err := store.ListActiveUserMembershipsWithDetails(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
