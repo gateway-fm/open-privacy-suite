@@ -1,6 +1,6 @@
 # Decisions, Limitations & Open Items
 
-Last updated: 2026-04-21
+Last updated: 2026-09-25 (added Reth execution-capacity limitations in §§12–13)
 
 Each item describes the current state, the decision made (or deferred), and whether action is needed. Items that have been fully resolved are removed — see the git history for the cleanup log. Ongoing security hardening work is tracked in the project's issue tracker (`RD-XXXX` identifiers throughout the codebase refer to those tickets); this doc is for items that need a maintainer decision before implementation.
 
@@ -370,6 +370,61 @@ Over time, this can de-anonymize pseudonymous addresses, especially with off-cha
 
 ---
 
+## 12. Reth Per-Group Permission Budget
+
+**Status:** Accepted as a temporary limitation on 2026-09-25; optimization is
+deferred. The per-group implementation and its live functional checks are
+complete. This acceptance does not establish support for arbitrary numbers of
+memberships per caller.
+
+An organization with 60 groups was compiled and exercised successfully. The
+node checks only the caller's current groups with execution artifacts, in
+sorted group-ID order, until one allows the frame. All those evaluations share
+**100,000 internal policy gas per application frame**. If the budget expires
+before the allowing group is reached, execution is denied even though that
+later group would grant permission. Adding memberships can therefore make a
+previously permitted action fail. Increasing the transaction's gas limit does
+not increase this separate policy budget.
+
+With the measured rules, a last-matching grant passed at 11 memberships and
+exhausted the budget at 12 in the node EVM benchmark. The live HTTP test passed
+at ten and denied at twenty; an early match worked with sixty. **These are
+workload-specific results, not a fixed group limit or a guarantee below twelve.**
+Rule complexity, membership facts and the position of the allowing group matter.
+
+**Deferred work:** Measure representative customer rules and membership counts;
+reduce repeated evaluation work or define supported limits before promising
+many memberships per caller. Keep the bounded, fail-closed policy budget.
+
+Evidence and theoretical policy-only throughput:
+[per-group live report](implementation/evidence/per-group-live-2026-09-25.md).
+
+---
+
+## 13. Reth Sustained Transaction Throughput
+
+**Status:** Open capacity work; no production TPS claim is established.
+
+As checked on 2026-09-25, `Runtime::accept_identity` still holds one ingestion
+mutex while persisting each transaction's signed identity and archive pointer.
+Those writes synchronously flush files and directories. The earlier 2026-09-17
+private-node load run measured **9.6–11.1 mined transactions/s** on a shared
+Apple M2 Max development setup. That historical result is not a fresh throughput
+measurement of the per-group build. The latest run verified live correctness
+and serial call latency, not sustained transaction throughput.
+
+**Remaining work before a high-TPS claim:** Profile and address the serialized
+durability path, preserving crash recovery and durable evidence before block
+publication; then measure sustained admission, inclusion and finality with
+representative contracts on the intended hardware and block configuration.
+The reciprocal of an in-process policy-check time excludes this work and cannot
+be quoted as achieved node TPS.
+
+Evidence: [load results and durability analysis](implementation/evidence/reth-runtime.md#where-the-stacks-throughput-actually-goes-2026-09-17),
+[current policy cost and theoretical ceiling](implementation/evidence/per-group-live-2026-09-25.md#theoretical-throughput-from-policy-cost).
+
+---
+
 ## Summary: Items Requiring Team Decision
 
 | **§** | **Item** | **Question** |
@@ -385,3 +440,5 @@ Over time, this can de-anonymize pseudonymous addresses, especially with off-cha
 | 9 | SIEM sends DIDs, IPs, ETH addresses externally | Acceptable disclosure? Hash/anonymize? |
 | 10a | View functions return unfiltered data | Acceptable? Document for contract authors? |
 | 10g | Pseudonymous address correlation via amounts | Amount redaction needed? |
+| 12 | Per-group permission budget | Temporarily accepted; revisit before promising many memberships per caller. |
+| 13 | Serialized transaction durability and sustained TPS | Capacity work and a representative load run remain before a production TPS claim. |

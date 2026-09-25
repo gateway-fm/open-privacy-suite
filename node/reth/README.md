@@ -14,6 +14,16 @@ gas budget, and failures deny execution. A pinned snapshot cannot mix revisions
 or legacy org-wide artifacts with grouped artifacts for the same organization.
 Upgrade OPS and this node together before activating grouped revisions.
 
+**Known membership limitation:** A frame can be denied when its shared policy
+budget is exhausted before reaching a group that would allow it. Adding groups
+to a caller can therefore cause an otherwise permitted action to fail. The
+measured last-match workload passed at 11 memberships and exhausted the budget
+at 12; this is not a universal membership limit. An organization with sixty
+groups is supported by the tested workflow, but arbitrary memberships per caller
+are not established. Optimization is deferred for now; see
+[the accepted limitation](../../docs/OPEN_ITEMS.md#12-reth-per-group-permission-budget)
+and [live measurements](../../docs/implementation/evidence/per-group-live-2026-09-25.md).
+
 Reth is pinned to **v2.5.2**, commit
 `5a6940e351fed80458fe6c9da8581cbe4b8bd036`. Preparation refuses tracked source
 modifications and reuses the research checkout when available:
@@ -168,6 +178,13 @@ is [LoadRecord.sol](scripts/LoadRecord.sol), compiled outside the timed interval
 using the pinned Solidity compiler. This measures the complete node path, not
 isolated policy-interpreter cost or full OPS/explorer throughput. It does not
 establish the roadmap's 5,000 TPS target.
+
+Transaction identities currently require serialized synchronous archive writes.
+That admission bottleneck remains open; see
+[sustained throughput work](../../docs/OPEN_ITEMS.md#13-reth-sustained-transaction-throughput).
+The current group's in-process timings imply only a
+[policy-only theoretical ceiling](../../docs/implementation/evidence/per-group-live-2026-09-25.md#theoretical-throughput-from-policy-cost),
+not achieved node TPS.
 
 Reth's upstream 64-bit execution-cache default is 4 GiB and eagerly reserves
 fixed-cache buckets when self-import starts. The local examples explicitly use

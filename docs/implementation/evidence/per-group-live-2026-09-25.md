@@ -51,6 +51,44 @@ five-membership cases consumed identical gas with seven and sixty artifacts in
 the organization. For five memberships with the match last, median check cost
 was **80.5 µs** with seven directory groups and **81.7 µs** with sixty.
 
+## Theoretical throughput from policy cost
+
+For planning, invert the **mean** check time from the JSON report (not the
+median above). Assuming one execution thread spends all its time on these
+permission checks, one evaluation pass per transaction, and the same check
+cost for every application frame:
+
+`policy-only tx/s = 1,000,000 / (mean check microseconds × checked frames per transaction)`
+
+| Caller groups checked, match last | Mean check µs | One checked frame/tx: theoretical tx/s | Three checked frames/tx: theoretical tx/s |
+|---:|---:|---:|---:|
+| 1 | 17.15 | 58,300 | 19,400 |
+| 2 | 32.38 | 30,900 | 10,300 |
+| 5 | 82.41 | 12,100 | 4,040 |
+| 10 | 174.87 | 5,720 | 1,910 |
+| 11 | 193.95 | 5,160 | 1,720 |
+
+These are approximate **policy-only CPU ceilings**, not measured transaction
+throughput. The three-frame column is an arithmetic projection, not a new
+three-frame measurement with these group artifacts. Nested application calls
+each require another policy check, and their policies may cost different amounts.
+Rejected cases are excluded from successful-throughput estimates.
+
+Application execution, signature checks, transaction admission, database/state
+access, durable writes, block production/import and RPC/OPS overhead all consume
+additional time. Re-executing transactions in additional passes also consumes
+policy CPU. Multiplying by the host's core count is not justified by this
+single-thread benchmark. Serial `eth_call` latency below is not a sustained
+mined-transaction throughput measurement either.
+
+For context, the earlier 2026-09-17 private-node load run achieved only
+**9.6–11.1 mined transactions/s** on this shared development host. Its analysis
+identified serialized per-transaction durable archive writes as a bottleneck.
+The current code still performs those writes under the ingestion lock; the
+per-group test run did not change or benchmark that admission path under load.
+See [the historical load and durability evidence](reth-runtime.md#where-the-stacks-throughput-actually-goes-2026-09-17)
+and [remaining capacity work](../../OPEN_ITEMS.md#13-reth-sustained-transaction-throughput).
+
 ## Serial live RPC latency
 
 Each row contains 20 loopback HTTP `eth_call` requests after three warmups.
@@ -70,6 +108,10 @@ one original membership with no artifact in this replacement document.
 | 60 | 12.19 / 166.31 | 13.36 / 129.29 | HTTP 403: node rejected |
 
 ## Capacity limit and remaining work
+
+**Decision, 2026-09-25:** Retain this as an accepted temporary limitation;
+optimization is deferred. It is tracked in
+[OPEN_ITEMS §12](../../OPEN_ITEMS.md#12-reth-per-group-permission-budget).
 
 The organization can contain sixty groups without overflowing one policy
 contract. However, each frame still shares **100,000 policy gas** across all
