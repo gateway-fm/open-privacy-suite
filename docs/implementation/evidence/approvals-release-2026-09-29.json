@@ -11,7 +11,10 @@
     "workflow_actionlint": "passed",
     "besu_unit_tests": 101,
     "reth_unit_tests": 48,
-    "native_test_failures": 0
+    "native_test_failures": 0,
+    "pre_push_go_unit": "passed",
+    "frontend_tests": 747,
+    "standard_local_e2e": "Hook skipped on macOS: GNU ps --ppid is unavailable; Linux CI remains required."
   },
   "scenarios": {
     "besu": [

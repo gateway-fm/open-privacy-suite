@@ -90,7 +90,7 @@ available while submission is degraded. OPS rejects new raw submissions with 503
 when no compatible producer is ready. With multiple targets, at least one compatible connected
 producer admits submissions; a disconnected standby is still an operational alert.
 
-Scrape OPS `/metrics`, Besu's metrics endpoint with category `OPS_APPROVAL`, and Reth's private
+Scrape OPS `/metrics`, Besu's metrics endpoint with category `ops_approval`, and Reth's private
 `--metrics address:port` endpoint. Reth exports approval store/counter metrics once per second,
 independent of block activity. [alerts.yml](alerts.yml) supplies starting rules for disconnection,
 loss of unconfirmed approvals, retention eviction, retries and receiver overload. Add a normal

@@ -43,7 +43,8 @@ toolchains or operating systems. Reth bundles name the host OS and architecture.
 CI builds both targets, runs their unit tests, shared vectors, real-node scenarios and OPS HTTP
 scenarios, then retains candidate artifacts. Publishing a release is a separate maintainer action
 after those jobs pass. Use an independent `approvals-vX.Y.Z` tag and include the supported node
-versions and checksums. A successful local build alone is not deployment qualification.
+versions and checksums. OPS backend/frontend image publication ignores that tag prefix. A
+successful local build alone is not deployment qualification.
 
 ## Validation and upgrades
 

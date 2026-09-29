@@ -101,6 +101,7 @@ jobs:
         with:
           name: approvals-${{ matrix.node }}-${{ github.sha }}
           path: .tmp/approval-release/
+          include-hidden-files: true # only the explicitly scoped candidate bundle directory
           if-no-files-found: error
           retention-days: 14
       - name: Upload scenario evidence
@@ -111,4 +112,5 @@ jobs:
           path: |
             .tmp/approval-ci/
             node-approvals/besu/build/reports/tests/
+          include-hidden-files: true # only isolated fixture evidence and test reports
           retention-days: 14
