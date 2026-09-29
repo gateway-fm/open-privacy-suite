@@ -9,6 +9,9 @@ plugins {
 repositories { mavenCentral() }
 def grpcVersion = '1.79.0'
 dependencies {
+  // gRPC's default 4.1 dependency line does not match the Besu runtime and
+  // contains advisory-affected codecs. Keep the benchmark on the same BOM.
+  implementation enforcedPlatform('io.netty:netty-bom:4.2.17.Final')
   implementation "io.grpc:grpc-netty:${grpcVersion}"
   implementation "io.grpc:grpc-protobuf:${grpcVersion}"
   implementation "io.grpc:grpc-stub:${grpcVersion}"

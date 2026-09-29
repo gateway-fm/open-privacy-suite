@@ -77,6 +77,11 @@ review and are **not cleared by this approval review**. The native approval bund
 frontend dependencies. An approval candidate passing its own gates does not establish that a
 complete OPS application release has a clean dependency audit.
 
+The separate Java transport benchmark had resolved Netty 4.1.130 instead of the documented
+Besu runtime version. It now enforces the same 4.2.17 BOM as the plugin. Its rebuilt 36-coordinate
+tree has no OSV findings; the Rust authentication benchmark's 52 registry packages also have none.
+These fixture fixes do not change the provenance of historical performance measurements.
+
 The scans cover resolved coordinates/registry packages and Go call reachability as described.
 They are not scans of the entire Besu distribution, optional third-party plugins, OS images,
 native libraries or deployment infrastructure. Upstream clients and deployment images also need

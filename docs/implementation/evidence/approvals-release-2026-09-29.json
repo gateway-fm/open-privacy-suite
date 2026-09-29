@@ -14,7 +14,9 @@
     "native_test_failures": 0,
     "pre_push_go_unit": "passed",
     "frontend_tests": 747,
-    "standard_local_e2e": "Hook skipped on macOS: GNU ps --ppid is unavailable; Linux CI remains required."
+    "standard_local_e2e": "Hook skipped on macOS: GNU ps --ppid is unavailable; Linux CI remains required.",
+    "prometheus_alert_rules": "promtool 3.5.0: 5 rules valid",
+    "benchmark_grpc_smoke": "32/32 Go-to-Java unary batches received and matched after Netty alignment"
   },
   "scenarios": {
     "besu": [
@@ -560,5 +562,84 @@
     },
     "lockfile_sha256": "9dc22a0fbbacd2be96ef8f7c667ff901fd8134e824e1c2a1a00e3d0a7ed02c16",
     "counts": "Affected package entries, including transitive propagation; not demonstrated exploit counts."
+  },
+  "benchmark_dependency_audit": {
+    "java_before": {
+      "ecosystem": "Maven",
+      "packages": 35,
+      "findings": [
+        {
+          "name": "io.netty:netty-codec",
+          "version": "4.1.130.Final",
+          "advisories": [
+            "GHSA-558v-64gr-wgg4",
+            "GHSA-mj4r-2hfc-f8p6"
+          ]
+        },
+        {
+          "name": "io.netty:netty-codec-http",
+          "version": "4.1.130.Final",
+          "advisories": [
+            "GHSA-38f8-5428-x5cv",
+            "GHSA-4mp9-239f-g9hg",
+            "GHSA-57rv-r2g8-2cj3",
+            "GHSA-6cqp-g7gg-8hr5",
+            "GHSA-6jqx-86gh-f27w",
+            "GHSA-8c42-7qj2-3j46",
+            "GHSA-f6hv-jmp6-3vwv",
+            "GHSA-gcjf-9mgh-3p7g",
+            "GHSA-hvcg-qmg6-jm4c",
+            "GHSA-jppx-w49h-x2qq",
+            "GHSA-m4cv-j2px-7723",
+            "GHSA-mvh2-crg5-v77c",
+            "GHSA-pwqr-wmgm-9rr8",
+            "GHSA-q4f6-jm68-57ww",
+            "GHSA-v8h7-rr48-vmmv",
+            "GHSA-xxqh-mfjm-7mv9"
+          ]
+        },
+        {
+          "name": "io.netty:netty-codec-http2",
+          "version": "4.1.130.Final",
+          "advisories": [
+            "GHSA-563q-j3cm-6jxm",
+            "GHSA-5x3r-wrvg-rp6q",
+            "GHSA-93wv-jw9v-4972",
+            "GHSA-c2gf-v879-257j",
+            "GHSA-c69g-56f8-xwqj",
+            "GHSA-f6hv-jmp6-3vwv",
+            "GHSA-w9fj-cfpg-grvv"
+          ]
+        },
+        {
+          "name": "io.netty:netty-handler",
+          "version": "4.1.130.Final",
+          "advisories": [
+            "GHSA-3qp7-7mw8-wx86",
+            "GHSA-c4c3-7fpv-j4q5",
+            "GHSA-c653-97m9-rcg9",
+            "GHSA-fccg-mwvh-qqg4",
+            "GHSA-x4gw-5cx5-pgmh"
+          ]
+        },
+        {
+          "name": "io.netty:netty-handler-proxy",
+          "version": "4.1.130.Final",
+          "advisories": [
+            "GHSA-45q3-82m4-75jr"
+          ]
+        }
+      ]
+    },
+    "java_after": {
+      "ecosystem": "Maven",
+      "packages": 36,
+      "findings": []
+    },
+    "rust": {
+      "ecosystem": "crates.io",
+      "packages": 52,
+      "findings": []
+    }
   }
 }
