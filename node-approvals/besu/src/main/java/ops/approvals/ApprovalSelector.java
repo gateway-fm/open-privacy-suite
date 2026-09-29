@@ -20,6 +20,7 @@ import org.slf4j.LoggerFactory;
  * Every exceptional path is a rejection.
  */
 public final class ApprovalSelector implements PluginTransactionSelector {
+  private static final boolean DIAGNOSTICS = "1".equals(System.getenv("OPS_APPROVAL_DIAGNOSTICS"));
   static final String PENDING = "OPS_APPROVAL_PENDING";
   static final String TIMEOUT = "OPS_APPROVAL_TIMEOUT";
   static final String MISMATCH = "OPS_APPROVAL_MISMATCH";
@@ -112,7 +113,9 @@ public final class ApprovalSelector implements PluginTransactionSelector {
       metrics.decision("drop", "timeout");
       return TransactionSelectionResult.invalid(TIMEOUT);
     }
-    LOG.info("OPS_APPROVAL_DECISION wait tx={} waited_ms={}{}", txHash, waited, approval);
+    if (DIAGNOSTICS) {
+      LOG.info("OPS_APPROVAL_DECISION wait tx={} waited_ms={}{}", txHash, waited, approval);
+    }
     metrics.decision("wait", "pending");
     return TransactionSelectionResult.invalidTransient(PENDING);
   }
@@ -175,13 +178,15 @@ public final class ApprovalSelector implements PluginTransactionSelector {
       return reject(txHash, MISMATCH, "approved " + approval.fingerprint() + " actual " + actual);
     }
     metrics.decision("allow", "matched");
-    LOG.info("OPS_APPROVAL_DECISION allow tx={} calls={}", txHash, seen.records().size());
-    LOG.info(
-        "OPS_APPROVAL_TIMING {\"tx\":\"{}\",\"mode\":{},\"calls\":{},\"gate_ns\":{}}",
-        txHash,
-        required,
-        seen.records().size(),
-        gateNanos + (System.nanoTime() - postStarted));
+    if (DIAGNOSTICS) {
+      LOG.info("OPS_APPROVAL_DECISION allow tx={} calls={}", txHash, seen.records().size());
+      LOG.info(
+          "OPS_APPROVAL_TIMING {\"tx\":\"{}\",\"mode\":{},\"calls\":{},\"gate_ns\":{}}",
+          txHash,
+          required,
+          seen.records().size(),
+          gateNanos + (System.nanoTime() - postStarted));
+    }
     return TransactionSelectionResult.SELECTED;
   }
 

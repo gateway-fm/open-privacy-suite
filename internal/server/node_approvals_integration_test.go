@@ -10,6 +10,7 @@ import (
 	"privacy-proxy/internal/nodeapproval"
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
+	"privacy-proxy/internal/server/middleware"
 	"privacy-proxy/internal/tracer"
 	"testing"
 	"time"
@@ -44,11 +45,12 @@ func TestNodeApprovalsRealReth(t *testing.T) {
 	t.Cleanup(rt.Stop)
 	tv := rbac.NewTraceValidator(ts.db)
 	tv.SetCodeHashFetcher(rt)
-	p := NewJSONRPCProcessorWithTracing(ts.rbacAccessCtrl, &noopRateLimiter{}, proxy.New(url), ts.db, rt, tv, NewCircuitBreaker(), NewConcurrencyLimiter(50, 0), "")
-	p.nodeApprovals, err = nodeapproval.New(url, os.Getenv("OPS_TEST_APPROVAL_TARGET"), bytes.Repeat([]byte{7}, 32))
+	approvals, err := nodeapproval.New(url, os.Getenv("OPS_TEST_APPROVAL_TARGET"), bytes.Repeat([]byte{7}, 32))
 	require.NoError(t, err)
-	t.Cleanup(p.nodeApprovals.Close)
-	require.NoError(t, p.configurePreflightLimit(nil))
+	t.Cleanup(approvals.Close)
+	budget, err := newApprovalPreflightLimiter(approvals, nil)
+	require.NoError(t, err)
+	p := NewJSONRPCProcessor(JSONRPCProcessorConfig{RBACAccessCtrl: ts.rbacAccessCtrl, RateLimiter: &noopRateLimiter{}, Proxy: proxy.New(url), AccessLogger: ts.db, RuntimeTracer: rt, TraceValidator: tv, CircuitBreaker: middleware.NewCircuitBreaker(), ConcurrencyLimiter: middleware.NewConcurrencyLimiter(50, 0), NodeApprovals: approvals, ApprovalPreflightLimiter: budget})
 	data, err := os.ReadFile(os.Getenv("OPS_TEST_TX_FILE"))
 	require.NoError(t, err)
 	var inputs map[string]string

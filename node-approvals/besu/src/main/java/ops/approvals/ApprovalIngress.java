@@ -108,6 +108,11 @@ public final class ApprovalIngress {
     return outcome;
   }
 
+  /** Count admission refusals without doing parsing, crypto or logging on the I/O loop. */
+  public void verificationBusy() {
+    metrics.batch(Status.Code.UNAVAILABLE);
+  }
+
   private Outcome check(final byte[] envelope) {
     final ApprovalBatch.Decoded batch;
     try {

@@ -208,6 +208,7 @@ impl<DB: Database, I: Inspector<EthEvmContext<DB>>> Evm for ApprovalEvm<DB, I> {
             timer.lap(9);
             timer.record(&self.profile);
             if actual.as_ref() != Ok(&selected.approval.fingerprint) {
+                reth_metrics::metrics::counter!("ops_approval_mismatches_total").increment(1);
                 eprintln!(
                     "OPS_APPROVAL_DECISION {}",
                     serde_json::json!({"decision":"deny","hash_mode":3,"tx_hash":selected.approval.tx_hash,"expected":selected.approval.fingerprint,"actual":format!("{actual:?}")})
@@ -284,6 +285,7 @@ impl<DB: Database, I: Inspector<EthEvmContext<DB>>> Evm for ApprovalEvm<DB, I> {
         }
         timer.record(&self.profile);
         if actual.as_ref() != Ok(&selected.approval.fingerprint) {
+            reth_metrics::metrics::counter!("ops_approval_mismatches_total").increment(1);
             eprintln!(
                 "OPS_APPROVAL_DECISION {}",
                 serde_json::json!({"decision":"deny","tx_hash":selected.approval.tx_hash,"expected":selected.approval.fingerprint,"actual":format!("{actual:?}")})

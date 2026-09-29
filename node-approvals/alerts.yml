@@ -1,0 +1,42 @@
+groups:
+  - name: ops-approvals
+    rules:
+      - alert: ApprovalProducerDisconnected
+        expr: privacyproxy_approval_target_connected == 0
+        for: 30s
+        labels:
+          severity: warning
+        annotations:
+          summary: "OPS cannot deliver approvals to a configured producer"
+          description: "Check producer availability, network access, chain and trusted key ids. Keep surviving OPS processes alive for replay."
+      - alert: ApprovalDeliveryLost
+        expr: sum by (instance, target, reason) (increase(privacyproxy_approval_dropped_total[5m])) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "Unconfirmed approvals were lost or permanently refused"
+          description: "Inspect receipts and refusal reasons; clients may need a fresh preflight through OPS."
+      - alert: ApprovalRecoveryHistoryEvicted
+        expr: increase(privacyproxy_approval_evicted_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Approval recovery history is being shortened by its capacity limit"
+          description: "Compare the observed history window with the recovery objective before increasing capacity."
+      - alert: ApprovalDeliveryRetries
+        expr: sum by (instance, target) (rate(privacyproxy_approval_retries_total[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Approval delivery is retrying continuously"
+          description: "Inspect receiver overload, network failures and oldest pending receipt age."
+      - alert: ApprovalReceiverFull
+        expr: increase(ops_approval_store_full_total[5m]) > 0 or increase(ops_approval_batches_total{status="UNAVAILABLE"}[5m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The approval receiver is full or busy"
+          description: "Inspect capacity, expiry/finality, verification CPU and delivery backlog."

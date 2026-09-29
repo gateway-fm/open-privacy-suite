@@ -104,6 +104,7 @@ class Node:
         self.stdout_path = self.directory / "node-stdout.log"
         self.rpc_url = "http://127.0.0.1:" + str(unused_port())
         self.engine_url = "http://127.0.0.1:" + str(unused_port())
+        self.metrics_address = "127.0.0.1:" + str(unused_port())
         self.secret = bytes.fromhex("11" * 32)
         jwt_path = self.directory / "jwt.hex"
         jwt_path.write_text(self.secret.hex())
@@ -132,13 +133,13 @@ class Node:
                 "--authrpc.jwtsecret", str(jwt_path), "--ipcdisable", "--disable-discovery",
                 "--addr", "127.0.0.1", "--port", "0", "--max-outbound-peers", "0",
                 "--max-inbound-peers", "0", "--txpool.max-account-slots", "1024", "--log.stdout.format", "terminal",
-                "--log.file.directory", str(self.directory / "logs")]
+                "--log.file.directory", str(self.directory / "logs"), "--metrics", self.metrics_address]
         if gas_limit := os.environ.get("OPS_POC_GAS_LIMIT"):
             args.extend(["--builder.gaslimit", str(int(gas_limit))])
         if connections := os.environ.get("OPS_POC_RPC_MAX_CONNECTIONS"):
             args.extend(["--rpc.max-connections", str(int(connections))])
         self.approval_port = approval_port if approval_port is not None else unused_port()
-        env = dict(os.environ, OPS_APPROVALS="0" if disabled else "1", RUST_LOG="info",
+        env = dict(os.environ, OPS_APPROVALS="0" if disabled else "1", RUST_LOG="info", OPS_APPROVAL_DIAGNOSTICS=os.environ.get("OPS_APPROVAL_DIAGNOSTICS", "1"),
                    OPS_APPROVAL_WAIT_MS=str(wait_ms), OPS_APPROVAL_CHAIN_ID="31337",
                    OPS_APPROVAL_LISTEN=f"127.0.0.1:{self.approval_port}",
                    OPS_APPROVAL_ALLOWED_SOURCES="127.0.0.1/32",

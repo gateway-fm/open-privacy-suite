@@ -185,7 +185,7 @@ func (s *Server) DB() *db.DB {
 }
 
 // Stop gracefully stops all background goroutines.
-// Should be called before server shutdown.
+// Call after HTTP shutdown has stopped and drained incoming requests.
 func (s *Server) Stop() {
 	if s.jsonrpcProcessor != nil && s.jsonrpcProcessor.nodeApprovals != nil {
 		s.jsonrpcProcessor.nodeApprovals.Close()
@@ -778,7 +778,6 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 			AllowInsecure:   !cfg.IsProduction(),
 		})
 		if siemErr != nil {
-			s.jsonrpcProcessor.closeNodeApprovals()
 			return nil, fmt.Errorf("init SIEM forwarder: %w", siemErr)
 		}
 		siemForwarder.SetMetrics(m.SIEMBatchesTotal, m.SIEMEventsDroppedTotal)
@@ -795,7 +794,6 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	if cfg.AuditBufferDir != "" {
 		auditBuf, bufErr := buffer.Open(cfg.AuditBufferDir)
 		if bufErr != nil {
-			s.jsonrpcProcessor.closeNodeApprovals()
 			return nil, fmt.Errorf("async audit buffer init (AUDIT_BUFFER_DIR=%q): %w", cfg.AuditBufferDir, bufErr)
 		}
 		s.auditBuffer = auditBuf
@@ -933,6 +931,20 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	if s.auditBuffer != nil {
 		procAuditBuffer = s.auditBuffer
 	}
+	approvals, err := nodeApprovalsFromEnv(cfg.NodeURL, nodeTransport)
+	if err != nil {
+		return nil, err
+	}
+	approvalBudget, err := newApprovalPreflightLimiter(approvals, redisClient)
+	if err == nil {
+		err = registerNodeApprovalMetrics(approvals, m.Registry)
+	}
+	if err != nil {
+		if approvals != nil {
+			approvals.Close()
+		}
+		return nil, err
+	}
 	s.jsonrpcProcessor = NewJSONRPCProcessor(JSONRPCProcessorConfig{
 		RBACAccessCtrl:            rbacAccessCtrl,
 		RateLimiter:               rateLimiter,
@@ -942,6 +954,8 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		ConcurrencyLimiter:        middleware.NewConcurrencyLimiter(cfg.MaxConcurrentRequests, cfg.MaxConcurrentAnonymousRequests),
 		DefaultRPCAPIKey:          cfg.RPCAPIKey,
 		RuntimeTracer:             runtimeTracer,
+		NodeApprovals:             approvals,
+		ApprovalPreflightLimiter:  approvalBudget,
 		TraceValidator:            traceValidator,
 		Metrics:                   m,
 		TxVisibilityStore:         database,
@@ -960,18 +974,6 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		},
 		IntraOrgGrantTracingEnabled: cfg.RuntimeTracingIntraOrgGrantsEnabled,
 	})
-	if err := s.jsonrpcProcessor.configureNodeApprovals(cfg.NodeURL, nodeTransport); err != nil {
-		return nil, err
-	}
-	if err := s.jsonrpcProcessor.configurePreflightLimit(redisClient); err != nil {
-		s.jsonrpcProcessor.nodeApprovals.Close()
-		return nil, err
-	}
-	if err := s.jsonrpcProcessor.registerNodeApprovalMetrics(m.Registry); err != nil {
-		s.jsonrpcProcessor.nodeApprovals.Close()
-		return nil, err
-	}
-
 
 	// RD-858: scheduled audit hash-chain integrity verifier. Default
 	// interval 15m (config: AUDIT_INTEGRITY_VERIFY_INTERVAL). On

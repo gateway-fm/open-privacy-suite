@@ -24,6 +24,7 @@ import (
 	"privacy-proxy/internal/nodehttp"
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
+	"privacy-proxy/internal/server/middleware"
 	"privacy-proxy/internal/tracer"
 )
 
@@ -33,7 +34,8 @@ func TestNodeApprovalSettings(t *testing.T) {
 	t.Setenv("OPS_APPROVAL_SEED_FILE", seed)
 	configure := func() (*JSONRPCProcessor, error) {
 		p := &JSONRPCProcessor{}
-		err := p.configureNodeApprovals("http://127.0.0.1:1", nodehttp.DefaultTransportConfig())
+		approvals, err := nodeApprovalsFromEnv("http://127.0.0.1:1", nodehttp.DefaultTransportConfig())
+		p.nodeApprovals = approvals
 		if p.nodeApprovals != nil {
 			t.Cleanup(p.nodeApprovals.Close)
 		}
@@ -67,6 +69,34 @@ func TestNodeApprovalSettings(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, p.nodeApprovals)
 	})
+}
+
+// A wildcard RPC permission must never expose the node's private simulation API.
+// Exercise the common processor used by HTTP and WebSocket, including audit opacity.
+func TestPrivateApprovalRPCNeverReachesNode(t *testing.T) {
+	ts := setupTestServerForRBAC(t)
+	ctx := context.Background()
+	did := seedPermittedUser(t, ctx, ts.db)
+	_, err := ts.db.Conn().ExecContext(ctx, "UPDATE group_access SET allowed_methods=ARRAY['*','ops_prepareApproval']")
+	require.NoError(t, err)
+	node := startPreflightNode(t)
+	p := NewJSONRPCProcessor(JSONRPCProcessorConfig{
+		RBACAccessCtrl: ts.rbacAccessCtrl, RateLimiter: &noopRateLimiter{},
+		Proxy: proxy.New(node.url), AccessLogger: ts.db,
+	})
+	logs := recordAccessLog(p)
+	for _, method := range []string{"ops_prepareApproval", "OPS_PREPAREAPPROVAL", "ops_futurePrivateMethod"} {
+		body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": method, "params": []any{"0x00"}})
+		require.NoError(t, err)
+		result := p.Process(ctx, &ProcessRequest{UserID: did, Method: method, Params: []any{"0x00"}, Body: body})
+		require.NotNil(t, result.Error)
+		require.Equal(t, http.StatusNotFound, result.Error.StatusCode)
+		require.Equal(t, "method not found", result.Error.Message)
+		entry, _ := logs.last()
+		require.Equal(t, http.StatusForbidden, entry.status)
+		require.Equal(t, ReasonMethodNotAllowed, entry.denialReason)
+	}
+	require.Zero(t, node.requests.Load(), "private preflight bypassed the approval path")
 }
 
 // With the gate on and no producer ready to take the approval, a transaction is refused with an
@@ -142,10 +172,9 @@ func TestRawTransactionRefusedWhenNoApprovalProducerIsReady(t *testing.T) {
 
 			rt := tracer.NewRuntimeTracer(tracer.RuntimeTracerConfig{NodeURL: node.URL, Enabled: true, TieredEnabled: true, Timeout: 5 * time.Second})
 			t.Cleanup(rt.Stop)
-			p := NewJSONRPCProcessorWithTracing(ts.rbacAccessCtrl, &noopRateLimiter{}, proxy.New(node.URL), ts.db, rt, rbac.NewTraceValidator(ts.db),
-				NewCircuitBreaker(), NewConcurrencyLimiter(50, 0), "")
-			p.nodeApprovals = approvals
-			require.NoError(t, p.configurePreflightLimit(nil))
+			budget, err := newApprovalPreflightLimiter(approvals, nil)
+			require.NoError(t, err)
+			p := NewJSONRPCProcessor(JSONRPCProcessorConfig{RBACAccessCtrl: ts.rbacAccessCtrl, RateLimiter: &noopRateLimiter{}, Proxy: proxy.New(node.URL), AccessLogger: ts.db, RuntimeTracer: rt, TraceValidator: rbac.NewTraceValidator(ts.db), CircuitBreaker: middleware.NewCircuitBreaker(), ConcurrencyLimiter: middleware.NewConcurrencyLimiter(50, 0), NodeApprovals: approvals, ApprovalPreflightLimiter: budget})
 			accessLog := recordAccessLog(p)
 
 			res := p.Process(ctx, &ProcessRequest{UserID: did, Method: "eth_sendRawTransaction", Params: []any{rawHex}, Body: body, ClientIP: "127.0.0.1"})
@@ -174,9 +203,11 @@ func TestNodeApprovalMetricsAreRegistered(t *testing.T) {
 	t.Run("gate off registers nothing", func(t *testing.T) {
 		t.Setenv("OPS_APPROVAL_TARGETS", "")
 		p := &JSONRPCProcessor{}
-		require.NoError(t, p.configureNodeApprovals("http://127.0.0.1:1", nodehttp.DefaultTransportConfig()))
+		approvals, err := nodeApprovalsFromEnv("http://127.0.0.1:1", nodehttp.DefaultTransportConfig())
+		require.NoError(t, err)
+		p.nodeApprovals = approvals
 		reg := prometheus.NewRegistry()
-		require.NoError(t, p.registerNodeApprovalMetrics(reg))
+		require.NoError(t, registerNodeApprovalMetrics(p.nodeApprovals, reg))
 		families, err := reg.Gather()
 		require.NoError(t, err)
 		require.Empty(t, families)
@@ -184,10 +215,12 @@ func TestNodeApprovalMetricsAreRegistered(t *testing.T) {
 	t.Run("gate on serves the delivery metrics", func(t *testing.T) {
 		t.Setenv("OPS_APPROVAL_TARGETS", "127.0.0.1:1")
 		p := &JSONRPCProcessor{}
-		require.NoError(t, p.configureNodeApprovals("http://127.0.0.1:1", nodehttp.DefaultTransportConfig()))
+		approvals, err := nodeApprovalsFromEnv("http://127.0.0.1:1", nodehttp.DefaultTransportConfig())
+		require.NoError(t, err)
+		p.nodeApprovals = approvals
 		t.Cleanup(p.nodeApprovals.Close)
 		reg := prometheus.NewRegistry()
-		require.NoError(t, p.registerNodeApprovalMetrics(reg))
+		require.NoError(t, registerNodeApprovalMetrics(p.nodeApprovals, reg))
 		families, err := reg.Gather()
 		require.NoError(t, err)
 		served := false

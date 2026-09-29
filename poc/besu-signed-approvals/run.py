@@ -95,7 +95,10 @@ class Client:
         self.send(a)
         return a
 
-    def close(self):
+    def close(self, crashed=False):
+        if crashed:
+            self.process.kill()
+            self.process.wait(timeout=5)
         self.process.stdin.close()
         try:
             self.process.wait(timeout=10)
@@ -107,7 +110,7 @@ class Client:
             self.process.stdout.close()
             self.log.close()
             h.write_evidence_log(self.log_path, h.EVIDENCE / f"{self.log_path.stem}.log")
-        assert self.process.returncode == 0, self.log_path.read_text()
+        assert self.process.returncode == (-9 if crashed else 0), self.log_path.read_text()
 
 
 @contextlib.contextmanager
@@ -491,6 +494,38 @@ def restart_loses_approvals():
         record("restart_drops_approvals_resubmission_after_new_preflight_included")
 
 
+def successive_restarts_require_fresh_approval():
+    # First lose OPS's retained copy while the producer is still running. Its confirmed
+    # approval remains usable. A later producer restart loses that last usable copy.
+    with node("successive-before", wait_ms=1500) as n:
+        c = Client(n)
+        tx = n.raw(h.ALICE, h.ROUTER, "run(uint256)", 7)
+        try:
+            c.approve(tx)
+            assert n.metric("ops_approval_approvals_stored_total") == 1
+        finally:
+            c.close(crashed=True)
+        with contextlib.closing(Client(n)) as replacement:
+            assert replacement.metric("retained") == 0
+            directory = n.directory
+    with node("successive-after", wait_ms=1500, directory=directory) as n, contextlib.closing(Client(n)) as c:
+        assert c.metric("retained") == 0
+        n.submit(tx)
+        time.sleep(1.7)
+        n.make_block([])
+        for _ in range(40):
+            if not n.in_pool(tx["hash"]):
+                break
+            time.sleep(.25)
+        assert not n.in_pool(tx["hash"])
+        assert n.receipt(tx["hash"]) is None
+        c.approve(tx)
+        n.submit(tx)
+        n.make_block([tx])
+        assert n.receipt(tx["hash"])["status"] == "0x1"
+        record("successive_sender_then_producer_restarts_require_fresh_preflight", hash=tx["hash"], sender_sigkill=True)
+
+
 def coexists_with_lineth_plugins():
     """Our gate next to Lineth's own plugins, using the JARs from the linea-besu-package release."""
     if not (h.BESU_HOME / "plugins" / "linea-sequencer-linea-8bb72b4.jar").is_file():
@@ -753,7 +788,7 @@ SCENARIOS = {f.__name__: f for f in (
     delegatecall_path, wrong_fingerprint, bad_deliveries, shared_counter, deployment_included,
     runtime_lifecycle_included, snapshot_matches_the_node_state, strict_mode_binds_state, state_change_turns_call_into_lifecycle,
     resubmission_after_mismatch,
-    restart_loses_approvals, reorg_keeps_approvals, coexists_with_lineth_plugins, fail_closed_startup,
+    restart_loses_approvals, successive_restarts_require_fresh_approval, reorg_keeps_approvals, coexists_with_lineth_plugins, fail_closed_startup,
     precompile_and_value_paths, expired_approval_not_included, restart_resend_restores_inclusion)}
 
 

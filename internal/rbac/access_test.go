@@ -215,9 +215,9 @@ func TestIsContractDeployment(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:   "eth_sendTransaction with malformed params (not map) - deployment (safe default)",
-			method: "eth_sendTransaction",
-			params: []any{"not a map"},
+			name:     "eth_sendTransaction with malformed params (not map) - deployment (safe default)",
+			method:   "eth_sendTransaction",
+			params:   []any{"not a map"},
 			expected: true,
 		},
 		{
@@ -510,6 +510,9 @@ func TestIsMethodBlocked(t *testing.T) {
 		method   string
 		expected bool
 	}{
+		{"approval preparation", "ops_prepareApproval", true},
+		{"approval namespace case", " OPS_PREPAREAPPROVAL ", true},
+		{"future approval control method", "ops_futureMethod", true},
 		// Should be blocked - debug namespace (except exempted trace methods)
 		{"debug_setHead", "debug_setHead", true},
 		{"debug_unknown", "debug_unknown", true}, // prefix match
@@ -1079,8 +1082,8 @@ func TestReadWriteOpsMaps(t *testing.T) {
 func TestCrossOrgIsolationComprehensive(t *testing.T) {
 	// Contract addresses for testing
 	const (
-		contractOrgA = "0xaaaa000000000000000000000000000000000001" // OrgA's contract
-		contractOrgB = "0xbbbb000000000000000000000000000000000002" // OrgB's contract
+		contractOrgA   = "0xaaaa000000000000000000000000000000000001" // OrgA's contract
+		contractOrgB   = "0xbbbb000000000000000000000000000000000002" // OrgB's contract
 		publicContract = "0xcccc000000000000000000000000000000000003" // Public (no org)
 	)
 
@@ -1793,9 +1796,9 @@ func TestExtractDeploymentBytecode(t *testing.T) {
 			expected: "",
 		},
 		{
-			name:   "Malformed params - not a map",
-			method: "eth_sendTransaction",
-			params: []any{"not a map"},
+			name:     "Malformed params - not a map",
+			method:   "eth_sendTransaction",
+			params:   []any{"not a map"},
 			expected: "",
 		},
 		{
@@ -2772,7 +2775,7 @@ func TestEmptySelectorDeniedWithFunctionRestrictions(t *testing.T) {
 	tests := []struct {
 		name          string
 		functionRules []FunctionRule // function rules on the contract grant
-		selector      string        // function selector in request
+		selector      string         // function selector in request
 		expectAllowed bool
 		expectReason  string // substring that must appear in denial reason
 	}{
@@ -3518,5 +3521,19 @@ func TestFunctionSelectorGateOnlyForCallMethods(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// No policy, cache or database state may allow callers into the producer's
+// private preflight API. The empty controller proves denial precedes all of it.
+func TestApprovalRPCDeniedBeforePolicyLookup(t *testing.T) {
+	for _, method := range []string{"ops_prepareApproval", "OPS_PREPAREAPPROVAL", " ops_futureMethod "} {
+		for _, principal := range []string{"", "did:test:permitted"} {
+			controller := &AccessController{}
+			result, err := controller.CheckAccess(context.Background(), &AccessCheckRequest{Method: method, UserExternalID: principal, BypassCache: true})
+			if err != nil || result == nil || result.Allowed {
+				t.Fatalf("private method %q was not refused before policy lookup: result=%+v err=%v", method, result, err)
+			}
+		}
 	}
 }

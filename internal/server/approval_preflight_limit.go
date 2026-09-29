@@ -17,6 +17,7 @@ import (
 
 	goredis "github.com/redis/go-redis/v9"
 
+	"privacy-proxy/internal/nodeapproval"
 	privacyredis "privacy-proxy/internal/redis"
 	"privacy-proxy/internal/server/middleware"
 )
@@ -115,25 +116,21 @@ var (
 	_ preflightLimiter = (*redisPreflightLimiter)(nil)
 )
 
-// configurePreflightLimit installs the preflight limit when signed approvals are
-// on; it runs right after configureNodeApprovals. The settings are read and
-// validated only then, like the other OPS_APPROVAL_* settings. A processor with
-// approvals but no limit refuses every preflight (limitPreflight).
-func (p *JSONRPCProcessor) configurePreflightLimit(client *privacyredis.Client) error {
-	if p.nodeApprovals == nil {
-		return nil
+// newApprovalPreflightLimiter constructs the budget before the processor is
+// published. Disabled approvals do not read or validate approval-only settings.
+func newApprovalPreflightLimiter(approvals *nodeapproval.Service, client *privacyredis.Client) (preflightLimiter, error) {
+	if approvals == nil {
+		return nil, nil
 	}
 	limit, err := preflightLimitFromEnv()
 	if err != nil {
-		return err
-	}
-	if client != nil {
-		p.preflightLimiter = newRedisPreflightLimiter(client, limit)
-	} else {
-		p.preflightLimiter = newLocalPreflightLimiter(limit)
+		return nil, err
 	}
 	slog.Info("approval preflight rate limit", "rate_per_second", limit.Rate, "burst", limit.Burst, "shared_through_redis", client != nil)
-	return nil
+	if client != nil {
+		return newRedisPreflightLimiter(client, limit), nil
+	}
+	return newLocalPreflightLimiter(limit), nil
 }
 
 // limitPreflight refuses a call whose principal is over its preflight budget,

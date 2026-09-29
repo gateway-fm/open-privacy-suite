@@ -1,3 +1,6 @@
+Current supported source, build artifacts and operations: [node-approvals](../../node-approvals/README.md).
+This directory retains scenario fixtures and historical measurements.
+
 Рабочий PoC подписанных разрешений OPS → Reth. Ветка `poc/ops-reth-signed-approvals`.
 
 **По умолчанию теперь calls V3:** сравниваются вызовы, их параметры/value, контекст storage, bytecode и успех/ошибка; обычные изменения storage, outputs и logs разрешены. Shared counter больше не блокируется только из-за изменения значения. CREATE/CREATE2/SELFDESTRUCT автоматически сохраняют strict V2. `OPS_APPROVAL_HASH_MODE=strict` возвращает прежнюю проверку. [Краткие результаты, запуск и ограничения](CALL-HASH.md).
@@ -78,7 +81,7 @@ flowchart LR
 
 ```sh
 python3 poc/reth-signed-approvals/setup.py
-export OPS_RETH_BINARY="$PWD/.tmp/approval-target/release/ops-reth-approvals-poc"
+export OPS_RETH_BINARY="$PWD/.tmp/approval-target/release/ops-reth-approvals"
 python3 poc/reth-signed-approvals/run.py node   # только нода и тестовый клиент, без OPS и PostgreSQL
 export TEST_DATABASE_URL='postgres://postgres:postgres@127.0.0.1:5432/ops_approvals_test?sslmode=disable'
 python3 poc/reth-signed-approvals/run.py test   # node и сценарий с настоящим OPS
@@ -93,7 +96,7 @@ python3 poc/reth-signed-approvals/run.py bench
 
 Для включения в OPS задаются `OPS_APPROVAL_TARGETS=host:port[,host:port…]` и `OPS_APPROVAL_SEED_FILE` — путь к файлу с hex-encoded 32-byte Ed25519 seed. Для custom Reth: `OPS_APPROVALS=1`, `OPS_APPROVAL_LISTEN=host:port`, `OPS_APPROVAL_PUBLIC_KEYS=id=hex[,id=hex…]` (доверенные ключи OPS по id; ротация — добавить новый ключ, переключить OPS, убрать старый), `OPS_APPROVAL_CHAIN_ID`, обязательный `OPS_APPROVAL_ALLOWED_SOURCES` (CIDR через запятую либо явное `any`, если доступ ограничивает сетевое правило); необязательно `OPS_APPROVAL_MAX_TTL_MS=3600000` (наибольший `expires_at − issued_at`; допустимо 10000–86400000 мс), `OPS_APPROVAL_WAIT_MS=5000`, `OPS_APPROVAL_CAPACITY=100000`, `OPS_APPROVAL_MAX_CONNECTIONS=32`, `OPS_APPROVAL_MAX_CONCURRENT_CALLS=32` (на соединение) и `OPS_APPROVAL_VERIFY_WORKERS=2`. Названия и значения по умолчанию повторяют опции `--plugin-ops-approval-*` плагина Besu. Подписи проверяются в выделенных потоках Reth — не в потоках Tokio и не в потоке сборки блока; при заполненной очереди вызов ждёт (в пределах своего deadline), а не получает отказ. `OPS_APPROVAL_MAX_BATCH=32` задаёт максимум batch в OPS (1–32). Тестовый ключ из исходников пригоден только для локальной фикстуры.
 
-Код: [отправитель OPS](../../internal/nodeapproval/service.go), [включение в обработчик](../../internal/server/jsonrpc_processor.go), [приёмник и ожидание](src/approvals.rs), [подбор транзакций](src/payload.rs), [исполнение и veto](src/execution.rs), [прямое вычисление отпечатка](src/direct.rs), [исходный алгоритм для сравнения](src/fingerprint.rs).
+Код: [отправитель OPS](../../internal/nodeapproval/service.go), [включение в обработчик](../../internal/server/jsonrpc_processor.go), [приёмник и ожидание](../../node-approvals/reth/src/approvals.rs), [подбор транзакций](../../node-approvals/reth/src/payload.rs), [исполнение и veto](../../node-approvals/reth/src/execution.rs), [прямое вычисление отпечатка](../../node-approvals/reth/src/direct.rs), [исходный алгоритм для сравнения](../../node-approvals/reth/src/fingerprint.rs).
 
 Benchmark измеряет `Instant` вокруг настоящего `default_ethereum_payload`: исполнение транзакций и вычисление корней состояния/receipts при построении payload. Итог делится на число включённых транзакций. Для одинакового прогрева обе ноды проходят одинаковый preflight перед подбором блока. Ожидание RPC, preflight, доставка разрешения и импорт через Engine API сюда не входят. Проверка Ed25519 измеряется отдельно внутри приёмника. Это измерение producer path, не TPS всей системы. Сравнение до batching — stock / исходный / оптимизированный модуль: [comparison.json](evidence/optimized-benchmark/comparison.json). Первый прогон сохранён в [benchmark.json](evidence/benchmark.json).
 

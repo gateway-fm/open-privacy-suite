@@ -1,8 +1,9 @@
 # Signed approvals: from PoC to production
 
-**Status:** implementation in progress, updated 25 September 2026. The gRPC delivery contract is
-implemented in OPS, Besu and Reth. This is not yet a production release; §5 distinguishes the
-completed work from the remaining requirements. **Owner:** Ivan Beliakov.
+**Status:** release candidate preparation, updated 29 September 2026. The shared contract,
+versioned integrations, compatibility CI, operator procedures and architecture/security review are
+implemented. Publication depends on passing compatibility CI; deployment qualification remains
+environment-specific. See the [release review](approvals-release-review.md) and §5. **Owner:** Ivan Beliakov.
 **Scope:** the signed-approvals gate (preflight in OPS, fingerprint check in the block producer)
 for the current OPS version. The in-node policy runtime is OPS v2 and is not discussed here.
 
@@ -434,13 +435,13 @@ continue to pass the Go, Java and Rust tests and both real-node scenario suites.
 
 | Work | Completed on this branch | Remaining |
 |---|---|---|
-| Network facts and measurements | Maru finality/build-window source review (§0.1b); direct and follower TCP baseline; unary gRPC microbenchmark and end-to-end load run (§3.5); [5,000/sec delivery, full-stack load, heap sizing and restart measurements](../../poc/approval-performance/README.md) | Full-stack 5,000 committed TPS remains unproven; validate tail latency, receipt success and recovery on production hardware and transaction mixes; operator deployment/change process |
+| Network facts and measurements | Maru finality/build-window source review (§0.1b); direct and follower TCP baseline; unary gRPC microbenchmark and end-to-end load run (§3.5); [5,000/sec delivery, full-stack load, heap sizing and restart measurements](../../poc/approval-performance/README.md) | Local full-stack comparison accepted for initial release; 5,000 committed TPS is not a release requirement. These machine-specific development numbers are not solution limits. Qualify deployment hardware/transaction mixes and the operator change process |
 | Transport | Shared `.proto`, envelope v2, unary gRPC on both receivers, signature/status checks, all-or-nothing batches, per-producer delivery lanes and backoff | TLS remains explicitly postponed (§0.3) |
-| Restart recovery | OPS retains signed batches in memory and resends on a changed producer boot id; receivers provide a bounded restart wait window; real pending transaction recovered on both nodes amid fresh 5,000/sec approval traffic | Full-cache replay can lose older approvals to eviction; validate oldest pending age, shutdown draining and client receipt-check/retry procedures under load, including successive OPS/producer restarts. Durable approval storage is deferred (§5.1); automatic transaction reconciliation remains separate work |
+| Restart recovery | OPS retains signed batches in memory and resends on a changed producer boot id; receivers provide a bounded restart wait window; real pending transaction recovered on both nodes amid fresh 5,000/sec approval traffic | Successive sender/producer loss and fresh reapproval exercised on both nodes; bounded graceful drain tested. Full-cache replay can lose older approvals. Exercise receipt retry and shutdown with deployed traffic/termination settings. Persistence is deferred (§5.1); automatic transaction reconciliation remains separate work |
 | Keys and lifetime | Key sets, key ids, signed expiry, deterministic replacement, finality release and bounded stores; TTL floor of 10 s on sender and receivers | Secret deployment and rotation procedure exercised in the target environment; capacity sizing for all OPS instances |
 | Ingress protection | Explicit source list required, connection/call caps, preface and idle limits; OPS preflight limiting with Redis and bounded local fallback | Deployment network rules and authentication for `ops_prepareApproval`; test the controls in the deployed topology |
-| Observability | Delivery/receiver metrics, no-ready-producer 503 before preflight, audit rows for approval refusals | Alerts, readiness policy, and sampling/retention for producer decision logs |
-| Packaging and CI | Besu dependencies pinned; JAR packaging check prevents bundled classes from shadowing Besu; shared wire vectors and scenario harnesses | Move supported components out of `poc/`; versioned plugin release; per-Besu-version and Reth CI lanes and upgrade compatibility records |
+| Observability | Delivery/receiver metrics, Reth standard scrape export, no-ready-producer 503 before preflight, audited refusals, alert rules and readiness policy; high-volume diagnostics opt-in | Configure target-missing alerts, routing and private log retention in the deployment |
+| Packaging and CI | Supported source moved to `node-approvals/`; pinned compatibility record, versioned checksum bundles, JAR classpath checks, advisory gate and Besu/Reth CI lanes | Publish only after compatibility jobs pass; qualify each additional node version/fork before adding support |
 | Scope extensions | Protected legacy and EIP-1559 transactions; deployments use strict fingerprints | EIP-2930/4844/7702 support and separate preflight URL remain outside the current implementation |
 
 The review follow-up closes the source-list/idle-connection lockout, minimum-TTL and refusal-audit
@@ -472,8 +473,10 @@ headroom. Paced 5,000/sec traffic formed batches close to one approval. A histor
 not a downtime guarantee: fresh arrivals can evict older entries while restart replay is still
 walking the retained set. These measurements do not change the default cap or add persistence.
 
-The immediate work is to validate graceful shutdown draining, receipt monitoring and client
-retry/reapproval, including abrupt shutdown and successive restarts. Automatic transaction
+Graceful drain is tested through real gRPC and bounded when a producer fails. Real-node scenarios
+on both clients exercise successive sender/producer restarts and fresh preflight of the same bytes.
+The operator guide covers abrupt loss and receipt retry; deployment-specific termination and
+receipt-monitoring behavior must still be exercised under the intended traffic. Automatic transaction
 resubmission/reconciliation is not provided by storing approval records alone: transactions must
 also remain available, and their inclusion, nonce and approval validity must be reconciled.
 
@@ -488,8 +491,8 @@ target rates, including storage stalls and recovery bursts, before accepting the
 
 ## 6. Compliance notes
 
-- The seed file on disk deviates from Secrets Manager as canonical store — resolved in phase 4;
-  document the interim.
+- Deliver the software seed from the deployment secret manager as a protected mounted file, as
+  described in the operator guide; do not commit fixture keys or secrets to deployment configuration.
 - **TLS on the approval channel is postponed (§0.3): record it as a risk acceptance** (ISO/IEC
   27001:2022 Annex A 8.24, use of cryptography — Compliance to confirm how it is recorded), with
   the network rule restricting the plugin's port to OPS as the compensating control. When mTLS

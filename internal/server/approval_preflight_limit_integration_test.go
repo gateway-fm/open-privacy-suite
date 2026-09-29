@@ -33,6 +33,7 @@ import (
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
 	privacyredis "privacy-proxy/internal/redis"
+	"privacy-proxy/internal/server/middleware"
 	"privacy-proxy/internal/tracer"
 )
 
@@ -158,14 +159,11 @@ func newApprovalInstance(t *testing.T, ts *testServerRBAC, nodeURL, sink string)
 	t.Cleanup(access.Stop)
 	rt := tracer.NewRuntimeTracer(tracer.RuntimeTracerConfig{NodeURL: nodeURL, Enabled: true, Timeout: 5 * time.Second})
 	t.Cleanup(rt.Stop)
-	p := NewJSONRPCProcessorWithTracing(access, &noopRateLimiter{}, proxy.New(nodeURL), ts.db, rt,
-		rbac.NewTraceValidator(ts.db), NewCircuitBreaker(), NewConcurrencyLimiter(50, 0), "")
 	approvals, err := nodeapproval.New(nodeURL, sink, bytes.Repeat([]byte{7}, 32))
 	require.NoError(t, err)
 	t.Cleanup(approvals.Close)
 	require.Eventually(t, approvals.Accepting, 5*time.Second, 10*time.Millisecond, "the stand-in producer never became ready")
-	p.nodeApprovals = approvals
-	return p
+	return NewJSONRPCProcessor(JSONRPCProcessorConfig{RBACAccessCtrl: access, RateLimiter: &noopRateLimiter{}, Proxy: proxy.New(nodeURL), AccessLogger: ts.db, RuntimeTracer: rt, TraceValidator: rbac.NewTraceValidator(ts.db), CircuitBreaker: middleware.NewCircuitBreaker(), ConcurrencyLimiter: middleware.NewConcurrencyLimiter(50, 0), NodeApprovals: approvals})
 }
 
 // connectPreflightRedis opens a Redis client the way the server does.
@@ -239,7 +237,10 @@ func (r *accessLogRecorder) UpdateAccessLogHash(context.Context, int64, string) 
 // recordAccessLog routes p's access-log writes to a recorder.
 func recordAccessLog(p *JSONRPCProcessor) *accessLogRecorder {
 	recorder := &accessLogRecorder{}
-	p.SetEnhancedAudit(recorder, audit.NewHashChain(""), nil, false)
+	p.enhancedLogger = recorder
+	p.hashChain = audit.NewHashChain("")
+	p.siemForwarder = nil
+	p.logParams = false
 	return recorder
 }
 
@@ -292,9 +293,13 @@ func TestApprovalPreflightLimit_SharedAcrossInstances(t *testing.T) {
 	sink := startApprovalSink(t)
 	redisURL := startPreflightTestRedis(t)
 	first := newApprovalInstance(t, ts, node.url, sink)
-	require.NoError(t, first.configurePreflightLimit(connectPreflightRedis(t, redisURL)))
+	firstLimit, err := newApprovalPreflightLimiter(first.nodeApprovals, connectPreflightRedis(t, redisURL))
+	require.NoError(t, err)
+	first.preflightLimiter = firstLimit
 	second := newApprovalInstance(t, ts, node.url, sink)
-	require.NoError(t, second.configurePreflightLimit(connectPreflightRedis(t, redisURL)))
+	secondLimit, err := newApprovalPreflightLimiter(second.nodeApprovals, connectPreflightRedis(t, redisURL))
+	require.NoError(t, err)
+	second.preflightLimiter = secondLimit
 	accessLogs := map[*JSONRPCProcessor]*accessLogRecorder{first: recordAccessLog(first), second: recordAccessLog(second)}
 	raw := signedContractCall(t, contract)
 

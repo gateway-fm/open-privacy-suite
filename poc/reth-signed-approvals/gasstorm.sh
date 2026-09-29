@@ -10,7 +10,7 @@ GASSTORM_LOADGEN_SOURCE="$(python3 "$POC_DIR/prepare_gasstorm.py" loadgenerator 
 GASSTORM_SOURCE="$(python3 "$POC_DIR/prepare_gasstorm.py" gasstorm "$GASSTORM_UPSTREAM")"
 export OPS_FINGERPRINT_MODE=direct OPS_PROFILE=0
 if [[ -z "${OPS_RETH_BINARY:-}" ]]; then
-  for candidate in "$POC_ROOT/.tmp/approval-target/release/ops-reth-approvals-poc" \
+  for candidate in "$POC_ROOT/.tmp/approval-target/release/ops-reth-approvals" \
     "$POC_ROOT/../../reth-policy-poc/target/release/ops-reth-approvals-poc"; do
     if [[ -x "$candidate" ]]; then export OPS_RETH_BINARY="$candidate"; break; fi
   done

@@ -1,5 +1,5 @@
 [package]
-name = "ops-reth-approvals-poc"
+name = "ops-reth-approvals"
 version = "0.1.0"
 edition = "2024"
 publish = false
@@ -7,6 +7,7 @@ publish = false
 [workspace]
 
 [dependencies]
+reth-metrics = { path = "../../.tmp/reth/crates/metrics" }
 reth-ethereum = { path = "../../.tmp/reth/crates/ethereum/reth", features = ["node", "cli", "evm"] }
 reth-basic-payload-builder = { path = "../../.tmp/reth/crates/payload/basic" }
 reth-chain-state = { path = "../../.tmp/reth/crates/chain-state" }
@@ -34,7 +35,7 @@ tracing = "0.1"
 tonic-prost-build = { version = "=0.14.5", default-features = false, features = ["transport"] }
 
 [dev-dependencies]
-h2 = "=0.4.14"
+h2 = "=0.4.16"
 http = "=1.4.2"
 
 [profile.dev]

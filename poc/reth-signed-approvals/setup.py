@@ -18,10 +18,10 @@ assert subprocess.check_output(["git","-C",str(source),"rev-parse","HEAD"],text=
 assert not subprocess.check_output(["git","-C",str(source),"status","--porcelain"],text=True).strip()
 target=Path(os.environ.get("CARGO_TARGET_DIR",str(ROOT/".tmp/approval-target"))).resolve()
 env=dict(os.environ,CARGO_TARGET_DIR=str(target),CARGO_BUILD_JOBS=os.environ.get("CARGO_BUILD_JOBS","6"))
-run("cargo","build","--release","--locked","--manifest-path",str(HERE/"Cargo.toml"),env=env)
-run("cargo","test","--release","--locked","--manifest-path",str(HERE/"Cargo.toml"),env=env)
+run("cargo","build","--release","--locked","--manifest-path",str(ROOT/"node-approvals/reth/Cargo.toml"),env=env)
+run("cargo","test","--release","--locked","--manifest-path",str(ROOT/"node-approvals/reth/Cargo.toml"),env=env)
 run("go","build","-o",str(ROOT/".tmp/approval-client"),"./poc/reth-signed-approvals/client",cwd=ROOT)
 run("go","test","-c","-o",str(ROOT/".tmp/server-approval.test"),"./internal/server",cwd=ROOT)
 run("go","build","-tags","mockauth","-o",str(ROOT/".tmp/ops-server"),"./cmd/server",cwd=ROOT)
-print("OPS_RETH_BINARY="+str(target/"release/ops-reth-approvals-poc"))
+print("OPS_RETH_BINARY="+str(target/"release/ops-reth-approvals"))
 

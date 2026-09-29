@@ -1,4 +1,4 @@
-// OPS signed-approvals Besu plugin (PoC). Built against the Besu artifacts Lineth consumes.
+// OPS signed-approvals Besu plugin. Built against the Besu artifacts Lineth consumes.
 plugins {
   id 'java'
   id 'com.google.protobuf' version '0.9.5'
@@ -6,7 +6,7 @@ plugins {
 }
 
 group = 'fm.gateway.ops'
-version = '0.1.0-poc'
+version = file('../VERSION').text.trim()
 
 def besuVersion = '26.8.1-d97cbd6'
 // Besu 26.8.1 ships grpc-api, grpc-core, grpc-netty and grpc-util at this version and Netty 4.2.17
@@ -108,7 +108,9 @@ jar {
 }
 
 shadowJar {
-  archiveFileName = 'ops-besu-approvals.jar'
+  archiveFileName = "ops-besu-approvals-${project.version}-besu-26.8.1.jar"
+  preserveFileTimestamps = false
+  reproducibleFileOrder = true
   archiveClassifier = ''
   // Only what `implementation` resolves to at runtime: grpc-stub, grpc-protobuf(-lite), protobuf-java.
   configurations = [project.configurations.runtimeClasspath]
@@ -153,3 +155,19 @@ def verifyPluginJar = tasks.register('verifyPluginJar') {
 }
 tasks.named('check') { dependsOn verifyPluginJar }
 tasks.named('assemble') { dependsOn tasks.named('shadowJar') }
+
+// Resolved compile/runtime coordinates include Besu-provided libraries for security review.
+tasks.register('dependencyInventory') {
+  def inventory = layout.buildDirectory.file('dependency-inventory.json')
+  inputs.files(configurations.compileClasspath, configurations.runtimeClasspath)
+  outputs.file(inventory)
+  doLast {
+    def modules = [configurations.compileClasspath, configurations.runtimeClasspath].collectMany { configuration ->
+      configuration.resolvedConfiguration.resolvedArtifacts.collect { artifact ->
+        def id = artifact.moduleVersion.id
+        [name: "${id.group}:${id.name}".toString(), version: id.version]
+      }
+    }.unique().sort { a, b -> a.name <=> b.name ?: a.version <=> b.version }
+    inventory.get().asFile.text = groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(modules)) + '\n'
+  }
+}

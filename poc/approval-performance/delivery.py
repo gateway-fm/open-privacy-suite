@@ -133,7 +133,7 @@ def main():
     os.environ["OPS_EVIDENCE_DIR"] = str(output)
     os.environ["OPS_APPROVAL_CAPACITY"] = str(args.capacity)
     os.environ["OPS_APPROVAL_VERIFY_WORKERS"] = str(args.verify_workers or 2)
-    os.environ.setdefault("OPS_RETH_BINARY", str(ROOT / ".tmp/approval-target/release/ops-reth-approvals-poc"))
+    os.environ.setdefault("OPS_RETH_BINARY", str(ROOT / ".tmp/approval-target/release/ops-reth-approvals"))
     os.environ.setdefault("OPS_BESU_HOME", str(ROOT / ".tmp/besu-review-private"))
     sys.path.insert(0, str(ROOT / "poc" / f"{args.node}-signed-approvals"))
     import harness as h

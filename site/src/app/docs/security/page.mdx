@@ -20,6 +20,7 @@ Dangerous JSON-RPC methods are blocked regardless of user permissions:
 | Method Pattern | Reason |
 |----------------|--------|
 | `debug_*` | Tracing/debugging (info disclosure, DoS) |
+| `ops_*` | Internal node approval APIs; execution details are never exposed through public OPS RPC access |
 | `admin_*` | Node administration |
 | `personal_*` | Account management (key exposure) |
 | `miner_*` | Mining control |

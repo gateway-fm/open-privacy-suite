@@ -17,7 +17,9 @@ import java.net.InetSocketAddress;
 import java.net.SocketAddress;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -52,6 +54,7 @@ public final class ApprovalServer implements AutoCloseable {
   /** Verification runs off Netty's I/O threads; size the pool for the measured batch rate. */
   static final int DEFAULT_VERIFY_WORKERS = 2;
   static final int MAX_VERIFY_WORKERS = 32;
+  static final int VERIFY_QUEUE_CAPACITY = 128;
   private static final int IO_THREADS = 2;
   private static final long REFUSAL_LOG_INTERVAL_MS = 60_000;
   static final Metadata.Key<String> REASON = Metadata.Key.of("ops-approval-reason", Metadata.ASCII_STRING_MARSHALLER);
@@ -104,7 +107,9 @@ public final class ApprovalServer implements AutoCloseable {
   public void start() throws IOException {
     acceptor = new MultiThreadIoEventLoopGroup(1, new DefaultThreadFactory("ops-approval-accept", true), NioIoHandler.newFactory());
     io = new MultiThreadIoEventLoopGroup(IO_THREADS, new DefaultThreadFactory("ops-approval-io", true), NioIoHandler.newFactory());
-    calls = Executors.newFixedThreadPool(verifyWorkers, Thread.ofPlatform().name("ops-approval-call-", 1).daemon(true).factory());
+    calls = new ThreadPoolExecutor(verifyWorkers, verifyWorkers, 0, TimeUnit.MILLISECONDS,
+        new ArrayBlockingQueue<>(VERIFY_QUEUE_CAPACITY),
+        Thread.ofPlatform().name("ops-approval-call-", 1).daemon(true).factory());
     try {
       server =
           NettyServerBuilder.forAddress(bind)
@@ -115,7 +120,10 @@ public final class ApprovalServer implements AutoCloseable {
               .withOption(ChannelOption.SO_REUSEADDR, true)
               .bossEventLoopGroup(acceptor)
               .workerEventLoopGroup(io)
-              .executor(calls)
+              // Dispatch only bounded, cheap RPC callbacks on the I/O loop. Verification has
+              // its own bounded queue below: reset streams cannot leave an unbounded executor
+              // backlog behind after freeing their HTTP/2 concurrency slots.
+              .directExecutor()
               .addService(new Delivery())
               .maxInboundMessageSize(MAX_REQUEST_BYTES)
               .maxConcurrentCallsPerConnection(limits.maxConcurrentCalls())
@@ -216,6 +224,16 @@ public final class ApprovalServer implements AutoCloseable {
   private final class Delivery extends ApprovalDeliveryGrpc.ApprovalDeliveryImplBase {
     @Override
     public void deliver(final DeliverRequest request, final StreamObserver<DeliverResponse> response) {
+      try {
+        calls.execute(() -> verify(request, response));
+      } catch (final RejectedExecutionException e) {
+        // Retryable, unlike RESOURCE_EXHAUSTED (malformed/oversized request in the contract).
+        ingress.verificationBusy();
+        response.onError(Status.UNAVAILABLE.withDescription("approval verification busy").asRuntimeException());
+      }
+    }
+
+    private void verify(final DeliverRequest request, final StreamObserver<DeliverResponse> response) {
       final ApprovalIngress.Outcome outcome = ingress.deliver(request.getBatch().toByteArray());
       if (outcome.code() == Status.Code.OK) {
         response.onNext(DeliverResponse.newBuilder().setBootId(ingress.bootId()).setStored(outcome.stored()).build());

@@ -37,6 +37,8 @@ import java.util.Deque;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -104,6 +106,62 @@ class ApprovalServerTest {
     server.start();
     closing.push(server);
     return server;
+  }
+
+  @Test
+  void overloadIsRetryableAndStatusStaysResponsive() throws Exception {
+    final CountDownLatch entered = new CountDownLatch(1);
+    final CountDownLatch release = new CountDownLatch(1);
+    final AtomicBoolean blockNext = new AtomicBoolean(true);
+    store = new ApprovalStore(1000, 5_000, System::currentTimeMillis);
+    ingress = new ApprovalIngress(new ApprovalVerifier(Map.of("default", Fixtures.FIXTURE_PUBLIC_KEY)),
+        Fixtures.CHAIN, MAX_TTL, store, new WaitWindow(5_000, System.currentTimeMillis()), () -> {
+          if (blockNext.compareAndSet(true, false)) {
+            entered.countDown();
+            try {
+              if (!release.await(10, TimeUnit.SECONDS)) {
+                throw new AssertionError("verification was not released");
+              }
+            } catch (final InterruptedException e) {
+              Thread.currentThread().interrupt();
+              throw new AssertionError(e);
+            }
+          }
+          return System.currentTimeMillis();
+        }, ApprovalIngress.Metrics.NONE);
+    final ApprovalServer server = new ApprovalServer(new InetSocketAddress("127.0.0.1", 0), ingress,
+        new ApprovalServer.Limits(AllowedSources.ANY, 2, 512, 10_000, 30_000), ApprovalServer.Metrics.NONE, 1);
+    server.start();
+    closing.push(server);
+    final ManagedChannel channel = NettyChannelBuilder.forAddress("127.0.0.1", server.port()).usePlaintext().build();
+    closing.push(() -> { channel.shutdownNow(); channel.awaitTermination(5, TimeUnit.SECONDS); });
+    final var async = ApprovalDeliveryGrpc.newFutureStub(channel).withDeadlineAfter(10, TimeUnit.SECONDS);
+    // A malformed batch reads the clock for refusal accounting; no key material is necessary.
+    final DeliverRequest request = DeliverRequest.getDefaultInstance();
+    try {
+      final var first = async.deliver(request);
+      assertTrue(entered.await(3, TimeUnit.SECONDS));
+      final var pending = new java.util.ArrayList<com.google.common.util.concurrent.ListenableFuture<DeliverResponse>>();
+      for (int i = 0; i < ApprovalServer.VERIFY_QUEUE_CAPACITY + 1; i++) {
+        pending.add(async.deliver(request));
+      }
+      // The last queued call cannot grow the worker queue beyond its bound.
+      final var failure = assertThrows(java.util.concurrent.ExecutionException.class,
+          () -> pending.getLast().get(3, TimeUnit.SECONDS));
+      assertEquals(Status.Code.UNAVAILABLE, Status.fromThrowable(failure.getCause()).getCode());
+      assertEquals(ingress.bootId(), ApprovalDeliveryGrpc.newBlockingStub(channel)
+          .withDeadlineAfter(1, TimeUnit.SECONDS).status(StatusRequest.getDefaultInstance()).getBootId());
+      release.countDown();
+      assertThrows(java.util.concurrent.ExecutionException.class, () -> first.get(3, TimeUnit.SECONDS));
+      // After draining, a new call is processed, rather than remaining overloaded.
+      for (final var call : pending) {
+        assertThrows(java.util.concurrent.ExecutionException.class, () -> call.get(3, TimeUnit.SECONDS));
+      }
+      assertEquals(Status.Code.INVALID_ARGUMENT, assertThrows(StatusRuntimeException.class,
+          () -> client(server).deliver(request)).getStatus().getCode());
+    } finally {
+      release.countDown();
+    }
   }
 
   private ApprovalDeliveryGrpc.ApprovalDeliveryBlockingStub client(final ApprovalServer server) {

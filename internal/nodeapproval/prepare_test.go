@@ -115,3 +115,24 @@ func TestCreationSetsExcludeCollisionsAndTemporaryContracts(t *testing.T) {
 		t.Fatal("collision cannot grant existing code")
 	}
 }
+
+func TestPrepareRejectsChainIDTruncationBeforeRPC(t *testing.T) {
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	chain := new(big.Int).Add(new(big.Int).Lsh(big.NewInt(1), 64), big.NewInt(31337))
+	tx, err := types.SignTx(types.NewContractCreation(0, big.NewInt(0), 100000, big.NewInt(1), nil), types.NewEIP155Signer(chain), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := tx.MarshalBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A nil RPC client would panic if malformed chain IDs reached preflight.
+	_, err = (&Service{}).Prepare(context.Background(), hexutil.Encode(raw))
+	if err == nil || !strings.Contains(err.Error(), "chain id") {
+		t.Fatalf("want chain-id refusal, got %v", err)
+	}
+}

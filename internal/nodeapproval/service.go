@@ -212,6 +212,11 @@ func (s *Service) Prepare(ctx context.Context, raw string) (*Prepared, error) {
 	if !tx.Protected() || (tx.Type() != types.LegacyTxType && tx.Type() != types.DynamicFeeTxType) {
 		return nil, errors.New("V2 supports protected legacy/EIP-1559 transactions only")
 	}
+	// The signed approval contract carries u64 chain IDs. Never truncate a
+	// larger EIP-155 chain ID into another network's approval domain.
+	if !tx.ChainId().IsUint64() {
+		return nil, errors.New("chain id exceeds the approval wire format")
+	}
 	from, err := types.Sender(types.LatestSignerForChainID(tx.ChainId()), &tx)
 	if err != nil {
 		return nil, err

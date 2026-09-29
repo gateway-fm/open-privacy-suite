@@ -146,7 +146,8 @@ where
             )
         };
         let elapsed = start.elapsed().as_nanos();
-        if let Ok(ref outcome) = result
+        if std::env::var("OPS_APPROVAL_DIAGNOSTICS").as_deref() == Ok("1")
+            && let Ok(ref outcome) = result
             && let Some(p) = outcome.payload()
         {
             eprintln!(

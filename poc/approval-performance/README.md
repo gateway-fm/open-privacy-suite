@@ -1,6 +1,13 @@
-# Approval performance and retention at 5,000 TPS
+# Development measurements: approval performance and retention
 
-Measured on 25 September 2026. **The approval delivery component can keep up with
+Measured on 25 September 2026. **These results describe one development workstation and
+workload, not a limit of the solution or a production throughput guarantee.** The baseline
+comparison measured Reth at 2,639 TPS without approvals / 1,962 with approvals, and Besu at
+2,298 / 1,296. Both used the same Apple M2 Max described below. These numbers were accepted
+as adequate for the initial release on 29 September; 5,000 full-stack TPS is not a release
+requirement. They precede the main rebase and subsequent hardening.
+
+ **The approval delivery component can keep up with
 5,000 approvals/sec on this machine; the complete transaction stack has not
 demonstrated 5,000 committed TPS.** Besu needed four verification workers to avoid
 a growing delivery backlog. Its default remains two, with a new bounded operator

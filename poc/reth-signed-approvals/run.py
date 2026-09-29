@@ -10,6 +10,7 @@ import statistics
 import subprocess
 import time
 import threading
+import urllib.request
 import harness as h
 
 RESULTS=[]
@@ -96,6 +97,15 @@ def ordinary():
         assert int(n.rpc("eth_getStorageAt",h.VAULT_A,"0x0","latest"),16)==7
         assert n.rpc("eth_getTransactionReceipt",tx["hash"])["status"]=="0x1"
         record("same_org_nested_call_executes",hash=tx["hash"])
+        deadline = time.monotonic() + 5
+        while True:
+            with urllib.request.urlopen("http://" + n.metrics_address + "/metrics", timeout=2) as response:
+                metrics = response.read().decode()
+            if "ops_approval_verified_total 1" in metrics:
+                break
+            assert time.monotonic() < deadline, metrics
+            time.sleep(.1)
+        record("receiver_metrics_exported_on_standard_reth_endpoint")
         tx=n.raw(h.ALICE,h.ROUTER,"runDelegate(address,uint256)",h.VAULT_A,3)
         c.approve(tx);n.submit(tx);n.make_block([tx])
         assert int(n.rpc("eth_getStorageAt",h.VAULT_A,"0x0","latest"),16)==7
@@ -226,6 +236,29 @@ def restart():
         # User sends the same signed tx; OPS does a fresh preflight and delivers approval.
         c.approve(tx);n.submit(tx);n.make_block([tx]);record("actual_restart_loses_approval_then_client_retry_succeeds")
 
+def successive_restarts():
+    with node("successive-before", wait_ms=500) as n:
+        with contextlib.closing(Client(n)) as c:
+            tx = n.raw(h.ALICE, h.ROUTER, "run(uint256)", 7)
+            c.approve(tx)
+            c.process.kill()
+            c.process.wait(timeout=5)
+        # A new OPS process has no recovery history even while the original producer lives.
+        with contextlib.closing(Client(n)) as replacement:
+            assert replacement.metrics()["privacyproxy_approval_retained"] == 0
+            directory = n.directory
+    with node("successive-after", wait_ms=500, directory=directory) as n, contextlib.closing(Client(n)) as c:
+        n.submit(tx)
+        gone_from_pool(n, tx)
+        n.make_block([])
+        assert n.rpc("eth_getTransactionReceipt", tx["hash"]) is None
+        c.approve(tx)
+        n.submit(tx)
+        n.make_block([tx])
+        assert n.rpc("eth_getTransactionReceipt", tx["hash"])["status"] == "0x1"
+        record("successive_sender_then_producer_restarts_require_fresh_preflight", hash=tx["hash"], sender_sigkill=True)
+
+
 def restart_resend():
     """Keep the real OPS sender alive while Reth restarts: its lane alone detects the new boot
     id and redelivers retained signed bytes. No new preflight, enqueue, Deliver or tx submission."""
@@ -347,7 +380,7 @@ def write_benchmark_report(measurements,batch):
 def node_scenarios():
     """Everything that needs only the node and the fixture client, not an OPS server."""
     divergence("same_block_cross_org_divergence");divergence("caught_call_cannot_bypass",catch=True);divergence("same_org_storage_divergence",storage_only=True);divergence("stock_control_executes_cross_org",disabled=True)
-    read_only();fingerprint_cases();waits();waiting_load();invalid();expiry();restart();restart_resend();reorg();history()
+    read_only();fingerprint_cases();waits();waiting_load();invalid();expiry();restart();successive_restarts();restart_resend();reorg();history()
 
 if __name__=="__main__":
     parser=argparse.ArgumentParser();parser.add_argument("mode",choices=["smoke","node","test","bench","all"]);args=parser.parse_args();h.prepare()

@@ -77,22 +77,29 @@ func TestConfigurePreflightLimit(t *testing.T) {
 	t.Run("signed approvals off: no limit and the settings are not read", func(t *testing.T) {
 		t.Setenv(preflightRateEnv, "fast")
 		p := &JSONRPCProcessor{}
-		require.NoError(t, p.configurePreflightLimit(redisClient))
+		limiter, err := newApprovalPreflightLimiter(p.nodeApprovals, redisClient)
+		require.NoError(t, err)
+		p.preflightLimiter = limiter
 		require.Nil(t, p.preflightLimiter)
 	})
 	t.Run("signed approvals on: invalid settings stop start-up", func(t *testing.T) {
 		p := &JSONRPCProcessor{nodeApprovals: approvals(t)}
 		t.Setenv(preflightBurstEnv, "0")
-		require.ErrorContains(t, p.configurePreflightLimit(redisClient), preflightBurstEnv)
+		_, err := newApprovalPreflightLimiter(p.nodeApprovals, redisClient)
+		require.ErrorContains(t, err, preflightBurstEnv)
 	})
 	t.Run("signed approvals on without Redis: per-instance limit", func(t *testing.T) {
 		p := &JSONRPCProcessor{nodeApprovals: approvals(t)}
-		require.NoError(t, p.configurePreflightLimit(nil))
+		limiter, err := newApprovalPreflightLimiter(p.nodeApprovals, nil)
+		require.NoError(t, err)
+		p.preflightLimiter = limiter
 		require.IsType(t, &localPreflightLimiter{}, p.preflightLimiter)
 	})
 	t.Run("signed approvals on with Redis: limit shared through Redis", func(t *testing.T) {
 		p := &JSONRPCProcessor{nodeApprovals: approvals(t)}
-		require.NoError(t, p.configurePreflightLimit(redisClient))
+		limiter, err := newApprovalPreflightLimiter(p.nodeApprovals, redisClient)
+		require.NoError(t, err)
+		p.preflightLimiter = limiter
 		require.IsType(t, &redisPreflightLimiter{}, p.preflightLimiter)
 	})
 }

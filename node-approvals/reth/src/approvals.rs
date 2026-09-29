@@ -510,6 +510,7 @@ impl Store {
             let (approval, pooled, included) = (e.approval.clone(), e.pooled, e.included);
             let timeout = |s: &mut State, remove_tx: &mut dyn FnMut(B256)| {
                 remove_tx(hash);
+                reth_metrics::metrics::counter!("ops_approval_timeouts_total").increment(1);
                 eprintln!("OPS_APPROVAL_EVENT {{\"event\":\"timeout\",\"tx_hash\":\"{hash}\"}}");
                 s.remove(hash);
             };
@@ -611,7 +612,40 @@ impl Store {
         }
     }
 
+    // Export existing bounded counters once per second, off the block execution path.
+    // Register on each tick because the node installs its recorder during launch.
+    fn publish_metrics(&self) {
+        use reth_metrics::metrics::{counter, gauge};
+        for (name, value) in [
+            ("ops_approval_verified_total", &self.verified),
+            (
+                "ops_approval_verified_batches_total",
+                &self.verified_batches,
+            ),
+            (
+                "ops_approval_invalid_envelopes_total",
+                &self.invalid_envelopes,
+            ),
+            ("ops_approval_store_full_total", &self.store_full),
+            ("ops_approval_expired_total", &self.expired),
+            ("ops_approval_evicted_total", &self.evicted),
+            ("ops_approval_released_total", &self.released),
+            ("ops_approval_waiting_total", &self.waiting_first),
+        ] {
+            counter!(name).absolute(value.load(Ordering::Relaxed));
+        }
+        gauge!("ops_approval_store_size").set(self.state.lock().unwrap().entries.len() as f64);
+    }
+
     pub fn start<P: TransactionPool + 'static>(self: &Arc<Self>, pool: P) {
+        let this = self.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_secs(1));
+            loop {
+                tick.tick().await;
+                this.publish_metrics();
+            }
+        });
         let mut arrivals = pool.new_transactions_listener_for(TransactionListenerKind::All);
         let this = self.clone();
         tokio::spawn(async move {

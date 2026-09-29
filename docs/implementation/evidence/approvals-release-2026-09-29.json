@@ -1,0 +1,540 @@
+{
+  "date": "2026-09-29",
+  "main_base": "6ebc3b77b0f83770f894f3c93715bd088719e835",
+  "hardware": "Apple M2 Max, 12 cores, 32 GiB RAM; macOS 26.6.1",
+  "scope": "Local release-candidate validation; artifact bytes built from the working tree committed with this evidence. No production deployment or new throughput claim.",
+  "checks": {
+    "go_internal_race": "All internal packages passed; explorer first hit a Docker reaper startup timeout and passed its isolated rerun.",
+    "go_vet": "passed",
+    "http_error_leaks": "passed",
+    "api_spec_regeneration": "no drift",
+    "workflow_actionlint": "passed",
+    "besu_unit_tests": 101,
+    "reth_unit_tests": 48,
+    "native_test_failures": 0
+  },
+  "scenarios": {
+    "besu": [
+      {
+        "test": "approval_before_transaction_included",
+        "passed": true
+      },
+      {
+        "test": "go_fingerprint_over_besu_calltracer_matches_plugin",
+        "passed": true
+      },
+      {
+        "test": "transaction_before_approval_waits_then_included",
+        "passed": true
+      },
+      {
+        "test": "unapproved_transaction_dropped_after_wait",
+        "passed": true
+      },
+      {
+        "test": "same_block_target_change_excludes_stale_approval",
+        "passed": true
+      },
+      {
+        "test": "redirected_call_excluded_even_when_application_catches",
+        "passed": true
+      },
+      {
+        "test": "delegatecall_bound_to_caller_storage",
+        "passed": true
+      },
+      {
+        "test": "mismatching_fingerprint_excluded_and_dropped",
+        "passed": true
+      },
+      {
+        "test": "refused_deliveries_answer_their_status_codes_and_store_nothing_duplicates_idempotent",
+        "passed": true
+      },
+      {
+        "test": "eight_counter_increments_approved_against_one_state_all_included",
+        "passed": true
+      },
+      {
+        "test": "deployment_approved_and_included",
+        "passed": true
+      },
+      {
+        "test": "runtime_create_create2_and_selfdestruct_included",
+        "passed": true
+      },
+      {
+        "test": "plugin_state_snapshot_matches_the_mined_state",
+        "passed": true
+      },
+      {
+        "test": "strict_approval_denied_when_touched_state_changed",
+        "passed": true
+      },
+      {
+        "test": "approved_call_that_gains_a_create_is_denied_by_the_producer",
+        "passed": true
+      },
+      {
+        "test": "same_signed_transaction_included_after_new_preflight_following_a_mismatch",
+        "passed": true
+      },
+      {
+        "test": "restart_drops_approvals_resubmission_after_new_preflight_included",
+        "passed": true
+      },
+      {
+        "test": "successive_sender_then_producer_restarts_require_fresh_preflight",
+        "passed": true
+      },
+      {
+        "test": "reorg_returns_transactions_to_the_pool_with_their_approvals_intact",
+        "passed": true
+      },
+      {
+        "test": "gate_works_beside_lineth_transaction_pool_validator",
+        "passed": true
+      },
+      {
+        "test": "gate_works_beside_lineth_sequencer_selector_on_osaka",
+        "passed": true
+      },
+      {
+        "test": "lineth_sequencer_selector_loads_but_needs_an_osaka_chain",
+        "passed": true
+      },
+      {
+        "test": "missing_plugin_or_configuration_refuses_to_start",
+        "passed": true
+      },
+      {
+        "test": "precompile_staticcall_and_plain_value_transfer_included",
+        "passed": true
+      },
+      {
+        "test": "expired_approval_counts_as_absent_transaction_dropped_not_included",
+        "passed": true
+      },
+      {
+        "test": "restart_live_ops_status_redelivers_retained_batch_and_restores_inclusion",
+        "passed": true
+      }
+    ],
+    "besu-abrupt": [
+      {
+        "test": "successive_sender_then_producer_restarts_require_fresh_preflight",
+        "passed": true,
+        "sender_sigkill": true
+      }
+    ],
+    "reth-final-run": [
+      {
+        "test": "same_org_nested_call_executes",
+        "passed": true
+      },
+      {
+        "test": "receiver_metrics_exported_on_standard_reth_endpoint",
+        "passed": true
+      },
+      {
+        "test": "delegatecall_uses_caller_storage",
+        "passed": true
+      },
+      {
+        "test": "EIP1559_signed_transaction",
+        "passed": true
+      },
+      {
+        "test": "same_block_cross_org_divergence",
+        "passed": true
+      },
+      {
+        "test": "caught_call_cannot_bypass",
+        "passed": true
+      },
+      {
+        "test": "same_org_storage_divergence",
+        "passed": true
+      },
+      {
+        "test": "stock_control_executes_cross_org",
+        "passed": true
+      },
+      {
+        "test": "no_write_cross_org_call_denied_despite_identical_return_and_storage",
+        "passed": true
+      },
+      {
+        "test": "fingerprint_zero_deletion_unchanged_write_and_read",
+        "passed": true
+      },
+      {
+        "test": "fingerprint_log_positions_dynamic_output_and_caught_revert",
+        "passed": true
+      },
+      {
+        "test": "waiting_tx_does_not_block_ready_sender",
+        "passed": true
+      },
+      {
+        "test": "timeout_then_client_retry_same_signed_tx",
+        "passed": true
+      },
+      {
+        "test": "128_missing_approvals_do_not_block_ready_sender",
+        "passed": true
+      },
+      {
+        "test": "forged_signature_denied_then_valid_retry",
+        "passed": true
+      },
+      {
+        "test": "expired_approval_is_absent_at_the_gate_then_fresh_approval_is_used",
+        "passed": true
+      },
+      {
+        "test": "approval_expiring_before_arrival_drops_the_transaction_and_refused_batches_store_nothing",
+        "passed": true
+      },
+      {
+        "test": "actual_restart_loses_approval_then_client_retry_succeeds",
+        "passed": true
+      },
+      {
+        "test": "successive_sender_then_producer_restarts_require_fresh_preflight",
+        "passed": true,
+        "sender_sigkill": true
+      },
+      {
+        "test": "persistent_OPS_sender_automatically_redelivers_after_Reth_restart",
+        "passed": true
+      },
+      {
+        "test": "reorg_returns_the_transaction_and_its_kept_approval_includes_it_again",
+        "passed": true
+      },
+      {
+        "test": "historical_import_without_approvals",
+        "passed": true
+      },
+      {
+        "test": "real_OPS_DB_RBAC_trace_signature_forwarding_and_Reth_commit",
+        "passed": true
+      }
+    ],
+    "reth-final-call_hash_tests": [
+      {
+        "test": "counter_strict",
+        "passed": true
+      },
+      {
+        "test": "counter_calls",
+        "passed": true
+      },
+      {
+        "test": "shared_token_balances",
+        "passed": true
+      },
+      {
+        "test": "three_nested_shared_counters",
+        "passed": true
+      },
+      {
+        "test": "precompile_call_identity",
+        "passed": true
+      },
+      {
+        "test": "reject_changed_argument",
+        "passed": true
+      },
+      {
+        "test": "reject_changed_extra_call",
+        "passed": true
+      },
+      {
+        "test": "reject_changed_unexpected_create",
+        "passed": true
+      },
+      {
+        "test": "reject_changed_executed_code",
+        "passed": true
+      },
+      {
+        "test": "reject_changed_native_value",
+        "passed": true
+      },
+      {
+        "test": "calls_cross_org_redirect",
+        "passed": true
+      },
+      {
+        "test": "calls_caught_foreign_redirect",
+        "passed": true
+      },
+      {
+        "test": "no_write_cross_org_call_denied_despite_identical_return_and_storage",
+        "passed": true
+      },
+      {
+        "test": "documented_limit_internal_accounting_can_change",
+        "passed": true
+      },
+      {
+        "test": "reject_tampered_mode_0",
+        "passed": true
+      },
+      {
+        "test": "reject_tampered_mode_42",
+        "passed": true
+      },
+      {
+        "test": "same_org_nested_call_executes",
+        "passed": true
+      },
+      {
+        "test": "receiver_metrics_exported_on_standard_reth_endpoint",
+        "passed": true
+      },
+      {
+        "test": "delegatecall_uses_caller_storage",
+        "passed": true
+      },
+      {
+        "test": "EIP1559_signed_transaction",
+        "passed": true
+      },
+      {
+        "test": "real_OPS_parallel_counter",
+        "passed": true
+      },
+      {
+        "test": "real_OPS_DB_cross_org_and_execution_redirect_rejected",
+        "passed": true
+      }
+    ],
+    "reth-final-lifecycle_tests": [
+      {
+        "test": "contract_fee_recipient_does_not_change_application_fingerprint",
+        "passed": true
+      },
+      {
+        "test": "shanghai_native_transfers_self_and_fee_recipient",
+        "passed": true
+      },
+      {
+        "test": "shanghai_payable_nested_transfer",
+        "passed": true
+      },
+      {
+        "test": "shanghai_caught_value_transfer_reverted",
+        "passed": true
+      },
+      {
+        "test": "shanghai_root_revert_only_pays_fees",
+        "passed": true
+      },
+      {
+        "test": "shanghai_payable_deployment_with_queued_nonce",
+        "passed": true
+      },
+      {
+        "test": "shanghai_nested_create_constructor_call_and_new_contract_call",
+        "passed": true
+      },
+      {
+        "test": "shanghai_empty_runtime_code_deployment",
+        "passed": true
+      },
+      {
+        "test": "shanghai_prefunded_create2_success_and_collision",
+        "passed": true
+      },
+      {
+        "test": "shanghai_create2_redeployment_after_destruction",
+        "passed": true
+      },
+      {
+        "test": "shanghai_existing_selfdestruct_account_effects",
+        "passed": true
+      },
+      {
+        "test": "shanghai_create_and_destroy_including_self_beneficiary",
+        "passed": true
+      },
+      {
+        "test": "shanghai_caught_revert_undoes_creation_and_destruction",
+        "passed": true
+      },
+      {
+        "test": "shanghai_reject_changed_value_recipient",
+        "passed": true
+      },
+      {
+        "test": "shanghai_reject_changed_destruction_balance",
+        "passed": true
+      },
+      {
+        "test": "shanghai_reject_changed_constructor_state",
+        "passed": true
+      },
+      {
+        "test": "shanghai_selfdestruct_self_beneficiary",
+        "passed": true
+      },
+      {
+        "test": "shanghai_selfdestruct_fee_beneficiary",
+        "passed": true
+      },
+      {
+        "test": "cancun_native_transfers_self_and_fee_recipient",
+        "passed": true
+      },
+      {
+        "test": "cancun_payable_nested_transfer",
+        "passed": true
+      },
+      {
+        "test": "cancun_caught_value_transfer_reverted",
+        "passed": true
+      },
+      {
+        "test": "cancun_root_revert_only_pays_fees",
+        "passed": true
+      },
+      {
+        "test": "cancun_payable_deployment_with_queued_nonce",
+        "passed": true
+      },
+      {
+        "test": "cancun_nested_create_constructor_call_and_new_contract_call",
+        "passed": true
+      },
+      {
+        "test": "cancun_empty_runtime_code_deployment",
+        "passed": true
+      },
+      {
+        "test": "cancun_prefunded_create2_success_and_collision",
+        "passed": true
+      },
+      {
+        "test": "cancun_create2_redeployment_after_destruction",
+        "passed": true
+      },
+      {
+        "test": "cancun_existing_selfdestruct_account_effects",
+        "passed": true
+      },
+      {
+        "test": "cancun_create_and_destroy_including_self_beneficiary",
+        "passed": true
+      },
+      {
+        "test": "cancun_caught_revert_undoes_creation_and_destruction",
+        "passed": true
+      },
+      {
+        "test": "cancun_reject_changed_value_recipient",
+        "passed": true
+      },
+      {
+        "test": "cancun_reject_changed_destruction_balance",
+        "passed": true
+      },
+      {
+        "test": "cancun_reject_changed_constructor_state",
+        "passed": true
+      },
+      {
+        "test": "cancun_selfdestruct_self_beneficiary",
+        "passed": true
+      },
+      {
+        "test": "cancun_selfdestruct_fee_beneficiary",
+        "passed": true
+      }
+    ],
+    "besu-http": {
+      "passed_steps": 4,
+      "exit_code": 0
+    },
+    "reth-final-demo": {
+      "passed_steps": 3,
+      "exit_code": 0
+    }
+  },
+  "dependencies": {
+    "besu-advisories": {
+      "checked_at": "2026-09-29T09:39:55.216228+00:00",
+      "source": "https://api.osv.dev",
+      "ecosystem": "Maven",
+      "dependencies_checked": 65,
+      "findings": [],
+      "scope": "Resolved Besu compile/runtime coordinates or registry packages in the Reth lockfile; not a reachability analysis, native-library or OS scan."
+    },
+    "reth-advisories-final": {
+      "checked_at": "2026-09-29T09:43:30.248198+00:00",
+      "source": "https://api.osv.dev",
+      "ecosystem": "crates.io",
+      "dependencies_checked": 854,
+      "findings": [
+        {
+          "name": "bincode",
+          "version": "1.3.3",
+          "advisories": [
+            {
+              "id": "RUSTSEC-2025-0141",
+              "review": "Maintenance notice, not a reported vulnerability. Retained by pinned upstream dependencies; replacing serialization needs upstream compatibility review."
+            }
+          ]
+        },
+        {
+          "name": "derivative",
+          "version": "2.2.0",
+          "advisories": [
+            {
+              "id": "RUSTSEC-2024-0388",
+              "review": "Unmaintained compile-time derive macro; no runtime vulnerability in this advisory. Track upstream replacement."
+            }
+          ]
+        },
+        {
+          "name": "lru",
+          "version": "0.16.4",
+          "advisories": [
+            {
+              "id": "RUSTSEC-2026-0253",
+              "review": "Not reachable in the pinned alloy-provider 2.3.0 usage: blocks.rs keys are BlockNumber/u64 and layers/cache.rs keys are B256. Both are primitive/Copy keys with no panicking Drop, which the advisory requires. The other lru dependency is updated to 0.18.2. Reassess on any provider/key-type change."
+            }
+          ]
+        },
+        {
+          "name": "paste",
+          "version": "1.0.15",
+          "advisories": [
+            {
+              "id": "RUSTSEC-2024-0436",
+              "review": "Unmaintained compile-time macro; no runtime vulnerability in this advisory. Track upstream replacement."
+            }
+          ]
+        },
+        {
+          "name": "proc-macro-error2",
+          "version": "2.0.1",
+          "advisories": [
+            {
+              "id": "RUSTSEC-2026-0173",
+              "review": "Unmaintained compile-time diagnostic macro; no runtime vulnerability in this advisory. Track upstream replacement."
+            }
+          ]
+        }
+      ],
+      "review_current": true,
+      "scope": "Resolved Besu compile/runtime coordinates or registry packages in the Reth lockfile; not a reachability analysis, native-library or OS scan."
+    }
+  },
+  "artifacts": {
+    "ops-reth-approvals": "98dc65edcd79f06ec520e4e197ae5bcb6045b46d3e6d5177179894aa7a06e97f",
+    "ops-besu-approvals-0.1.0-besu-26.8.1.jar": "c41a9ca903606aa5e6a1c0f75c3794085d4060eb40b9451181a9da036379b986"
+  }
+}

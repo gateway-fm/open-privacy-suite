@@ -1,0 +1,114 @@
+name: Node approvals
+
+on:
+  pull_request:
+    paths: ['node-approvals/**', 'internal/**', 'proto/**', 'go.mod', 'go.sum', 'poc/**', 'scripts/init-audit-db.sh', '.github/workflows/node-approvals.yml']
+  push:
+    branches: [main, poc/ops-besu-signed-approvals]
+    paths: ['node-approvals/**', 'internal/**', 'proto/**', 'go.mod', 'go.sum', 'poc/**', 'scripts/init-audit-db.sh', '.github/workflows/node-approvals.yml']
+  workflow_dispatch:
+  schedule:
+    - cron: '23 3 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: node-approvals-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compatibility:
+    name: ${{ matrix.node }} compatibility
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [besu, reth]
+    env:
+      CARGO_BUILD_JOBS: '4'
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.tmp/approval-target
+      OPS_EVIDENCE_DIR: ${{ github.workspace }}/.tmp/approval-ci/${{ matrix.node }}
+      OPS_RETH_BINARY: ${{ github.workspace }}/.tmp/approval-target/release/ops-reth-approvals
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        if: matrix.node == 'besu'
+        with:
+          distribution: temurin
+          java-version: '25.0.4.1+1'
+      - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d # v4
+        if: matrix.node == 'besu'
+        with:
+          gradle-version: '9.0.0'
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable, explicitly selected toolchain
+        if: matrix.node == 'reth'
+        with:
+          toolchain: '1.98.1'
+      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1
+        with:
+          version: 'v1.4.0'
+      - name: Install native build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler libclang-dev pkg-config libssl-dev
+      - name: Prepare pinned fixture tools
+        env:
+          APPROVAL_NODE: ${{ matrix.node }}
+        run: |
+          if [ "$APPROVAL_NODE" = besu ]; then
+            python3 node-approvals/ci/prepare.py --besu
+          else
+            python3 node-approvals/ci/prepare.py
+          fi
+          echo "$PWD/.tmp/approval-tools" >> "$GITHUB_PATH"
+      - name: Build and test supported integration
+        env:
+          APPROVAL_NODE: ${{ matrix.node }}
+        run: python3 node-approvals/build.py "$APPROVAL_NODE"
+      - name: Build OPS fixtures and test sender
+        run: |
+          go test -race ./internal/nodeapproval
+          go build -o .tmp/approval-client ./poc/reth-signed-approvals/client
+          go test -c -o .tmp/server-approval.test ./internal/server
+          go build -tags mockauth -o .tmp/ops-server ./cmd/server
+      - name: Check dependency advisories
+        env:
+          APPROVAL_NODE: ${{ matrix.node }}
+        run: python3 node-approvals/audit_dependencies.py "$APPROVAL_NODE" --output "$OPS_EVIDENCE_DIR/advisories.json"
+      - name: Besu real-node and HTTP scenarios
+        if: matrix.node == 'besu'
+        run: |
+          export OPS_JAVA_HOME="$JAVA_HOME"
+          python3 poc/besu-signed-approvals/run.py
+          python3 poc/besu-signed-approvals/demo.py story
+      - name: Reth real-node and HTTP scenarios
+        if: matrix.node == 'reth'
+        run: |
+          python3 poc/reth-signed-approvals/run.py test
+          python3 poc/reth-signed-approvals/call_hash_tests.py all
+          python3 poc/reth-signed-approvals/lifecycle_tests.py
+          python3 poc/reth-signed-approvals/demo.py story
+      - name: Upload tested candidate bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: approvals-${{ matrix.node }}-${{ github.sha }}
+          path: .tmp/approval-release/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload scenario evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: approval-checks-${{ matrix.node }}-${{ github.run_id }}
+          path: |
+            .tmp/approval-ci/
+            node-approvals/besu/build/reports/tests/
+          retention-days: 14

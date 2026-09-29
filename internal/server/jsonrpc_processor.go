@@ -244,6 +244,10 @@ type JSONRPCProcessorConfig struct {
 	RuntimeTracer  *tracer.RuntimeTracer
 	TraceValidator *rbac.TraceValidator
 
+	// Signed approvals are opt-in; an enabled service without a budget fails closed.
+	NodeApprovals            *nodeapproval.Service
+	ApprovalPreflightLimiter preflightLimiter
+
 	// Optional wiring. Zero values reproduce the unwired behavior exactly:
 	// nil Metrics = no metrics; nil TxVisibilityStore = visibleTo resolution
 	// skipped; nil AddressVisibilityResolver = RPC log field-redaction no-op
@@ -278,6 +282,8 @@ func NewJSONRPCProcessor(cfg JSONRPCProcessorConfig) *JSONRPCProcessor {
 		proxy:                  cfg.Proxy,
 		accessLogger:           cfg.AccessLogger,
 		runtimeTracer:          cfg.RuntimeTracer,
+		nodeApprovals:          cfg.NodeApprovals,
+		preflightLimiter:       cfg.ApprovalPreflightLimiter,
 		traceValidator:         cfg.TraceValidator,
 		circuitBreaker:         cfg.CircuitBreaker,
 		concurrencyLimiter:     cfg.ConcurrencyLimiter,

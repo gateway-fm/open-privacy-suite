@@ -24,7 +24,7 @@ fn main() -> eyre::Result<()> {
         println!("{hash}");
         return Ok(());
     }
-    let enabled = std::env::var("OPS_APPROVALS").as_deref() == Ok("1");
+    let enabled = approvals_enabled(std::env::var("OPS_APPROVALS"))?;
     Cli::parse_args().run(async move |builder, _| {
         let store = if enabled {
             let settings = delivery::Settings::from_env().map_err(|e| eyre::eyre!(e))?;
@@ -77,4 +77,28 @@ fn main() -> eyre::Result<()> {
             .wait_for_node_exit()
             .await
     })
+}
+
+fn approvals_enabled(value: Result<String, std::env::VarError>) -> eyre::Result<bool> {
+    match value.as_deref() {
+        Ok("1") => Ok(true),
+        Ok("0") | Err(std::env::VarError::NotPresent) => Ok(false),
+        _ => eyre::bail!("OPS_APPROVALS must be 1 (enabled) or 0 (disabled)"),
+    }
+}
+
+#[cfg(test)]
+mod config_tests {
+    use super::*;
+
+    #[test]
+    fn an_invalid_enable_flag_must_not_silently_disable_enforcement() {
+        assert!(approvals_enabled(Ok("1".into())).unwrap());
+        assert!(!approvals_enabled(Ok("0".into())).unwrap());
+        assert!(!approvals_enabled(Err(std::env::VarError::NotPresent)).unwrap());
+        for value in ["true", "yes", "", " 1", "2"] {
+            assert!(approvals_enabled(Ok(value.into())).is_err());
+        }
+        assert!(approvals_enabled(Err(std::env::VarError::NotUnicode("bad".into()))).is_err());
+    }
 }

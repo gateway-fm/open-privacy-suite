@@ -1,3 +1,6 @@
+Current supported source, build artifacts and operations: [node-approvals](../../node-approvals/README.md).
+This directory retains scenario fixtures and historical measurements.
+
 # OPS signed approvals on Besu 26.8.1: a standalone plugin, no Besu patch
 
 Branch `poc/ops-besu-signed-approvals`. Companion to the Reth PoC (`poc/ops-reth-signed-approvals`)
@@ -228,7 +231,7 @@ Go from `go.mod`, Python 3, Foundry `cast`, solc 0.8.35, the Besu 26.8.1 release
 
 ```sh
 export JAVA_HOME=$PWD/.tmp/jdk25/jdk-25.0.4.1+1/Contents/Home
-(cd poc/besu-signed-approvals && gradle --no-daemon build)      # unit tests + JAR
+gradle -p node-approvals/besu --no-daemon check assemble      # unit tests + JAR
 go test ./internal/nodeapproval/
 python3 poc/besu-signed-approvals/run.py                         # full suite (25 checks), ~5 min
 python3 poc/besu-signed-approvals/run.py same_block_target_change
@@ -333,12 +336,12 @@ that serves users; the same holds for the delivery port above.
 Demo and benchmarks: [demo.py](demo.py), headless load [gasstorm.py](gasstorm.py), the dashboard
 session [gasstorm_ui.py](gasstorm_ui.py) + [run_ui_case.sh](run_ui_case.sh) (see [DEMO.md](DEMO.md)).
 
-Code map: [gate](src/main/java/ops/approvals/ApprovalSelector.java) ·
-[tracer](src/main/java/ops/approvals/ApprovalTracer.java) ·
-[encoder](src/main/java/ops/approvals/CallsFingerprint.java) ·
-[ingress checks](src/main/java/ops/approvals/ApprovalIngress.java) ·
-[gRPC service](src/main/java/ops/approvals/ApprovalServer.java) ·
-[store](src/main/java/ops/approvals/ApprovalStore.java) ·
-[preflight RPC](src/main/java/ops/approvals/PrepareApprovalRpc.java) ·
-[plugin wiring](src/main/java/ops/approvals/OpsApprovalPlugin.java) ·
+Code map: [gate](../../node-approvals/besu/src/main/java/ops/approvals/ApprovalSelector.java) ·
+[tracer](../../node-approvals/besu/src/main/java/ops/approvals/ApprovalTracer.java) ·
+[encoder](../../node-approvals/besu/src/main/java/ops/approvals/CallsFingerprint.java) ·
+[ingress checks](../../node-approvals/besu/src/main/java/ops/approvals/ApprovalIngress.java) ·
+[gRPC service](../../node-approvals/besu/src/main/java/ops/approvals/ApprovalServer.java) ·
+[store](../../node-approvals/besu/src/main/java/ops/approvals/ApprovalStore.java) ·
+[preflight RPC](../../node-approvals/besu/src/main/java/ops/approvals/PrepareApprovalRpc.java) ·
+[plugin wiring](../../node-approvals/besu/src/main/java/ops/approvals/OpsApprovalPlugin.java) ·
 [OPS Besu mode](../../internal/nodeapproval/besu.go) · [harness](harness.py) · [scenarios](run.py).

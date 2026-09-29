@@ -7,7 +7,7 @@ cd "$DEMO_ROOT"
 # Prefer the shared cache of the earlier PoC on this workstation; portable
 # setup.py builds use .tmp/approval-target. An explicit binary always wins.
 if [[ -z "${OPS_RETH_BINARY:-}" ]]; then
-  for candidate in "$DEMO_ROOT/.tmp/approval-target/release/ops-reth-approvals-poc" \
+  for candidate in "$DEMO_ROOT/.tmp/approval-target/release/ops-reth-approvals" \
     "$DEMO_ROOT/../../reth-policy-poc/target/release/ops-reth-approvals-poc"; do
     if [[ -x "$candidate" ]]; then export OPS_RETH_BINARY="$candidate"; break; fi
   done

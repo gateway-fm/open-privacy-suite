@@ -41,7 +41,7 @@ LINEA_SELECTOR_OPTIONS = [
     "--plugin-linea-min-margin", "0.0",
 ]
 JAVA_HOME = Path(os.environ.get("OPS_JAVA_HOME", str(next(iter(sorted((ROOT / ".tmp/jdk25").glob("jdk-25*"))), Path("/nonexistent")) / "Contents/Home")))
-PLUGIN_JAR = HERE / "build/libs/ops-besu-approvals.jar"
+PLUGIN_JAR = ROOT / "node-approvals/besu/build/libs" / ("ops-besu-approvals-" + (ROOT / "node-approvals/VERSION").read_text().strip() + "-besu-26.8.1.jar")
 CLIENT = ROOT / ".tmp/besu-approval-client"
 CHAIN_ID = 31337
 ZERO = "0x" + "00" * 32
@@ -218,7 +218,7 @@ class Node:
             args += ["--Xplugins-external-enabled=false"]
         args += list(extra)
         env = dict(os.environ, JAVA_HOME=str(JAVA_HOME), PATH=f"{JAVA_HOME}/bin:" + os.environ["PATH"],
-                   JAVA_OPTS="-Xmx2g")
+                   JAVA_OPTS="-Xmx2g", OPS_APPROVAL_DIAGNOSTICS=os.environ.get("OPS_APPROVAL_DIAGNOSTICS", "1"))
         self.log = open(self.log_path, "ab")
         self.process = subprocess.Popen(args, stdout=self.log, stderr=subprocess.STDOUT, env=env, cwd=self.directory)
         if expect_exit:
