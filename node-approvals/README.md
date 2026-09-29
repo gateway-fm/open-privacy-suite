@@ -26,6 +26,11 @@ unstable: another Besu version needs a new build and the full compatibility suit
 the JAR into a different version. Reth dependencies resolve from `.tmp/reth`; `build.py` clones
 and verifies the exact upstream commit and refuses a modified checkout. Cargo is locked.
 
+The Besu plugin verifies Ed25519 signatures with Bouncy Castle 1.84, already provided by the
+supported Besu distribution. The plugin compiles against that version and does not bundle another
+copy or change global Java security providers. This optimization requires no Besu source patch,
+sender batching delay or increase in verification workers.
+
 From the repository root, with the toolchain on PATH (and JAVA_HOME for Besu):
 
 ```sh
@@ -74,3 +79,11 @@ These are development measurements for that machine, workload and configuration,
 the solution or production throughput guarantees**. They precede the main rebase and subsequent
 hardening; they have not been relabelled as measurements of this release build. See the
 [full report](../poc/approval-performance/README.md) for receipt checks, overload latency and sizing.
+
+The [29 September Besu verifier comparison](../poc/approval-performance/BESU-VERIFIER-2026-09-29.md)
+measured **2,256 TPS with the original verifier, 2,324 with the optimized verifier and 2,869
+with approvals disabled**, using current code, normal-path approval diagnostics disabled and
+an HTTP node connection cap of 256 in every case. That cap is a benchmark setting, not a new
+production default. The [separate logging comparison](../poc/approval-performance/BESU-BASELINE-2026-09-29.md)
+identifies a large effect from disabling approval success/timing logs during earlier hardening.
+The historical-to-current TPS increase must not be attributed entirely to the verifier change.

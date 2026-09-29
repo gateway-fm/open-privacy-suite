@@ -58,8 +58,23 @@ Go `govulncheck` v1.5.0 scanned with the actual Go 1.26.6 toolchain: no reachabl
 vulnerabilities. It reports the unused `golang.org/x/crypto/openpgp` maintenance/design advisory
 [GO-2026-5932](https://pkg.go.dev/vuln/GO-2026-5932) at module level.
 
-OSV scan: 65 resolved Besu compile/runtime coordinates had no findings. The corrected Rust
-lockfile has 854 registry packages; its remaining notices are explicitly recorded in
+The verifier follow-up makes Besu's existing Bouncy Castle 1.84 an explicit compile dependency.
+OSV now scans **66** resolved Besu compile/runtime coordinates and reports two advisories in
+that library: [X.509 name-constraint bypass](https://github.com/advisories/GHSA-9pwp-9qqc-pr26)
+and [lazy ASN.1 parsing recursion](https://github.com/advisories/GHSA-qp49-qgx5-5m26), both fixed
+upstream in 1.85. Source review of the [name-constraint fix](https://github.com/bcgit/bc-java/commit/2c28b25)
+and [ASN.1 fix](https://github.com/bcgit/bc-java/commit/77454da) found neither path reachable
+from `ApprovalVerifier`: its direct `math.ec.rfc8032.Ed25519.verify` call consumes a raw
+32-byte key, 64-byte signature and bounded message. That implementation uses byte decoding,
+curve arithmetic and SHA-512; it does not invoke certificate validation or ASN.1 parsing.
+The plugin registers no global security provider and bundles no copy of Bouncy Castle.
+These two exact-version exceptions are recorded with a deadline in the review file below.
+This is a narrow source-based assessment of the approval API, **not clearance of other Besu
+certificate, TLS or ASN.1 uses**. Updating the host library requires a supported Besu version
+and renewed compatibility checks; adding another copy to the plugin would not update Besu's
+parent classloader. The initial scan previously covered 65 coordinates and had no findings.
+
+The corrected Rust lockfile has 854 registry packages; its remaining notices are explicitly recorded in
 [`advisory-review.json`](../../node-approvals/advisory-review.json), with a recheck deadline.
 Four are upstream maintenance notices. The remaining
 [LRU advisory](https://rustsec.org/advisories/RUSTSEC-2026-0253.html) requires a panicking key
@@ -88,6 +103,13 @@ native libraries or deployment infrastructure. Upstream clients and deployment i
 their normal security maintenance.
 
 ## Validation record
+
+The [Besu verifier follow-up](../../poc/approval-performance/BESU-VERIFIER-2026-09-29.md)
+records the subsequent switch to the host's Bouncy Castle Ed25519 implementation. Its
+local checks passed 105 Java tests (including 151 Wycheproof cases), all 26 real-Besu
+scenario checks and all four OPS HTTP checks. Thin-JAR checks confirm that the dependency
+is provided by Besu. The change keeps immediate sending, two verification workers and
+eight outstanding delivery calls. Its dependency review is included above.
 
 Local validation uses disposable databases and loopback-only nodes on an Apple M2 Max, macOS
 26.6.1. The unrelated workspace and its services are not test targets. Compact final results are

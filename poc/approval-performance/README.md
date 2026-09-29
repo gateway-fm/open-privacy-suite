@@ -1,5 +1,12 @@
 # Development measurements: approval performance and retention
 
+The [29 September verifier follow-up](BESU-VERIFIER-2026-09-29.md) covers the Besu plugin's
+switch from JDK Ed25519 to Besu's existing Bouncy Castle implementation, with a fresh
+comparison and security/compatibility results. The measurements below retain their
+original versions and settings; the Besu results here use the former JDK verifier.
+The [baseline explanation](BESU-BASELINE-2026-09-29.md) separately measures the cost of
+approval logging that was disabled before that verifier comparison.
+
 Measured on 25 September 2026. **These results describe one development workstation and
 workload, not a limit of the solution or a production throughput guarantee.** The baseline
 comparison measured Reth at 2,639 TPS without approvals / 1,962 with approvals, and Besu at
@@ -7,9 +14,9 @@ comparison measured Reth at 2,639 TPS without approvals / 1,962 with approvals, 
 as adequate for the initial release on 29 September; 5,000 full-stack TPS is not a release
 requirement. They precede the main rebase and subsequent hardening.
 
- **The approval delivery component can keep up with
+ **In these historical tests, the approval delivery component could keep up with
 5,000 approvals/sec on this machine; the complete transaction stack has not
-demonstrated 5,000 committed TPS.** Besu needed four verification workers to avoid
+demonstrated 5,000 committed TPS.** The original Besu verifier needed four workers to avoid
 a growing delivery backlog. Its default remains two, with a new bounded operator
 setting, `--plugin-ops-approval-verify-workers=1..32`, matching Reth's existing
 `OPS_APPROVAL_VERIFY_WORKERS` setting.

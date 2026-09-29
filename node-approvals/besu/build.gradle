@@ -14,6 +14,8 @@ def besuVersion = '26.8.1-d97cbd6'
 // never bundles them.
 def grpcVersion = '1.79.0'
 def nettyVersion = '4.2.17.Final'
+// The verifier uses Besu's existing crypto library; do not bundle or relocate another copy.
+def bouncycastleVersion = '1.84'
 // Besu does not ship protobuf-java; the plugin bundles it, relocated. protoc and the runtime must be
 // the same release: generated code checks its runtime version.
 def protobufVersion = '4.32.1'
@@ -45,6 +47,7 @@ dependencies {
   compileOnly 'org.slf4j:slf4j-api:2.0.17'
   compileOnly 'com.fasterxml.jackson.core:jackson-annotations:2.19.0'
   compileOnly 'com.google.auto.service:auto-service-annotations:1.1.1'
+  compileOnly "org.bouncycastle:bcprov-jdk18on:${bouncycastleVersion}"
   annotationProcessor 'com.google.auto.service:auto-service:1.1.1'
   compileOnly enforcedPlatform("io.netty:netty-bom:${nettyVersion}")
   compileOnly "io.grpc:grpc-api:${grpcVersion}"
@@ -65,6 +68,7 @@ dependencies {
   testImplementation 'info.picocli:picocli:4.7.7'
   testImplementation 'org.slf4j:slf4j-api:2.0.17'
   testImplementation 'com.fasterxml.jackson.core:jackson-databind:2.19.0'
+  testImplementation "org.bouncycastle:bcprov-jdk18on:${bouncycastleVersion}"
   // The runtime Besu gives the plugin: the same gRPC and Netty, for the in-process round trips.
   testImplementation enforcedPlatform("io.netty:netty-bom:${nettyVersion}")
   testImplementation "io.grpc:grpc-api:${grpcVersion}"
