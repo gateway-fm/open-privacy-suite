@@ -14,7 +14,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: node-approvals-${{ github.workflow }}-${{ github.ref }}
+  group: node-approvals-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
@@ -43,7 +43,20 @@ jobs:
         if: matrix.node == 'besu'
         with:
           distribution: temurin
-          java-version: '25.0.4.1+1'
+          # Adoptium's SemVer encoding of Temurin 25.0.4.1+1 (four-part
+          # OpenJDK versions are not accepted directly by setup-java).
+          java-version: '25.0.4+101.0.LTS'
+      - name: Verify exact JDK release
+        if: matrix.node == 'besu'
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          expected = json.loads(Path('node-approvals/compatibility.json').read_text())['besu']['java']
+          release = (Path(os.environ['JAVA_HOME']) / 'release').read_text().splitlines()
+          if f'IMPLEMENTOR_VERSION="Temurin-{expected}"' not in release:
+              raise SystemExit('installed JDK differs from compatibility.json')
+          PY
       - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d # v4
         if: matrix.node == 'besu'
         with:

@@ -67,6 +67,16 @@ destructor: the pinned alloy-provider 2.3.0 caches use `u64` or `B256` keys, whi
 That is a source-based reachability assessment, not a claim that every use of lru 0.16.4 is safe.
 The other LRU dependency is fixed. New advisories, changed versions or an expired review fail CI.
 
+A broader `npm audit` of the frontend on this same date reports **48 affected package entries**
+(2 critical, 19 high, 25 moderate, 2 low); `--omit=dev` reports **29** (7 high, 21 moderate,
+1 low). These counts include transitive propagation and are not counts of demonstrated exploits.
+Both frontend package files are identical to the reviewed main baseline. The critical entries
+are Vitest/coverage development tooling; production-tree findings include router redirects,
+wallet dependencies and CSS tooling. They require a separate frontend dependency/reachability
+review and are **not cleared by this approval review**. The native approval bundles contain no
+frontend dependencies. An approval candidate passing its own gates does not establish that a
+complete OPS application release has a clean dependency audit.
+
 The scans cover resolved coordinates/registry packages and Go call reachability as described.
 They are not scans of the entire Besu distribution, optional third-party plugins, OS images,
 native libraries or deployment infrastructure. Upstream clients and deployment images also need

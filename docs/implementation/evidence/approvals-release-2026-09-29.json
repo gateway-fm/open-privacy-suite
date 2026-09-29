@@ -539,5 +539,26 @@
   "artifacts": {
     "ops-reth-approvals": "98dc65edcd79f06ec520e4e197ae5bcb6045b46d3e6d5177179894aa7a06e97f",
     "ops-besu-approvals-0.1.0-besu-26.8.1.jar": "c41a9ca903606aa5e6a1c0f75c3794085d4060eb40b9451181a9da036379b986"
+  },
+  "frontend_dependency_audit": {
+    "scope": "Inherited unchanged from main; findings remain open and are outside native approval bundles.",
+    "all": {
+      "info": 0,
+      "low": 2,
+      "moderate": 25,
+      "high": 19,
+      "critical": 2,
+      "total": 48
+    },
+    "omit_dev": {
+      "info": 0,
+      "low": 1,
+      "moderate": 21,
+      "high": 7,
+      "critical": 0,
+      "total": 29
+    },
+    "lockfile_sha256": "9dc22a0fbbacd2be96ef8f7c667ff901fd8134e824e1c2a1a00e3d0a7ed02c16",
+    "counts": "Affected package entries, including transitive propagation; not demonstrated exploit counts."
   }
 }
