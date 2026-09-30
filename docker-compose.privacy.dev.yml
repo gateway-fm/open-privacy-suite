@@ -210,6 +210,7 @@ services:
       - OAUTH_FIRST_PARTY_CLIENTS=${OAUTH_FIRST_PARTY_CLIENTS:-}  # RD-993 + RD-1006: <client_id>:<bcrypt_hash>,... — see .env.production.example
       # Org-admin volume/timing audit view of user↔user txs (default off = strict privacy).
       - ORG_ADMIN_VIEW_USER_TXS=${ORG_ADMIN_VIEW_USER_TXS:-false}
+      - PRIVACY_READ_PROFILE=${PRIVACY_READ_PROFILE:-}
       - INDEXER_URL=chain-indexer:50051
       - EXPLORER_DATABASE_URL=postgres://postgres:${INDEXER_POSTGRES_PASSWORD:?INDEXER_POSTGRES_PASSWORD is required in privacy mode}@indexer-postgres:5432/chain_indexer?sslmode=disable
       # DEV-ONLY: mock-login + mock-signatures. Both runtime-gated AND

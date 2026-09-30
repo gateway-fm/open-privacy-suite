@@ -701,6 +701,10 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	// mints to the viewer left them unable to see their own tx.
 	wireExplorerRedactor(s.explorerRedactor, database, s.rbacAccessCtrl, explorerBackend, cfg.ExplorerPseudonymKey)
 
+	// RD-1299: record the enforced read privacy profile (and warn when strict
+	// overrides ORG_ADMIN_VIEW_USER_TXS) so the effective policy is in the log.
+	s.logReadProfile()
+
 	// Start background explorer DB reconnection if initial connection failed
 	if cfg.ExplorerDatabaseURL != "" && explorerSQL == nil {
 		go s.explorerReconnectLoop(cfg.ExplorerDatabaseURL, database, cfg.IndexerURL)
@@ -1258,6 +1262,10 @@ func (s *Server) setupRouter() *gin.Engine {
 			// RD-1023: build identity of the running binary. Read-only,
 			// admin-gated; intentionally not on /health or web3_clientVersion.
 			system.GET("/version", s.handleGetVersion)
+
+			// RD-1299: effective read privacy profile (PRIVACY_READ_PROFILE)
+			// and the effective org-admin audit view. Read-only, any admin.
+			system.GET("/read-profile", s.handleGetReadProfile)
 		}
 	}
 

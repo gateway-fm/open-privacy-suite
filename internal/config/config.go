@@ -17,6 +17,7 @@ import (
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/netguard"
 	"privacy-proxy/internal/proxy"
+	"privacy-proxy/internal/rbac"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -380,6 +381,14 @@ type Config struct {
 	// actually reveals a row under this flag is written to rbac_audit_log.
 	OrgAdminViewUserTxs bool
 
+	// ReadProfile (PRIVACY_READ_PROFILE) selects the deployment-wide read
+	// privacy policy for transactions, receipts and events on JSON-RPC and the
+	// Explorer Data API: "standard" (default) or "strict" (participant-only
+	// transactions and receipts, indexed-self events). Fixed at startup; an
+	// unknown value refuses to start. Under strict, ORG_ADMIN_VIEW_USER_TXS has
+	// no effect (see Server.orgAdminViewUserTxsEffective).
+	ReadProfile rbac.ReadProfile
+
 	// Retention policy configuration (0 = keep forever)
 	RetentionAccessLogs      time.Duration // Retention for access_logs (default: 90 days)
 	RetentionComplianceLogs  time.Duration // Retention for compliance_logs (default: 7 years)
@@ -598,6 +607,16 @@ func Load() *Config {
 	// Org-admin elevated transaction visibility (default off = strict privacy).
 	orgAdminViewUserTxs := getEnv("ORG_ADMIN_VIEW_USER_TXS", "false") == "true"
 
+	// Read privacy profile (RD-1299). Unset (environment empty and absent from
+	// CONFIG_FILE) = standard; anything other than "standard"/"strict" —
+	// including a whitespace-only value — refuses to start, so a typo cannot
+	// select a policy.
+	readProfileRaw := getEnv("PRIVACY_READ_PROFILE", "standard")
+	readProfile, err := rbac.ParseReadProfile(readProfileRaw)
+	if err != nil {
+		panic(fmt.Sprintf("PRIVACY_READ_PROFILE: %v", err))
+	}
+
 	// Retention policy configuration
 	retentionAccessLogs := parseDurationEnv("RETENTION_ACCESS_LOGS", 90*24*time.Hour)            // 90 days
 	retentionComplianceLogs := parseDurationEnv("RETENTION_COMPLIANCE_LOGS", 7*365*24*time.Hour) // ~7 years
@@ -805,6 +824,7 @@ func Load() *Config {
 		DisableCoinGecko:                    disableCoinGecko,
 		AuditLogParams:                      auditLogParams,
 		OrgAdminViewUserTxs:                 orgAdminViewUserTxs,
+		ReadProfile:                         readProfile,
 		RetentionAccessLogs:                 retentionAccessLogs,
 		RetentionComplianceLogs:             retentionComplianceLogs,
 		RetentionRBACAuditLogs:              retentionRBACAuditLogs,

@@ -1718,6 +1718,23 @@ components:
         security:
           $ref: '#/components/schemas/privacy-proxy_internal_apimodels.SecurityStatus'
       type: object
+    privacy-proxy_internal_apimodels.SystemReadProfileResponse:
+      properties:
+        org_admin_view_user_txs:
+          description: |-
+            OrgAdminViewUserTxs is whether the org-admin audit view is in effect
+            (always false under the strict profile).
+          type: boolean
+        org_admin_view_user_txs_configured:
+          description: |-
+            OrgAdminViewUserTxsConfigured is the configured ORG_ADMIN_VIEW_USER_TXS
+            value, reported so an overridden setting is visible.
+          type: boolean
+        profile:
+          description: 'Profile is the enforced read profile: "standard" or "strict".'
+          example: strict
+          type: string
+      type: object
     privacy-proxy_internal_apimodels.SystemToggleRequest:
       properties:
         enabled:
@@ -8740,6 +8757,39 @@ paths:
       security:
       - AdminToken: []
       summary: Toggle intra-org grant tracing
+      tags:
+      - 'Admin: system'
+  /api/v1/admin/system/read-profile:
+    get:
+      description: Effective deployment-wide read privacy profile (PRIVACY_READ_PROFILE,
+        fixed at startup) and the effective state of the org-admin audit view (ORG_ADMIN_VIEW_USER_TXS).
+        Under "strict", transactions and receipts are returned only to a transaction
+        participant and an event only when an indexed address parameter of its registered
+        ABI is one of the viewer's linked addresses; the org-admin audit view is then
+        always off, whatever ORG_ADMIN_VIEW_USER_TXS says. Read-only; any admin the
+        middleware admits.
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/privacy-proxy_internal_apimodels.SystemReadProfileResponse'
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
+          description: missing or invalid admin token
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
+          description: source address not on the private network
+      security:
+      - AdminToken: []
+      summary: Get the read privacy profile
       tags:
       - 'Admin: system'
   /api/v1/admin/system/version:

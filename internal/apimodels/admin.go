@@ -109,6 +109,20 @@ type SystemVersionResponse struct {
 	BuildTime string `json:"build_time"`
 }
 
+// SystemReadProfileResponse is the GET /api/v1/admin/system/read-profile
+// shape: the effective read privacy profile and the effective state of the
+// org-admin audit view it may override.
+type SystemReadProfileResponse struct {
+	// Profile is the enforced read profile: "standard" or "strict".
+	Profile string `json:"profile" example:"strict"`
+	// OrgAdminViewUserTxs is whether the org-admin audit view is in effect
+	// (always false under the strict profile).
+	OrgAdminViewUserTxs bool `json:"org_admin_view_user_txs"`
+	// OrgAdminViewUserTxsConfigured is the configured ORG_ADMIN_VIEW_USER_TXS
+	// value, reported so an overridden setting is visible.
+	OrgAdminViewUserTxsConfigured bool `json:"org_admin_view_user_txs_configured"`
+}
+
 // SystemToggleRequest is the request body for the system on/off toggle POSTs
 // (eth_call tracing, intra-org grant scoping). Shared shape.
 type SystemToggleRequest struct {

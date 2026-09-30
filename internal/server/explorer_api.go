@@ -338,7 +338,9 @@ func (s *Server) buildRedactOptsForViewer(ctx context.Context, viewerDID string)
 // pointer through opts; auditAdminUserTxView and auditGrantFullReveal
 // inspect their respective fields.
 func (s *Server) applyAdminTxView(opts *explorer.RedactOpts) {
-	opts.OrgAdminViewUserTxs = s.config.OrgAdminViewUserTxs
+	// Strict wins (RD-1299): the audit view never applies under the strict
+	// read profile, whatever ORG_ADMIN_VIEW_USER_TXS says.
+	opts.OrgAdminViewUserTxs = s.orgAdminViewUserTxsEffective()
 	if opts.Stats == nil {
 		opts.Stats = &explorer.RedactStats{}
 	}
