@@ -8,7 +8,15 @@ groups:
           severity: warning
         annotations:
           summary: "OPS cannot deliver approvals to a configured producer"
-          description: "Check producer availability, network access, chain and trusted key ids. Keep surviving OPS processes alive for replay."
+          description: "Check producer availability and network access. Keep surviving OPS processes alive for replay."
+      - alert: ApprovalProducerNotReady
+        expr: privacyproxy_approval_target_ready == 0 and on (job, instance, target) privacyproxy_approval_target_connected == 1
+        for: 30s
+        labels:
+          severity: warning
+        annotations:
+          summary: "A connected approval producer is not ready for OPS submissions"
+          description: "Check the producer's Status response, signing key id, maximum TTL and chain id once OPS has learned it. A connected target without a recent compatible Status cannot admit approvals."
       - alert: ApprovalDeliveryLost
         expr: sum by (instance, target, reason) (increase(privacyproxy_approval_dropped_total[5m])) > 0
         labels:

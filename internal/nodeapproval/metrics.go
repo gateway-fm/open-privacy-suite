@@ -1,6 +1,10 @@
 package nodeapproval
 
-import "github.com/prometheus/client_golang/prometheus"
+import (
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+)
 
 const metricsNamespace = "privacyproxy"
 
@@ -29,6 +33,7 @@ type deliveryMetrics struct {
 	mismatches   *prometheus.CounterVec
 	inFlight     *prometheus.GaugeVec
 	connected    *prometheus.GaugeVec
+	ready        *prometheus.Desc
 	latency      *prometheus.HistogramVec
 	retained     prometheus.Gauge
 	evicted      prometheus.Counter
@@ -77,6 +82,9 @@ func newDeliveryMetrics() *deliveryMetrics {
 			Name:      "approval_target_connected",
 			Help:      "1 while the connection to the target is ready, else 0.",
 		}, []string{"target"}),
+		ready: prometheus.NewDesc("privacyproxy_approval_target_ready",
+			"1 when the target has answered Status recently with a matching signing key id, usable maximum TTL and OPS's chain ID once known; 0 otherwise. This does not prove block-production enforcement.",
+			[]string{"target"}, nil),
 		latency: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Namespace: metricsNamespace,
 			Name:      "approval_delivery_seconds",
@@ -115,6 +123,7 @@ func (s *Service) Describe(ch chan<- *prometheus.Desc) {
 	for _, c := range s.metrics.collectors() {
 		c.Describe(ch)
 	}
+	ch <- s.metrics.ready
 }
 
 func (s *Service) Collect(ch chan<- prometheus.Metric) {
@@ -123,5 +132,15 @@ func (s *Service) Collect(ch chan<- prometheus.Metric) {
 	}
 	for _, c := range s.metrics.collectors() {
 		c.Collect(ch)
+	}
+	// Compute readiness at scrape time. A Status answer can expire while the TCP
+	// connection stays open, with no event to update a stored gauge.
+	now, chain := time.Now().UnixNano(), s.chainID.Load()
+	for _, l := range s.lanes {
+		value := 0.0
+		if now < l.readyUntil.Load() && (chain == 0 || l.readyChain.Load() == chain) {
+			value = 1
+		}
+		ch <- prometheus.MustNewConstMetric(s.metrics.ready, prometheus.GaugeValue, value, l.target)
 	}
 }

@@ -33,10 +33,14 @@ For Reth set `OPS_APPROVALS=1`, `OPS_APPROVAL_LISTEN=address:port`,
 The chain id must match the node. Reth rejects an invalid enable flag; absent/`0` intentionally
 disables its gate for ordinary-node operation, so deployment templates must explicitly require `1`.
 
-Before admitting traffic, verify every producer's activation log, chain/key compatibility and
-OPS `privacyproxy_approval_target_connected{target=...}=1`. On a disposable canary, submit an
-unapproved transaction directly: it must never enter a block. Then submit through OPS and verify
-a successful receipt. A successful delivery acknowledgement alone is not proof of enforcement.
+Before admitting traffic, verify every producer's activation log and OPS
+`privacyproxy_approval_target_ready{target=...}=1`. The separate
+`privacyproxy_approval_target_connected` gauge only reports transport connectivity; a connected
+producer can still have a missing or incompatible Status response. OPS learns the chain ID during
+the first preflight, so verify the reported chain ID explicitly before traffic. On a disposable
+canary, submit an unapproved transaction directly: it must never enter a block. Then submit through
+OPS and verify a successful receipt. A successful delivery acknowledgement alone is not proof of
+enforcement.
 
 ## Network and API boundary
 
@@ -88,12 +92,13 @@ M2 Max throughput numbers are development comparisons, not solution limits or a 
 must not create an OPS restart loop that also discards recovery copies. Read operations may stay
 available while submission is degraded. OPS rejects new raw submissions with 503 before simulation
 when no compatible producer is ready. With multiple targets, at least one compatible connected
-producer admits submissions; a disconnected standby is still an operational alert.
+producer admits submissions; a disconnected or incompatible standby is still an operational alert.
 
 Scrape OPS `/metrics`, Besu's metrics endpoint with category `ops_approval`, and Reth's private
 `--metrics address:port` endpoint. Reth exports approval store/counter metrics once per second,
 independent of block activity. [alerts.yml](alerts.yml) supplies starting rules for disconnection,
-loss of unconfirmed approvals, retention eviction, retries and receiver overload. Add a normal
+connected targets without a recent compatible Status, loss of unconfirmed approvals, retention
+eviction, retries and receiver overload. Add a normal
 Prometheus target-missing alert: a missing series is not a healthy zero. Route alerts to the
 existing operations system and set thresholds against measured delivery latency and the wait
 window; alerts do not define an automatic retry or failover policy.

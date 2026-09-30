@@ -51,6 +51,55 @@ func TestConfirmedApprovalsCountMembersAfterSuccessIncludingRedelivery(t *testin
 	}
 }
 
+func TestTargetReadyMetricTracksStatusWithoutRequiringStartOrder(t *testing.T) {
+	p := newProducer(t, "producer-a:1", "boot-a")
+	p.stop()
+	s := startDelivery(t, time.Minute, testDelivery(p))
+	registry := prometheus.NewRegistry()
+	registry.MustRegister(s)
+	ready := func() float64 {
+		t.Helper()
+		families, err := registry.Gather()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, family := range families {
+			if family.GetName() != "privacyproxy_approval_target_ready" {
+				continue
+			}
+			if len(family.GetMetric()) != 1 {
+				t.Fatalf("ready metric has %d targets, want 1", len(family.GetMetric()))
+			}
+			return family.GetMetric()[0].GetGauge().GetValue()
+		}
+		t.Fatal("ready metric is missing")
+		return 0
+	}
+	if got := ready(); got != 0 {
+		t.Fatalf("ready before the producer starts = %v, want 0", got)
+	}
+	p.start()
+	waitUntil(t, 3*time.Second, "a late producer becomes ready", func() bool { return ready() == 1 })
+	// Enqueue normally learns this chain from the first prepared transaction.
+	s.chainID.Store(31337)
+	p.set(func(p *producer) { p.chain = 1 })
+	waitUntil(t, 2*time.Second, "a wrong-chain Status removes readiness", func() bool { return ready() == 0 })
+	p.set(func(p *producer) { p.chain = 31337 })
+	waitUntil(t, 2*time.Second, "the matching chain restores readiness", func() bool { return ready() == 1 })
+
+	p.set(func(p *producer) { p.keys = []string{"rotated"} })
+	waitUntil(t, 2*time.Second, "an incompatible Status removes readiness", func() bool {
+		return ready() == 0 && value(t, s.metrics.connected.WithLabelValues(p.name)) == 1
+	})
+	p.set(func(p *producer) { p.keys = []string{"default"} })
+	waitUntil(t, 2*time.Second, "compatible Status restores readiness", func() bool { return ready() == 1 })
+
+	p.set(func(p *producer) { p.statusErr = codes.Unavailable })
+	waitUntil(t, 2*time.Second, "an unanswered Status expires readiness", func() bool {
+		return ready() == 0 && value(t, s.metrics.connected.WithLabelValues(p.name)) == 1
+	})
+}
+
 func TestDeliveryConfirmsEachBatchOnOneConnection(t *testing.T) {
 	p := newProducer(t, "producer-a:1", "boot-a")
 	s := startDelivery(t, time.Minute, testDelivery(p))
