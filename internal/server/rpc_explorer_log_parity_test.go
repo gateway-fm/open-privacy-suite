@@ -171,7 +171,7 @@ func TestRPCExplorerLogParity_VisibleToUnlock_RD1300(t *testing.T) {
 	render := func(t *testing.T) (exTopics []string, exData string, rpcTopics []string, rpcData string) {
 		t.Helper()
 		exOut, err := engine.RedactLogsWithOpts(ctx, []explorer.Log{{ID: 1, Address: emitter, TxHash: txHash, Topic0: &sig, Topic1: &payerTopic, Data: data}},
-			viewerDID, &explorer.RedactOpts{VisibleTxHashes: map[string]bool{txHash: true}})
+			viewerDID, &explorer.RedactOpts{VisibleTxHashes: map[string]bool{txHash: true}, ListedTxHashes: map[string]bool{txHash: true}})
 		require.NoError(t, err)
 		require.Len(t, exOut, 1)
 		exTopics = []string{strings.ToLower(*exOut[0].Topic0), strings.ToLower(*exOut[0].Topic1)}

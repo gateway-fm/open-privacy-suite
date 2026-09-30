@@ -428,6 +428,12 @@ func TestVisibleToUnlockFullPayload_CrossLayer_RD1300(t *testing.T) {
 		f.requireSurfaces(t, recipient, tx2, nil, "tx2 not listed: must_be=self fails, no fallback")
 		f.requireSurfaces(t, recipient2, tx2, nil, "tx2 not listed: deny-all")
 	})
+	t.Run("flag on: a token-transfer party of a later tx is not 'listed' (RD-1009 union must not trigger the unlock)", func(t *testing.T) {
+		f.requireSurfaces(t, recipient2, tx3, nil, "tx3 not in tx_visible_to; deny-all rules must stand")
+	})
+	t.Run("flag on: the flagged contract being a token-transfer party does not unlock unlisted txs", func(t *testing.T) {
+		f.requireSurfaces(t, recipient2, tx4, nil, "tx4 not in tx_visible_to; the granted contract is Full for the viewer, which feeds the RD-1009 union")
+	})
 	t.Run("flag on: one eth_getLogs response spanning listed and unlisted txs unlocks only the listed tx", func(t *testing.T) {
 		got := f.rpcGetLogsMulti(t, recipient2, tx1, tx2, tx3, tx4)
 		assert.Equal(t, map[string][]vtuLog{tx1: {paymentLog.norm()}}, got, "deny-all holder: only tx1's Payments log, exact")
@@ -549,5 +555,16 @@ func TestVisibleToUnlockEligibility_OrgAdmin_RD1300(t *testing.T) {
 		"CURRENT behaviour: org-admin effective access makes the admin unlock-eligible without a contract_grant")
 	f.requireSurfaces(t, admin, listed, []vtuLog{raw}, "org admin listed on a flagged contract: unlock applies on every surface")
 	f.requireSurfaces(t, admin, unlisted, []vtuLog{masked}, "org admin, not listed: admin bypass admits, ordinary masking of user EOAs")
+
+	// Any org contract is Full for an org admin, so a token transfer touching
+	// one feeds the explorer's RD-1009 union. That must not count as a listing.
+	unlistedUnion := "0x" + strings.Repeat("67", 32)
+	f.seedTx(unlistedUnion, f.payer, f.payment, []vtuLog{raw})
+	_, err := f.db.Conn().ExecContext(ctx,
+		`INSERT INTO token_transfers (tx_hash, log_index, token_address, from_address, to_address, value, block_number)
+		 VALUES ($1, 9, $2, $3, $4, 1, 1)`, unlistedUnion, f.payment, f.payment, f.payee)
+	require.NoError(t, err)
+	f.requireSurfaces(t, admin, unlistedUnion, []vtuLog{masked},
+		"org admin, not listed, org contract is a token-transfer party: user EOAs stay masked")
 
 }

@@ -4420,13 +4420,23 @@ func TestRedactLogs_M15_VisibleToUnlockBypass(t *testing.T) {
 
 	topic := eventTopic0("Bridge(address,bytes)")
 	logs := []Log{{ID: 1, Address: addr, TxHash: txHash, Topic0: &topic, Data: "0x"}}
-	opts := &RedactOpts{VisibleTxHashes: map[string]bool{txHash: true}}
+	// The unlock is keyed on the genuine listing (ListedTxHashes, RD-1307);
+	// VisibleTxHashes alone (row survival) never unlocks.
+	opts := &RedactOpts{VisibleTxHashes: map[string]bool{txHash: true}, ListedTxHashes: map[string]bool{txHash: true}}
 	result, err := engine.RedactLogsWithOpts(context.Background(), logs, "did:test", opts)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(result) != 1 {
 		t.Errorf("M15 visibleTo unlock: expected 1 log, got %d", len(result))
+	}
+	unionOnly := &RedactOpts{VisibleTxHashes: map[string]bool{txHash: true}}
+	result, err = engine.RedactLogsWithOpts(context.Background(), logs, "did:test", unionOnly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 0 {
+		t.Errorf("a tx that is only in VisibleTxHashes (e.g. the RD-1009 union) must not unlock: expected 0 logs, got %d", len(result))
 	}
 }
 

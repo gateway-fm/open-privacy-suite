@@ -97,7 +97,8 @@ func TestVisibleToUnlock_Matrix(t *testing.T) {
 			{ID: 1, Address: contractAddr, TxHash: txHash, Topic0: &transferTopic0x, Data: "0x"},
 		}
 	}
-	opts := &explorer.RedactOpts{VisibleTxHashes: map[string]bool{txHash: true}}
+	// Listed = the genuine tx_visible_to listing (ListedTxHashes, RD-1307).
+	opts := &explorer.RedactOpts{VisibleTxHashes: map[string]bool{txHash: true}, ListedTxHashes: map[string]bool{txHash: true}}
 
 	// ----- Case 1: flag OFF — additive behaviour stays. ----------------
 	// Even though alice is in eligible group + listed, deny-all rules

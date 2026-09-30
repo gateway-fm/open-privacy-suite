@@ -294,7 +294,7 @@ PUT /api/orgs/:org_id/contracts/:address/visibleto-unlock
 
 Admin-only on the contract's owning org. Default is `false` -- existing additive behaviour stays unless explicitly opted in.
 
-**When the flag is true and a transaction lists an eligible viewer, that viewer sees every log emitted by this opted-in contract in this one transaction** -- including events absent from their event-rules allowlist, events that fail their parameter rules, and the full event payload with every embedded address in topics and data. `eth_getLogs`, the receipt, and the block explorer's transaction log view return these logs identically. A log emitted by a different contract in the same transaction is checked against **that other contract's** grant and flag. A later transaction is checked against its own `visibleTo` list.
+**When the flag is true and a transaction lists an eligible viewer, that viewer sees every log emitted by this opted-in contract in this one transaction** -- including events absent from their event-rules allowlist, events that fail their parameter rules, and the full event payload with every embedded address in topics and data. `eth_getLogs`, the receipt, and the block explorer's transaction log view return these logs identically. A log emitted by a different contract in the same transaction is checked against **that other contract's** grant and flag. A later transaction is checked against its own `visibleTo` list. Only the sender's listing counts: being a party to a token transfer in a transaction does not unlock that transaction's logs.
 
 ### Example: one call, two emitters
 

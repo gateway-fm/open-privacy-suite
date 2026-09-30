@@ -147,8 +147,8 @@ type AdminContractsResolver interface {
 // addresses where the per-contract `allow_visibleto_unlock` flag is set
 // AND the viewer is eligible for the unlock — both gates from RD-874.
 // The map is consumed by Phase 4 of RedactLogs along with the
-// visibleTxHashes opt: when both the contract is unlockable AND the
-// log's tx hash is in the visibleTo set, the log passes unredacted
+// ListedTxHashes opt: when both the contract is unlockable AND the
+// log's tx hash is one the viewer is genuinely listed on, the log passes unredacted
 // (bypasses event_rules, param_rules, and the deny-when-no-ABI gate).
 //
 // Implementations MUST be org-scoped: a viewer who is in another org
@@ -611,6 +611,14 @@ type RedactOpts struct {
 	// ReasonVisibleToGrant ("Shared") when the reveal is due to participation,
 	// not sharing (RD-1155). A nil map reproduces the pre-RD-1155 labels.
 	ParticipantTxHashes map[string]bool
+
+	// ListedTxHashes is the set of tx hashes whose visibleTo row genuinely
+	// lists the viewer (tx_visible_to only — never the RD-1009
+	// transfer-participant union that also feeds VisibleTxHashes). It is the
+	// only input RedactLogsWithOpts accepts for the RD-874 visibleTo unlock:
+	// an unlock needs the sender to have listed this viewer on this tx
+	// (RD-1307). A nil map unlocks nothing (fail-closed).
+	ListedTxHashes map[string]bool
 
 	// ParentParticipants are the parent transaction's from/to addresses,
 	// threaded into RedactInternalTransactions by the single-hash handler
@@ -2051,9 +2059,10 @@ func (r *RedactionEngine) RedactLogs(ctx context.Context, logs []Log, viewerDID 
 
 // RedactLogsWithOpts is RedactLogs with visibleTo support.
 func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, viewerDID string, opts *RedactOpts, participantAddrs ...string) ([]Log, error) {
-	var visibleTxHashes map[string]bool
+	var visibleTxHashes, listedTxHashes map[string]bool
 	if opts != nil {
 		visibleTxHashes = opts.VisibleTxHashes
+		listedTxHashes = opts.ListedTxHashes
 	}
 	if len(logs) == 0 {
 		return logs, nil
@@ -2306,8 +2315,10 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 		facts := rbac.LogEmitterFacts{
 			// RD-890 admin bypass (per-contract, org-scoped).
 			IsAdmin: adminContracts[contractAddr],
-			// RD-874 visibleTo unlock — the only standalone-grant path.
-			Unlocked: unlockableContracts[contractAddr] && visibleTxHashes[strings.ToLower(l.TxHash)],
+			// RD-874 visibleTo unlock — the only standalone-grant path. Keyed on
+			// the viewer's genuine listing for THIS tx (ListedTxHashes), never on
+			// the RD-1009 transfer-participant union in VisibleTxHashes (RD-1307).
+			Unlocked: unlockableContracts[contractAddr] && listedTxHashes[strings.ToLower(l.TxHash)],
 			// Grant eligibility: a contract grant resolves the emitter to Full
 			// for this viewer (GetBatchVisibilityDetailed). No grant → Redacted
 			// (registered) or Hidden (unregistered/EOA). Load-bearing (RD-1208).
