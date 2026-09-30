@@ -41,7 +41,8 @@ func setupTestServer(t *testing.T) *Server {
 	}
 
 	cfg := &config.Config{
-		NodeURL: "http://localhost:8545",
+		ReadProfile: rbac.ReadProfileStandard,
+		NodeURL:     "http://localhost:8545",
 	}
 
 	proxySvc := proxy.New(cfg.NodeURL)
@@ -166,6 +167,7 @@ func TestLocalhostOnlyMiddleware_TrustedInternalCIDRs(t *testing.T) {
 	// Lightweight test — no DB needed, just test the middleware logic
 	srv := &Server{
 		config: &config.Config{
+			ReadProfile:          rbac.ReadProfileStandard,
 			TrustedInternalCIDRs: []string{"203.0.113.0/24", "2001:db8::/32"},
 		},
 	}

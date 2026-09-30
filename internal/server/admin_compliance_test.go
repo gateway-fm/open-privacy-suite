@@ -85,6 +85,7 @@ func setupTestServerForCompliance(t *testing.T) *testServerCompliance {
 	})
 
 	cfg := &config.Config{
+		ReadProfile: rbac.ReadProfileStandard,
 		NodeURL:     "http://localhost:8545",
 		JWTSecret:   "test-secret-key-for-jwt-signing-123",
 		BaseURL:     "http://localhost:8080",

@@ -74,6 +74,7 @@ func setupTestServerForOAuth(t *testing.T) *Server {
 
 	// Create test config
 	cfg := &config.Config{
+		ReadProfile:        rbac.ReadProfileStandard,
 		VerifierID:         "did:privado:verifier:test",
 		BaseURL:            "http://localhost:8080",
 		Environment:        "development",

@@ -145,7 +145,7 @@ func TestExplorerRedactorWiring_FullStack(t *testing.T) {
 	// resolver-style setter to RedactionEngine without updating
 	// wireExplorerRedactor (and this list), this assertion fires —
 	// before the gap can ship as another silently-disabled resolver.
-	expectedSetters := []string{"SetABIResolver", "SetAdminContractsResolver", "SetDynamicPayloadAllowedResolver", "SetEventRuleChecker", "SetLogParticipantStore", "SetVisibleToUnlockResolver"}
+	expectedSetters := []string{"SetABIResolver", "SetAdminContractsResolver", "SetDynamicPayloadAllowedResolver", "SetEventRuleChecker", "SetLogParticipantStore", "SetTxDataResolver", "SetVisibleToUnlockResolver"}
 	require.Equal(t, sortedStrings(expectedSetters), interfaceTypedSetters(engine),
 		"wireExplorerRedactor must wire every interface-typed Set* method on RedactionEngine; mismatch means a setter was added/removed without updating the helper. See wireExplorerRedactor doc-comment.")
 
@@ -319,4 +319,14 @@ type noopLogParticipantStore struct{}
 
 func (noopLogParticipantStore) FindLogParticipantTxs(_ context.Context, _ []string, _ []string) (map[string]bool, error) {
 	return map[string]bool{}, nil
+}
+
+// GetTransaction / GetLogsByTransaction satisfy explorer.TxDataResolver: no
+// chain data, so the strict profile admits no derived row.
+func (noopLogParticipantStore) GetTransaction(_ context.Context, _ string) (*explorer.Transaction, error) {
+	return nil, nil
+}
+
+func (noopLogParticipantStore) GetLogsByTransaction(_ context.Context, _ string) ([]explorer.Log, error) {
+	return nil, nil
 }

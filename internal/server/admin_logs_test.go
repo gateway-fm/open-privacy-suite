@@ -50,7 +50,7 @@ func setupGetLogsTestServer(t *testing.T) (*Server, *gin.Engine, string) {
 	require.NoError(t, err)
 
 	const adminToken = "test-admin-token"
-	cfg := &config.Config{AdminAPIToken: adminToken}
+	cfg := &config.Config{ReadProfile: rbac.ReadProfileStandard, AdminAPIToken: adminToken}
 
 	srv := &Server{
 		db:             database,

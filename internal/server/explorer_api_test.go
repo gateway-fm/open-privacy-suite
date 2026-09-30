@@ -71,6 +71,7 @@ func setupTestServerForExplorer(t *testing.T) (*Server, *db.DB) {
 	require.NoError(t, err)
 
 	cfg := &config.Config{
+		ReadProfile: rbac.ReadProfileStandard,
 		VerifierID:  "did:privado:verifier:test",
 		BaseURL:     "http://localhost:8080",
 		Environment: "development",
@@ -1532,6 +1533,7 @@ func setupTestServerForExplorerTransactions(t *testing.T) (*Server, *db.DB, *sql
 	require.NoError(t, err)
 
 	cfg := &config.Config{
+		ReadProfile: rbac.ReadProfileStandard,
 		VerifierID:  "did:privado:verifier:test",
 		BaseURL:     "http://localhost:8080",
 		Environment: "development",

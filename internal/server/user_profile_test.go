@@ -48,6 +48,7 @@ func setupTestServerForUserProfile(t *testing.T) (*Server, *gin.Engine) {
 	require.NoError(t, err)
 
 	cfg := &config.Config{
+		ReadProfile:    rbac.ReadProfileStandard,
 		VerifierID:     "did:privado:verifier:test",
 		BaseURL:        "http://localhost:8080",
 		Environment:    "development",

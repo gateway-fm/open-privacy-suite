@@ -36,6 +36,7 @@ func setupTestServerForDevAdmin(t *testing.T) *Server {
 	t.Cleanup(func() { database.Close() })
 
 	cfg := &config.Config{
+		ReadProfile:    rbac.ReadProfileStandard,
 		AllowMockLogin: true,
 	}
 
