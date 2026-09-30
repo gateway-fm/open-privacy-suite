@@ -1654,6 +1654,7 @@ func TestRedactLogs_EventRules_ParamRules_VisibleToOnlyHelpsIfTopic0Matches(t *t
 	logs := []Log{{ID: 1, Address: addr, TxHash: "0xshared", Topic0: &approvalTopic, Data: "0x"}}
 	result, err := engine.RedactLogsWithOpts(context.Background(), logs, "did:test", &RedactOpts{
 		VisibleTxHashes: map[string]bool{"0xshared": true},
+		ListedTxHashes:  map[string]bool{"0xshared": true}, // a genuine listing, so only the rule under test can deny (RD-1307)
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1689,6 +1690,7 @@ func TestRedactLogs_OrdinaryVisibleTo_NoGrantEmitter_RD1208(t *testing.T) {
 		logs := []Log{{ID: 1, Address: addr, TxHash: "0xshared", Topic0: &topic, Data: "0x"}}
 		result, err := engine.RedactLogsWithOpts(context.Background(), logs, "did:test", &RedactOpts{
 			VisibleTxHashes: map[string]bool{"0xshared": true},
+			ListedTxHashes:  map[string]bool{"0xshared": true}, // a genuine listing, so only the rule under test can deny (RD-1307)
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -1707,6 +1709,7 @@ func TestRedactLogs_OrdinaryVisibleTo_NoGrantEmitter_RD1208(t *testing.T) {
 		logs := []Log{{ID: 1, Address: addr, TxHash: "0xshared", Topic0: &topic, Data: "0x"}}
 		result, err := engine.RedactLogsWithOpts(context.Background(), logs, "did:test", &RedactOpts{
 			VisibleTxHashes: map[string]bool{"0xshared": true},
+			ListedTxHashes:  map[string]bool{"0xshared": true}, // a genuine listing, so only the rule under test can deny (RD-1307)
 		})
 		if err != nil {
 			t.Fatal(err)

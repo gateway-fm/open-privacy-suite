@@ -16,8 +16,8 @@ func TestFilterEventLogsDetailed_UnlockIsPerLogTuple(t *testing.T) {
 		flagged = "0xa00000000000000000000000000000000000000a" // allow_visibleto_unlock + eligible
 		other   = "0xb00000000000000000000000000000000000000b" // not unlockable, wildcard grant
 		viewer  = "did:test:viewer"
-		listed  = "0x1111111111111111111111111111111111111111111111111111111111111111"
-		later   = "0x2222222222222222222222222222222222222222222222222222222222222222"
+		listed  = "0xabababababababababababababababababababababababababababababababab"
+		later   = "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
 	)
 	staticABI := `[{"anonymous":false,"inputs":[{"indexed":false,"name":"v","type":"uint256"}],"name":"E","type":"event"}]`
 	topic0 := "0xabc0000000000000000000000000000000000000000000000000000000000000"
@@ -43,7 +43,7 @@ func TestFilterEventLogsDetailed_UnlockIsPerLogTuple(t *testing.T) {
 		log(other, listed),   // 1: same tx, other emitter → ordinary wildcard, masked
 		log(flagged, later),  // 2: same emitter, unlisted tx → deny-all drop
 		log(flagged, ""),     // 3: no transactionHash → cannot be tied to a listing → drop
-		log("0xA00000000000000000000000000000000000000A", "0x1111111111111111111111111111111111111111111111111111111111111111"), // 4: mixed case → same tuple, full
+		log("0xA00000000000000000000000000000000000000A", "0xABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB"), // 4: upper-case address and hash → same tuple, full
 		log(flagged, listed), // 5: duplicate of 0 → full
 		log(other, later),    // 6: other emitter, unlisted → wildcard, masked
 	}

@@ -200,7 +200,7 @@ func FilterEventLogsDetailed(
 		contractAddr := strings.ToLower(entry.Address)
 
 		// Resolve the per-log facts, then defer the admit/deny verdict to the
-		// shared decision engine (rbac.DecideLogEmitterAccess, RD-1214) so the
+		// shared decision engine (rbac.DecideLogEmitter, RD-1214/RD-1300) so the
 		// RPC filter and the explorer redactor apply the SAME policy and cannot
 		// drift. Each fact below mirrors a gate that used to live inline here;
 		// the engine encodes the (unchanged) gate order and semantics.

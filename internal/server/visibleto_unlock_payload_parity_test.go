@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"privacy-proxy/internal/db"
 	"privacy-proxy/internal/explorer"
@@ -614,6 +615,11 @@ func TestVisibleToUnlockEligibility_DefaultAndSystemGroups_RD1306(t *testing.T) 
 	f.user(systemOnly, sysGID, "")
 	f.user(both, regularGID, "")
 	require.NoError(t, f.db.CreateMembership(ctx, &rbac.UserMembership{ID: uuid.New().String(), UserID: f.users[both], GroupID: rbac.DefaultGroupID, Source: rbac.MembershipSourceAdmin}))
+	// A regular-group membership that has expired no longer counts.
+	const expired = "did:test:vtu:expired-member"
+	f.user(expired, "", "")
+	past := time.Now().Add(-time.Hour)
+	require.NoError(t, f.db.CreateMembership(ctx, &rbac.UserMembership{ID: uuid.New().String(), UserID: f.users[expired], GroupID: regularGID, Source: rbac.MembershipSourceAdmin, ExpiresAt: &past}))
 	f.user("did:test:vtu:dg-payer", "", f.payer)
 	f.user("did:test:vtu:dg-payee", "", f.payee)
 	f.user("did:test:vtu:dg-intermediary", "", f.intermedAdr)
@@ -622,7 +628,7 @@ func TestVisibleToUnlockEligibility_DefaultAndSystemGroups_RD1306(t *testing.T) 
 	raw := vtuLog{Address: f.payment, Topics: []string{paymentCreated, zeroPadAddrToTopic(f.payer), zeroPadAddrToTopic(f.payee)}, Data: vtuPackPaymentData(t, f.intermedAdr, "PAY-0003")}
 	tx := "0x" + strings.Repeat("68", 32)
 	f.seedTx(tx, f.payer, f.payment, []vtuLog{raw})
-	require.NoError(t, f.db.SaveTxVisibility(ctx, tx, []string{defaultOnly, systemOnly, both}, "did:test:vtu:dg-payer", f.orgID))
+	require.NoError(t, f.db.SaveTxVisibility(ctx, tx, []string{defaultOnly, systemOnly, both, expired}, "did:test:vtu:dg-payer", f.orgID))
 
 	require.False(t, rbac.IsViewerEligibleForVisibleToUnlock(ctx, f.srv.rbacAccessCtrl, defaultOnly, f.payment),
 		"a grant held only by the default group must not make its members unlock-eligible")
@@ -634,4 +640,7 @@ func TestVisibleToUnlockEligibility_DefaultAndSystemGroups_RD1306(t *testing.T) 
 	f.requireSurfaces(t, defaultOnly, tx, nil, "default-group grant only: no unlock; deny-all rules stand")
 	f.requireSurfaces(t, systemOnly, tx, nil, "system-group grant only: no unlock; deny-all rules stand")
 	f.requireSurfaces(t, both, tx, []vtuLog{raw}, "regular grant: unlock applies on every surface")
+	require.False(t, rbac.IsViewerEligibleForVisibleToUnlock(ctx, f.srv.rbacAccessCtrl, expired, f.payment),
+		"an expired membership must not make the viewer eligible")
+	f.requireSurfaces(t, expired, tx, nil, "expired membership: no unlock")
 }

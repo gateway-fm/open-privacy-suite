@@ -1726,7 +1726,7 @@ func redactTopicAddress(addr string, level VisibilityLevel) string {
 // embedded addresses for a given (viewer, log) — symmetry by construction
 // (RD-1214, completing RD-887).
 //
-// It performs NO admission decision (that is rbac.DecideLogEmitterAccess,
+// It performs NO admission decision (that is rbac.DecideLogEmitter,
 // resolved upstream) and NO metadata emission (explorer-only, and only for the
 // addresses this primitive leaves visible). Both callers resolve visMap from the
 // SAME source — db.GetBatchVisibilityDetailed — so the per-address verdict is
@@ -2310,7 +2310,7 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 		}
 
 		// Resolve the per-log facts and defer the admit/deny verdict to the
-		// shared decision engine (rbac.DecideLogEmitterAccess, RD-1214) — the
+		// shared decision engine (rbac.DecideLogEmitter, RD-1214/RD-1300) — the
 		// SAME function the RPC filter (rbac.FilterEventLogs) uses, so the two
 		// layers reach identical verdicts and cannot drift. The engine owns the
 		// gate order; this block only resolves the facts from the explorer's
