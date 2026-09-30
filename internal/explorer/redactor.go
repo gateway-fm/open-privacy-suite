@@ -2260,6 +2260,21 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 		allowDynamicPayload = r.dynamicPayloadAllowedResolver.Resolve(ctx, uniqueAddrs)
 	}
 
+	// Per-call memo of the ABI resolver (uncached DB lookup), so resolving the
+	// ABI fact for every candidate log costs one lookup per emitter.
+	abiByContract := make(map[string]string)
+	resolveABIOnce := func(addr string) string {
+		if r.abiResolver == nil {
+			return ""
+		}
+		if v, ok := abiByContract[addr]; ok {
+			return v
+		}
+		v := r.abiResolver.Resolve(ctx, addr)
+		abiByContract[addr] = v
+		return v
+	}
+
 	// Phase 4: apply redactions.
 	var result []Log
 	for _, l := range logs {
@@ -2315,21 +2330,21 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 		}
 
 		// RD-889 deny-when-no-ABI + M15 dynamic-payload — the embedded-address
-		// protections. Skipped for admin/unlock (the engine admits them before
-		// these gates). Without a resolvable ABI, non-indexed address params in
-		// `data` can't be decoded/redacted.
-		facts.ABIResolvable = true
-		if r.abiResolver != nil && !facts.IsAdmin && !facts.Unlocked {
-			facts.ABIResolvable = r.abiResolver.Resolve(ctx, contractAddr) != ""
-		}
-		if !facts.IsAdmin && !facts.Unlocked && l.Topic0 != nil {
+		// protections. Resolved for EVERY candidate log, admin and unlock
+		// included, exactly as rbac.FilterEventLogs does: the engine admits
+		// admin/unlock before reading these facts, but a policy profile that
+		// switches the unlock off falls back to the ordinary verdict, which
+		// must then see the real ABI/M15 facts rather than permissive defaults.
+		// Without a resolvable ABI, non-indexed address params in `data` can't
+		// be decoded/redacted.
+		resolvedABI := resolveABIOnce(contractAddr)
+		facts.ABIResolvable = r.abiResolver == nil || resolvedABI != ""
+		if l.Topic0 != nil {
 			var abiForCheck json.RawMessage
 			if raw, ok := contractABIs[contractAddr]; ok && len(raw) > 0 {
 				abiForCheck = raw
-			} else if r.abiResolver != nil {
-				if s := r.abiResolver.Resolve(ctx, contractAddr); s != "" {
-					abiForCheck = json.RawMessage(s)
-				}
+			} else if resolvedABI != "" {
+				abiForCheck = json.RawMessage(resolvedABI)
 			}
 			if len(abiForCheck) > 0 && !allowDynamicPayload[contractAddr] &&
 				eventHasDynamicNonIndexedParam(abiForCheck, *l.Topic0) {
@@ -2384,13 +2399,17 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 			facts.Rules = rbac.LogEventRulesWildcard
 		}
 
-		if !rbac.DecideLogEmitterAccess(facts) {
+		decision := rbac.DecideLogEmitter(facts)
+		if !decision.Admit {
 			continue
 		}
 
-		// RD-874 visibleTo unlock: full reveal, no field redaction — the
-		// contract owner opted in via allow_visibleto_unlock.
-		if facts.Unlocked {
+		// Payload policy from the shared decision (RD-1300) — the SAME value the
+		// RPC renderer consumes. LogPayloadFull (the RD-874 visibleTo unlock:
+		// the contract owner opted in via allow_visibleto_unlock and the sender
+		// listed this viewer on this tx) is a full reveal with no field
+		// redaction; everything else is masked below.
+		if decision.Payload == rbac.LogPayloadFull {
 			redacted := l
 			redacted.AddressMetadata = make(map[string]VisibilityReason)
 			result = append(result, redacted)

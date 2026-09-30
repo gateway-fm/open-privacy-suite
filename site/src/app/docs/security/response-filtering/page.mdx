@@ -154,6 +154,8 @@ Keeping a log entry does not mean returning it verbatim. A single event can carr
 
 This makes `eth_getLogs`, transaction receipts, and the block explorer reveal the **same** set of addresses to a given user — a log fetched over JSON-RPC exposes nothing the explorer would have hidden, and vice versa.
 
+The one exception to this masking is the per-contract `visibleTo` unlock described below: when a contract has opted in and the sender listed an eligible user on a transaction, that user receives the contract's logs from that transaction exactly as emitted, embedded addresses included — identically through `eth_getLogs`, the receipt, and the block explorer's transaction log view.
+
 <Callout variant="warning" title="A zeroed address looks like the zero address">
   A redacted address slot is zeroed, which is indistinguishable from a genuine zero address (for example, a token mint or burn whose `from`/`to` is `0x000…0`). Clients must not treat a zero address inside a returned log as authoritative — it may be a real zero address or a redacted one.
 </Callout>
@@ -230,7 +232,7 @@ The `visibleTo` feature (renamed from `logVisibleTo`) allows a transaction sende
 | Mechanism | What a listed DID sees | What it requires |
 | --- | --- | --- |
 | **Transaction & receipt visibility** (always on) | The full transaction object (`eth_getTransactionByHash` and the block-index variants) and the full receipt (`eth_getTransactionReceipt`) for that one tx | Only that the viewer's DID is in the tx's `visibleTo` list. **No group access or contract grant is required.** Logs inside a returned receipt are still event-rule filtered. |
-| **Event-log unlock** (per-contract opt-in) | **All** event logs of that tx — bypassing the event-rules allowlist, `param_rules`, and field-level redaction | The `allow_visibleto_unlock` flag on the contract **and** the viewer holds an in-org contract grant (see eligibility below). Cross-org and anonymous viewers are denied. |
+| **Event-log unlock** (per-contract opt-in) | Every log **emitted by that opted-in contract in this transaction**, with its full event payload — bypassing the event-rules allowlist, `param_rules`, and embedded-address masking | The `allow_visibleto_unlock` flag on the contract **and** the viewer holds an in-org contract grant (see eligibility below). Cross-org and anonymous viewers are denied. |
 
 So "I listed Bob in `visibleTo`" does **not** by itself mean "Bob sees every event payload." Bob always gets the transaction and receipt; he only gets the unredacted event logs when the contract has opted in *and* Bob is grant-eligible.
 
@@ -292,7 +294,18 @@ PUT /api/orgs/:org_id/contracts/:address/visibleto-unlock
 
 Admin-only on the contract's owning org. Default is `false` -- existing additive behaviour stays unless explicitly opted in.
 
-**When the flag is true and a transaction's `visibleTo` lists a viewer who is in an eligible group on this contract, the viewer sees ALL event logs of that one transaction** -- including events whose topic0 is not in their event-rules allowlist, including events that fail their `param_rules`, and including embedded private addresses in topics/data. The unlock is **per-tx, all-events**.
+**When the flag is true and a transaction lists an eligible viewer, that viewer sees every log emitted by this opted-in contract in this one transaction** -- including events absent from their event-rules allowlist, events that fail their parameter rules, and the full event payload with every embedded address in topics and data. `eth_getLogs`, the receipt, and the block explorer's transaction log view return these logs identically. A log emitted by a different contract in the same transaction is checked against **that other contract's** grant and flag. A later transaction is checked against its own `visibleTo` list.
+
+### Example: one call, two emitters
+
+Alice submits one call to `PaymentContract`, which emits `PaymentCreated(payer, payee, intermediary)` and also moves tokens on `LedgerContract`, which emits `Transfer(from, to, value)`, in the same transaction. Alice lists settlement reviewer Sam in the transaction's `visibleTo`. Sam holds grants on both contracts; his `PaymentContract` grant allowlists `PaymentCreated` only when Sam is the payer, and Sam is neither payer nor payee.
+
+| `PaymentContract` setting | What Sam receives |
+|---------------------------|-------------------|
+| `allow_visibleto_unlock=false` (default) | `PaymentCreated` passes the `visibleTo` fallback for his allowlisted event, with the payer, payee and intermediary addresses zeroed. `Transfer` is filtered by his `LedgerContract` grant, with hidden addresses zeroed. |
+| `allow_visibleto_unlock=true` | `PaymentCreated` exactly as emitted, including the payer, payee and intermediary addresses. `Transfer` is unchanged: `LedgerContract` did not opt in, so its ordinary rules and masking still apply. |
+
+A `PaymentSettled` event emitted by a **later transaction** is not covered by Alice's earlier `visibleTo` list.
 
 **Eligibility requires both:**
 
@@ -306,7 +319,8 @@ Cross-org isolation: a viewer who has access only in another org cannot be unloc
 **Operator security checklist before flipping the flag:**
 
 - Contracts with the flag on let the tx sender authorise per-event visibility for any DID they list. Set this only on contracts where that's the intended workflow.
-- The set of users who can see a contract's events grows beyond what your `groups + grants` enumeration shows when the flag is on. Plan for that in access reviews.
+- The set of users who can see a contract's events grows beyond what your `groups + grants` enumeration shows when the flag is on: for access reviews, check which eligible grant holders were listed on each transaction — grants alone do not show who received a particular unlocked event.
+- A sender who is themselves eligible can list their own DID and receive the full payload of everything the contract emits in their transaction, including third-party addresses the contract writes into its events. Enable the flag only on contracts whose events are meant to be shared in full with any eligible, listed participant.
 - Revoking a viewer's group membership cuts their unlock access immediately on the next request -- the eligibility check runs per-request.
 
 ### RPC method access still required

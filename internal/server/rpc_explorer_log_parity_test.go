@@ -128,3 +128,91 @@ func TestRPCExplorerLogParity_RD1214(t *testing.T) {
 		require.Empty(t, admitted, "RPC must DROP a foreign-org emitter's log — symmetric with the explorer (RD-1009/RD-1208)")
 	})
 }
+
+// TestRPCExplorerLogParity_VisibleToUnlock_RD1300 extends the RD-1214 parity
+// matrix to the RD-874 visibleTo unlock. For ONE fixture — a flagged emitter
+// whose event embeds a third-party address in an indexed topic AND in
+// non-indexed data — both layers must render the identical payload: exact
+// with the unlock, masked without it. The RPC side runs the production
+// visibility context (buildTxVisibilityContext) and the admission-bound
+// renderer; the explorer side runs the wired RedactionEngine.
+func TestRPCExplorerLogParity_VisibleToUnlock_RD1300(t *testing.T) {
+	ctx := context.Background()
+	database, err := db.New(sharedTestDBURL(t))
+	require.NoError(t, err)
+	t.Cleanup(func() { database.Close() })
+	require.NoError(t, db.ResetTestDatabase(database))
+
+	orgID := uuid.New().String()
+	require.NoError(t, database.CreateOrganization(ctx, &rbac.Organization{ID: orgID, Slug: "parity-unlock", Name: "Parity Unlock", Settings: map[string]any{}}))
+	gid := wiringCreateGroup(t, database, orgID, "parity-unlock-granted", nil, false)
+	emitter := "0x3333333333333333333333333333333333333333"
+	cid := wiringCreateContractWithABI(t, database, orgID, emitter, "Payments", paymentABI)
+	wiringCreateGrant(t, database, cid, gid, &rbac.EventRulesField{Wildcard: true})
+	const viewerDID = "did:viewer:parity-unlock"
+	wiringCreateUserInGroup(t, database, viewerDID, gid)
+
+	payer := "0xdeaddeaddeaddeaddeaddeaddeaddeaddeaddead"     // indexed third party
+	recipient := "0xbeefbeefbeefbeefbeefbeefbeefbeefbeefbeef" // non-indexed third party
+	txHash := "0x" + strings.Repeat("5a", 32)
+	require.NoError(t, database.SaveTxVisibility(ctx, txHash, []string{viewerDID}, "did:sender", orgID))
+
+	accessCtrl := rbac.NewAccessController(database, time.Minute)
+	t.Cleanup(accessCtrl.Stop)
+	engine := explorer.NewRedactionEngine(noopContractStore{}, database)
+	wireExplorerRedactor(engine, database, accessCtrl, noopLogParticipantStore{}, nil)
+	p := &JSONRPCProcessor{rbacAccessCtrl: accessCtrl, txVisibilityStore: database, addrVisResolver: database}
+
+	sig := "0x" + topicHex("PaymentMade(address,address,uint256)")
+	payerTopic := zeroPadAddrToTopic(payer)
+	data := "0x" + strings.TrimPrefix(zeroPadAddrToTopic(recipient), "0x") + strings.Repeat("0", 62) + "2a"
+	maskedData := "0x" + strings.Repeat("0", 64) + strings.Repeat("0", 62) + "2a"
+
+	render := func(t *testing.T) (exTopics []string, exData string, rpcTopics []string, rpcData string) {
+		t.Helper()
+		exOut, err := engine.RedactLogsWithOpts(ctx, []explorer.Log{{ID: 1, Address: emitter, TxHash: txHash, Topic0: &sig, Topic1: &payerTopic, Data: data}},
+			viewerDID, &explorer.RedactOpts{VisibleTxHashes: map[string]bool{txHash: true}})
+		require.NoError(t, err)
+		require.Len(t, exOut, 1)
+		exTopics = []string{strings.ToLower(*exOut[0].Topic0), strings.ToLower(*exOut[0].Topic1)}
+		exData = strings.ToLower(exOut[0].Data)
+
+		raw, err := json.Marshal(map[string]any{"address": emitter, "topics": []string{sig, payerTopic}, "data": data, "transactionHash": txHash, "logIndex": "0x0"})
+		require.NoError(t, err)
+		body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "result": []json.RawMessage{raw}})
+		require.NoError(t, err)
+		visCtx := p.buildTxVisibilityContext(ctx, viewerDID, body)
+		perms := &rbac.EffectivePermissions{ContractAccess: map[string]rbac.ContractAccess{emitter: {EventRules: &rbac.EventRulesField{Wildcard: true}}}}
+		abiProv := mapABIProvider{emitter: paymentABI}
+		admitted := rbac.FilterEventLogsDetailed([]json.RawMessage{raw}, perms, nil, abiProv, visCtx, nil)
+		out := p.redactAdmittedLogs(ctx, viewerDID, admitted, abiProv)
+		require.Len(t, out, 1)
+		var m struct {
+			Topics []string `json:"topics"`
+			Data   string   `json:"data"`
+		}
+		require.NoError(t, json.Unmarshal(out[0], &m))
+		for _, tp := range m.Topics {
+			rpcTopics = append(rpcTopics, strings.ToLower(tp))
+		}
+		return exTopics, exData, rpcTopics, strings.ToLower(m.Data)
+	}
+
+	t.Run("flag off: both layers mask the indexed and the non-indexed third party", func(t *testing.T) {
+		exT, exD, rpcT, rpcD := render(t)
+		require.Equal(t, []string{sig, zeroTopic}, exT)
+		require.Equal(t, maskedData, exD)
+		require.Equal(t, exT, rpcT, "PARITY VIOLATION (topics)")
+		require.Equal(t, exD, rpcD, "PARITY VIOLATION (data)")
+	})
+
+	require.NoError(t, database.UpdateContractAllowVisibleToUnlock(ctx, cid, true))
+	accessCtrl.InvalidateOrg(ctx, orgID)
+	t.Run("flag on: both layers return the exact payload", func(t *testing.T) {
+		exT, exD, rpcT, rpcD := render(t)
+		require.Equal(t, []string{sig, payerTopic}, exT)
+		require.Equal(t, strings.ToLower(data), exD)
+		require.Equal(t, exT, rpcT, "PARITY VIOLATION (topics)")
+		require.Equal(t, exD, rpcD, "PARITY VIOLATION (data)")
+	})
+}
