@@ -35,6 +35,14 @@ func rpcResponseID(body []byte) string {
 	return "null"
 }
 
+// nullResult is the fail-closed JSON-RPC response: a null result carrying the
+// request id (or null when the body cannot be parsed). A filter that cannot
+// evaluate an upstream shape returns this instead of the upstream body, which
+// would otherwise reach the caller unfiltered (RD-1299).
+func nullResult(responseBody []byte) []byte {
+	return []byte(`{"jsonrpc":"2.0","id":` + rpcResponseID(responseBody) + `,"result":null}`)
+}
+
 // addrSetFromLinked builds a lowercase address set for O(1) lookup.
 func addrSetFromLinked(addrs []string) map[string]bool {
 	set := make(map[string]bool, len(addrs))
@@ -82,7 +90,7 @@ func FilterTransactionByHash(responseBody []byte, userAddresses []string, isAdmi
 		Error   *json.RawMessage `json:"error"`
 	}
 	if err := json.Unmarshal(responseBody, &resp); err != nil {
-		return responseBody // parse error: pass through
+		return nullResult(responseBody) // unparseable: fail closed
 	}
 	// Pass through errors and null results unchanged
 	if resp.Error != nil || resp.Result == nil {
@@ -98,7 +106,7 @@ func FilterTransactionByHash(responseBody []byte, userAddresses []string, isAdmi
 		To   string `json:"to"`
 	}
 	if err := json.Unmarshal(raw, &tx); err != nil {
-		return responseBody
+		return nullResult(responseBody) // result is not a tx object: fail closed
 	}
 
 	addrSet := addrSetFromLinked(userAddresses)
@@ -117,49 +125,6 @@ func FilterTransactionByHash(responseBody []byte, userAddresses []string, isAdmi
 	}
 
 	// Not a participant, not an admin -- return null
-	id := rpcResponseID(responseBody)
-	return []byte(`{"jsonrpc":"2.0","id":` + id + `,"result":null}`)
-}
-
-// FilterTransactionReceipt filters an eth_getTransactionReceipt response.
-// For non-participants: returns a receipt with empty logs and zeroed logsBloom.
-// If result is null, passes through unchanged.
-func FilterTransactionReceipt(responseBody []byte, userAddresses []string) []byte {
-	var resp struct {
-		JSONRPC string           `json:"jsonrpc"`
-		ID      json.RawMessage  `json:"id"`
-		Result  *json.RawMessage `json:"result"`
-		Error   *json.RawMessage `json:"error"`
-	}
-	if err := json.Unmarshal(responseBody, &resp); err != nil {
-		return responseBody
-	}
-	if resp.Error != nil || resp.Result == nil {
-		return responseBody
-	}
-	raw := []byte(*resp.Result)
-	if string(raw) == "null" {
-		return responseBody
-	}
-
-	var receipt struct {
-		From string `json:"from"`
-		To   string `json:"to"`
-	}
-	if err := json.Unmarshal(raw, &receipt); err != nil {
-		return responseBody
-	}
-
-	addrSet := addrSetFromLinked(userAddresses)
-	from := strings.ToLower(receipt.From)
-	to := strings.ToLower(receipt.To)
-
-	if addrSet[from] || (to != "" && addrSet[to]) {
-		id := rpcResponseID(responseBody)
-		return filterReceiptLogs(raw, addrSet, id)
-	}
-
-	// Non-participant: return null result (consistent with FilterTransactionByHash).
 	id := rpcResponseID(responseBody)
 	return []byte(`{"jsonrpc":"2.0","id":` + id + `,"result":null}`)
 }
@@ -219,85 +184,6 @@ func filterReceiptLogs(rawReceipt []byte, addrSet map[string]bool, rpcID string)
 	return out
 }
 
-// FilterLogs filters an eth_getLogs response, keeping only log entries where
-// at least one indexed topic (topics[1+]) encodes one of the user's linked
-// Ethereum addresses. Logs with no address-indexed topics are removed.
-// If the result is not a JSON array or is null, passes through unchanged.
-func FilterLogs(responseBody []byte, userAddresses []string) []byte {
-	var resp struct {
-		JSONRPC string           `json:"jsonrpc"`
-		ID      json.RawMessage  `json:"id"`
-		Result  *json.RawMessage `json:"result"`
-		Error   *json.RawMessage `json:"error"`
-	}
-	if err := json.Unmarshal(responseBody, &resp); err != nil {
-		return responseBody
-	}
-	if resp.Error != nil || resp.Result == nil {
-		return responseBody
-	}
-	raw := []byte(*resp.Result)
-	if string(raw) == "null" {
-		return responseBody
-	}
-
-	// Parse as array of raw messages for round-trip fidelity
-	var rawLogs []json.RawMessage
-	if err := json.Unmarshal(raw, &rawLogs); err != nil {
-		return responseBody // not an array -- pass through
-	}
-
-	addrSet := addrSetFromLinked(userAddresses)
-
-	filtered := make([]json.RawMessage, 0, len(rawLogs))
-	for _, rawLog := range rawLogs {
-		var entry struct {
-			Topics []string `json:"topics"`
-		}
-		if err := json.Unmarshal(rawLog, &entry); err != nil {
-			continue // skip malformed entries
-		}
-
-		visible := false
-		// Check all topics including topics[0].
-		// For normal events, topics[0] is the keccak256 event signature hash —
-		// a value that practically never has 12 leading zero bytes, so
-		// topicMatchesAddress will reject it without false positives.
-		// For anonymous events (Solidity `anonymous` keyword), there is no
-		// signature hash and topics[0] is the first indexed parameter, which
-		// may be an address — so we must include it.
-		for i := 0; i < len(entry.Topics); i++ {
-			if topicMatchesAddress(entry.Topics[i], addrSet) {
-				visible = true
-				break
-			}
-		}
-		if visible {
-			filtered = append(filtered, rawLog)
-		}
-	}
-
-	filteredJSON, err := json.Marshal(filtered)
-	if err != nil {
-		return responseBody
-	}
-
-	result := json.RawMessage(filteredJSON)
-	out, err := json.Marshal(struct {
-		JSONRPC string          `json:"jsonrpc"`
-		ID      json.RawMessage `json:"id"`
-		Result  json.RawMessage `json:"result"`
-	}{
-		JSONRPC: "2.0",
-		ID:      resp.ID,
-		Result:  result,
-	})
-	if err != nil {
-		return responseBody
-	}
-	return out
-}
-
 // zeroLogsBloomJSON is the canonical JSON value used to overwrite a block's
 // logsBloom field — `"0x"` followed by 512 zero hex characters (the spec's
 // 256-byte all-zero bloom). Computed once because every block-returning RPC
@@ -347,7 +233,7 @@ func FilterBlockTransactions(responseBody []byte, userAddresses []string, origin
 		Error   *json.RawMessage `json:"error"`
 	}
 	if err := json.Unmarshal(responseBody, &resp); err != nil {
-		return responseBody
+		return nullResult(responseBody) // unparseable: fail closed
 	}
 	if resp.Error != nil || resp.Result == nil {
 		return responseBody
@@ -360,7 +246,7 @@ func FilterBlockTransactions(responseBody []byte, userAddresses []string, origin
 	// Parse the block as a map to preserve all fields
 	var block map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &block); err != nil {
-		return responseBody
+		return nullResult(responseBody) // result is not a block object: fail closed
 	}
 
 	// Always zero logsBloom and gas-aggregate fields before any further
@@ -384,7 +270,11 @@ func FilterBlockTransactions(responseBody []byte, userAddresses []string, origin
 	if txsRaw, ok := block["transactions"]; ok {
 		// Check if transactions are objects or hashes (strings).
 		var rawTxs []json.RawMessage
-		if err := json.Unmarshal(txsRaw, &rawTxs); err == nil && len(rawTxs) > 0 {
+		if err := json.Unmarshal(txsRaw, &rawTxs); err != nil {
+			// Not an array: nothing we can evaluate per-transaction, so
+			// return none rather than the upstream value (fail closed).
+			block["transactions"] = []byte("[]")
+		} else if len(rawTxs) > 0 {
 			// Peek at first element to determine if full objects or hashes.
 			first := bytes.TrimSpace(rawTxs[0])
 			if len(first) == 0 || first[0] == '"' {
@@ -420,13 +310,12 @@ func FilterBlockTransactions(responseBody []byte, userAddresses []string, origin
 				}
 			}
 		}
-		// If transactions is unparseable or empty, leave it alone — but the
-		// bloom rewrite above still applies.
+		// An empty array is left alone; the bloom rewrite above still applies.
 	}
 
 	blockJSON, err := json.Marshal(block)
 	if err != nil {
-		return responseBody
+		return nullResult(responseBody)
 	}
 
 	blockResult := json.RawMessage(blockJSON)
@@ -440,7 +329,7 @@ func FilterBlockTransactions(responseBody []byte, userAddresses []string, origin
 		Result:  blockResult,
 	})
 	if err != nil {
-		return responseBody
+		return nullResult(responseBody)
 	}
 	return blockOut
 }
@@ -457,7 +346,7 @@ func FilterBlockReceipts(responseBody []byte, userAddresses []string) []byte {
 		Error   *json.RawMessage `json:"error"`
 	}
 	if err := json.Unmarshal(responseBody, &resp); err != nil {
-		return responseBody
+		return nullResult(responseBody) // unparseable: fail closed
 	}
 	if resp.Error != nil || resp.Result == nil {
 		return responseBody
@@ -469,7 +358,7 @@ func FilterBlockReceipts(responseBody []byte, userAddresses []string) []byte {
 
 	var rawReceipts []json.RawMessage
 	if err := json.Unmarshal(raw, &rawReceipts); err != nil {
-		return responseBody // not an array — pass through
+		return nullResult(responseBody) // not an array: fail closed
 	}
 
 	addrSet := addrSetFromLinked(userAddresses)
@@ -495,7 +384,7 @@ func FilterBlockReceipts(responseBody []byte, userAddresses []string) []byte {
 
 	receiptsJSON, err := json.Marshal(receiptsFiltered)
 	if err != nil {
-		return responseBody
+		return nullResult(responseBody)
 	}
 
 	receiptsResult := json.RawMessage(receiptsJSON)
@@ -509,7 +398,7 @@ func FilterBlockReceipts(responseBody []byte, userAddresses []string) []byte {
 		Result:  receiptsResult,
 	})
 	if err != nil {
-		return responseBody
+		return nullResult(responseBody)
 	}
 	return receiptsOut
 }
@@ -524,7 +413,7 @@ func FilterBlockTransactionCount(responseBody []byte, userAddresses []string) []
 		Error   *json.RawMessage `json:"error"`
 	}
 	if err := json.Unmarshal(responseBody, &resp); err != nil {
-		return responseBody
+		return nullResult(responseBody) // unparseable: fail closed
 	}
 	if resp.Error != nil || resp.Result == nil {
 		return responseBody
@@ -534,19 +423,20 @@ func FilterBlockTransactionCount(responseBody []byte, userAddresses []string) []
 		return responseBody
 	}
 
+	// The request was rewritten to a full block fetch, so the result must be
+	// a block object. Anything else (e.g. the node's raw count for a method
+	// that was not rewritten — the total including other users' transactions)
+	// fails closed.
 	var block map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &block); err != nil {
-		return responseBody
-	}
-
-	txsRaw, ok := block["transactions"]
-	if !ok {
-		return responseBody
+		return nullResult(responseBody)
 	}
 
 	var rawTxs []json.RawMessage
-	if err := json.Unmarshal(txsRaw, &rawTxs); err != nil || len(rawTxs) == 0 {
-		return responseBody
+	if txsRaw, ok := block["transactions"]; ok {
+		if err := json.Unmarshal(txsRaw, &rawTxs); err != nil {
+			return nullResult(responseBody)
+		}
 	}
 
 	addrSet := addrSetFromLinked(userAddresses)
@@ -579,7 +469,7 @@ func FilterBlockTransactionCount(responseBody []byte, userAddresses []string) []
 		Result:  hexResult,
 	})
 	if err != nil {
-		return responseBody
+		return nullResult(responseBody)
 	}
 	return out
 }
