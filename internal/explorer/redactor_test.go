@@ -4539,3 +4539,40 @@ func TestEventHasDynamicNonIndexedParam_TypeMatrix(t *testing.T) {
 		})
 	}
 }
+
+// countingUnlockResolver counts Resolve calls (per-request DB cost).
+type countingUnlockResolver struct {
+	calls      int
+	unlockable map[string]bool
+}
+
+func (c *countingUnlockResolver) Resolve(_ context.Context, _ string, _ []string) map[string]bool {
+	c.calls++
+	return c.unlockable
+}
+
+// TestRedactLogs_UnlockResolverSkippedWithoutListing (RD-1300): the unlock
+// can only fire on a tx the viewer is listed on, so the eligibility resolver
+// (several DB lookups) is not consulted for a page with no listed tx.
+func TestRedactLogs_UnlockResolverSkippedWithoutListing(t *testing.T) {
+	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	engine := newEngine(VisibilityMap{addr: VisibilityFull})
+	engine.SetEventRuleChecker(&stubEventRuleChecker{byAddr: map[string]EventRulesResolution{addr: {Wildcard: true}}})
+	resolver := &countingUnlockResolver{unlockable: map[string]bool{addr: true}}
+	engine.SetVisibleToUnlockResolver(resolver)
+	topic := eventTopic0("Ping()")
+	logs := []Log{{ID: 1, Address: addr, TxHash: "0xtx", Topic0: &topic, Data: "0x"}}
+
+	if _, err := engine.RedactLogsWithOpts(context.Background(), logs, "did:test", &RedactOpts{VisibleTxHashes: map[string]bool{"0xtx": true}}); err != nil {
+		t.Fatal(err)
+	}
+	if resolver.calls != 0 {
+		t.Fatalf("no listed tx: the unlock resolver must not be consulted, got %d calls", resolver.calls)
+	}
+	if _, err := engine.RedactLogsWithOpts(context.Background(), logs, "did:test", &RedactOpts{ListedTxHashes: map[string]bool{"0xtx": true}}); err != nil {
+		t.Fatal(err)
+	}
+	if resolver.calls != 1 {
+		t.Fatalf("listed tx: the unlock resolver must be consulted once, got %d calls", resolver.calls)
+	}
+}

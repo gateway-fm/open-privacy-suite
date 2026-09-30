@@ -2239,15 +2239,15 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 
 	// Phase 3d (RD-874): resolve the per-contract visibleTo unlock map.
 	// True for contracts where (a) `allow_visibleto_unlock` is set in the
-	// DB AND (b) the viewer holds a contract_grant via an eligible
-	// (non-system) group in the contract's owning org. Both gates must
-	// hold; the resolver returns the conjunction. Combined with a per-tx
-	// visibleTxHashes membership check below, this drives the unlock
-	// branch in Phase 4. Mirrors processor_event_rules.go's
-	// buildVisibleToUnlockableMap so RPC and explorer agree on the
-	// (viewer, contract, tx) triple.
+	// DB AND (b) the viewer is unlock-eligible there (rbac.UnlockableContracts
+	// — the same helper the RPC's buildVisibleToUnlockableMap calls). Combined
+	// with the per-tx ListedTxHashes check below, this drives the unlock
+	// branch in Phase 4, so RPC and explorer agree on the (viewer, contract,
+	// tx) triple.
 	unlockableContracts := map[string]bool{}
-	if r.visibleToUnlockResolver != nil && viewerDID != "" && len(addrMap) > 0 {
+	// The unlock only fires on a tx the viewer is listed on, so skip the
+	// eligibility lookups entirely when this page has no listed tx.
+	if r.visibleToUnlockResolver != nil && viewerDID != "" && len(addrMap) > 0 && len(listedTxHashes) > 0 {
 		uniqueAddrs := make([]string, 0, len(addrMap))
 		for a := range addrMap {
 			uniqueAddrs = append(uniqueAddrs, a)
@@ -2278,6 +2278,10 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 		}
 		if v, ok := abiByContract[addr]; ok {
 			return v
+		}
+		if raw, ok := contractABIs[addr]; ok && len(raw) > 0 {
+			abiByContract[addr] = string(raw)
+			return string(raw)
 		}
 		v := r.abiResolver.Resolve(ctx, addr)
 		abiByContract[addr] = v

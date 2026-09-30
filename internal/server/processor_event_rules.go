@@ -214,40 +214,19 @@ func (p *JSONRPCProcessor) buildTxVisibilityContext(ctx context.Context, userDID
 
 // buildVisibleToUnlockableMap returns the (lowercased address → true) map
 // of contracts where the per-contract `allow_visibleto_unlock` flag is
-// set AND the viewer holds an eligible group membership on the contract
-// (rbac.IsViewerEligibleForVisibleToUnlock). Both gates are required;
-// missing either omits the contract from the map. The caller is expected
-// to combine the result with a per-tx visibleTo membership check before
-// granting access — see TxVisibilityContext doc for the full sequence.
+// set AND the viewer is unlock-eligible — rbac.UnlockableContracts, the
+// same helper the explorer's dbVisibleToUnlockResolver calls. The caller
+// is expected to combine the result with a per-tx visibleTo membership
+// check before granting access — see TxVisibilityContext doc for the
+// full sequence.
 //
 // Returns an empty (non-nil) map on no-op inputs so callers don't need
 // to nil-check before lookup.
 func (p *JSONRPCProcessor) buildVisibleToUnlockableMap(ctx context.Context, viewerDID string, contractAddrs []string) map[string]bool {
-	out := make(map[string]bool)
-	if p.rbacAccessCtrl == nil || viewerDID == "" || len(contractAddrs) == 0 {
-		return out
+	if p.rbacAccessCtrl == nil {
+		return map[string]bool{}
 	}
-	store := p.rbacAccessCtrl.Store()
-	if store == nil {
-		return out
-	}
-	seen := make(map[string]struct{}, len(contractAddrs))
-	for _, addr := range contractAddrs {
-		addrLower := strings.ToLower(addr)
-		if _, dup := seen[addrLower]; dup || addrLower == "" {
-			continue
-		}
-		seen[addrLower] = struct{}{}
-
-		contract, err := store.GetContractByAddressGlobal(ctx, addrLower)
-		if err != nil || contract == nil || !contract.AllowVisibleToUnlock {
-			continue
-		}
-		if rbac.IsViewerEligibleForVisibleToUnlock(ctx, p.rbacAccessCtrl, viewerDID, addrLower) {
-			out[addrLower] = true
-		}
-	}
-	return out
+	return rbac.UnlockableContracts(ctx, p.rbacAccessCtrl, viewerDID, contractAddrs)
 }
 
 // participantResolveMaxTxs caps how many unique transactions an eth_getLogs
