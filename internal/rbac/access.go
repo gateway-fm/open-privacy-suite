@@ -405,9 +405,10 @@ func NewAccessControllerWithCache(store Store, cacheTTL time.Duration, cache Per
 // handled bool, err error) short-circuits the whole check when handled is true:
 // CheckAccess returns (result, err) immediately. When handled is false the
 // helper's result is ignored and evaluation falls through to the next phase.
-// The decomposition is a pure structural refactor of the original monolithic
-// method — the order of checks, every condition, reason string, error, and
-// AccessCheckResult field are preserved exactly.
+// The decomposition was a pure structural refactor of the original monolithic
+// method (order of checks, conditions, reason strings, errors and result fields
+// preserved); later phases added their own denies (e.g. the RD-1301
+// storage-read floors) without reordering the phases.
 func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequest) (*AccessCheckResult, error) {
 	// Global blocklist + Multicall bypass detection — before any RBAC evaluation.
 	if res, handled := c.checkGlobalBlocks(req); handled {
@@ -564,8 +565,9 @@ func (c *AccessController) checkGlobalBlocks(req *AccessCheckRequest) (*AccessCh
 //
 // Anonymous permissions live in the `anonymous` group's group_access row
 // (seeded by migration 044, RD-870). Edits restricted to super admin
-// (X-Admin-Token) so the auditable rules are explicit and configurable
-// rather than hardcoded here.
+// (X-Admin-Token) so the auditable rules are explicit and configurable.
+// Two hardcoded floors apply regardless of that allowlist: deployments and
+// raw storage reads always require authentication.
 func (c *AccessController) checkAnonymousAccess(ctx context.Context, req *AccessCheckRequest) (*AccessCheckResult, error) {
 	// Block historical state queries up-front. These reveal point-in-time
 	// state and aren't safe to expose anonymously even if the method name
@@ -612,8 +614,9 @@ func (c *AccessController) checkAnonymousAccess(ctx context.Context, req *Access
 	// Defense in depth: deployment payloads always require an authenticated
 	// principal with the deploy claim. The anonymous group has empty Claims
 	// by default; even if a super admin allowlists eth_sendTransaction, a
-	// CREATE-shaped payload still requires auth.
-	if IsContractDeployment(req.Method, req.Params) {
+	// CREATE-shaped payload still requires auth. Judged on the alias target so
+	// an allowlisted alias of eth_sendTransaction cannot skip it.
+	if IsContractDeployment(req.EffectiveMethod(), req.Params) {
 		return &AccessCheckResult{
 			Allowed:      false,
 			AuthRequired: true,

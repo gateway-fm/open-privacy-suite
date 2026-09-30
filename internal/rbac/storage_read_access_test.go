@@ -1,6 +1,7 @@
 package rbac
 
 import (
+	"cmp"
 	"context"
 	"testing"
 	"time"
@@ -215,13 +216,13 @@ func TestCheckAccess_StorageReadWithoutTargetDenied(t *testing.T) {
 				Method:         tc.method,
 				AccessMethod:   tc.alias,
 				Params:         tc.params,
-				TargetAddress:  GetTargetAddress(MethodGetProof, tc.params),
+				TargetAddress:  GetTargetAddress(cmp.Or(tc.alias, tc.method), tc.params),
 			})
 			if err != nil {
 				t.Fatalf("CheckAccess: %v", err)
 			}
-			if res.Allowed {
-				t.Fatalf("a storage read without a target address must be denied")
+			if res.Allowed || res.Reason != ErrContractAccessDenied {
+				t.Fatalf("a storage read without a target address must get the contract-access denial, got %+v", res)
 			}
 		})
 	}
@@ -257,21 +258,42 @@ func TestCheckAccess_AnonymousStorageReadDenied(t *testing.T) {
 			if err != nil {
 				t.Fatalf("CheckAccess: %v", err)
 			}
-			if res.Allowed {
-				t.Fatalf("an anonymous storage read must be denied even when allowlisted")
-			}
-			if !res.AuthRequired {
-				t.Fatalf("the denial must ask for authentication, got %+v", res)
+			if res.Allowed || !res.AuthRequired || res.Reason != "storage reads require authentication" {
+				t.Fatalf("an allowlisted anonymous storage read must get the storage-read denial, got %+v", res)
 			}
 		})
 	}
 }
 
+// TestCheckAccess_AnonymousAliasDeploymentDenied pins that the anonymous
+// deployment floor is judged on the alias target: an allowlisted alias of
+// eth_sendTransaction with a CREATE payload is still a deployment.
+func TestCheckAccess_AnonymousAliasDeploymentDenied(t *testing.T) {
+	store := NewMockCrossOrgStore()
+	anon := store.groupAccess[AnonymousGroupID]
+	anon.AllowedMethods = append(anon.AllowedMethods, "linea_sendTransaction")
+	ac := NewAccessController(store, time.Minute)
+	defer ac.Stop()
+
+	res, err := ac.CheckAccess(context.Background(), &AccessCheckRequest{
+		Method:       "linea_sendTransaction",
+		AccessMethod: "eth_sendTransaction",
+		Params:       []any{map[string]any{"from": rd1301Contract, "data": "0x6080"}},
+	})
+	if err != nil {
+		t.Fatalf("CheckAccess: %v", err)
+	}
+	if res.Allowed || !res.AuthRequired || res.Reason != "deployment requires authentication" {
+		t.Fatalf("an allowlisted anonymous alias of a deployment must get the deployment denial, got %+v", res)
+	}
+}
+
 // TestRegisterExtraNamespaces_CanonicalizesAliasTargets pins that an alias
-// target is stored in its canonical spelling: every access-control decision
-// keyed on the alias target (target extraction, the storage-slot tier, the
-// historical-state guard) matches the canonical name, so a mis-cased target
-// in the operator config would otherwise silently skip those checks.
+// target is stored in its canonical spelling: the case-sensitive decisions
+// keyed on the alias target (target and selector extraction, the
+// storage-slot tier, eth_getLogs validation, eth_call tracing) match the
+// canonical name, so a mis-cased target in the operator config would
+// otherwise silently skip those checks.
 func TestRegisterExtraNamespaces_CanonicalizesAliasTargets(t *testing.T) {
 	defer SnapshotMethodRegistriesForTest()()
 	ExtraMethods = map[string]bool{}

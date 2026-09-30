@@ -333,10 +333,11 @@ func RegisterExtraNamespaces(methodNames map[string][]string, aliases map[string
 		}
 	}
 	for method, alias := range aliases {
-		// Store the target in its canonical spelling: every access-control
-		// decision keyed on the alias target (GetTargetAddress, the
-		// storage-slot tier, the historical-state guard) matches canonical
-		// names, so a mis-cased target would silently skip them.
+		// Store the target in its canonical spelling: the case-sensitive
+		// decisions keyed on the alias target (GetTargetAddress and
+		// GetFunctionSelector, the storage-slot tier, eth_getLogs validation,
+		// eth_call tracing) match canonical names, so a mis-cased target would
+		// silently skip them.
 		MethodAliases[method] = CanonicalizeMethod(alias)
 	}
 	Wildcards = wildcards
