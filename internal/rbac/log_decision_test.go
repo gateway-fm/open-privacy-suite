@@ -70,3 +70,61 @@ func TestDecideLogEmitterAccess(t *testing.T) {
 		})
 	}
 }
+
+// TestDecideLogEmitter_PayloadPolicy pins the field-policy half of the shared
+// decision (RD-1300): the payload policy of an admitted log. Full payload is
+// produced by the RD-874 visibleTo unlock and by nothing else; every other
+// admit path — including admin — renders with embedded-address masking, and a
+// dropped log carries the zero value. Both layers consume Payload, so a verdict
+// here is the verdict on eth_getLogs, receipt logs and the explorer alike.
+func TestDecideLogEmitter_PayloadPolicy(t *testing.T) {
+	var zeroPolicy LogPayloadPolicy
+	if zeroPolicy != LogPayloadMasked {
+		t.Fatalf("zero LogPayloadPolicy must be LogPayloadMasked (fail-closed), got %v", zeroPolicy)
+	}
+	if (LogDecision{}) != (LogDecision{Admit: false, Payload: LogPayloadMasked}) {
+		t.Fatalf("zero LogDecision must be drop + masked")
+	}
+
+	grantWildcard := LogEmitterFacts{HasGrant: true, ABIResolvable: true, Rules: LogEventRulesWildcard, HasTopic0: true}
+	allowlistFallback := LogEmitterFacts{HasGrant: true, ABIResolvable: true, Rules: LogEventRulesAllowlist, HasTopic0: true, Topic0Allowlisted: true, InVisibleTo: true}
+	allowlistMatch := LogEmitterFacts{HasGrant: true, ABIResolvable: true, Rules: LogEventRulesAllowlist, HasTopic0: true, Topic0Allowlisted: true, EventAllowed: true}
+
+	cases := []struct {
+		name  string
+		facts LogEmitterFacts
+		want  LogDecision
+	}{
+		// ---- the only full-payload path ----
+		{"unlock alone → full payload", LogEmitterFacts{Unlocked: true}, LogDecision{Admit: true, Payload: LogPayloadFull}},
+		{"unlock bypasses no-ABI with full payload", LogEmitterFacts{Unlocked: true, HasGrant: true, ABIResolvable: false}, LogDecision{Admit: true, Payload: LogPayloadFull}},
+		{"unlock bypasses M15 with full payload", LogEmitterFacts{Unlocked: true, HasGrant: true, ABIResolvable: true, DynamicPayloadDropped: true, HasTopic0: true}, LogDecision{Admit: true, Payload: LogPayloadFull}},
+		{"unlock + admin → full payload (the unlock wins)", LogEmitterFacts{Unlocked: true, IsAdmin: true}, LogDecision{Admit: true, Payload: LogPayloadFull}},
+
+		// ---- every other admit path is masked ----
+		{"admin alone → masked", LogEmitterFacts{IsAdmin: true}, LogDecision{Admit: true, Payload: LogPayloadMasked}},
+		{"participant + grant → masked", LogEmitterFacts{HasGrant: true, IsParticipant: true, ABIResolvable: true, Rules: LogEventRulesDeny, HasTopic0: true}, LogDecision{Admit: true, Payload: LogPayloadMasked}},
+		{"grant + wildcard → masked", grantWildcard, LogDecision{Admit: true, Payload: LogPayloadMasked}},
+		{"allowlist match → masked", allowlistMatch, LogDecision{Admit: true, Payload: LogPayloadMasked}},
+		{"ordinary visibleTo fallback → masked (listing alone is never full payload)", allowlistFallback, LogDecision{Admit: true, Payload: LogPayloadMasked}},
+
+		// ---- a gated-off unlock falls back to the ordinary verdict, which
+		// must see the real ABI / M15 facts (never defaults) ----
+		{"no unlock, no ABI → drop", LogEmitterFacts{HasGrant: true, ABIResolvable: false, Rules: LogEventRulesWildcard, HasTopic0: true}, LogDecision{}},
+		{"no unlock, M15 → drop", LogEmitterFacts{HasGrant: true, ABIResolvable: true, DynamicPayloadDropped: true, Rules: LogEventRulesWildcard, HasTopic0: true}, LogDecision{}},
+		{"no unlock, no grant, listed → drop", LogEmitterFacts{ABIResolvable: true, Rules: LogEventRulesWildcard, HasTopic0: true, InVisibleTo: true}, LogDecision{}},
+		{"no unlock, deny-all → drop", LogEmitterFacts{HasGrant: true, ABIResolvable: true, Rules: LogEventRulesDeny, HasTopic0: true, InVisibleTo: true}, LogDecision{}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := DecideLogEmitter(tc.facts)
+			if got != tc.want {
+				t.Errorf("DecideLogEmitter(%+v) = %+v, want %+v", tc.facts, got, tc.want)
+			}
+			if DecideLogEmitterAccess(tc.facts) != got.Admit {
+				t.Errorf("DecideLogEmitterAccess must equal DecideLogEmitter(...).Admit for %+v", tc.facts)
+			}
+		})
+	}
+}
