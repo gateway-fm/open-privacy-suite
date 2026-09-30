@@ -414,6 +414,9 @@ func TestVisibleToUnlockFullPayload_CrossLayer_RD1300(t *testing.T) {
 	t.Run("flag off: deny-all grant holder sees nothing from Payments", func(t *testing.T) {
 		f.requireSurfaces(t, recipient2, tx1, nil, "deny-all rules, no unlock")
 	})
+	t.Run("flag off: a transfer-party tx is not a listing for the param-rule fallback", func(t *testing.T) {
+		f.requireSurfaces(t, recipient, tx4, nil, "the flagged contract is a transfer party in tx4, but no one listed the recipient; must_be=self fails")
+	})
 
 	// ---- Flag ON --------------------------------------------------------
 	setUnlock(t, true)
@@ -433,6 +436,10 @@ func TestVisibleToUnlockFullPayload_CrossLayer_RD1300(t *testing.T) {
 	})
 	t.Run("flag on: the flagged contract being a token-transfer party does not unlock unlisted txs", func(t *testing.T) {
 		f.requireSurfaces(t, recipient2, tx4, nil, "tx4 not in tx_visible_to; the granted contract is Full for the viewer, which feeds the RD-1009 union")
+	})
+	t.Run("flag on: the ordinary param-rule fallback also needs a genuine listing", func(t *testing.T) {
+		f.requireSurfaces(t, recipient, tx3, nil, "tx3 not listed (recipient2 is the transfer party); must_be=self fails")
+		f.requireSurfaces(t, recipient, tx4, nil, "tx4 not listed; the flagged contract being a transfer party is not a listing; must_be=self fails")
 	})
 	t.Run("flag on: one eth_getLogs response spanning listed and unlisted txs unlocks only the listed tx", func(t *testing.T) {
 		got := f.rpcGetLogsMulti(t, recipient2, tx1, tx2, tx3, tx4)

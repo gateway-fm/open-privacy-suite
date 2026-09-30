@@ -1611,14 +1611,28 @@ func TestRedactLogs_EventRules_ParamRules_VisibleToFallback(t *testing.T) {
 	logs := []Log{
 		{ID: 1, Address: addr, TxHash: sharedTxHash, Topic0: &transferTopic, Topic1: &otherTopic, Data: "0x"},
 	}
+	// The fallback needs a genuine listing (ListedTxHashes, RD-1307).
 	result, err := engine.RedactLogsWithOpts(context.Background(), logs, "did:test", &RedactOpts{
 		VisibleTxHashes: map[string]bool{sharedTxHash: true},
+		ListedTxHashes:  map[string]bool{sharedTxHash: true},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(result) != 1 {
 		t.Errorf("visibleTo fallback: expected 1 log to pass (param failed but tx shared), got %d", len(result))
+	}
+
+	// A tx that is only in VisibleTxHashes (e.g. the RD-1009 transfer
+	// union) is not a listing: the failed param rule stands.
+	result, err = engine.RedactLogsWithOpts(context.Background(), logs, "did:test", &RedactOpts{
+		VisibleTxHashes: map[string]bool{sharedTxHash: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 0 {
+		t.Errorf("union-only tx must not trigger the param-rule fallback, got %d logs", len(result))
 	}
 }
 

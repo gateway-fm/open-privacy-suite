@@ -615,9 +615,9 @@ type RedactOpts struct {
 	// ListedTxHashes is the set of tx hashes whose visibleTo row genuinely
 	// lists the viewer (tx_visible_to only — never the RD-1009
 	// transfer-participant union that also feeds VisibleTxHashes). It is the
-	// only input RedactLogsWithOpts accepts for the RD-874 visibleTo unlock:
-	// an unlock needs the sender to have listed this viewer on this tx
-	// (RD-1307). A nil map unlocks nothing (fail-closed).
+	// only input RedactLogsWithOpts accepts for "the sender listed this viewer
+	// on this tx": the RD-874 visibleTo unlock and the ordinary param-rule
+	// fallback (RD-1307). A nil map lists nothing (fail-closed).
 	ListedTxHashes map[string]bool
 
 	// ParentParticipants are the parent transaction's from/to addresses,
@@ -2325,8 +2325,10 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 			HasGrant: level == VisibilityFull,
 			// RD-1162 participant/sender (grant-bounded inside the engine).
 			IsParticipant: isParticipant,
-			// Ordinary visibleTo — additive param-rule fallback only.
-			InVisibleTo: visibleTxHashes[strings.ToLower(l.TxHash)],
+			// Ordinary visibleTo — additive param-rule fallback only. Like the
+			// unlock, keyed on the genuine listing, never the RD-1009 union
+			// (RD-1307) — matching the RPC's tx_visible_to check.
+			InVisibleTo: listedTxHashes[strings.ToLower(l.TxHash)],
 			HasTopic0:   l.Topic0 != nil,
 		}
 

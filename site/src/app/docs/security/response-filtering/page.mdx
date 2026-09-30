@@ -274,7 +274,7 @@ All forms present on one request are combined (deduped, capped at 32 recipients)
 By default `visibleTo` is **additive** -- it never restricts existing access:
 
 - If a viewer already has access to an event through normal event rules or address-based filtering, `visibleTo` has no effect.
-- If a viewer is denied an event because `must_be=self` param rules fail, `visibleTo` serves as a fallback: the log is visible if the viewer's DID appears in the list. This fallback applies **only on contracts the viewer already holds a grant to**.
+- If a viewer is denied an event because `must_be=self` param rules fail, `visibleTo` serves as a fallback: the log is visible if the viewer's DID appears in that transaction's list. This fallback applies **only on contracts the viewer already holds a grant to**, and only the sender's listing counts — being a party to a token transfer in the transaction does not.
 - `visibleTo` does **not** grant access to a contract the viewer has **no** grant on. Logs from an ungranted contract stay hidden even when the viewer is listed in the tx's `visibleTo` — grant eligibility is required. (The viewer still receives the transaction/receipt envelope, but its logs are filtered.) Standalone `visibleTo`-based event access requires the per-contract unlock opt-in below.
 - `visibleTo` does **not** bypass the topic0 allowlist. If an event's signature is not in the allowed event rules, it remains hidden regardless of `visibleTo`.
 - Admin users always see all events -- `visibleTo` does not change admin behavior.
