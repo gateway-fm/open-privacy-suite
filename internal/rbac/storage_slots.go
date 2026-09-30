@@ -19,10 +19,11 @@ var erc1967Slots = []string{
 // diamondStorageSlot is the EIP-2535 Diamond storage slot.
 const diamondStorageSlot = "0xc8fcad8db84d3cc18b4c41d551ea0ee66dd599cde068d998e57d5e09332c131c"
 
-// WellKnownStorageSlots is the set of storage slots that read-claim users may
-// access via eth_getStorageAt. These are infrastructure metadata slots defined
-// by EIP-1967 (proxy implementation/admin/beacon) and EIP-2535 (Diamond storage).
-// They contain only contract addresses, not business data.
+// WellKnownStorageSlots is the set of storage slots that non-admin users may
+// read via eth_getStorageAt or prove via eth_getProof. These are infrastructure
+// metadata slots defined by EIP-1967 (proxy implementation/admin/beacon) and
+// EIP-2535 (Diamond storage). They contain only contract addresses, not
+// business data.
 //
 // This allowlist is intentionally hardcoded — new standards require a code change
 // with security review. Do NOT make this configurable.
@@ -48,8 +49,8 @@ func IsWellKnownStorageSlot(slot string) bool {
 	if !strings.HasPrefix(slot, "0x") {
 		slot = "0x" + slot
 	}
-	// Pad to 66 chars (0x + 64 hex digits) if needed — some clients send short-form
-	// but our constants are full 32-byte hex
+	// No padding: the constants are full 32-byte hex, so a short-form spelling
+	// of a slot never matches and is denied (fail-closed).
 	return WellKnownStorageSlots[slot]
 }
 
@@ -64,4 +65,49 @@ func extractStorageSlot(params []any) string {
 		return ""
 	}
 	return slot
+}
+
+// extractProofStorageKeys extracts the storage keys (params[1]) from
+// eth_getProof params: [address, storageKeys[], block]. ok is false unless
+// params[1] is a JSON array whose every element is a string — a missing, null
+// or non-array key list, or any non-string key, is malformed and must be
+// denied by the caller (fail-closed). An empty array is well-formed: it asks
+// for an account-only proof.
+func extractProofStorageKeys(params []any) (keys []string, ok bool) {
+	if len(params) < 2 {
+		return nil, false
+	}
+	list, isList := params[1].([]any)
+	if !isList {
+		return nil, false
+	}
+	keys = make([]string, 0, len(list))
+	for _, k := range list {
+		s, isString := k.(string)
+		if !isString {
+			return nil, false
+		}
+		keys = append(keys, s)
+	}
+	return keys, true
+}
+
+// requestedStorageKeys returns the storage slots whose raw values a
+// storage-read request would return: the single slot of eth_getStorageAt, or
+// every key of eth_getProof (whose storageProof[].value carries each value).
+// ok is false for a malformed request or a method that is not a storage read.
+func requestedStorageKeys(method string, params []any) (keys []string, ok bool) {
+	switch method {
+	case MethodGetStorageAt:
+		return []string{extractStorageSlot(params)}, true
+	case MethodGetProof:
+		return extractProofStorageKeys(params)
+	}
+	return nil, false
+}
+
+// isStorageReadMethod reports whether the (alias-resolved) method returns raw
+// contract storage values and is therefore subject to the storage-slot tier.
+func isStorageReadMethod(method string) bool {
+	return method == MethodGetStorageAt || method == MethodGetProof
 }

@@ -308,7 +308,7 @@ This prevents an admin from configuring event rules that target users or contrac
 
 <Callout variant="warning" title="Known limitations">
 
-- `eth_getStorageAt` uses tiered access (admin: all slots, non-admin: EIP-1967 proxy infrastructure slots only) which limits but does not fully prevent storage-level reads -- the four allowed proxy slots expose implementation/admin addresses only
+- `eth_getStorageAt` and `eth_getProof` use tiered access (admin: all slots, non-admin: EIP-1967 proxy infrastructure slots only) which limits but does not fully prevent storage-level reads -- the four allowed proxy slots expose implementation/admin addresses only, and an allowed proof also carries the contract's storage root and trie hashes (see [Response Filtering](/docs/security/response-filtering#eth_getproof))
 - Internal calls within contracts cannot be intercepted
 - Users without a linked ETH address cannot access functions with param constraints
 

@@ -282,7 +282,7 @@ The file format is a versioned JSON object. Two schema versions are supported:
 | `version` | Schema version (`1` or `2`). Required for forward compatibility. |
 | `namespaces` | Map of display label to method list (v1) or namespace object (v2). The key appears as the section heading in the admin UI. |
 
-Every method must specify an `alias` — a standard Ethereum method it inherits access control and response filtering from. This ensures contract-level checks, storage slot tiering, deployment detection, and participant-based response filtering apply consistently. The proxy rejects the config at startup if any method is missing an alias.
+Every method must specify an `alias` — a standard Ethereum method it inherits access control and response filtering from. This ensures contract-level checks, storage slot tiering, deployment detection, and participant-based response filtering apply consistently. An alias also inherits its target's historical-state restriction: `linea_getProof` at a block number is denied to non-admins exactly as `eth_getProof` is. The proxy rejects the config at startup if any method is missing an alias.
 
 ### v2 — explicit methods + optional wildcard passthrough
 
@@ -320,6 +320,7 @@ In v2 each namespace value can be either an array (same as v1) or an object with
 - forwards the request to the upstream node verbatim;
 - does **not** apply contract-level access checks (it doesn't know whether the method has an address parameter);
 - does **not** redact response fields (it doesn't know the response shape);
+- does **not** apply storage slot tiering or the historical-state restriction — a proof or storage method reached only through a wildcard (e.g. `linea_getProof` without an explicit entry) returns any storage slot to any caller allowed the prefix;
 - still applies the global block list (`debug_*`, `admin_*`, `personal_*`, `miner_*`, `txpool_*`, `clique_*`, `les_*` are always rejected);
 - still applies the namespace's `deny` list (evaluated before the prefix allow);
 - logs the call with `matched_via: "wildcard"` and the matched prefix in the SIEM audit stream.
@@ -327,7 +328,7 @@ In v2 each namespace value can be either an array (same as v1) or an object with
 **Operator responsibility for wildcard mode.** When you enable a wildcard, you are stating that you trust the upstream chain's namespace and accept that methods you haven't explicitly mapped don't get the proxy's privacy guarantees. If a future upstream release adds a method under the prefix that returns sensitive data your tenants shouldn't see, that data passes through. To narrow the surface:
 
 1. Keep the deny list current as the upstream chain's catalog evolves.
-2. Prefer `explicit` entries (with proper `alias`) for any method that benefits from contract-access checks or response filtering.
+2. Prefer `explicit` entries (with proper `alias`) for any method that benefits from contract-access checks or response filtering. Always map state-proof and storage methods explicitly (e.g. `linea_getProof` → `eth_getProof`), or add them to `deny`.
 3. Don't enable a wildcard for namespaces you don't actually run.
 
 Standard Ethereum-method redaction (`eth_getLogs` filtering, `eth_call` return-data redaction, etc.) is unaffected — it continues to operate on the alias target for explicit methods and on standard methods directly.
@@ -380,7 +381,7 @@ Group with `allowed_methods: ["linea_estimateGas", "linea_*"]`:
 | Method | Alias used | HasMethod | Outcome |
 |---|---|---|---|
 | `linea_estimateGas` | `eth_estimateGas` (explicit) | true (exact match) | contract checks + redaction via alias |
-| `linea_getProof` | none (no explicit entry) | true (via `linea_*` → wildcard match) | passthrough, no redaction |
+| `linea_getProof` | none (no explicit entry) | true (via `linea_*` → wildcard match) | passthrough, no redaction, no storage slot tiering — map it explicitly instead |
 | `linea_sendTransaction` | none | false (wildcard match blocked by deny) | rejected with "method not allowed" |
 | `linea_signFoo` | none | false (deny `linea_sign*` glob) | rejected |
 | `debug_traceTransaction` | n/a | only if listed in the group's `allowed_methods` (or `*`) | gated by the method allowlist like any other method; cross-org isolation on results always enforced |

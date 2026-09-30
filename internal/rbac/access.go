@@ -506,6 +506,15 @@ func (c *AccessController) checkWithResolvedOrg(ctx context.Context, req *Access
 		if res, handled, err := c.validateDeploymentWithoutTarget(req, user, org, perms, requiredClaim); handled {
 			return res, err
 		}
+	} else if isStorageReadMethod(req.EffectiveMethod()) {
+		// A storage read with no parseable target address (missing or
+		// non-string params[0]) would skip the contract and storage-slot
+		// checks above; deny rather than rely on the node rejecting it.
+		slog.Debug("access denied: storage read without a target address", "method", req.Method, "user", req.UserExternalID)
+		return &AccessCheckResult{
+			Allowed: false,
+			Reason:  ErrContractAccessDenied,
+		}, nil
 	}
 
 	// Check additional required claims from the request.
@@ -559,9 +568,11 @@ func (c *AccessController) checkGlobalBlocks(req *AccessCheckRequest) (*AccessCh
 func (c *AccessController) checkAnonymousAccess(ctx context.Context, req *AccessCheckRequest) (*AccessCheckResult, error) {
 	// Block historical state queries up-front. These reveal point-in-time
 	// state and aren't safe to expose anonymously even if the method name
-	// is on the allowlist. Authenticated users skip this check because
-	// per-address visibility filters take over.
-	if isHistorical, reason := IsHistoricalStateQuery(req.Method, req.Params); isHistorical {
+	// is on the allowlist (authenticated users get checkHistoricalStateQuery).
+	// Judged on the alias-resolved method: an operator alias of a
+	// state-reading method (e.g. linea_getProof → eth_getProof) is subject to
+	// the same guard as its target.
+	if isHistorical, reason := IsHistoricalStateQuery(req.EffectiveMethod(), req.Params); isHistorical {
 		return &AccessCheckResult{
 			Allowed: false,
 			Reason:  reason,
@@ -665,10 +676,13 @@ func (c *AccessController) resolveAndValidateUser(ctx context.Context, req *Acce
 // uses CURRENT ownership, so a contract that was owned by another
 // org at block N could leak past state to today's owner.
 //
-// Admin viewers (is_org_admin or admin claim on a specific
-// contract) are exempted by checking the user's group memberships
-// via the optional OrgAdminChecker extension on the store
-// interface. When the extension is not implemented (test fixtures
+// Org admins (is_org_admin, in any of the user's orgs) are exempted
+// by checking the user's group memberships via the optional
+// OrgAdminChecker extension on the store interface; a per-contract
+// admin claim (tier 3) is not an exemption. The check is made on the
+// alias-resolved method, so an operator alias of a state-reading
+// method (e.g. linea_getProof → eth_getProof) is subject to the same
+// guard as its target. When the extension is not implemented (test fixtures
 // using a minimal mock store) we err on the side of allowing
 // historical queries — those fixtures don't model multi-tenant
 // ownership changes, so the leak isn't reproducible there.
@@ -678,7 +692,7 @@ func (c *AccessController) resolveAndValidateUser(ctx context.Context, req *Acce
 // unreachable in production and cannot be silently disabled by a
 // dropped method.
 func (c *AccessController) checkHistoricalStateQuery(ctx context.Context, req *AccessCheckRequest, user *User) (*AccessCheckResult, bool, error) {
-	if isHistorical, reason := IsHistoricalStateQuery(req.Method, req.Params); isHistorical {
+	if isHistorical, reason := IsHistoricalStateQuery(req.EffectiveMethod(), req.Params); isHistorical {
 		allow := true
 		if adminChk, ok := c.store.(OrgAdminChecker); ok {
 			isAdmin, _, adminErr := adminChk.IsOrgAdmin(ctx, user.ID)
@@ -972,9 +986,10 @@ func (c *AccessController) classifyValueTransferCarveout(ctx context.Context, re
 //   - eth_getTransactionCount: nonce lookups for tx building (cast send, wallets)
 //   - eth_getBalance: wallet balance display
 //
-// eth_getStorageAt has tiered access (admin=all slots, non-admin=well-known only)
-// enforced below. eth_getProof needs strict contract-level gating since
-// both methods access contract-internal state that could leak sensitive data.
+// eth_getStorageAt and eth_getProof are not carved out: both return raw
+// contract storage, so they need contract-level gating plus the storage-slot
+// tier (admin=all slots, non-admin=well-known only) enforced in
+// validateContractAccess.
 func (c *AccessController) classifyBasicAddressQueryCarveout(ctx context.Context, req *AccessCheckRequest, user *User, org *Organization, orgCtx *OrgContext, perms *EffectivePermissions) (*AccessCheckResult, bool, error) {
 	if req.TargetAddress != "" && isBasicAddressQuery(req.EffectiveMethod()) {
 		addr := strings.ToLower(req.TargetAddress)
@@ -1004,10 +1019,11 @@ func (c *AccessController) classifyBasicAddressQueryCarveout(ctx context.Context
 // request targets a specific address. It resolves the effective ContractAccess
 // (explicit grant, cross-org-filtered default claims, pre-registration, or
 // deployer auto-grant), then enforces the cross-org isolation check, required
-// claim, tiered eth_getStorageAt access, function-selector rules, and proxy
-// upgrade validation. handled=true means the check terminated with the returned
-// result/err; handled=false means all inner gates passed and evaluation falls
-// through to the additional-required-claims phase.
+// claim, tiered raw-storage access (eth_getStorageAt / eth_getProof),
+// function-selector rules, and proxy upgrade validation. handled=true means the
+// check terminated with the returned result/err; handled=false means all inner
+// gates passed and evaluation falls through to the additional-required-claims
+// phase.
 func (c *AccessController) validateContractAccess(ctx context.Context, req *AccessCheckRequest, user *User, org *Organization, orgCtx *OrgContext, perms *EffectivePermissions, requiredClaim Claim) (*AccessCheckResult, bool, error) {
 	addr := strings.ToLower(req.TargetAddress)
 
@@ -1146,16 +1162,13 @@ func (c *AccessController) validateContractAccess(ctx context.Context, req *Acce
 		}, true, nil
 	}
 
-	// Tiered eth_getStorageAt access: admin-claim users get all slots,
-	// non-admin users get only well-known infrastructure slots (EIP-1967, EIP-2535).
-	// This runs AFTER the contract access check (so we know the user has access
-	// to the contract) but BEFORE function selector checks (which don't apply
-	// to storage reads).
-	if req.EffectiveMethod() == MethodGetStorageAt {
-		if res, handled := c.validateStorageSlotAccess(req, access); handled {
-			return res, true, nil
-		}
-		// Admin users pass through — all slots allowed
+	// Tiered raw-storage access (eth_getStorageAt, eth_getProof and their
+	// aliases): admin-claim users get all slots, non-admin users only the
+	// well-known infrastructure slots (EIP-1967, EIP-2535). This runs AFTER the
+	// contract access check (so we know the user has access to the contract)
+	// but BEFORE function selector checks (which don't apply to storage reads).
+	if res, handled := c.validateStorageReadAccess(req, access); handled {
+		return res, true, nil
 	}
 
 	// Check function selector if specified.
@@ -1174,20 +1187,35 @@ func (c *AccessController) validateContractAccess(ctx context.Context, req *Acce
 	return nil, false, nil
 }
 
-// validateStorageSlotAccess enforces tiered eth_getStorageAt access: admin-claim
-// users get all slots, non-admin users get only well-known infrastructure slots
-// (EIP-1967, EIP-2535). Returns handled=true with a deny result when a non-admin
-// requests a non-well-known slot.
-func (c *AccessController) validateStorageSlotAccess(req *AccessCheckRequest, access *ContractAccess) (*AccessCheckResult, bool) {
-	if !hasClaim(access.Claims, ClaimAdmin) {
-		slot := extractStorageSlot(req.Params)
-		if !IsWellKnownStorageSlot(slot) {
+// validateStorageReadAccess enforces the storage-slot tier on every method
+// that returns raw contract storage values (isStorageReadMethod, judged on the
+// alias-resolved method): eth_getStorageAt returns one slot's value, and
+// eth_getProof returns storageProof[].value for every requested key (RD-1301).
+// Admin-claim users get all slots. For everyone else each requested slot must
+// be a well-known infrastructure slot (EIP-1967, EIP-2535); an ordinary,
+// mixed or malformed key list is denied. An eth_getProof with an empty key
+// list (account-only proof) requests no slot and passes. Returns
+// handled=true with a deny result.
+func (c *AccessController) validateStorageReadAccess(req *AccessCheckRequest, access *ContractAccess) (*AccessCheckResult, bool) {
+	method := req.EffectiveMethod()
+	if !isStorageReadMethod(method) || hasClaim(access.Claims, ClaimAdmin) {
+		return nil, false
+	}
+	deny := &AccessCheckResult{
+		Allowed: false,
+		Reason:  ErrContractAccessDenied,
+	}
+	keys, ok := requestedStorageKeys(method, req.Params)
+	if !ok {
+		slog.Debug("access denied: malformed storage key list from non-admin user",
+			"method", req.Method, "contract", req.TargetAddress, "user", req.UserExternalID)
+		return deny, true
+	}
+	for _, key := range keys {
+		if !IsWellKnownStorageSlot(key) {
 			slog.Debug("access denied: non-admin user accessing non-well-known storage slot",
-				"slot", slot, "contract", req.TargetAddress, "user", req.UserExternalID)
-			return &AccessCheckResult{
-				Allowed: false,
-				Reason:  ErrContractAccessDenied,
-			}, true
+				"method", req.Method, "slot", key, "contract", req.TargetAddress, "user", req.UserExternalID)
+			return deny, true
 		}
 	}
 	return nil, false
@@ -1752,8 +1780,8 @@ func (c *AccessController) getOrgContextForTarget(ctx context.Context, userOrgID
 //
 // NOT included:
 //   - eth_getCode: reveals whether an address has deployed code (contract existence oracle)
-//   - eth_getStorageAt: tiered access enforced in CheckAccess (admin=all, read=well-known only)
-//   - eth_getProof: returns balance + storage hash
+//   - eth_getStorageAt / eth_getProof: raw storage, tiered in validateContractAccess
+//     (admin=all slots, non-admin=well-known only)
 func isBasicAddressQuery(method string) bool {
 	switch method {
 	case "eth_getBalance", "eth_getTransactionCount":
@@ -1821,8 +1849,9 @@ func GetTargetAddress(method string, params []any) string {
 		// All address-targeted state queries need per-address access checks.
 		// On a private network, balances, nonces, bytecode, and storage proofs
 		// are sensitive — cross-org queries leak financial and activity data.
-		// eth_getProof returns balance + nonce + storage hash for an address,
-		// equivalent to eth_getBalance + eth_getStorageAt combined.
+		// eth_getProof returns balance + nonce + storage hash for an address
+		// plus the value of every requested storage key, equivalent to
+		// eth_getBalance + eth_getStorageAt combined.
 		if addr, ok := params[0].(string); ok {
 			return strings.ToLower(addr)
 		}

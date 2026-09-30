@@ -43,7 +43,7 @@ Response filtering uses these linked addresses to determine what the user is all
 |-------------|--------|
 | **Admin** | Unrestricted access to all storage slots |
 | **Non-admin** (any user without admin claim) | Allowed only for well-known proxy infrastructure slots (see below) |
-| **No claim** | Blocked |
+| **No access to the contract** (no grant, or another organization's contract) | Blocked |
 
 ### Well-known proxy infrastructure slots
 
@@ -57,6 +57,22 @@ Non-admin users can query only the following four slots. These are standard EIP-
 | `0xc8fcad8db84d3cc18b4c41d551ea0ee66dd599cde068d998e57d5e09332c131c` | EIP-2535 | Diamond storage |
 
 Any other slot returns an error for non-admin users. This allows standard proxy introspection tools (e.g., OpenZeppelin Upgrades) to function while preventing raw state extraction of private contract data.
+
+### eth\_getProof
+
+`eth_getProof` returns the value of every requested storage key (`storageProof[].value`) together with the account's balance, nonce, code hash and storage root, so it follows the same tiers:
+
+| Caller | Allowed requests |
+|--------|------------------|
+| **Admin** | Any storage keys |
+| **Non-admin** | Only the four slots above: every key in the list must be one of them. An empty key list (an account-only proof) is allowed. |
+| **No access to the contract** | Blocked |
+
+A key list that mixes an allowed slot with any other slot, or that is missing, `null`, or not a list of hex strings, is rejected as a whole, before the request reaches the node. Chain-specific methods you alias to `eth_getProof` or `eth_getStorageAt` (for example `linea_getProof`) follow the same rules.
+
+<Callout variant="warning" title="What an allowed proof still reveals">
+  A Merkle proof is not value-only. Every proof carries the contract's storage root (`storageHash`), which changes whenever any of its storage changes, and the proof nodes carry hashes that let a caller confirm guesses of low-entropy values in neighbouring storage slots and neighbouring accounts. Allow `eth_getProof` only for groups that need state proofs.
+</Callout>
 
 ---
 
@@ -212,7 +228,7 @@ These response-filtering features implement core privacy requirements for regula
 |-------------|----------------|
 | **Intra-org transaction confidentiality** | `eth_getTransactionByHash` returns `null` for non-participants, preventing co-members from reading each other's calldata and transfer details |
 | **Event log visibility restrictions** | `eth_getLogs` filters entries by indexed address topics, ensuring users see only events involving their own addresses |
-| **Raw state access prevention** | `eth_getStorageAt` uses tiered access based on claims: admin users get unrestricted slot access, non-admin users can query only EIP-1967 proxy infrastructure slots, and users with no claim are blocked entirely |
+| **Raw state access prevention** | `eth_getStorageAt` and `eth_getProof` use tiered access based on claims: admin users get unrestricted slot access, non-admin users can read or prove only the EIP-1967 / EIP-2535 proxy infrastructure slots, and users without access to the contract are blocked entirely |
 | **Receipt log redaction** | `eth_getTransactionReceipt` strictly filters inner logs and zeros bloom filters, ensuring even participants cannot see unrelated logs |
 
 These controls ensure that even within a shared private network where all participants have read access to the same contracts, individual transaction privacy is maintained at the response level.
@@ -338,6 +354,7 @@ A DID listed in `visibleTo` whose group does not allow the relevant method is de
 | Method | Participant behavior | Non-participant behavior |
 |--------|---------------------|--------------------------|
 | `eth_getStorageAt` | Admin: all slots; Non-admin: EIP-1967 proxy slots only | Blocked (no claim) |
+| `eth_getProof` | Admin: any keys; Non-admin: every key must be an EIP-1967 / EIP-2535 proxy slot (empty key list allowed) | Blocked (no claim) |
 | `eth_getTransactionByHash` | Full transaction | `null` (or full tx if viewer is in `visibleTo`) |
 | `eth_getTransactionByBlockHashAndIndex` | Full transaction | `null` (or full tx if viewer is in `visibleTo`) |
 | `eth_getTransactionByBlockNumberAndIndex` | Full transaction | `null` (or full tx if viewer is in `visibleTo`) |

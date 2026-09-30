@@ -33,7 +33,7 @@ Dangerous JSON-RPC methods are blocked regardless of user permissions:
 
 **Exception:** `debug_traceCall` and `debug_traceTransaction` are *not* blocked by the `debug_*` rule — they are gated by the group method allowlist plus cross-org trace validation (they power the runtime validation below). All other `debug_*` methods are blocked.
 
-**`eth_getStorageAt`** is not globally blocked but uses **tiered access based on claims**: admin users get unrestricted access to all storage slots, non-admin users can query only EIP-1967 proxy infrastructure slots, and users with no claim are blocked. See [Response Filtering](/docs/security/response-filtering#eth_getstorageat----tiered-access) for the full list of allowed slots.
+**`eth_getStorageAt`** and **`eth_getProof`** are not globally blocked but use **tiered access based on claims**: admin users get unrestricted access to all storage slots, non-admin users can read or prove only EIP-1967 proxy infrastructure slots, and users with no claim are blocked. See [Response Filtering](/docs/security/response-filtering#eth_getstorageat----tiered-access) for the full list of allowed slots.
 
 ### eth\_sendRawTransaction Support
 
@@ -124,6 +124,7 @@ The proxy applies per-method response filters **after** receiving the node's res
 | Method | Filtering behavior |
 |--------|-------------------|
 | `eth_getStorageAt` | Tiered access: admin (all slots), non-admin (EIP-1967 proxy slots only), no claim (blocked) |
+| `eth_getProof` | Same tiers, applied to every requested storage key before the request is forwarded |
 | `eth_getTransactionByHash` | Returns `null` if user is not a participant (`from`/`to` match) |
 | `eth_getTransactionReceipt` | Strips `logs` and `logsBloom` for non-participants; preserves execution metadata |
 | `eth_getLogs` | Per-log-entry filtering based on indexed topic address matching |
@@ -232,11 +233,11 @@ All methods that accept a target address enforce cross-org isolation at the addr
 | `eth_getCode` | Deployed bytecode | Contract internals |
 | `eth_getBalance` | Native ETH balance | Financial data |
 | `eth_getTransactionCount` | Nonce (tx count) | Activity tracking |
-| `eth_getProof` | Balance + nonce + storage proof | Combines balance and storage |
+| `eth_getProof` | Balance + nonce + storage proof | Combines balance and storage; storage keys are tiered like `eth_getStorageAt` |
 | `eth_createAccessList` | Storage slots and addresses accessed | Contract internals |
 | `eth_sendTransaction` | Submits transaction | Write access |
 
-`eth_getStorageAt` uses **tiered access based on claims** (admin: all slots, non-admin: EIP-1967 proxy slots only, method not in allowlist: blocked). See [Response Filtering](/docs/security/response-filtering#eth_getstorageat----tiered-access) for details.
+`eth_getStorageAt` and `eth_getProof` use **tiered access based on claims** (admin: all slots, non-admin: EIP-1967 proxy slots only, method not in allowlist: blocked). See [Response Filtering](/docs/security/response-filtering#eth_getstorageat----tiered-access) for details.
 
 ### Plain CREATE Pre-registration
 
@@ -572,5 +573,5 @@ A standalone verifier CLI is planned.
 | Token revocation | Database lookup per request | Consider Redis for high volume |
 | Multicall | Only 3 hardcoded addresses blocked | Mitigated by runtime tracing (all calls validated regardless of target) |
 | Method case handling | Method names are canonicalized to their standard spelling before access checks and dispatch | Built-in methods match case-insensitively; unknown/vendor methods pass through unchanged and are rejected by the upstream node if mis-cased |
-| Historical state | Historical block queries blocked for anonymous users only | Authenticated users go through full RBAC which gates address access; blocking by block number is redundant and breaks wallets like MetaMask |
+| Historical state | State reads at a block number or block hash (`eth_call`, `eth_getBalance`, `eth_getCode`, `eth_getStorageAt`, `eth_getTransactionCount`, `eth_getProof`, and any chain-specific method aliased to one of them) are blocked for anonymous users and for authenticated users who are not org admins | Access checks use current contract ownership, so past state is not served to non-admins. Named tags such as `latest`, `pending`, `safe` and `finalized` are not affected; wallets that pin concrete block numbers (e.g. MetaMask) can hit this denial |
 | Response filtering gaps | `eth_getBlockByNumber`/`eth_getBlockByHash` (with full tx objects), `eth_getTransactionByBlockHashAndIndex`/`eth_getTransactionByBlockNumberAndIndex`, and `eth_getBlockReceipts` are not yet response-filtered | See [Response Filtering known gaps](/docs/security/response-filtering) |
