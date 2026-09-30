@@ -464,9 +464,10 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 // checkWithResolvedOrg runs the post-org-resolution phases of CheckAccess:
 // permission resolution, method allowlist, eth_getLogs multi-address
 // validation, carve-outs, contract-access/claim checks, and the final allow.
-// Pure structural extraction from CheckAccess (RD-1199) — order of checks,
-// conditions, reason strings, errors, and result fields are unchanged; the
-// caller stamps OrgID/UserID onto every result.
+// Extracted from CheckAccess (RD-1199) without changing the order of checks,
+// conditions, reason strings, errors, or result fields; RD-1301 later added
+// the deny for a storage read with no target address. The caller stamps
+// OrgID/UserID onto every result.
 func (c *AccessController) checkWithResolvedOrg(ctx context.Context, req *AccessCheckRequest, user *User, org *Organization, orgCtx *OrgContext) (*AccessCheckResult, error) {
 	// Resolve effective permissions (in-memory cache, DB cache, or compute).
 	perms, err := c.resolvePermissionsForRequest(ctx, req, user, org)
@@ -617,6 +618,17 @@ func (c *AccessController) checkAnonymousAccess(ctx context.Context, req *Access
 			Allowed:      false,
 			AuthRequired: true,
 			Reason:       "deployment requires authentication",
+		}, nil
+	}
+
+	// Raw storage reads (eth_getStorageAt, eth_getProof and aliases of them)
+	// need a contract grant and the storage-slot tier, neither of which exists
+	// for an anonymous caller. Deny even if a super admin allowlists them.
+	if isStorageReadMethod(req.EffectiveMethod()) {
+		return &AccessCheckResult{
+			Allowed:      false,
+			AuthRequired: true,
+			Reason:       "storage reads require authentication",
 		}, nil
 	}
 

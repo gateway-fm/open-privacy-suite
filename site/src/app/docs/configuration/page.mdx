@@ -282,7 +282,7 @@ The file format is a versioned JSON object. Two schema versions are supported:
 | `version` | Schema version (`1` or `2`). Required for forward compatibility. |
 | `namespaces` | Map of display label to method list (v1) or namespace object (v2). The key appears as the section heading in the admin UI. |
 
-Every method must specify an `alias` — a standard Ethereum method it inherits access control and response filtering from. This ensures contract-level checks, storage slot tiering, deployment detection, and participant-based response filtering apply consistently. An alias also inherits its target's historical-state restriction: `linea_getProof` at a block number is denied to non-admins exactly as `eth_getProof` is. The proxy rejects the config at startup if any method is missing an alias.
+Every method must specify an `alias` — a standard Ethereum method it inherits access control and response filtering from. This ensures contract-level checks, storage slot tiering, deployment detection, and participant-based response filtering apply consistently. An alias also inherits its target's historical-state restriction: `linea_getProof` at a block number is denied to anyone who is not an org admin, exactly as `eth_getProof` is. The proxy rejects the config at startup if any method is missing an alias.
 
 ### v2 — explicit methods + optional wildcard passthrough
 
@@ -320,7 +320,7 @@ In v2 each namespace value can be either an array (same as v1) or an object with
 - forwards the request to the upstream node verbatim;
 - does **not** apply contract-level access checks (it doesn't know whether the method has an address parameter);
 - does **not** redact response fields (it doesn't know the response shape);
-- does **not** apply storage slot tiering or the historical-state restriction — a proof or storage method reached only through a wildcard (e.g. `linea_getProof` without an explicit entry) returns any storage slot to any caller allowed the prefix;
+- does **not** apply storage slot tiering or the historical-state restriction — a proof or storage method reached only through a wildcard (e.g. `linea_getProof` without an explicit entry) returns any slot of any contract, including other organizations' contracts, to any caller allowed the prefix;
 - still applies the global block list (`debug_*`, `admin_*`, `personal_*`, `miner_*`, `txpool_*`, `clique_*`, `les_*` are always rejected);
 - still applies the namespace's `deny` list (evaluated before the prefix allow);
 - logs the call with `matched_via: "wildcard"` and the matched prefix in the SIEM audit stream.

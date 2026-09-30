@@ -243,7 +243,9 @@ var ExtraNamespaces map[string][]string
 // MethodAliases maps chain-specific methods to their standard equivalents
 // for access control purposes (e.g. "linea_estimateGas" → "eth_estimateGas").
 // Methods with aliases inherit the same contract access checks, storage slot
-// tiering, deployment detection, and function selector extraction as their target.
+// tiering, historical-state guard, deployment detection, and function selector
+// extraction as their target. Targets are stored canonicalized
+// (RegisterExtraNamespaces).
 //
 // Wildcard-matched methods do NOT populate this map — they pass through to the
 // upstream node without alias-based redaction (see WildcardNamespace).
@@ -331,7 +333,11 @@ func RegisterExtraNamespaces(methodNames map[string][]string, aliases map[string
 		}
 	}
 	for method, alias := range aliases {
-		MethodAliases[method] = alias
+		// Store the target in its canonical spelling: every access-control
+		// decision keyed on the alias target (GetTargetAddress, the
+		// storage-slot tier, the historical-state guard) matches canonical
+		// names, so a mis-cased target would silently skip them.
+		MethodAliases[method] = CanonicalizeMethod(alias)
 	}
 	Wildcards = wildcards
 }

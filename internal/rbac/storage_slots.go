@@ -7,8 +7,8 @@ import (
 // erc1967Slots is the set of standard EIP-1967 storage slot hashes
 // (implementation, admin, beacon) used by upgradeable proxy contracts
 // to keep proxy metadata in predictable locations. Inlined here
-// because they're consumed only by the eth_getStorageAt allowlist
-// below; the historical home in internal/evm/bytecode/proxy.go was
+// because they're consumed only by the storage-slot allowlist below
+// (eth_getStorageAt / eth_getProof); the historical home in internal/evm/bytecode/proxy.go was
 // deleted alongside the dead deploy-time bytecode analyzer.
 var erc1967Slots = []string{
 	"0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc", // implementation

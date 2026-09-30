@@ -161,20 +161,142 @@ func TestCheckAccess_AuthenticatedAliasHistoricalGuard(t *testing.T) {
 		{"linea_getProof", "eth_getProof"},
 	} {
 		t.Run(tc.method, func(t *testing.T) {
+			check := func(block string) *AccessCheckResult {
+				res, err := ac.CheckAccess(context.Background(), &AccessCheckRequest{
+					UserExternalID: "did:test:user-a",
+					Method:         tc.method,
+					AccessMethod:   tc.alias,
+					Params:         []any{rd1301Contract, []any{rd1301Impl}, block},
+					TargetAddress:  rd1301Contract,
+				})
+				if err != nil {
+					t.Fatalf("CheckAccess: %v", err)
+				}
+				return res
+			}
+			if res := check("latest"); !res.Allowed {
+				t.Fatalf("precondition: %s of a well-known slot at latest is allowed, got %+v", tc.method, res)
+			}
+			res := check("0x10")
+			if res.Allowed {
+				t.Fatalf("%s at a block number must be denied for a non-org-admin", tc.method)
+			}
+			if res.Reason != "historical state queries not permitted" {
+				t.Fatalf("expected the historical-state denial, got reason %q", res.Reason)
+			}
+		})
+	}
+}
+
+// TestCheckAccess_StorageReadWithoutTargetDenied pins the fail-closed branch
+// for a storage read whose address param is missing or not a string: the
+// contract and storage-slot checks key on the target address, so without one
+// the request would otherwise be allowed and forwarded unchecked.
+func TestCheckAccess_StorageReadWithoutTargetDenied(t *testing.T) {
+	store := NewMockCrossOrgStore()
+	setupCrossOrgTestScenario(store)
+	perms := store.cachedPermissions["user-a:org-a"]
+	perms.AllowedMethods = append(perms.AllowedMethods, "eth_getProof", "linea_getProof")
+	ac := NewAccessController(store, time.Minute)
+	defer ac.Stop()
+
+	for _, tc := range []struct {
+		name, method, alias string
+		params              []any
+	}{
+		{"getProof non-string address", "eth_getProof", "", []any{float64(1), []any{rd1301Impl}, "latest"}},
+		{"getProof no params", "eth_getProof", "", []any{}},
+		{"alias getProof non-string address", "linea_getProof", "eth_getProof", []any{nil, []any{}, "latest"}},
+		{"getStorageAt non-string address", "eth_getStorageAt", "", []any{map[string]any{}, rd1301Impl, "latest"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			res, err := ac.CheckAccess(context.Background(), &AccessCheckRequest{
 				UserExternalID: "did:test:user-a",
 				Method:         tc.method,
 				AccessMethod:   tc.alias,
-				Params:         []any{rd1301Contract, []any{rd1301Impl}, "0x10"},
-				TargetAddress:  rd1301Contract,
+				Params:         tc.params,
+				TargetAddress:  GetTargetAddress(MethodGetProof, tc.params),
 			})
 			if err != nil {
 				t.Fatalf("CheckAccess: %v", err)
 			}
 			if res.Allowed {
-				t.Fatalf("%s at a block number must be denied for a non-org-admin", tc.method)
+				t.Fatalf("a storage read without a target address must be denied")
 			}
 		})
+	}
+}
+
+// TestCheckAccess_AnonymousStorageReadDenied pins that raw storage is never
+// served to an anonymous caller, even when a super admin allowlists a storage
+// method (or an alias of one) for the anonymous group: anonymous requests get
+// no contract-level check, so the slot tier cannot apply there.
+func TestCheckAccess_AnonymousStorageReadDenied(t *testing.T) {
+	store := NewMockCrossOrgStore()
+	anon := store.groupAccess[AnonymousGroupID]
+	anon.AllowedMethods = append(anon.AllowedMethods, "eth_getStorageAt", "eth_getProof", "linea_getProof")
+	ac := NewAccessController(store, time.Minute)
+	defer ac.Stop()
+
+	res, err := ac.CheckAccess(context.Background(), &AccessCheckRequest{Method: "eth_blockNumber"})
+	if err != nil || !res.Allowed {
+		t.Fatalf("precondition: anonymous eth_blockNumber is allowed, got %+v err=%v", res, err)
+	}
+	for _, tc := range []struct {
+		name, method, alias string
+		params              []any
+	}{
+		{"getStorageAt well-known slot", "eth_getStorageAt", "", []any{rd1301Contract, rd1301Impl, "latest"}},
+		{"getProof zero keys", "eth_getProof", "", []any{rd1301Contract, []any{}, "latest"}},
+		{"alias getProof well-known key", "linea_getProof", "eth_getProof", []any{rd1301Contract, []any{rd1301Impl}, "latest"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := ac.CheckAccess(context.Background(), &AccessCheckRequest{
+				Method: tc.method, AccessMethod: tc.alias, Params: tc.params, TargetAddress: rd1301Contract,
+			})
+			if err != nil {
+				t.Fatalf("CheckAccess: %v", err)
+			}
+			if res.Allowed {
+				t.Fatalf("an anonymous storage read must be denied even when allowlisted")
+			}
+			if !res.AuthRequired {
+				t.Fatalf("the denial must ask for authentication, got %+v", res)
+			}
+		})
+	}
+}
+
+// TestRegisterExtraNamespaces_CanonicalizesAliasTargets pins that an alias
+// target is stored in its canonical spelling: every access-control decision
+// keyed on the alias target (target extraction, the storage-slot tier, the
+// historical-state guard) matches the canonical name, so a mis-cased target
+// in the operator config would otherwise silently skip those checks.
+func TestRegisterExtraNamespaces_CanonicalizesAliasTargets(t *testing.T) {
+	defer SnapshotMethodRegistriesForTest()()
+	ExtraMethods = map[string]bool{}
+	ExtraNamespaces = nil
+	MethodAliases = map[string]string{}
+	Wildcards = nil
+
+	RegisterExtraNamespaces(
+		map[string][]string{"Linea": {"linea_getProof", "linea_getStorageAt", "linea_custom"}},
+		map[string]string{
+			"linea_getProof":     "eth_getproof",
+			"linea_getStorageAt": "ETH_GETSTORAGEAT",
+			"linea_custom":       "vendor_somethingElse",
+		},
+		nil,
+	)
+
+	if got := ResolveMethodAlias("linea_getProof"); got != MethodGetProof {
+		t.Fatalf("mis-cased eth_getProof target resolved to %q", got)
+	}
+	if got := ResolveMethodAlias("linea_getStorageAt"); got != MethodGetStorageAt {
+		t.Fatalf("mis-cased eth_getStorageAt target resolved to %q", got)
+	}
+	if got := ResolveMethodAlias("linea_custom"); got != "vendor_somethingElse" {
+		t.Fatalf("an unknown target must be kept verbatim, got %q", got)
 	}
 }
 

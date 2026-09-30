@@ -78,7 +78,7 @@ func (u *countingUpstream) lastBody() []byte {
 }
 
 // rd1301Methods is the allowlist every non-wildcard fixture group gets.
-var rd1301Methods = []string{"eth_getProof", "linea_getProof", "eth_getStorageAt"}
+var rd1301Methods = []string{"eth_getProof", "linea_getProof", "eth_getStorageAt", "linea_getStorageAt"}
 
 type rd1301Fixture struct {
 	ts       *testServerRBAC
@@ -98,6 +98,7 @@ type rd1301Fixture struct {
 	preregDID        string // deploy claim, reaches `prereg` via pre-registration
 	starExpandedDID  string // group saved with "*" while linea_getProof is configured
 	literalStarDID   string // group stored with a literal "*" (batch-move new-group shape)
+	splitAdminDID    string // admin claim in a group WITHOUT a grant + a plain grant from another group
 }
 
 // rd1301Group creates a group (optionally is_org_admin) with its access row
@@ -160,6 +161,7 @@ func setupRD1301(t *testing.T) *rd1301Fixture {
 	// as it does in a deployment with that namespace configured. The snapshot
 	// taken by withMethodAlias restores both registries.
 	withMethodAlias(t, "linea_getProof", "eth_getProof")
+	rbac.MethodAliases["linea_getStorageAt"] = "eth_getStorageAt"
 	rbac.ExtraMethods["linea_getProof"] = true
 
 	proc := NewJSONRPCProcessor(JSONRPCProcessorConfig{
@@ -210,6 +212,17 @@ func setupRD1301(t *testing.T) *rd1301Fixture {
 
 	f.literalStarDID, _, groupID = rd1301Group(t, ts, orgA, false, rbac.ExpandClaims([]rbac.Claim{rbac.ClaimDeploy}), []string{"*"})
 	rd1301Grant(t, ts, contractID, groupID)
+
+	// The admin claim is per contract: holding it in a group that has no
+	// grant on the contract does not make a plain grant from another group an
+	// admin grant.
+	var splitUserID string
+	f.splitAdminDID, splitUserID, groupID = rd1301Group(t, ts, orgA, false, []rbac.Claim{}, rd1301Methods)
+	rd1301Grant(t, ts, contractID, groupID)
+	_, _, adminGroupID := rd1301Group(t, ts, orgA, false, rbac.ExpandClaims([]rbac.Claim{rbac.ClaimAdmin}), rd1301Methods)
+	require.NoError(t, ts.db.CreateMembership(ctx, &rbac.UserMembership{
+		ID: uuid.New().String(), UserID: splitUserID, GroupID: adminGroupID, Source: rbac.MembershipSourceAdmin,
+	}))
 
 	return f
 }
@@ -307,6 +320,12 @@ func TestGetProofSlotPolicy_RD1301(t *testing.T) {
 			params: []any{}},
 
 		// Aliases inherit the policy.
+		{name: "member linea_getStorageAt alias ordinary slot denied", did: f.memberDID, method: "linea_getStorageAt",
+			params: []any{c, rd1301OrdinarySlot, "latest"}},
+		{name: "member linea_getStorageAt alias well-known slot allowed", did: f.memberDID, method: "linea_getStorageAt",
+			params: []any{c, rd1301ImplSlot, "latest"}, allowed: true},
+		{name: "member linea_getProof non-string address denied", did: f.memberDID, method: "linea_getProof",
+			params: []any{nil, []any{}, "latest"}},
 		{name: "member linea_getProof ordinary key denied", did: f.memberDID, method: "linea_getProof",
 			params: []any{c, []any{rd1301OrdinarySlot}, "latest"}},
 		{name: "member linea_getProof mixed keys denied", did: f.memberDID, method: "linea_getProof",
@@ -332,6 +351,10 @@ func TestGetProofSlotPolicy_RD1301(t *testing.T) {
 		{name: "literal \"*\" group getProof ordinary key denied", did: f.literalStarDID, method: "eth_getProof",
 			params: []any{c, []any{rd1301OrdinarySlot}, "latest"}},
 		{name: "literal \"*\" group getProof well-known key allowed", did: f.literalStarDID, method: "eth_getProof",
+			params: []any{c, []any{rd1301ImplSlot}, "latest"}, allowed: true},
+		{name: "admin claim without a grant + plain grant elsewhere getProof ordinary key denied", did: f.splitAdminDID, method: "eth_getProof",
+			params: []any{c, []any{rd1301OrdinarySlot}, "latest"}},
+		{name: "admin claim without a grant + plain grant elsewhere getProof well-known key allowed", did: f.splitAdminDID, method: "eth_getProof",
 			params: []any{c, []any{rd1301ImplSlot}, "latest"}, allowed: true},
 
 		// Admins keep the unrestricted same-org path.
@@ -365,7 +388,8 @@ func TestGetProofSlotPolicy_RD1301(t *testing.T) {
 		{name: "member getProof on another org's contract denied", did: f.memberDID, method: "eth_getProof",
 			params: []any{f.foreignAddr, []any{rd1301ImplSlot}, "latest"}},
 
-		// Anonymous callers never reach the node for proofs.
+		// Anonymous callers (default anonymous allowlist) are denied; an
+		// allowlisted anonymous storage read is covered in internal/rbac.
 		{name: "anonymous getProof denied", did: "", method: "eth_getProof",
 			params: []any{c, []any{rd1301ImplSlot}, "latest"}},
 	})

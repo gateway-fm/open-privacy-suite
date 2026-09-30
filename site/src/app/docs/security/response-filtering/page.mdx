@@ -353,8 +353,8 @@ A DID listed in `visibleTo` whose group does not allow the relevant method is de
 
 | Method | Participant behavior | Non-participant behavior |
 |--------|---------------------|--------------------------|
-| `eth_getStorageAt` | Admin: all slots; Non-admin: EIP-1967 proxy slots only | Blocked (no claim) |
-| `eth_getProof` | Admin: any keys; Non-admin: every key must be an EIP-1967 / EIP-2535 proxy slot (empty key list allowed) | Blocked (no claim) |
+| `eth_getStorageAt` | Admin: all slots; Non-admin: EIP-1967 / EIP-2535 proxy slots only | Blocked (no access to the contract) |
+| `eth_getProof` | Admin: any keys; Non-admin: every key must be an EIP-1967 / EIP-2535 proxy slot (empty key list allowed) | Blocked (no access to the contract) |
 | `eth_getTransactionByHash` | Full transaction | `null` (or full tx if viewer is in `visibleTo`) |
 | `eth_getTransactionByBlockHashAndIndex` | Full transaction | `null` (or full tx if viewer is in `visibleTo`) |
 | `eth_getTransactionByBlockNumberAndIndex` | Full transaction | `null` (or full tx if viewer is in `visibleTo`) |
