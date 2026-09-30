@@ -296,6 +296,7 @@ func TestVisibleToE2E_TxNotVisibleToListedDID(t *testing.T) {
 	receiptBody := buildReceiptResponse(t, setup.senderAddr, setup.contractAddr, txHash, transferTopic0, senderTopic)
 
 	receiptResult := server.FilterReceiptLogsWithEventRules(
+		rbac.ReadProfileStandard,
 		receiptBody,
 		[]string{setup.viewerAddr}, // viewer's addresses
 		perms,

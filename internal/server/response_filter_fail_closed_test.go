@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 
+	"privacy-proxy/internal/rbac"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -33,43 +35,43 @@ func TestResponseFilters_FailClosedOnUnexpectedShape(t *testing.T) {
 		{
 			name: "tx-by-hash: body is not JSON",
 			body: `{"jsonrpc":"2.0","id":1,"result":{"from":"` + leak + `"`,
-			run:  func(b []byte) []byte { return FilterTransactionByHash(b, nil, false) },
+			run:  func(b []byte) []byte { return FilterTransactionByHash(rbac.ReadProfileStandard, b, nil, false, nil) },
 			want: "null",
 		},
 		{
 			name: "tx-by-hash: result is not an object",
 			body: `{"jsonrpc":"2.0","id":1,"result":["` + leak + `"]}`,
-			run:  func(b []byte) []byte { return FilterTransactionByHash(b, nil, false) },
+			run:  func(b []byte) []byte { return FilterTransactionByHash(rbac.ReadProfileStandard, b, nil, false, nil) },
 			want: "null",
 		},
 		{
 			name: "block receipts: result is not an array",
 			body: `{"jsonrpc":"2.0","id":1,"result":{"from":"` + leak + `","to":"` + leak + `"}}`,
-			run:  func(b []byte) []byte { return FilterBlockReceipts(b, nil) },
+			run:  func(b []byte) []byte { return FilterBlockReceipts(rbac.ReadProfileStandard, b, nil) },
 			want: "null",
 		},
 		{
 			name: "block receipts: body is not JSON",
 			body: `{"jsonrpc":"2.0","id":1,"result":[{"from":"` + leak + `"}`,
-			run:  func(b []byte) []byte { return FilterBlockReceipts(b, nil) },
+			run:  func(b []byte) []byte { return FilterBlockReceipts(rbac.ReadProfileStandard, b, nil) },
 			want: "null",
 		},
 		{
 			name: "block: result is not an object",
 			body: `{"jsonrpc":"2.0","id":1,"result":["` + leak + `"]}`,
-			run:  func(b []byte) []byte { return FilterBlockTransactions(b, nil, true) },
+			run:  func(b []byte) []byte { return FilterBlockTransactions(rbac.ReadProfileStandard, b, nil, true) },
 			want: "null",
 		},
 		{
 			name: "block: body is not JSON",
 			body: `{"jsonrpc":"2.0","id":1,"result":{"transactions":[{"from":"` + leak + `"}`,
-			run:  func(b []byte) []byte { return FilterBlockTransactions(b, nil, true) },
+			run:  func(b []byte) []byte { return FilterBlockTransactions(rbac.ReadProfileStandard, b, nil, true) },
 			want: "null",
 		},
 		{
 			name: "block: transactions is not an array",
 			body: `{"jsonrpc":"2.0","id":1,"result":{"number":"0x1","transactions":{"x":{"from":"` + leak + `"}}}}`,
-			run:  func(b []byte) []byte { return FilterBlockTransactions(b, nil, true) },
+			run:  func(b []byte) []byte { return FilterBlockTransactions(rbac.ReadProfileStandard, b, nil, true) },
 			want: `{"number":"0x1","transactions":[]}`,
 		},
 		{
@@ -124,9 +126,9 @@ func TestResponseFilters_PassNullAndErrors(t *testing.T) {
 		`{"jsonrpc":"2.0","id":7,"result":null}`,
 		`{"jsonrpc":"2.0","id":7,"error":{"code":-32000,"message":"not found"}}`,
 	} {
-		assert.JSONEq(t, body, string(FilterTransactionByHash([]byte(body), nil, false)))
-		assert.JSONEq(t, body, string(FilterBlockReceipts([]byte(body), nil)))
-		assert.JSONEq(t, body, string(FilterBlockTransactions([]byte(body), nil, true)))
+		assert.JSONEq(t, body, string(FilterTransactionByHash(rbac.ReadProfileStandard, []byte(body), nil, false, nil)))
+		assert.JSONEq(t, body, string(FilterBlockReceipts(rbac.ReadProfileStandard, []byte(body), nil)))
+		assert.JSONEq(t, body, string(FilterBlockTransactions(rbac.ReadProfileStandard, []byte(body), nil, true)))
 		assert.JSONEq(t, body, string(FilterBlockTransactionCount([]byte(body), nil)))
 	}
 }

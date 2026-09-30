@@ -17,6 +17,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"privacy-proxy/internal/rbac"
 )
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -27,7 +29,7 @@ func TestFilterTransactionByHash_SelfTransaction(t *testing.T) {
 	// User sends to themselves — must see full tx.
 	addr := "0xabc1234567890123456789012345678901234567"
 	response := `{"jsonrpc":"2.0","id":1,"result":{"hash":"0xabc","from":"` + addr + `","to":"` + addr + `","input":"0x","nonce":"0x1"}}`
-	got := FilterTransactionByHash([]byte(response), []string{addr}, false)
+	got := FilterTransactionByHash(rbac.ReadProfileStandard, []byte(response), []string{addr}, false, nil)
 	if string(got) != response {
 		t.Errorf("self-tx should pass through unchanged\ngot:  %s\nwant: %s", got, response)
 	}
@@ -38,7 +40,7 @@ func TestFilterTransactionByHash_MultipleLinkedAddresses(t *testing.T) {
 	addr1 := "0xaaa1111111111111111111111111111111111111"
 	addr2 := "0xbbb2222222222222222222222222222222222222"
 	response := `{"jsonrpc":"2.0","id":1,"result":{"from":"0xother","to":"` + addr2 + `","input":"0x","nonce":"0x1"}}`
-	got := FilterTransactionByHash([]byte(response), []string{addr1, addr2}, false)
+	got := FilterTransactionByHash(rbac.ReadProfileStandard, []byte(response), []string{addr1, addr2}, false, nil)
 	if string(got) != response {
 		t.Errorf("tx involving second linked address should pass through\ngot: %s", got)
 	}
@@ -49,7 +51,7 @@ func TestFilterTransactionByHash_ChecksummedAddress(t *testing.T) {
 	stored := "0xd8da6bf26964af9d7eed9e03e53415d37aa96045"
 	checksummed := "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"
 	response := `{"jsonrpc":"2.0","id":1,"result":{"from":"` + checksummed + `","to":"0xother","input":"0x","nonce":"0x1"}}`
-	got := FilterTransactionByHash([]byte(response), []string{stored}, false)
+	got := FilterTransactionByHash(rbac.ReadProfileStandard, []byte(response), []string{stored}, false, nil)
 	if string(got) != response {
 		t.Errorf("checksummed address should match stored lowercase\ngot: %s", got)
 	}
@@ -58,7 +60,7 @@ func TestFilterTransactionByHash_ChecksummedAddress(t *testing.T) {
 func TestFilterTransactionByHash_ContractCreation_NonParticipant(t *testing.T) {
 	// Contract creation tx (to=null): non-participant must receive null.
 	response := `{"jsonrpc":"2.0","id":1,"result":{"from":"0xdeployer","to":null,"input":"0x60806040","nonce":"0x1"}}`
-	got := FilterTransactionByHash([]byte(response), []string{"0xabc1234567890123456789012345678901234567"}, false)
+	got := FilterTransactionByHash(rbac.ReadProfileStandard, []byte(response), []string{"0xabc1234567890123456789012345678901234567"}, false, nil)
 	var resp struct {
 		Result *json.RawMessage `json:"result"`
 	}
@@ -75,7 +77,7 @@ func TestFilterTransactionByHash_EIP1559_FieldsPreserved(t *testing.T) {
 	// EIP-1559 fields (maxFeePerGas, maxPriorityFeePerGas, type) must all be preserved.
 	addr := "0xabc1234567890123456789012345678901234567"
 	response := `{"jsonrpc":"2.0","id":1,"result":{"hash":"0xabc","from":"` + addr + `","to":"0xother","input":"0x","nonce":"0x1","maxFeePerGas":"0x1234","maxPriorityFeePerGas":"0x100","type":"0x2"}}`
-	got := FilterTransactionByHash([]byte(response), []string{addr}, false)
+	got := FilterTransactionByHash(rbac.ReadProfileStandard, []byte(response), []string{addr}, false, nil)
 	if string(got) != response {
 		t.Errorf("EIP-1559 fields must be preserved for participant\ngot:  %s\nwant: %s", got, response)
 	}
@@ -103,7 +105,7 @@ func TestFilterBlockTransactions_UserAsTo(t *testing.T) {
 		`{"from":"0xother1","to":"0xother2","input":"0x"}` +
 		`]}}`
 
-	got := FilterBlockTransactions([]byte(response), []string{userAddr}, true)
+	got := FilterBlockTransactions(rbac.ReadProfileStandard, []byte(response), []string{userAddr}, true)
 	var resp struct {
 		Result *struct {
 			Transactions []json.RawMessage `json:"transactions"`
@@ -130,7 +132,7 @@ func TestFilterBlockTransactions_MultipleLinkedAddresses(t *testing.T) {
 		`{"from":"0xother1","to":"0xother2","input":"0x"}` +
 		`]}}`
 
-	got := FilterBlockTransactions([]byte(response), []string{addr1, addr2}, true)
+	got := FilterBlockTransactions(rbac.ReadProfileStandard, []byte(response), []string{addr1, addr2}, true)
 	var resp struct {
 		Result *struct {
 			Transactions []json.RawMessage `json:"transactions"`
@@ -179,7 +181,7 @@ func TestFilterBlockTransactions_BlockLogsBloom_Zeroed(t *testing.T) {
 		`{"from":"0xother1","to":"0xother2","input":"0x"}` +
 		`]}}`
 
-	got := FilterBlockTransactions([]byte(response), []string{userAddr}, true)
+	got := FilterBlockTransactions(rbac.ReadProfileStandard, []byte(response), []string{userAddr}, true)
 	if bloom := extractBlockLogsBloom(t, got); bloom != expectedZeroBloom {
 		t.Errorf("block logsBloom must be zeroed when transactions are filtered\ngot:  %s\nwant: %s", bloom, expectedZeroBloom)
 	}
@@ -192,7 +194,7 @@ func TestFilterBlockTransactions_BlockLogsBloom_Zeroed_EmptyTxArray(t *testing.T
 	userAddr := "0xabc1234567890123456789012345678901234567"
 	response := `{"jsonrpc":"2.0","id":1,"result":{"number":"0x1","logsBloom":"0xdeadbeef","transactions":[]}}`
 
-	got := FilterBlockTransactions([]byte(response), []string{userAddr}, true)
+	got := FilterBlockTransactions(rbac.ReadProfileStandard, []byte(response), []string{userAddr}, true)
 	if bloom := extractBlockLogsBloom(t, got); bloom != expectedZeroBloom {
 		t.Errorf("logsBloom must be zeroed on empty-tx blocks\ngot:  %s\nwant: %s", bloom, expectedZeroBloom)
 	}
@@ -204,7 +206,7 @@ func TestFilterBlockTransactions_BlockLogsBloom_Zeroed_NoTxField(t *testing.T) {
 	userAddr := "0xabc1234567890123456789012345678901234567"
 	response := `{"jsonrpc":"2.0","id":1,"result":{"number":"0x1","logsBloom":"0xfeedface"}}`
 
-	got := FilterBlockTransactions([]byte(response), []string{userAddr}, true)
+	got := FilterBlockTransactions(rbac.ReadProfileStandard, []byte(response), []string{userAddr}, true)
 	if bloom := extractBlockLogsBloom(t, got); bloom != expectedZeroBloom {
 		t.Errorf("logsBloom must be zeroed on blocks with no transactions field\ngot:  %s\nwant: %s", bloom, expectedZeroBloom)
 	}
@@ -217,7 +219,7 @@ func TestFilterBlockTransactions_BlockLogsBloom_Zeroed_HashesOnly(t *testing.T) 
 	userAddr := "0xabc1234567890123456789012345678901234567"
 	response := `{"jsonrpc":"2.0","id":1,"result":{"number":"0x1","logsBloom":"0xdeadbeef","transactions":["0xhash1","0xhash2"]}}`
 
-	got := FilterBlockTransactions([]byte(response), []string{userAddr}, false)
+	got := FilterBlockTransactions(rbac.ReadProfileStandard, []byte(response), []string{userAddr}, false)
 	if bloom := extractBlockLogsBloom(t, got); bloom != expectedZeroBloom {
 		t.Errorf("logsBloom must be zeroed on hash-only blocks\ngot:  %s\nwant: %s", bloom, expectedZeroBloom)
 	}
@@ -231,7 +233,7 @@ func TestFilterBlockTransactions_BlockLogsBloom_Zeroed_NonParticipantViewer(t *t
 		`{"from":"0xother1","to":"0xother2","input":"0x"}` +
 		`]}}`
 
-	got := FilterBlockTransactions([]byte(response), []string{userAddr}, true)
+	got := FilterBlockTransactions(rbac.ReadProfileStandard, []byte(response), []string{userAddr}, true)
 	if bloom := extractBlockLogsBloom(t, got); bloom != expectedZeroBloom {
 		t.Errorf("logsBloom must be zeroed for non-participant viewers\ngot:  %s\nwant: %s", bloom, expectedZeroBloom)
 	}
@@ -271,7 +273,7 @@ func TestFilterBlockTransactions_BlockGasUsed_Zeroed_Participant(t *testing.T) {
 		`{"from":"0xother1","to":"0xother2","input":"0x","hash":"0xh2"}` +
 		`]}}`
 
-	got := FilterBlockTransactions([]byte(response), []string{userAddr}, true)
+	got := FilterBlockTransactions(rbac.ReadProfileStandard, []byte(response), []string{userAddr}, true)
 	gasUsed, blobGasUsed := extractBlockGasFields(t, got)
 	if gasUsed != expectedZeroGasUsed {
 		t.Errorf("gasUsed must be zeroed for participants\ngot:  %s\nwant: %s", gasUsed, expectedZeroGasUsed)
@@ -287,7 +289,7 @@ func TestFilterBlockTransactions_BlockGasUsed_Zeroed_NonParticipant(t *testing.T
 		`{"from":"0xother1","to":"0xother2","input":"0x","hash":"0xh1"}` +
 		`]}}`
 
-	got := FilterBlockTransactions([]byte(response), []string{userAddr}, true)
+	got := FilterBlockTransactions(rbac.ReadProfileStandard, []byte(response), []string{userAddr}, true)
 	gasUsed, blobGasUsed := extractBlockGasFields(t, got)
 	if gasUsed != expectedZeroGasUsed {
 		t.Errorf("gasUsed must be zeroed for non-participants (the actual presence-leak case)\ngot:  %s\nwant: %s", gasUsed, expectedZeroGasUsed)
@@ -301,7 +303,7 @@ func TestFilterBlockTransactions_BlockGasUsed_Zeroed_EmptyTxArray(t *testing.T) 
 	userAddr := "0xabc1234567890123456789012345678901234567"
 	response := `{"jsonrpc":"2.0","id":1,"result":{"number":"0x1","gasUsed":"0x500000","blobGasUsed":"0x20000","transactions":[]}}`
 
-	got := FilterBlockTransactions([]byte(response), []string{userAddr}, true)
+	got := FilterBlockTransactions(rbac.ReadProfileStandard, []byte(response), []string{userAddr}, true)
 	gasUsed, blobGasUsed := extractBlockGasFields(t, got)
 	if gasUsed != expectedZeroGasUsed {
 		t.Errorf("gasUsed must be zeroed on empty-tx blocks\ngot:  %s\nwant: %s", gasUsed, expectedZeroGasUsed)
@@ -315,7 +317,7 @@ func TestFilterBlockTransactions_BlockGasUsed_Zeroed_HashesOnly(t *testing.T) {
 	userAddr := "0xabc1234567890123456789012345678901234567"
 	response := `{"jsonrpc":"2.0","id":1,"result":{"number":"0x1","gasUsed":"0x500000","transactions":["0xhash1","0xhash2"]}}`
 
-	got := FilterBlockTransactions([]byte(response), []string{userAddr}, false)
+	got := FilterBlockTransactions(rbac.ReadProfileStandard, []byte(response), []string{userAddr}, false)
 	gasUsed, _ := extractBlockGasFields(t, got)
 	if gasUsed != expectedZeroGasUsed {
 		t.Errorf("gasUsed must be zeroed on hash-only blocks\ngot:  %s\nwant: %s", gasUsed, expectedZeroGasUsed)
@@ -328,7 +330,7 @@ func TestFilterBlockTransactions_BlockGasUsed_Untouched_WhenFieldAbsent(t *testi
 	userAddr := "0xabc1234567890123456789012345678901234567"
 	response := `{"jsonrpc":"2.0","id":1,"result":{"number":"0x1","gasUsed":"0x500000","transactions":[]}}`
 
-	got := FilterBlockTransactions([]byte(response), []string{userAddr}, true)
+	got := FilterBlockTransactions(rbac.ReadProfileStandard, []byte(response), []string{userAddr}, true)
 	var resp struct {
 		Result map[string]json.RawMessage `json:"result"`
 	}
@@ -348,7 +350,7 @@ func TestFilterBlockTransactions_ContractCreation_DeployerKept(t *testing.T) {
 		`{"from":"0xother","to":null,"input":"0x60806040"}` +
 		`]}}`
 
-	got := FilterBlockTransactions([]byte(response), []string{userAddr}, true)
+	got := FilterBlockTransactions(rbac.ReadProfileStandard, []byte(response), []string{userAddr}, true)
 	var resp struct {
 		Result *struct {
 			Transactions []json.RawMessage `json:"transactions"`
@@ -373,7 +375,7 @@ func TestFilterBlockTransactions_AllNonParticipant_BlockMetadataPreserved(t *tes
 		`{"from":"0xother3","to":"0xother4","input":"0x"}` +
 		`]}}`
 
-	got := FilterBlockTransactions([]byte(response), []string{userAddr}, true)
+	got := FilterBlockTransactions(rbac.ReadProfileStandard, []byte(response), []string{userAddr}, true)
 	var resp struct {
 		Result *struct {
 			Number       string            `json:"number"`
@@ -407,7 +409,7 @@ func TestFilterBlockReceipts_AllNonParticipant_EmptyArray(t *testing.T) {
 		`{"from":"0xother5","to":"0xother6","status":"0x0","gasUsed":"0x5208","logs":[],"logsBloom":"0x0"}` +
 		`]}`
 
-	got := FilterBlockReceipts([]byte(response), []string{userAddr})
+	got := FilterBlockReceipts(rbac.ReadProfileStandard, []byte(response), []string{userAddr})
 	var resp struct {
 		Result []json.RawMessage `json:"result"`
 	}
@@ -424,7 +426,7 @@ func TestFilterBlockReceipts_NonParticipant_NotLeaked(t *testing.T) {
 	userAddr := "0xabc1234567890123456789012345678901234567"
 	response := `{"jsonrpc":"2.0","id":1,"result":[{"from":"0xsender","to":"0xreceiver","status":"0x1","gasUsed":"0x5208","contractAddress":null,"logs":[],"logsBloom":"0x0"}]}`
 
-	got := FilterBlockReceipts([]byte(response), []string{userAddr})
+	got := FilterBlockReceipts(rbac.ReadProfileStandard, []byte(response), []string{userAddr})
 	var resp struct {
 		Result []json.RawMessage `json:"result"`
 	}
@@ -442,7 +444,7 @@ func TestFilterBlockReceipts_ContractCreation_DeployerKeepsLogs(t *testing.T) {
 	paddedAddr := "0x000000000000000000000000abc1234567890123456789012345678901234567"
 	response := `{"jsonrpc":"2.0","id":1,"result":[{"from":"` + userAddr + `","to":null,"contractAddress":"0xnewcontract","status":"0x1","logs":[{"address":"0x1","topics":["0xevent","` + paddedAddr + `"]}],"logsBloom":"0xfull"}]}`
 
-	got := FilterBlockReceipts([]byte(response), []string{userAddr})
+	got := FilterBlockReceipts(rbac.ReadProfileStandard, []byte(response), []string{userAddr})
 	var resp struct {
 		Result []struct {
 			Logs []json.RawMessage `json:"logs"`
@@ -462,7 +464,7 @@ func TestFilterBlockReceipts_ContractCreation_DeployerKeepsLogs(t *testing.T) {
 func TestFilterBlockReceipts_EmptyBlock(t *testing.T) {
 	// Empty block — empty array, valid response.
 	response := `{"jsonrpc":"2.0","id":1,"result":[]}`
-	got := FilterBlockReceipts([]byte(response), []string{"0xabc1234567890123456789012345678901234567"})
+	got := FilterBlockReceipts(rbac.ReadProfileStandard, []byte(response), []string{"0xabc1234567890123456789012345678901234567"})
 
 	var resp struct {
 		Result []json.RawMessage `json:"result"`
@@ -497,7 +499,7 @@ func TestFilterBlockReceipts_ParticipantAddresslessOwnTxLog_GAP_RD1162(t *testin
 		`","status":"0x1","transactionHash":"0xdeadbeef","logs":[{"address":"` + contract +
 		`","topics":["` + eventTopic0 + `","` + recordKey + `"],"transactionHash":"0xdeadbeef"}],"logsBloom":"0xfull"}]}`
 
-	got := FilterBlockReceipts([]byte(response), []string{userAddr})
+	got := FilterBlockReceipts(rbac.ReadProfileStandard, []byte(response), []string{userAddr})
 	var resp struct {
 		Result []struct {
 			Logs []json.RawMessage `json:"logs"`
@@ -601,8 +603,8 @@ func TestBehavioralConsistency_BlockTxAndBlockReceipts_BothShrink(t *testing.T) 
 		`{"from":"0xother3","to":"0xother4","status":"0x1","logs":[],"logsBloom":"0x0"}` +
 		`]}`
 
-	filteredTxBlock := FilterBlockTransactions([]byte(txBlock), []string{userAddr}, true)
-	filteredReceiptBlock := FilterBlockReceipts([]byte(receiptBlock), []string{userAddr})
+	filteredTxBlock := FilterBlockTransactions(rbac.ReadProfileStandard, []byte(txBlock), []string{userAddr}, true)
+	filteredReceiptBlock := FilterBlockReceipts(rbac.ReadProfileStandard, []byte(receiptBlock), []string{userAddr})
 
 	var txResp struct {
 		Result *struct {

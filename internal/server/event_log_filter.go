@@ -201,6 +201,7 @@ func filterLogsWithEventRules(
 // returned verbatim); client-facing callers render through
 // filterReceiptLogsWithEventRules with JSONRPCProcessor.logFieldRenderer.
 func FilterReceiptLogsWithEventRules(
+	profile rbac.ReadProfile,
 	responseBody []byte,
 	userAddresses []string,
 	perms *rbac.EffectivePermissions,
@@ -208,12 +209,13 @@ func FilterReceiptLogsWithEventRules(
 	visCtx *rbac.TxVisibilityContext,
 	isAdminByContract map[string]bool,
 ) []byte {
-	return filterReceiptLogsWithEventRules(responseBody, userAddresses, perms, abiProvider, visCtx, isAdminByContract, nil)
+	return filterReceiptLogsWithEventRules(profile, responseBody, userAddresses, perms, abiProvider, visCtx, isAdminByContract, nil)
 }
 
 // filterReceiptLogsWithEventRules is FilterReceiptLogsWithEventRules with the
 // admitted receipt logs rendered by render (nil = verbatim).
 func filterReceiptLogsWithEventRules(
+	profile rbac.ReadProfile,
 	responseBody []byte,
 	userAddresses []string,
 	perms *rbac.EffectivePermissions,
@@ -332,10 +334,17 @@ func filterReceiptLogsWithEventRules(
 	//     RPC layer never redacts the top-level contractAddress (RD-1143 redaction
 	//     is explorer-layer only), so admitting one to a log-entitled
 	//     non-participant would leak the deployed contract address.
-	admit := isParticipant || isVisibleTo || isAdminOnTo || (to != "" && entitledLogs > 0)
+	//   - Strict profile: participant only (rbac.DecideTxEnvelope, RD-1299).
+	admit := rbac.DecideTxEnvelope(profile, rbac.TxEnvelopeFacts{
+		Surface:       rbac.TxSurfaceReceipt,
+		IsParticipant: isParticipant,
+		InVisibleTo:   isVisibleTo,
+		IsAdminOnTo:   isAdminOnTo,
+		EntitledLogs:  entitledLogs,
+		IsDeployment:  to == "",
+	})
 	if !admit {
-		id := rpcResponseID(responseBody)
-		return []byte(`{"jsonrpc":"2.0","id":` + id + `,"result":null}`)
+		return nullResult(responseBody)
 	}
 
 	id := rpcResponseID(responseBody)

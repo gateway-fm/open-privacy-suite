@@ -12,6 +12,11 @@ import (
 	"net/url"
 	"slices"
 
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
 	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/audit"
 	"privacy-proxy/internal/audit/buffer"
@@ -33,10 +38,6 @@ import (
 	privacyredis "privacy-proxy/internal/redis"
 	"privacy-proxy/internal/server/middleware"
 	"privacy-proxy/internal/tracer"
-	"strconv"
-	"strings"
-	"sync"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/iden3/iden3comm/v2/protocol"
@@ -958,6 +959,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 			Timeout: cfg.EthCallTraceTimeout,
 		},
 		IntraOrgGrantTracingEnabled: cfg.RuntimeTracingIntraOrgGrantsEnabled,
+		ReadProfile:                 cfg.ReadProfile,
 	})
 
 	// RD-858: scheduled audit hash-chain integrity verifier. Default

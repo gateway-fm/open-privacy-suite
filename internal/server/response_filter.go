@@ -21,6 +21,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"privacy-proxy/internal/rbac"
 )
 
 // rpcResponseID extracts the raw "id" field from a JSON-RPC response body.
@@ -68,21 +70,22 @@ func topicMatchesAddress(topic string, addrSet map[string]bool) bool {
 	return false
 }
 
-// FilterTransactionByHash filters an eth_getTransactionByHash response.
-// Returns null result if the user is not the sender (from) or recipient
-// (to) of the transaction AND is not an admin on the `to` contract.
+// FilterTransactionByHash filters a response carrying one transaction object
+// (eth_getTransactionByHash and the by-block-index aliases). The admission
+// verdict is rbac.DecideTxEnvelope for TxSurfaceTransaction: the viewer receives
+// the full transaction if admitted, otherwise a null result (indistinguishable
+// from an unknown hash).
 //
-// The isAdminOnTo bool is computed at the call site (see
-// JSONRPCProcessor.viewerIsAdminOnResponseTxContract) using an
-// org-scoped check: the tx's `to` is looked up to find its owning org,
-// then the viewer's admin claim is verified in that org ONLY. This is
-// a defense-in-depth check on top of the schema-level uniqueness
-// constraint (migration 035: one address → one org). Even if that
-// invariant were somehow violated, the org-scoped check would prevent
-// a cross-org admin leak.
+// isAdminOnTo is computed at the call site (JSONRPCProcessor.viewerAdminContracts)
+// with an org-scoped check: the tx's `to` is looked up to find its owning org,
+// then the viewer's admin claim is verified in that org ONLY — defense in depth
+// on top of the schema-level uniqueness constraint (migration 035: one address
+// → one org). inVisibleTo is consulted lazily, only when the verdict still
+// depends on it (standard profile, non-participant, non-admin).
 //
-// If the transaction result is already null, passes through unchanged.
-func FilterTransactionByHash(responseBody []byte, userAddresses []string, isAdminOnTo bool) []byte {
+// A null or error result passes through unchanged; any shape that cannot be
+// evaluated fails closed to null.
+func FilterTransactionByHash(profile rbac.ReadProfile, responseBody []byte, userAddresses []string, isAdminOnTo bool, inVisibleTo func() bool) []byte {
 	var resp struct {
 		JSONRPC string           `json:"jsonrpc"`
 		ID      json.RawMessage  `json:"id"`
@@ -109,24 +112,28 @@ func FilterTransactionByHash(responseBody []byte, userAddresses []string, isAdmi
 		return nullResult(responseBody) // result is not a tx object: fail closed
 	}
 
-	addrSet := addrSetFromLinked(userAddresses)
-	from := strings.ToLower(tx.From)
-	to := strings.ToLower(tx.To)
-
-	if addrSet[from] || (to != "" && addrSet[to]) {
-		return responseBody // participant -- return full response
+	facts := rbac.TxEnvelopeFacts{
+		Surface:       rbac.TxSurfaceTransaction,
+		IsParticipant: isTxParticipant(userAddresses, tx.From, tx.To),
+		IsAdminOnTo:   isAdminOnTo,
 	}
-
-	// Admin bypass (pre-computed, org-scoped at call site). Mirrors the
-	// admin bypass in FilterEventLogs and the documented semantics:
-	// "admin users always see all events" applies to tx envelopes too.
-	if isAdminOnTo {
+	if !facts.IsParticipant && !facts.IsAdminOnTo && !profile.Strict() && inVisibleTo != nil {
+		facts.InVisibleTo = inVisibleTo()
+	}
+	if rbac.DecideTxEnvelope(profile, facts) {
 		return responseBody
 	}
+	return nullResult(responseBody)
+}
 
-	// Not a participant, not an admin -- return null
-	id := rpcResponseID(responseBody)
-	return []byte(`{"jsonrpc":"2.0","id":` + id + `,"result":null}`)
+// isTxParticipant reports whether one of the viewer's linked addresses is the
+// transaction's `from` or `to` — the only notion of participation the
+// transaction-level decision accepts (RD-1299).
+func isTxParticipant(userAddresses []string, from, to string) bool {
+	addrSet := addrSetFromLinked(userAddresses)
+	from = strings.ToLower(from)
+	to = strings.ToLower(to)
+	return (from != "" && addrSet[from]) || (to != "" && addrSet[to])
 }
 
 // filterReceiptLogs removes non-viewable logs from a receipt and zeros logsBloom.
@@ -225,7 +232,7 @@ var zeroSizeJSON = json.RawMessage(`"0x0"`)
 // the gas footprint of other users' txs in the same block. We mirror logsBloom
 // and always return 0x0; users who need their own gas can get it from the
 // per-tx receipts they already have access to.
-func FilterBlockTransactions(responseBody []byte, userAddresses []string, originalFull bool) []byte {
+func FilterBlockTransactions(profile rbac.ReadProfile, responseBody []byte, userAddresses []string, originalFull bool) []byte {
 	var resp struct {
 		JSONRPC string           `json:"jsonrpc"`
 		ID      json.RawMessage  `json:"id"`
@@ -282,8 +289,8 @@ func FilterBlockTransactions(responseBody []byte, userAddresses []string, origin
 				// objects, this shouldn't happen. For safety, clear the array.
 				block["transactions"] = []byte("[]")
 			} else {
-				// Full transaction objects — filter to only user's transactions.
-				addrSet := addrSetFromLinked(userAddresses)
+				// Full transaction objects — keep only those the shared
+				// decision admits as a block entry (participant only).
 				filtered := make([]json.RawMessage, 0, len(rawTxs))
 				for _, rawTx := range rawTxs {
 					var tx struct {
@@ -294,9 +301,10 @@ func FilterBlockTransactions(responseBody []byte, userAddresses []string, origin
 					if err := json.Unmarshal(rawTx, &tx); err != nil {
 						continue
 					}
-					from := strings.ToLower(tx.From)
-					to := strings.ToLower(tx.To)
-					if addrSet[from] || (to != "" && addrSet[to]) {
+					if rbac.DecideTxEnvelope(profile, rbac.TxEnvelopeFacts{
+						Surface:       rbac.TxSurfaceBlockEntry,
+						IsParticipant: isTxParticipant(userAddresses, tx.From, tx.To),
+					}) {
 						if !originalFull {
 							hashStr, _ := json.Marshal(tx.Hash)
 							filtered = append(filtered, hashStr)
@@ -338,7 +346,7 @@ func FilterBlockTransactions(responseBody []byte, userAddresses []string, origin
 // Non-participant receipts are removed from the array entirely, consistent
 // with how FilterBlockTransactions removes non-participant transactions.
 // If the result is null or not an array, passes through unchanged.
-func FilterBlockReceipts(responseBody []byte, userAddresses []string) []byte {
+func FilterBlockReceipts(profile rbac.ReadProfile, responseBody []byte, userAddresses []string) []byte {
 	var resp struct {
 		JSONRPC string           `json:"jsonrpc"`
 		ID      json.RawMessage  `json:"id"`
@@ -372,10 +380,10 @@ func FilterBlockReceipts(responseBody []byte, userAddresses []string) []byte {
 		if err := json.Unmarshal(rawReceipt, &receipt); err != nil {
 			continue // skip malformed entries
 		}
-		from := strings.ToLower(receipt.From)
-		to := strings.ToLower(receipt.To)
-
-		if addrSet[from] || (to != "" && addrSet[to]) {
+		if rbac.DecideTxEnvelope(profile, rbac.TxEnvelopeFacts{
+			Surface:       rbac.TxSurfaceBlockEntry,
+			IsParticipant: isTxParticipant(userAddresses, receipt.From, receipt.To),
+		}) {
 			filteredReceipt := filterReceiptLogs(rawReceipt, addrSet, "")
 			receiptsFiltered = append(receiptsFiltered, filteredReceipt)
 		}

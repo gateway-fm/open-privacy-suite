@@ -65,7 +65,7 @@ func TestRPCExplorerLogParity_RD1214(t *testing.T) {
 	// The RPC uses p.addrVisResolver (the same *db.DB) for the field step; a
 	// real ABI keeps the deny-when-no-ABI gate out of the way so the entry
 	// verdict turns on the grant, matching the explorer's ABI resolver.
-	p := &JSONRPCProcessor{addrVisResolver: database}
+	p := &JSONRPCProcessor{readProfile: rbac.ReadProfileStandard, addrVisResolver: database}
 	abiProv := mapABIProvider{
 		strings.ToLower(emitter): erc20ABI,
 	}
@@ -161,7 +161,7 @@ func TestRPCExplorerLogParity_VisibleToUnlock_RD1300(t *testing.T) {
 	t.Cleanup(accessCtrl.Stop)
 	engine := explorer.NewRedactionEngine(noopContractStore{}, database)
 	wireExplorerRedactor(engine, database, accessCtrl, noopLogParticipantStore{}, nil)
-	p := &JSONRPCProcessor{rbacAccessCtrl: accessCtrl, txVisibilityStore: database, addrVisResolver: database}
+	p := &JSONRPCProcessor{readProfile: rbac.ReadProfileStandard, rbacAccessCtrl: accessCtrl, txVisibilityStore: database, addrVisResolver: database}
 
 	sig := "0x" + topicHex("PaymentMade(address,address,uint256)")
 	payerTopic := zeroPadAddrToTopic(payer)

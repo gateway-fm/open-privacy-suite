@@ -378,7 +378,7 @@ func (s *Server) handleDryRun(c *gin.Context) {
 				rawResp = s.jsonrpcProcessor.redactLogsArrayResponseFields(ctx, viewerDID, []byte(rawResp))
 			}
 		case "eth_getTransactionReceipt":
-			rawResp = FilterReceiptLogsWithEventRules([]byte(rawResp), addrs, userPerms, abiProv, nil, nil)
+			rawResp = FilterReceiptLogsWithEventRules(s.readProfile(), []byte(rawResp), addrs, userPerms, abiProv, nil, nil)
 			if s.jsonrpcProcessor != nil && viewerDID != "" {
 				rawResp = s.jsonrpcProcessor.redactReceiptResponseFields(ctx, viewerDID, []byte(rawResp))
 			}

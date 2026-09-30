@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"privacy-proxy/internal/proxy"
+	"privacy-proxy/internal/rbac"
 )
 
 // TestResolveAPIKeyHeader pins the two-branch behaviour of the processor's
@@ -29,7 +30,7 @@ func TestResolveAPIKeyHeader(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p := &JSONRPCProcessor{defaultRPCAPIKeyHeader: tt.processorDefault}
+			p := &JSONRPCProcessor{readProfile: rbac.ReadProfileStandard, defaultRPCAPIKeyHeader: tt.processorDefault}
 			got := p.resolveAPIKeyHeader()
 			if got != tt.want {
 				t.Errorf("resolveAPIKeyHeader(processorDefault=%q) = %q, want %q",
@@ -43,11 +44,11 @@ func TestResolveAPIKeyHeader(t *testing.T) {
 // operator-wide header (RPC_API_KEY_HEADER via Load()) through to the
 // resolver, and that omitting it keeps the proxy default.
 func TestRPCAPIKeyHeaderConfig(t *testing.T) {
-	p := NewJSONRPCProcessor(JSONRPCProcessorConfig{})
+	p := NewJSONRPCProcessor(JSONRPCProcessorConfig{ReadProfile: rbac.ReadProfileStandard})
 	if got := p.resolveAPIKeyHeader(); got != proxy.DefaultAPIKeyHeader {
 		t.Fatalf("default resolveAPIKeyHeader() = %q, want %q", got, proxy.DefaultAPIKeyHeader)
 	}
-	p = NewJSONRPCProcessor(JSONRPCProcessorConfig{RPCAPIKeyHeader: "Custom-H"})
+	p = NewJSONRPCProcessor(JSONRPCProcessorConfig{ReadProfile: rbac.ReadProfileStandard, RPCAPIKeyHeader: "Custom-H"})
 	if got := p.resolveAPIKeyHeader(); got != "Custom-H" {
 		t.Errorf("configured resolveAPIKeyHeader() = %q, want %q", got, "Custom-H")
 	}

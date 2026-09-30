@@ -79,7 +79,7 @@ func TestBuildParticipantTxHashes_ResolvesParticipants_RD1162(t *testing.T) {
 		txTo:   {from: other, to: user},
 	})
 	defer srv.Close()
-	p := &JSONRPCProcessor{proxy: proxy.New(srv.URL)}
+	p := &JSONRPCProcessor{readProfile: rbac.ReadProfileStandard, proxy: proxy.New(srv.URL)}
 
 	resp := getLogsRPCResponse([]map[string]any{
 		{"address": contract, "topics": []string{"0xevt"}, "transactionHash": txFrom},
@@ -115,7 +115,7 @@ func TestBuildParticipantTxHashes_FailClosed_RD1162(t *testing.T) {
 	})
 
 	t.Run("no linked addresses -> empty (upstream not consulted)", func(t *testing.T) {
-		p := &JSONRPCProcessor{proxy: proxy.New("http://127.0.0.1:1")}
+		p := &JSONRPCProcessor{readProfile: rbac.ReadProfileStandard, proxy: proxy.New("http://127.0.0.1:1")}
 		if got := p.buildParticipantTxHashes(nil, resp); len(got) != 0 {
 			t.Errorf("want empty, got %v", got)
 		}
@@ -125,7 +125,7 @@ func TestBuildParticipantTxHashes_FailClosed_RD1162(t *testing.T) {
 		down := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 		url := down.URL
 		down.Close() // connection refused on Forward
-		p := &JSONRPCProcessor{proxy: proxy.New(url)}
+		p := &JSONRPCProcessor{readProfile: rbac.ReadProfileStandard, proxy: proxy.New(url)}
 		if got := p.buildParticipantTxHashes([]string{user}, resp); len(got) != 0 {
 			t.Errorf("want empty on upstream error, got %v", got)
 		}
@@ -136,7 +136,7 @@ func TestBuildParticipantTxHashes_FailClosed_RD1162(t *testing.T) {
 			_, _ = w.Write([]byte("not json"))
 		}))
 		defer srv.Close()
-		p := &JSONRPCProcessor{proxy: proxy.New(srv.URL)}
+		p := &JSONRPCProcessor{readProfile: rbac.ReadProfileStandard, proxy: proxy.New(srv.URL)}
 		if got := p.buildParticipantTxHashes([]string{user}, resp); len(got) != 0 {
 			t.Errorf("want empty on unparseable response, got %v", got)
 		}
@@ -154,7 +154,7 @@ func TestBuildParticipantTxHashes_FailClosed_RD1162(t *testing.T) {
 		}
 		srv := fakeTxByHashNode(t, allTxs)
 		defer srv.Close()
-		p := &JSONRPCProcessor{proxy: proxy.New(srv.URL)}
+		p := &JSONRPCProcessor{readProfile: rbac.ReadProfileStandard, proxy: proxy.New(srv.URL)}
 		if got := p.buildParticipantTxHashes([]string{user}, getLogsRPCResponse(manyLogs)); len(got) != 0 {
 			t.Errorf("over-cap response must skip participant resolution and return empty, got %d", len(got))
 		}
@@ -179,7 +179,7 @@ func TestGetLogsParticipantPath_AddresslessOwnTxLogAdmitted_RD1162(t *testing.T)
 		txOther: {from: other, to: granted},
 	})
 	defer srv.Close()
-	p := &JSONRPCProcessor{proxy: proxy.New(srv.URL)}
+	p := &JSONRPCProcessor{readProfile: rbac.ReadProfileStandard, proxy: proxy.New(srv.URL)}
 
 	// granted contract, nil EventRules → deny-all baseline (address-less log is
 	// denied without participant admission).
