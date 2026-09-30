@@ -130,31 +130,6 @@ func TestFilterTransactionByHash_LineaExclusionStatus(t *testing.T) {
 	}
 }
 
-func TestTopicMatchesAddress(t *testing.T) {
-	addrSet := map[string]bool{
-		"0xabc1234567890123456789012345678901234567": true,
-	}
-	tests := []struct {
-		topic string
-		want  bool
-	}{
-		{"0x000000000000000000000000abc1234567890123456789012345678901234567", true},
-		{"0x000000000000000000000000ABC1234567890123456789012345678901234567", true}, // uppercase
-		{"0x000000000000000000000000ffffffffffffffffffffffffffffffffffffffff", false},
-		{"0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef", false}, // event sig (nonzero prefix)
-		{"0x0", false}, // too short
-		{"", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.topic, func(t *testing.T) {
-			got := topicMatchesAddress(tt.topic, addrSet)
-			if got != tt.want {
-				t.Errorf("topicMatchesAddress(%q) = %v, want %v", tt.topic, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestRpcResponseID(t *testing.T) {
 	tests := []struct {
 		name string
@@ -303,7 +278,7 @@ func TestFilterBlockReceipts(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := FilterBlockReceipts(rbac.ReadProfileStandard, []byte(tt.response), userAddrs)
+			got := FilterBlockReceipts(rbac.ReadProfileStandard, []byte(tt.response), userAddrs, nil, nil, nil, nil, nil)
 			if tt.wantReceiptCount == -1 {
 				var v interface{}
 				if err := json.Unmarshal(got, &v); err != nil {

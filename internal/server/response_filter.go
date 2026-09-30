@@ -54,22 +54,6 @@ func addrSetFromLinked(addrs []string) map[string]bool {
 	return set
 }
 
-// topicMatchesAddress checks if a 32-byte topic hex string encodes one of the
-// user's linked addresses (topic = 0x + 24 zero chars + 40 hex addr chars).
-func topicMatchesAddress(topic string, addrSet map[string]bool) bool {
-	topic = strings.ToLower(topic)
-	// Topics are 66 chars: "0x" + 64 hex. Address is the last 40 chars.
-	if len(topic) == 66 && strings.HasPrefix(topic, "0x") {
-		// Prefix must be all zeros (address padding)
-		prefix := topic[2:26] // 24 chars of padding
-		if strings.Trim(prefix, "0") == "" {
-			addr := "0x" + topic[26:]
-			return addrSet[addr]
-		}
-	}
-	return false
-}
-
 // FilterTransactionByHash filters a response carrying one transaction object
 // (eth_getTransactionByHash and the by-block-index aliases). The admission
 // verdict is rbac.DecideTxEnvelope for TxSurfaceTransaction: the viewer receives
@@ -134,61 +118,6 @@ func isTxParticipant(userAddresses []string, from, to string) bool {
 	from = strings.ToLower(from)
 	to = strings.ToLower(to)
 	return (from != "" && addrSet[from]) || (to != "" && addrSet[to])
-}
-
-// filterReceiptLogs removes non-viewable logs from a receipt and zeros logsBloom.
-func filterReceiptLogs(rawReceipt []byte, addrSet map[string]bool, rpcID string) []byte {
-	var m map[string]json.RawMessage
-	if err := json.Unmarshal(rawReceipt, &m); err != nil {
-		return rawReceipt
-	}
-
-	if rawLogs, ok := m["logs"]; ok {
-		var arr []json.RawMessage
-		if json.Unmarshal(rawLogs, &arr) == nil {
-			filtered := make([]json.RawMessage, 0, len(arr))
-			for _, logRaw := range arr {
-				var entry struct {
-					Topics []string `json:"topics"`
-				}
-				if json.Unmarshal(logRaw, &entry) == nil {
-					visible := false
-					for i := 0; i < len(entry.Topics); i++ {
-						if topicMatchesAddress(entry.Topics[i], addrSet) {
-							visible = true
-							break
-						}
-					}
-					if visible {
-						filtered = append(filtered, logRaw)
-					}
-				}
-			}
-			newLogs, err := json.Marshal(filtered)
-			if err == nil {
-				m["logs"] = newLogs
-			}
-		}
-	}
-
-	zeroBloom := `"0x` + strings.Repeat("0", 512) + `"`
-	m["logsBloom"] = json.RawMessage(zeroBloom)
-
-	out, _ := json.Marshal(m)
-
-	if rpcID != "" {
-		wrapped, _ := json.Marshal(struct {
-			JSONRPC string          `json:"jsonrpc"`
-			ID      json.RawMessage `json:"id"`
-			Result  json.RawMessage `json:"result"`
-		}{
-			JSONRPC: "2.0",
-			ID:      json.RawMessage(rpcID),
-			Result:  out,
-		})
-		return wrapped
-	}
-	return out
 }
 
 // zeroLogsBloomJSON is the canonical JSON value used to overwrite a block's
@@ -342,11 +271,24 @@ func FilterBlockTransactions(profile rbac.ReadProfile, responseBody []byte, user
 	return blockOut
 }
 
-// FilterBlockReceipts filters an eth_getBlockReceipts response.
-// Non-participant receipts are removed from the array entirely, consistent
-// with how FilterBlockTransactions removes non-participant transactions.
-// If the result is null or not an array, passes through unchanged.
-func FilterBlockReceipts(profile rbac.ReadProfile, responseBody []byte, userAddresses []string) []byte {
+// FilterBlockReceipts filters an eth_getBlockReceipts response. Each receipt
+// goes through the same per-receipt decision as eth_getTransactionReceipt
+// (decideReceipt) as a block entry: the envelope is kept for a participant only
+// (both profiles) and omitted otherwise, consistent with FilterBlockTransactions;
+// a kept receipt's logs are filtered by the shared log engine (grant, ABI,
+// dynamic-payload gate, event rules, RD-1162) and rendered by render, exactly as
+// the single-receipt path renders them (RD-1299). logsBloom is zeroed. A null or
+// error result passes through; any other non-array shape fails closed.
+func FilterBlockReceipts(
+	profile rbac.ReadProfile,
+	responseBody []byte,
+	userAddresses []string,
+	perms *rbac.EffectivePermissions,
+	abiProvider rbac.ABIProvider,
+	visCtx *rbac.TxVisibilityContext,
+	isAdminByContract map[string]bool,
+	render admittedLogRenderer,
+) []byte {
 	var resp struct {
 		JSONRPC string           `json:"jsonrpc"`
 		ID      json.RawMessage  `json:"id"`
@@ -369,25 +311,13 @@ func FilterBlockReceipts(profile rbac.ReadProfile, responseBody []byte, userAddr
 		return nullResult(responseBody) // not an array: fail closed
 	}
 
-	addrSet := addrSetFromLinked(userAddresses)
 	receiptsFiltered := make([]json.RawMessage, 0, len(rawReceipts))
-
 	for _, rawReceipt := range rawReceipts {
-		var receipt struct {
-			From string `json:"from"`
-			To   string `json:"to"`
+		// Non-participant receipts are omitted entirely; unparseable entries
+		// are skipped (fail closed).
+		if out, admit := decideReceipt(profile, rbac.TxSurfaceBlockEntry, rawReceipt, userAddresses, perms, abiProvider, visCtx, isAdminByContract, render); admit {
+			receiptsFiltered = append(receiptsFiltered, out)
 		}
-		if err := json.Unmarshal(rawReceipt, &receipt); err != nil {
-			continue // skip malformed entries
-		}
-		if rbac.DecideTxEnvelope(profile, rbac.TxEnvelopeFacts{
-			Surface:       rbac.TxSurfaceBlockEntry,
-			IsParticipant: isTxParticipant(userAddresses, receipt.From, receipt.To),
-		}) {
-			filteredReceipt := filterReceiptLogs(rawReceipt, addrSet, "")
-			receiptsFiltered = append(receiptsFiltered, filteredReceipt)
-		}
-		// Non-participant: omit entirely (consistent with FilterBlockTransactions).
 	}
 
 	receiptsJSON, err := json.Marshal(receiptsFiltered)

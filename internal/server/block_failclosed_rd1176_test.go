@@ -52,7 +52,7 @@ func TestBlockFilters_NilAddresses_FailClosed_RD1176(t *testing.T) {
 		`]}`
 
 	for _, addrs := range [][]string{nil, {}} {
-		out := FilterBlockReceipts(rbac.ReadProfileStandard, []byte(receiptsResp), addrs)
+		out := FilterBlockReceipts(rbac.ReadProfileStandard, []byte(receiptsResp), addrs, nil, nil, nil, nil, nil)
 		var parsed struct {
 			Result []json.RawMessage `json:"result"`
 		}

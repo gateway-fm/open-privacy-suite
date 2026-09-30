@@ -47,13 +47,17 @@ func TestResponseFilters_FailClosedOnUnexpectedShape(t *testing.T) {
 		{
 			name: "block receipts: result is not an array",
 			body: `{"jsonrpc":"2.0","id":1,"result":{"from":"` + leak + `","to":"` + leak + `"}}`,
-			run:  func(b []byte) []byte { return FilterBlockReceipts(rbac.ReadProfileStandard, b, nil) },
+			run: func(b []byte) []byte {
+				return FilterBlockReceipts(rbac.ReadProfileStandard, b, nil, nil, nil, nil, nil, nil)
+			},
 			want: "null",
 		},
 		{
 			name: "block receipts: body is not JSON",
 			body: `{"jsonrpc":"2.0","id":1,"result":[{"from":"` + leak + `"}`,
-			run:  func(b []byte) []byte { return FilterBlockReceipts(rbac.ReadProfileStandard, b, nil) },
+			run: func(b []byte) []byte {
+				return FilterBlockReceipts(rbac.ReadProfileStandard, b, nil, nil, nil, nil, nil, nil)
+			},
 			want: "null",
 		},
 		{
@@ -127,7 +131,7 @@ func TestResponseFilters_PassNullAndErrors(t *testing.T) {
 		`{"jsonrpc":"2.0","id":7,"error":{"code":-32000,"message":"not found"}}`,
 	} {
 		assert.JSONEq(t, body, string(FilterTransactionByHash(rbac.ReadProfileStandard, []byte(body), nil, false, nil)))
-		assert.JSONEq(t, body, string(FilterBlockReceipts(rbac.ReadProfileStandard, []byte(body), nil)))
+		assert.JSONEq(t, body, string(FilterBlockReceipts(rbac.ReadProfileStandard, []byte(body), nil, nil, nil, nil, nil, nil)))
 		assert.JSONEq(t, body, string(FilterBlockTransactions(rbac.ReadProfileStandard, []byte(body), nil, true)))
 		assert.JSONEq(t, body, string(FilterBlockTransactionCount([]byte(body), nil)))
 	}

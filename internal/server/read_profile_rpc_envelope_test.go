@@ -104,3 +104,49 @@ func TestReadProfile_RPCTxEnvelope_Matrix(t *testing.T) {
 		}
 	}
 }
+
+// Acceptance 3 / A5: a receipt inside eth_getBlockReceipts carries exactly the
+// logs eth_getTransactionReceipt returns for the same viewer — same shared
+// engine (grant, ABI, dynamic-payload gate, event rules, RD-1162), same
+// embedded-address masking — in both profiles.
+func TestReadProfile_BlockReceiptsLogsMatchReceipt(t *testing.T) {
+	f := setupRPFixture(t)
+	receiptBody := rpEnvelope(t, rpReceiptObject(rpTx1, rpE, rpRawLogs(rpTx1)))
+	blockReceiptsBody := rpEnvelope(t, []any{
+		rpReceiptObject(rpTx1, rpE, rpRawLogs(rpTx1)),
+		rpReceiptObject(rpTx2, rpQ, nil),
+	})
+	for _, profile := range []rbac.ReadProfile{rbac.ReadProfileStandard, rbac.ReadProfileStrict} {
+		p := f.rpProcessor(profile)
+		v := f.viewers["participant"]
+		t.Run(profile.String(), func(t *testing.T) {
+			var rc struct {
+				Logs []json.RawMessage `json:"logs"`
+			}
+			require.NoError(t, json.Unmarshal(rpResult(t, f.call(t, p, v, rbac.MethodGetTransactionReceipt, []any{rpTx1}, receiptBody)), &rc))
+			var brs []struct {
+				TransactionHash string            `json:"transactionHash"`
+				Logs            []json.RawMessage `json:"logs"`
+				LogsBloom       string            `json:"logsBloom"`
+			}
+			require.NoError(t, json.Unmarshal(rpResult(t, f.call(t, p, v, rbac.MethodGetBlockReceipts, []any{"0x1"}, blockReceiptsBody)), &brs))
+			require.Len(t, brs, 1)
+			assert.Equal(t, "0x"+strings.Repeat("0", 512), brs[0].LogsBloom)
+			require.Equal(t, len(rc.Logs), len(brs[0].Logs), "same admitted log set")
+			for i := range rc.Logs {
+				assert.JSONEq(t, string(rc.Logs[i]), string(brs[0].Logs[i]), "log %d must render identically", i)
+			}
+			// Masking: the participant's own address stays, third parties are zeroed.
+			for _, l := range brs[0].Logs {
+				for _, other := range []string{rpP, rpQ, rpR, rpAA} {
+					assert.False(t, rpHasAddr(l, other), "embedded third-party address %s not masked: %s", other, l)
+				}
+			}
+			if profile == rbac.ReadProfileStandard {
+				// RD-1162: the participant sees every log of their own tx on a
+				// granted contract (masked).
+				assert.Len(t, brs[0].Logs, 3)
+			}
+		})
+	}
+}

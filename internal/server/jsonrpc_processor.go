@@ -1175,7 +1175,15 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 			// serving the raw receipts of every participant in the block.
 			addrs = nil
 		}
-		return FilterBlockReceipts(p.readProfile, responseBody, addrs)
+		// Each kept receipt's logs go through the SAME engine and renderer as
+		// eth_getTransactionReceipt (RD-1299): grant, ABI and dynamic-payload
+		// gates, event rules, RD-1162 own-tx logs, RD-1214 masking and the
+		// RD-874 unlock payload.
+		perms := p.resolvePermsForFilter(ctx, result)
+		visCtx := p.buildTxVisibilityContext(ctx, req.UserID, responseBody)
+		adminMap := p.viewerAdminContracts(ctx, viewerUUID(result), extractContractAddressesFromResponse(responseBody))
+		abiProv := p.contractABIProvider(ctx)
+		return FilterBlockReceipts(p.readProfile, responseBody, addrs, perms, abiProv, visCtx, adminMap, p.logFieldRenderer(ctx, req.UserID, abiProv))
 	}
 	return responseBody
 }
