@@ -529,11 +529,12 @@ func TestVisibleToUnlockFullPayload_NoABI_RD1300(t *testing.T) {
 	f.requireSurfaces(t, recipient, tx, nil, "no ABI, flag off: deny-when-no-ABI drops the log")
 }
 
-// TestVisibleToUnlockEligibility_OrgAdmin_RD1300 characterises the CURRENT
-// eligibility of an org admin (effective access to every org contract without
-// a contract_grant row). It does NOT assert that this is the intended policy —
-// see the RD-1300 report. It asserts that whatever the helper decides, every
-// surface renders the same payload.
+// TestVisibleToUnlockEligibility_OrgAdmin_RD1300: an org admin of the owning
+// org is unlock-eligible without a contract_grant row — the org admin is the
+// contract owner's own authority (REDACTION_SPEC §3.7.1). Listed, they get the
+// full payload on every surface; unlisted, the admin bypass admits with the
+// ordinary masking, including on a tx where an org contract is a
+// token-transfer party.
 func TestVisibleToUnlockEligibility_OrgAdmin_RD1300(t *testing.T) {
 	ctx := context.Background()
 	f := newVTUFixture(t)
@@ -559,7 +560,7 @@ func TestVisibleToUnlockEligibility_OrgAdmin_RD1300(t *testing.T) {
 	require.NoError(t, f.db.SaveTxVisibility(ctx, listed, []string{admin}, "did:test:vtu:oa-payer", f.orgID))
 
 	require.True(t, rbac.IsViewerEligibleForVisibleToUnlock(ctx, f.srv.rbacAccessCtrl, admin, f.payment),
-		"CURRENT behaviour: org-admin effective access makes the admin unlock-eligible without a contract_grant")
+		"org admins are unlock-eligible without a contract_grant")
 	f.requireSurfaces(t, admin, listed, []vtuLog{raw}, "org admin listed on a flagged contract: unlock applies on every surface")
 	f.requireSurfaces(t, admin, unlisted, []vtuLog{masked}, "org admin, not listed: admin bypass admits, ordinary masking of user EOAs")
 
@@ -574,4 +575,63 @@ func TestVisibleToUnlockEligibility_OrgAdmin_RD1300(t *testing.T) {
 	f.requireSurfaces(t, admin, unlistedUnion, []vtuLog{masked},
 		"org admin, not listed, org contract is a token-transfer party: user EOAs stay masked")
 
+}
+
+// TestVisibleToUnlockEligibility_DefaultAndSystemGroups_RD1306 pins the
+// eligibility boundary the spec states: a grant reached only through the
+// seeded default group (which auto-provisioned users join) or through a
+// system group does not make a listed viewer unlock-eligible. A regular grant
+// does, whatever other groups the viewer is in. Asserted on every surface.
+func TestVisibleToUnlockEligibility_DefaultAndSystemGroups_RD1306(t *testing.T) {
+	ctx := context.Background()
+	f := newVTUFixture(t)
+
+	f.orgID = uuid.New().String()
+	require.NoError(t, f.db.CreateOrganization(ctx, &rbac.Organization{ID: f.orgID, Slug: "default", Name: "Default", Settings: map[string]any{}}))
+	require.NoError(t, f.db.CreateGroup(ctx, &rbac.Group{ID: rbac.DefaultGroupID, OrgID: f.orgID, Slug: "default", Name: "Default", Path: "default"}))
+	require.NoError(t, f.db.CreateGroupAccess(ctx, &rbac.GroupAccess{ID: uuid.New().String(), GroupID: rbac.DefaultGroupID, AllowedMethods: []string{"eth_getLogs"}, Claims: []rbac.Claim{}}))
+	cid := wiringCreateContractWithABI(t, f.db, f.orgID, f.payment, "Payments", paymentCreatedABIRD1300)
+	require.NoError(t, f.db.UpdateContractEventsAllowDynamicPayload(ctx, cid, true))
+	require.NoError(t, f.db.UpdateContractAllowVisibleToUnlock(ctx, cid, true))
+	wiringCreateGrant(t, f.db, cid, rbac.DefaultGroupID, &rbac.EventRulesField{})
+
+	sysGID := uuid.New().String()
+	_, err := f.db.Conn().ExecContext(ctx,
+		`INSERT INTO groups (id, org_id, slug, name, depth, path, is_system) VALUES ($1, $2, 'sys', 'System', 0, 'sys', true)`, sysGID, f.orgID)
+	require.NoError(t, err)
+	require.NoError(t, f.db.CreateGroupAccess(ctx, &rbac.GroupAccess{ID: uuid.New().String(), GroupID: sysGID, AllowedMethods: []string{"eth_getLogs"}, Claims: []rbac.Claim{}}))
+	wiringCreateGrant(t, f.db, cid, sysGID, &rbac.EventRulesField{})
+
+	regularGID := wiringCreateGroup(t, f.db, f.orgID, "settlement", nil, false)
+	wiringCreateGrant(t, f.db, cid, regularGID, &rbac.EventRulesField{})
+
+	const (
+		defaultOnly = "did:test:vtu:default-only"
+		systemOnly  = "did:test:vtu:system-only"
+		both        = "did:test:vtu:default-and-regular"
+	)
+	f.user(defaultOnly, rbac.DefaultGroupID, "")
+	f.user(systemOnly, sysGID, "")
+	f.user(both, regularGID, "")
+	require.NoError(t, f.db.CreateMembership(ctx, &rbac.UserMembership{ID: uuid.New().String(), UserID: f.users[both], GroupID: rbac.DefaultGroupID, Source: rbac.MembershipSourceAdmin}))
+	f.user("did:test:vtu:dg-payer", "", f.payer)
+	f.user("did:test:vtu:dg-payee", "", f.payee)
+	f.user("did:test:vtu:dg-intermediary", "", f.intermedAdr)
+
+	paymentCreated := "0x" + topicHex("PaymentCreated(address,address,address,string)")
+	raw := vtuLog{Address: f.payment, Topics: []string{paymentCreated, zeroPadAddrToTopic(f.payer), zeroPadAddrToTopic(f.payee)}, Data: vtuPackPaymentData(t, f.intermedAdr, "PAY-0003")}
+	tx := "0x" + strings.Repeat("68", 32)
+	f.seedTx(tx, f.payer, f.payment, []vtuLog{raw})
+	require.NoError(t, f.db.SaveTxVisibility(ctx, tx, []string{defaultOnly, systemOnly, both}, "did:test:vtu:dg-payer", f.orgID))
+
+	require.False(t, rbac.IsViewerEligibleForVisibleToUnlock(ctx, f.srv.rbacAccessCtrl, defaultOnly, f.payment),
+		"a grant held only by the default group must not make its members unlock-eligible")
+	require.False(t, rbac.IsViewerEligibleForVisibleToUnlock(ctx, f.srv.rbacAccessCtrl, systemOnly, f.payment),
+		"a grant held only by a system group must not make its members unlock-eligible")
+	require.True(t, rbac.IsViewerEligibleForVisibleToUnlock(ctx, f.srv.rbacAccessCtrl, both, f.payment),
+		"a regular grant makes the viewer eligible even when they are also in the default group")
+
+	f.requireSurfaces(t, defaultOnly, tx, nil, "default-group grant only: no unlock; deny-all rules stand")
+	f.requireSurfaces(t, systemOnly, tx, nil, "system-group grant only: no unlock; deny-all rules stand")
+	f.requireSurfaces(t, both, tx, []vtuLog{raw}, "regular grant: unlock applies on every surface")
 }

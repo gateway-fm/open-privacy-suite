@@ -274,9 +274,11 @@ Admin-only on the contract's owning org. Migration **045**.
 **Eligibility gate** (`rbac.IsViewerEligibleForVisibleToUnlock`) — both must hold for any unlock:
 
 1. The viewer resolves to a real `users` row (anonymous viewers — no DID account — are denied here).
-2. The viewer is a member of at least one **non-system** group whose `org_id` equals the contract's owning `org_id`, AND that group has a `contract_grant` on this contract. The grant's `event_rules` may be deny-all — the unlock works *because of* the grant link, not its rule set.
+2. In the contract's owning org, the viewer is either:
+   - a member of an **org-admin** group (`is_org_admin`) — the contract owner's own authority, which already reaches every org contract, so no `contract_grant` row is needed; or
+   - a member of an **eligible** group that has a `contract_grant` on this contract. A group is eligible unless it is a **system** group (`is_system`) or the seeded **default** group (`rbac.DefaultGroupID`) that auto-provisioned users join — a grant reached only through either would let a sender unlock for any registered user (RD-874 security analysis, RD-1306). The grant's `event_rules` may be deny-all — the unlock works *because of* the grant link, not its rule set.
 
-Cross-org isolation: `GetEffectivePermissionsByIDs` resolves grants per-org, so a viewer who has access only in another org gets `HasContractAccess(addr) == false` here. Anonymous / system groups are excluded explicitly.
+Cross-org isolation: only memberships in the contract's owning org are considered, so a viewer who has access only in another org is never eligible. Memberships (expired ones excluded) and grants are read per request, and any lookup error fails closed.
 
 **Per-tx blast-radius cap:** `visibleTo` lists at `eth_sendTransaction` time are capped at **32 entries** (`server.visibleToMaxSize`). Larger lists are rejected with HTTP 400. Operators with legitimate >32-recipient flows should use a dedicated group + grant instead.
 
@@ -288,12 +290,14 @@ Cross-org isolation: `GetEffectivePermissionsByIDs` resolves grants per-org, so 
 | Yes | No | true | Existing event_rules apply (unchanged) |
 | Yes | Yes | false | Existing additive widening (unchanged — RD-842 / param-rule fallback) |
 | No (cross-org or no group) | Yes | true | Denied (eligibility gate fails) |
+| Grant only via the default group or a system group | Yes | true | Denied (eligibility gate fails) |
+| Org admin of the owning org (no grant row needed) | Yes | true | **All of this contract's events in this tx visible, full payload** |
 | Anonymous viewer | Yes | true | Denied (no `users` row) |
-| Eligible but membership later revoked | Was previously listed | true | Denied at next request — eligibility is checked at request-time (`RedactionEngine.RedactLogs` runs per-request; cache invalidated on grant change via `InvalidateOrg`) |
+| Eligible but membership later revoked | Was previously listed | true | Denied at next request — eligibility reads memberships and grants at request time on both layers |
 
 **RPC and explorer use the same eligibility gate** — `rbac.IsViewerEligibleForVisibleToUnlock` is the single source of truth. RPC layer pre-resolves it via `processor_event_rules.go::buildVisibleToUnlockableMap`; explorer pre-resolves via `dbVisibleToUnlockResolver` wired through `wireExplorerRedactor`. Both feed an `UnlockableContracts map[string]bool` into the per-log decision so it stays O(1) per log, and both render from the decision's `Payload` (`rbac.LogPayloadFull` only for an unlocked log), so the payload a listed viewer receives is identical on the two layers.
 
-**Auditability note:** with the flag on, the set of users who can see a contract's events grows beyond what `groups + grants` enumeration alone shows — the active set is `(groups + grants) ∪ (every DID listed in any tx's visibleTo)`. Operators who flip the flag should plan for that surface in access-review tooling. The flag itself is a single boolean per contract; flips go through the admin API and are subject to whatever audit log the API surface uses.
+**Auditability note:** the eligible population is the owning org's org admins plus the members of eligible (non-system, non-default) groups holding a grant on the flagged contract. The viewers who actually receive a particular unlocked event are the eligible DIDs named in **that transaction's** `visibleTo`; neither a grant list nor a `visibleTo` list alone describes that set, so access reviews for a flagged contract must join the two. Eligibility is checked at read time, so revocation changes future reads. The flag itself is a single boolean per contract; flips go through the admin API and are subject to whatever audit log the API surface uses.
 
 **Method-allowlist non-bypass (RPC layer):** the unlock relaxes *redaction*, never *method access*. Over RPC the group's `AllowedMethods` allowlist is enforced **first** (`rbac.access.go::HasMethod`), before contract-access and before any `visibleTo` / unlock / redaction logic. So an eligible, listed viewer whose group does not allow the method is denied at the allowlist gate — the unlock never adds a method to a viewer's allowlist. Which facet needs which method: tx object → `eth_getTransactionByHash` (or block-index variants); receipt + logs → `eth_getTransactionReceipt`; filtered logs → `eth_getLogs` (+ contract access). This non-bypass is intentional and test-locked by `TestCheckAccess_VisibleTo_DoesNotBypassMethodAllowlist` (RD-837). The **only** allowlist-exempt surface is the Explorer API (separate BFF/JWT auth, reads via `RedactionEngine`) — which is why "visible in the explorer" ≠ "can call `eth_getLogs`".
 
