@@ -659,6 +659,10 @@ def reorg_keeps_approvals():
     back to the pool — and they must still find their approvals there, or they wait out the
     timeout for an approval OPS will never resend. Finality lags one block so the head can be
     replaced, as it can on any real network."""
+    # Build the empty rival before submitting transactions to the producer. Rewinding that
+    # producer to build the rival would repopulate its pool with the orphaned transactions.
+    with node("reorg-rival", plugin=False) as rival_node:
+        rival = rival_node.make_block([], finality_lag=1, randao="0x" + "11" * 32)
     with node("reorg") as n, contextlib.closing(Client(n)) as c:
         # Explicit nonces: both are built before either is submitted, and raw() reads the nonce from
         # the chain — with the default both would carry nonce 0 and the second would replace the first.
@@ -671,7 +675,7 @@ def reorg_keeps_approvals():
         n.make_block(txs, finality_lag=1)  # included at height N, not final
         included_at = int(n.head["number"], 16)
         assert n.storage(h.VAULT_A) == 15  # the vault accumulates: 7 + 8
-        orphaned = n.reorg_to_rival(finality_lag=1)  # rival at height N with no transactions
+        orphaned = n.reorg_to_rival(rival, finality_lag=1)  # rival at height N with no transactions
         assert orphaned["transactions"] == [tx["hash"] for tx in txs]
         assert n.storage(h.VAULT_A) == 0, "the reorganised block's writes must be gone"
         # Besu re-adds a reorganised block's transactions to its pool, but on 26.8.1 not reliably

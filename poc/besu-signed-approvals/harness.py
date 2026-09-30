@@ -130,6 +130,9 @@ def prepare():
     subprocess.check_call(["go", "build", "-o", str(CLIENT), "./poc/besu-signed-approvals/client"], cwd=ROOT)
     plugins = BESU_HOME / "plugins"
     plugins.mkdir(exist_ok=True)
+    stale = sorted(path.name for path in plugins.glob("ops-besu-approvals*.jar") if path.name != PLUGIN_JAR.name)
+    if stale:
+        raise RuntimeError(f"stale OPS plugin JARs in {plugins}: {stale}")
     shutil.copy(PLUGIN_JAR, plugins / PLUGIN_JAR.name)
 
 
@@ -320,16 +323,28 @@ class Node:
         assert self.head["transactions"] == [tx["hash"] for tx in expected], (self.head["transactions"], expected)
         return payload
 
-    def reorg_to_rival(self, finality_lag=1, expected=()):
-        """Replace the head with a rival block on the same parent, as a consensus client does when
-        it switches forks: the head's transactions return to the pool. Finality must lag at least
-        one block, or the head could not be replaced at all."""
+    def reorg_to_rival(self, rival, finality_lag=1):
+        """Import an empty rival built outside this node, then select it as the canonical head.
+        The orphaned transactions return to this node's pool. Finality must lag at least one block
+        or the head could not be replaced at all."""
         assert finality_lag >= 1, "a finalized head cannot be reorganised"
+        assert self.fork == "shanghai", "the rival import uses the Shanghai Engine API"
         orphaned = self.head
-        parent = self.rpc("eth_getBlockByHash", orphaned["parentHash"], False)
-        rival = self.make_block(list(expected), finality_lag=finality_lag, parent=parent, randao="0x" + "11" * 32)
+        assert rival["transactions"] == [], rival["transactions"]
         assert rival["blockHash"] != orphaned["hash"]
         assert rival["parentHash"] == orphaned["parentHash"]
+        imported = self.engine("engine_newPayloadV2", rival)
+        assert imported["status"] == "VALID", imported
+        selected = self.engine("engine_forkchoiceUpdatedV2", self.forkchoice(rival["blockHash"], finality_lag), None)
+        assert selected["payloadStatus"]["status"] == "VALID", selected
+        for _ in range(100):
+            self.head = self.rpc("eth_getBlockByNumber", "latest", False)
+            if self.head["hash"] == rival["blockHash"]:
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("rival block did not become canonical")
+        assert self.head["transactions"] == [], self.head["transactions"]
         return orphaned
 
     def request(self, method, params, engine=False):
