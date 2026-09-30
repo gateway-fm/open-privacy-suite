@@ -398,6 +398,11 @@ describe('ContractGrantsManager — event rules display', () => {
 
       // Cancel keeps it disabled.
       const dialog = dialogHeading.closest('div.fixed') as HTMLElement;
+      // The operator must see that the unlock shares full event payloads,
+      // embedded addresses included — not only that it bypasses event rules.
+      expect(
+        (await import('@testing-library/react')).within(dialog).getByText(/including embedded addresses/i),
+      ).toBeInTheDocument();
       const cancelBtn = (await import('@testing-library/react')).within(dialog).getByRole('button', { name: /cancel/i });
       await user.click(cancelBtn);
       
