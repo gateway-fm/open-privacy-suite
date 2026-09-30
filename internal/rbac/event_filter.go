@@ -60,7 +60,7 @@ type TxVisibilityProvider interface {
 // 0x-prefixed contract address; the value is true iff
 // `contract.allow_visibleto_unlock` is set AND the viewer holds an
 // eligible group membership on the contract (see
-// rbac.IsViewerEligibleForVisibleToUnlock for the gate). When the map
+// UnlockableContracts / IsViewerEligibleForVisibleToUnlock for the gate). When the map
 // reports true for a log's emitting contract AND the viewer is in the
 // tx's visibleTo set, the log passes the filter unconditionally —
 // bypassing the deny-when-no-ABI gate, event_rules, and param_rules

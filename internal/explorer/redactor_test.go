@@ -4579,3 +4579,45 @@ func TestRedactLogs_UnlockResolverSkippedWithoutListing(t *testing.T) {
 		t.Fatalf("listed tx: the unlock resolver must be consulted once, got %d calls", resolver.calls)
 	}
 }
+
+// countingABIResolver counts Resolve calls per address.
+type countingABIResolver struct {
+	byAddr map[string]string
+	calls  map[string]int
+}
+
+func (c *countingABIResolver) Resolve(_ context.Context, address string) string {
+	a := strings.ToLower(address)
+	c.calls[a]++
+	return c.byAddr[a]
+}
+
+// TestRedactLogs_ABIResolvedOncePerEmitter (RD-1300): resolving the ABI and M15
+// facts for every candidate log costs one ABI lookup per emitter per call —
+// including an emitter that has no ABI — however many logs it emitted.
+func TestRedactLogs_ABIResolvedOncePerEmitter(t *testing.T) {
+	withABI := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	noABI := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngine(VisibilityMap{withABI: VisibilityFull, noABI: VisibilityFull})
+	resolver := &countingABIResolver{byAddr: map[string]string{withABI: testEventABI}, calls: map[string]int{}}
+	engine.SetABIResolver(resolver)
+	engine.SetEventRuleChecker(&stubEventRuleChecker{byAddr: map[string]EventRulesResolution{
+		withABI: {Wildcard: true}, noABI: {Wildcard: true},
+	}})
+	engine.SetAdminContractsResolver(&stubAdminContractsResolver{admin: map[string]bool{noABI: true}})
+	topic := eventTopic0("Transfer(address,address,uint256)")
+	data := "0x" + strings.Repeat("0", 63) + "1"
+	var logs []Log
+	for i := 0; i < 3; i++ {
+		logs = append(logs,
+			Log{ID: int64(2 * i), Address: withABI, TxHash: "0xtx", Topic0: &topic, Data: data},
+			Log{ID: int64(2*i + 1), Address: noABI, TxHash: "0xtx", Topic0: &topic, Data: data},
+		)
+	}
+	if _, err := engine.RedactLogs(context.Background(), logs, "did:test"); err != nil {
+		t.Fatal(err)
+	}
+	if resolver.calls[withABI] != 1 || resolver.calls[noABI] != 1 {
+		t.Fatalf("ABI lookups per emitter: %v, want exactly 1 each", resolver.calls)
+	}
+}

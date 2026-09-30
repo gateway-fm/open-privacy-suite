@@ -274,10 +274,10 @@ All forms present on one request are combined (deduped, capped at 32 recipients)
 By default `visibleTo` is **additive** -- it never restricts existing access:
 
 - If a viewer already has access to an event through normal event rules or address-based filtering, `visibleTo` has no effect.
-- If a viewer is denied an event because `must_be=self` param rules fail, `visibleTo` serves as a fallback: the log is visible if the viewer's DID appears in that transaction's list. This fallback applies **only on contracts the viewer already holds a grant to**, and only the sender's listing counts — being a party to a token transfer in the transaction does not.
+- If a viewer is denied an event because `must_be=self` param rules fail, `visibleTo` serves as a fallback: the log is visible if the viewer's DID appears in that transaction's list. This fallback applies **only on contracts the viewer already holds a grant to**, and only the sender's listing counts — being a party to a token transfer in the transaction does not. In the block explorer this fallback, like the unlock, currently applies on a transaction's log view, not in the global or per-address log lists.
 - `visibleTo` does **not** grant access to a contract the viewer has **no** grant on. Logs from an ungranted contract stay hidden even when the viewer is listed in the tx's `visibleTo` — grant eligibility is required. (The viewer still receives the transaction/receipt envelope, but its logs are filtered.) Standalone `visibleTo`-based event access requires the per-contract unlock opt-in below.
 - `visibleTo` does **not** bypass the topic0 allowlist. If an event's signature is not in the allowed event rules, it remains hidden regardless of `visibleTo`.
-- Admin users always see all events -- `visibleTo` does not change which events they see. On a contract that enables the unlock described below, a listed admin also receives those logs with the full payload instead of masked addresses.
+- Admin users always see all events -- `visibleTo` does not change which events they see. On a contract that enables the unlock described below, a listed org admin also receives those logs with the full payload instead of masked addresses.
 
 Per-contract operators can opt **out of additive-only** behaviour and into the unlock semantic described below.
 
@@ -310,7 +310,7 @@ A `PaymentSettled` event emitted by a **later transaction** is not covered by Al
 **Eligibility requires both:**
 
 1. The viewer is registered (has a DID-backed user account -- anonymous viewers are denied).
-2. In the contract's owning org, the viewer is either an **org admin**, or a member of a group that has a `contract_grant` on this contract. The grant's `event_rules` may be deny-all -- the unlock works because of the grant link, not its rule set. Grants held by **system groups** or by the built-in **default group** that new users join automatically do not count: granting the default group access to a flagged contract does not make every user eligible. A group you configure as the automatic group for an Azure AD tenant is a regular group -- granting it access to a flagged contract makes every user provisioned into it eligible.
+2. In the contract's owning org, the viewer is either an **org admin**, or a member of a group that has a `contract_grant` on this contract. The grant's `event_rules` may be deny-all -- the unlock works because of the grant link, not its rule set. Grants held by **system groups** or by the built-in **default group** that new users join automatically do not count: granting the default group access to a flagged contract does not make every user eligible. A group you configure as the automatic group for an Azure AD tenant is treated like any other group -- granting it access to a flagged contract makes every user provisioned into it eligible.
 
 Cross-org isolation: a viewer who has access only in another org cannot be unlocked, even if they are listed in `visibleTo`. Anonymous viewers are denied.
 

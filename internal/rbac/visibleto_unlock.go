@@ -88,8 +88,9 @@ func UnlockableContracts(ctx context.Context, access *AccessController, viewerDI
 //     auto-provisioned users join: a grant reached only through either
 //     would let a sender unlock for any registered user (RD-874 security
 //     analysis; REDACTION_SPEC §3.7.1; RD-1306). A group an operator
-//     configures as an identity provider's automatic group is a regular
-//     group: granting it a flagged contract is the operator's choice.
+//     configures as an identity provider's automatic group is treated like
+//     any other group: granting it a flagged contract is the operator's
+//     choice.
 //
 // Memberships (expired ones excluded) and grants are read per request from
 // the store, so a revoked membership or grant stops the unlock on the next

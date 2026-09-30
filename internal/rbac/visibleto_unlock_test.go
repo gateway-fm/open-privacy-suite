@@ -19,14 +19,17 @@ type unlockStore struct {
 	grants      map[string][]*ContractGrant         // group ID → grants
 	failOn      string
 
-	userCalls, membershipCalls, grantCalls int
+	contractCalls, userCalls, membershipCalls, grantCalls int
 }
 
 var errUnlockStore = errors.New("store unavailable")
 
+// Each failing lookup still returns its populated value alongside the error,
+// so a caller that ignored the error would be caught by the fail-closed tests.
 func (s *unlockStore) GetContractByAddressGlobal(_ context.Context, addr string) (*Contract, error) {
+	s.contractCalls++
 	if s.failOn == "contract" {
-		return nil, errUnlockStore
+		return s.contracts[addr], errUnlockStore
 	}
 	return s.contracts[addr], nil
 }
@@ -34,7 +37,7 @@ func (s *unlockStore) GetContractByAddressGlobal(_ context.Context, addr string)
 func (s *unlockStore) GetUserByExternalID(_ context.Context, _ string) (*User, error) {
 	s.userCalls++
 	if s.failOn == "user" {
-		return nil, errUnlockStore
+		return s.user, errUnlockStore
 	}
 	return s.user, nil
 }
@@ -42,19 +45,19 @@ func (s *unlockStore) GetUserByExternalID(_ context.Context, _ string) (*User, e
 func (s *unlockStore) ListUserMembershipsInOrg(_ context.Context, _, orgID string) ([]*MembershipWithDetails, error) {
 	s.membershipCalls++
 	if s.failOn == "memberships" {
-		return nil, errUnlockStore
+		return s.memberships[orgID], errUnlockStore
 	}
 	return s.memberships[orgID], nil
 }
 
 func (s *unlockStore) ListContractGrantsBatch(_ context.Context, groupIDs []string) (map[string][]*ContractGrant, error) {
 	s.grantCalls++
-	if s.failOn == "grants" {
-		return nil, errUnlockStore
-	}
 	out := map[string][]*ContractGrant{}
 	for _, g := range groupIDs {
 		out[g] = s.grants[g]
+	}
+	if s.failOn == "grants" {
+		return out, errUnlockStore
 	}
 	return out, nil
 }
@@ -121,9 +124,9 @@ func TestUnlockableContracts_EligibilityBoundary(t *testing.T) {
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("UnlockableContracts = %v, want %v", got, want)
 		}
-		if store.userCalls != 1 || store.membershipCalls != 2 || store.grantCalls != 1 {
-			t.Fatalf("per-request cost: user=%d memberships=%d grants=%d, want 1/2 (one per owner org)/1 (org admin needs none)",
-				store.userCalls, store.membershipCalls, store.grantCalls)
+		if store.contractCalls != 7 || store.userCalls != 1 || store.membershipCalls != 2 || store.grantCalls != 1 {
+			t.Fatalf("per-request cost: contracts=%d user=%d memberships=%d grants=%d, want 7 (one per unique non-empty address)/1/2 (one per owner org)/1 (org admin needs none)",
+				store.contractCalls, store.userCalls, store.membershipCalls, store.grantCalls)
 		}
 	})
 
@@ -153,9 +156,21 @@ func TestUnlockableContracts_EligibilityBoundary(t *testing.T) {
 		for _, fail := range []string{"contract", "user", "memberships", "grants"} {
 			store := newStore()
 			store.failOn = fail
-			got := UnlockableContracts(context.Background(), NewAccessController(store, 0), "did:test:viewer", []string{flaggedRegular})
-			if len(got) != 0 {
-				t.Errorf("%s lookup error must deny, got %v", fail, got)
+			got := UnlockableContracts(context.Background(), NewAccessController(store, 0), "did:test:viewer", []string{flaggedRegular, flaggedAdmin})
+			want := map[string]bool{}
+			if fail == "grants" {
+				// The org-admin path needs no grant lookup; only the grant-based
+				// contract is lost.
+				want[flaggedAdmin] = true
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("%s lookup error: got %v, want %v", fail, got, want)
+			}
+			if fail == "memberships" && store.grantCalls != 0 {
+				t.Errorf("a membership lookup error must stop before the grant lookup, got %d grant calls", store.grantCalls)
+			}
+			if IsViewerEligibleForVisibleToUnlock(context.Background(), NewAccessController(store, 0), "did:test:viewer", flaggedRegular) {
+				t.Errorf("%s lookup error must deny IsViewerEligibleForVisibleToUnlock", fail)
 			}
 		}
 		store := newStore()

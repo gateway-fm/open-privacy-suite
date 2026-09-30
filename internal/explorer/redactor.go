@@ -2279,7 +2279,9 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 		if v, ok := abiByContract[addr]; ok {
 			return v
 		}
-		if raw, ok := contractABIs[addr]; ok && len(raw) > 0 {
+		// Phase 3 already asked the same resolver (resolveContractABI prefers
+		// it when wired), including for emitters that have no ABI.
+		if raw, ok := contractABIs[addr]; ok {
 			abiByContract[addr] = string(raw)
 			return string(raw)
 		}

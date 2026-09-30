@@ -201,7 +201,7 @@ func (p *JSONRPCProcessor) buildTxVisibilityContext(ctx context.Context, userDID
 
 	// RD-874: pre-resolve the per-contract unlock map so the filter pass
 	// stays O(1) per log. Both `allow_visibleto_unlock` (DB) and viewer
-	// eligibility (rbac.IsViewerEligibleForVisibleToUnlock) must hold.
+	// eligibility must hold (rbac.UnlockableContracts).
 	contractAddrs := extractContractAddressesFromResponse(responseBody)
 	unlockable := p.buildVisibleToUnlockableMap(ctx, userDID, contractAddrs)
 

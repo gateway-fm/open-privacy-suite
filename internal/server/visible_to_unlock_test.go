@@ -37,7 +37,7 @@ func TestVisibleToMaxSize_Constant(t *testing.T) {
 //
 // Implementation runs RedactionEngine.RedactLogs (explorer side)
 // against a wired DB. The RPC layer (rbac.FilterEventLogs) consumes
-// the same shared rbac.IsViewerEligibleForVisibleToUnlock helper plus
+// the same shared rbac.UnlockableContracts helper plus
 // processor_event_rules.go's buildVisibleToUnlockableMap, which has
 // 1:1 logic with the explorer resolver — the symmetry test
 // TestExplorerRedactorWiring_FullStack already checks the wiring
