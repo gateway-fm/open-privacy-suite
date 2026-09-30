@@ -386,6 +386,41 @@ func (r *AccessCheckRequest) EffectiveMethod() string {
 	return r.Method
 }
 
+// methodsToJudge returns the distinct method names a semantic floor (the
+// historical-state guard, the storage-slot tier, the anonymous deployment and
+// storage-read denies) must hold for: the alias target, which declares what a
+// chain-specific method does, and the raw method, which is what the node
+// executes because the body is forwarded verbatim. They differ only when an
+// operator alias is configured; checking both means an alias can neither
+// skip its target's checks nor, when a standard method name is used as an
+// alias key, the raw method's own checks.
+func (r *AccessCheckRequest) methodsToJudge() []string {
+	if eff := r.EffectiveMethod(); eff != r.Method {
+		return []string{eff, r.Method}
+	}
+	return []string{r.Method}
+}
+
+// anyMethodToJudge reports whether pred holds for any of methodsToJudge.
+func (r *AccessCheckRequest) anyMethodToJudge(pred func(method string) bool) bool {
+	for _, m := range r.methodsToJudge() {
+		if pred(m) {
+			return true
+		}
+	}
+	return false
+}
+
+// historicalStateQuery applies IsHistoricalStateQuery to methodsToJudge.
+func (r *AccessCheckRequest) historicalStateQuery() (bool, string) {
+	for _, m := range r.methodsToJudge() {
+		if isHistorical, reason := IsHistoricalStateQuery(m, r.Params); isHistorical {
+			return true, reason
+		}
+	}
+	return false, ""
+}
+
 // AccessCheckResult represents the result of an access check.
 //
 // SECURITY (RD-934): The Reason field is an OPERATOR-ONLY diagnostic.

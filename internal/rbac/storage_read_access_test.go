@@ -271,29 +271,122 @@ func TestCheckAccess_AnonymousStorageReadDenied(t *testing.T) {
 func TestCheckAccess_AnonymousAliasDeploymentDenied(t *testing.T) {
 	store := NewMockCrossOrgStore()
 	anon := store.groupAccess[AnonymousGroupID]
-	anon.AllowedMethods = append(anon.AllowedMethods, "linea_sendTransaction")
+	anon.AllowedMethods = append(anon.AllowedMethods, "linea_sendTransaction", "linea_estimateGas")
 	ac := NewAccessController(store, time.Minute)
 	defer ac.Stop()
 
-	res, err := ac.CheckAccess(context.Background(), &AccessCheckRequest{
-		Method:       "linea_sendTransaction",
-		AccessMethod: "eth_sendTransaction",
-		Params:       []any{map[string]any{"from": rd1301Contract, "data": "0x6080"}},
-	})
-	if err != nil {
-		t.Fatalf("CheckAccess: %v", err)
+	create := []any{map[string]any{"from": rd1301Contract, "data": "0x6080"}}
+	call := []any{map[string]any{"from": rd1301Contract, "to": rd1301Contract, "data": "0x6080"}}
+	for _, tc := range []struct {
+		name, method, alias string
+		params              []any
+		deployment          bool
+	}{
+		{"send alias with a CREATE payload", "linea_sendTransaction", "eth_sendTransaction", create, true},
+		{"estimateGas alias with a CREATE payload", "linea_estimateGas", "eth_estimateGas", create, true},
+		{"send alias with a target (control)", "linea_sendTransaction", "eth_sendTransaction", call, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := ac.CheckAccess(context.Background(), &AccessCheckRequest{
+				Method: tc.method, AccessMethod: tc.alias, Params: tc.params,
+			})
+			if err != nil {
+				t.Fatalf("CheckAccess: %v", err)
+			}
+			if !tc.deployment {
+				if !res.Allowed {
+					t.Fatalf("an allowlisted anonymous non-deployment must stay allowed, got %+v", res)
+				}
+				return
+			}
+			if res.Allowed || !res.AuthRequired || res.Reason != "deployment requires authentication" {
+				t.Fatalf("an allowlisted anonymous alias of a deployment must get the deployment denial, got %+v", res)
+			}
+		})
 	}
-	if res.Allowed || !res.AuthRequired || res.Reason != "deployment requires authentication" {
-		t.Fatalf("an allowlisted anonymous alias of a deployment must get the deployment denial, got %+v", res)
+}
+
+// TestCheckAccess_BuiltinAliasKeyKeepsRawMethodChecks covers an operator
+// config that uses a standard method name as an alias key (e.g.
+// eth_getStorageAt → eth_call). The node still executes the raw method (the
+// body is forwarded verbatim), so every floor keyed on method semantics must
+// hold for the raw method as well as for the alias target.
+func TestCheckAccess_BuiltinAliasKeyKeepsRawMethodChecks(t *testing.T) {
+	t.Run("anonymous", func(t *testing.T) {
+		store := NewMockCrossOrgStore()
+		anon := store.groupAccess[AnonymousGroupID]
+		anon.AllowedMethods = append(anon.AllowedMethods, "eth_sendTransaction", "eth_getStorageAt", "eth_getBalance")
+		ac := NewAccessController(store, time.Minute)
+		defer ac.Stop()
+
+		for _, tc := range []struct {
+			name, method, alias, reason string
+			params                      []any
+		}{
+			{"deployment", "eth_sendTransaction", "eth_call", "deployment requires authentication",
+				[]any{map[string]any{"from": rd1301Contract, "data": "0x6080"}}},
+			{"storage read", "eth_getStorageAt", "eth_blockNumber", "storage reads require authentication",
+				[]any{rd1301Contract, rd1301Impl, "latest"}},
+			{"historical state read", "eth_getBalance", "eth_blockNumber", "historical state queries not permitted",
+				[]any{rd1301Contract, "0x10"}},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				res, err := ac.CheckAccess(context.Background(), &AccessCheckRequest{
+					Method: tc.method, AccessMethod: tc.alias, Params: tc.params,
+				})
+				if err != nil {
+					t.Fatalf("CheckAccess: %v", err)
+				}
+				if res.Allowed || res.Reason != tc.reason {
+					t.Fatalf("expected %q, got %+v", tc.reason, res)
+				}
+			})
+		}
+	})
+
+	for _, tc := range []struct {
+		name, alias, reason string
+		orgAdmin            bool // exempt from the historical guard, still non-admin on the contract
+		params              []any
+	}{
+		// Target extracted per the alias (eth_call reads params[0].to) is empty.
+		{"remapped to a call-shaped method", "eth_call", ErrContractAccessDenied, true,
+			[]any{rd1301Contract, rd1301Ordinary, "latest"}},
+		// Target resolves, but the alias target is not a storage read.
+		{"remapped to another address query", "eth_getBalance", ErrContractAccessDenied, true,
+			[]any{rd1301Contract, rd1301Ordinary, "latest"}},
+		{"remapped, at a block number", "eth_blockNumber", "historical state queries not permitted", false,
+			[]any{rd1301Contract, rd1301Impl, "0x10"}},
+	} {
+		t.Run("authenticated "+tc.name, func(t *testing.T) {
+			store := NewMockCrossOrgStore()
+			setupCrossOrgTestScenario(store)
+			ac := NewAccessController(&orgAdminCheckingStore{MockCrossOrgStore: store, orgAdmin: tc.orgAdmin}, time.Minute)
+			defer ac.Stop()
+
+			res, err := ac.CheckAccess(context.Background(), &AccessCheckRequest{
+				UserExternalID: "did:test:user-a",
+				Method:         MethodGetStorageAt,
+				AccessMethod:   tc.alias,
+				Params:         tc.params,
+				TargetAddress:  GetTargetAddress(tc.alias, tc.params),
+			})
+			if err != nil {
+				t.Fatalf("CheckAccess: %v", err)
+			}
+			if res.Allowed || res.Reason != tc.reason {
+				t.Fatalf("eth_getStorageAt remapped to %s must keep the storage-read checks: want %q, got %+v", tc.alias, tc.reason, res)
+			}
+		})
 	}
 }
 
 // TestRegisterExtraNamespaces_CanonicalizesAliasTargets pins that an alias
 // target is stored in its canonical spelling: the case-sensitive decisions
-// keyed on the alias target (target and selector extraction, the
-// storage-slot tier, eth_getLogs validation, eth_call tracing) match the
-// canonical name, so a mis-cased target in the operator config would
-// otherwise silently skip those checks.
+// keyed on the alias target (e.g. target and selector extraction, function
+// and proxy-upgrade rules, the storage-slot tier, eth_getLogs validation,
+// eth_call tracing) match the canonical name, so a mis-cased target in the
+// operator config would otherwise silently skip those checks.
 func TestRegisterExtraNamespaces_CanonicalizesAliasTargets(t *testing.T) {
 	defer SnapshotMethodRegistriesForTest()()
 	ExtraMethods = map[string]bool{}
@@ -322,12 +415,14 @@ func TestRegisterExtraNamespaces_CanonicalizesAliasTargets(t *testing.T) {
 	}
 }
 
-// orgAdminCheckingStore adds the production OrgAdminChecker extension (no user
-// is an org admin) so the historical guard is live in the mock-store tests.
+// orgAdminCheckingStore adds the production OrgAdminChecker extension so the
+// historical guard is live in the mock-store tests; orgAdmin sets the answer
+// for every user.
 type orgAdminCheckingStore struct {
 	*MockCrossOrgStore
+	orgAdmin bool
 }
 
 func (s *orgAdminCheckingStore) IsOrgAdmin(ctx context.Context, userID string) (bool, []string, error) {
-	return false, nil, nil
+	return s.orgAdmin, nil, nil
 }

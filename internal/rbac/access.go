@@ -407,8 +407,8 @@ func NewAccessControllerWithCache(store Store, cacheTTL time.Duration, cache Per
 // helper's result is ignored and evaluation falls through to the next phase.
 // The decomposition was a pure structural refactor of the original monolithic
 // method (order of checks, conditions, reason strings, errors and result fields
-// preserved); later phases added their own denies (e.g. the RD-1301
-// storage-read floors) without reordering the phases.
+// preserved); later changes (RD-1301) added denies and made some checks judge
+// the alias target as well as the raw method, without reordering the phases.
 func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequest) (*AccessCheckResult, error) {
 	// Global blocklist + Multicall bypass detection — before any RBAC evaluation.
 	if res, handled := c.checkGlobalBlocks(req); handled {
@@ -508,7 +508,7 @@ func (c *AccessController) checkWithResolvedOrg(ctx context.Context, req *Access
 		if res, handled, err := c.validateDeploymentWithoutTarget(req, user, org, perms, requiredClaim); handled {
 			return res, err
 		}
-	} else if isStorageReadMethod(req.EffectiveMethod()) {
+	} else if req.anyMethodToJudge(isStorageReadMethod) {
 		// A storage read with no parseable target address (missing or
 		// non-string params[0]) would skip the contract and storage-slot
 		// checks above; deny rather than rely on the node rejecting it.
@@ -566,16 +566,17 @@ func (c *AccessController) checkGlobalBlocks(req *AccessCheckRequest) (*AccessCh
 // Anonymous permissions live in the `anonymous` group's group_access row
 // (seeded by migration 044, RD-870). Edits restricted to super admin
 // (X-Admin-Token) so the auditable rules are explicit and configurable.
-// Two hardcoded floors apply regardless of that allowlist: deployments and
-// raw storage reads always require authentication.
+// Besides the historical-state guard, two hardcoded floors apply regardless
+// of that allowlist: deployments and raw storage reads always require
+// authentication.
 func (c *AccessController) checkAnonymousAccess(ctx context.Context, req *AccessCheckRequest) (*AccessCheckResult, error) {
 	// Block historical state queries up-front. These reveal point-in-time
 	// state and aren't safe to expose anonymously even if the method name
 	// is on the allowlist (authenticated users get checkHistoricalStateQuery).
-	// Judged on the alias-resolved method: an operator alias of a
-	// state-reading method (e.g. linea_getProof → eth_getProof) is subject to
-	// the same guard as its target.
-	if isHistorical, reason := IsHistoricalStateQuery(req.EffectiveMethod(), req.Params); isHistorical {
+	// Judged on the alias target and the raw method (methodsToJudge): an
+	// operator alias of a state-reading method (e.g. linea_getProof →
+	// eth_getProof) is subject to the same guard as its target.
+	if isHistorical, reason := req.historicalStateQuery(); isHistorical {
 		return &AccessCheckResult{
 			Allowed: false,
 			Reason:  reason,
@@ -614,9 +615,9 @@ func (c *AccessController) checkAnonymousAccess(ctx context.Context, req *Access
 	// Defense in depth: deployment payloads always require an authenticated
 	// principal with the deploy claim. The anonymous group has empty Claims
 	// by default; even if a super admin allowlists eth_sendTransaction, a
-	// CREATE-shaped payload still requires auth. Judged on the alias target so
-	// an allowlisted alias of eth_sendTransaction cannot skip it.
-	if IsContractDeployment(req.EffectiveMethod(), req.Params) {
+	// CREATE-shaped payload still requires auth. Judged on the alias target and
+	// the raw method, so an allowlisted alias cannot skip it.
+	if req.anyMethodToJudge(func(m string) bool { return IsContractDeployment(m, req.Params) }) {
 		return &AccessCheckResult{
 			Allowed:      false,
 			AuthRequired: true,
@@ -627,7 +628,7 @@ func (c *AccessController) checkAnonymousAccess(ctx context.Context, req *Access
 	// Raw storage reads (eth_getStorageAt, eth_getProof and aliases of them)
 	// need a contract grant and the storage-slot tier, neither of which exists
 	// for an anonymous caller. Deny even if a super admin allowlists them.
-	if isStorageReadMethod(req.EffectiveMethod()) {
+	if req.anyMethodToJudge(isStorageReadMethod) {
 		return &AccessCheckResult{
 			Allowed:      false,
 			AuthRequired: true,
@@ -695,9 +696,9 @@ func (c *AccessController) resolveAndValidateUser(ctx context.Context, req *Acce
 // by checking the user's group memberships via the optional
 // OrgAdminChecker extension on the store interface; a per-contract
 // admin claim (tier 3) is not an exemption. The check is made on the
-// alias-resolved method, so an operator alias of a state-reading
-// method (e.g. linea_getProof → eth_getProof) is subject to the same
-// guard as its target. When the extension is not implemented (test fixtures
+// alias target and the raw method (methodsToJudge), so an operator
+// alias of a state-reading method (e.g. linea_getProof → eth_getProof)
+// is subject to the same guard as its target. When the extension is not implemented (test fixtures
 // using a minimal mock store) we err on the side of allowing
 // historical queries — those fixtures don't model multi-tenant
 // ownership changes, so the leak isn't reproducible there.
@@ -707,7 +708,7 @@ func (c *AccessController) resolveAndValidateUser(ctx context.Context, req *Acce
 // unreachable in production and cannot be silently disabled by a
 // dropped method.
 func (c *AccessController) checkHistoricalStateQuery(ctx context.Context, req *AccessCheckRequest, user *User) (*AccessCheckResult, bool, error) {
-	if isHistorical, reason := IsHistoricalStateQuery(req.EffectiveMethod(), req.Params); isHistorical {
+	if isHistorical, reason := req.historicalStateQuery(); isHistorical {
 		allow := true
 		if adminChk, ok := c.store.(OrgAdminChecker); ok {
 			isAdmin, _, adminErr := adminChk.IsOrgAdmin(ctx, user.ID)
@@ -1203,34 +1204,38 @@ func (c *AccessController) validateContractAccess(ctx context.Context, req *Acce
 }
 
 // validateStorageReadAccess enforces the storage-slot tier on every method
-// that returns raw contract storage values (isStorageReadMethod, judged on the
-// alias-resolved method): eth_getStorageAt returns one slot's value, and
-// eth_getProof returns storageProof[].value for every requested key (RD-1301).
-// Admin-claim users get all slots. For everyone else each requested slot must
-// be a well-known infrastructure slot (EIP-1967, EIP-2535); an ordinary,
-// mixed or malformed key list is denied. An eth_getProof with an empty key
-// list (account-only proof) requests no slot and passes. Returns
-// handled=true with a deny result.
+// that returns raw contract storage values (isStorageReadMethod, judged on
+// both the alias target and the raw method — see methodsToJudge):
+// eth_getStorageAt returns one slot's value, and eth_getProof returns
+// storageProof[].value for every requested key (RD-1301). Admin-claim users
+// get all slots. For everyone else each requested slot must be a well-known
+// infrastructure slot (EIP-1967, EIP-2535); an ordinary, mixed or malformed
+// key list is denied. An eth_getProof with an empty key list (account-only
+// proof) requests no slot and passes. Returns handled=true with a deny result.
 func (c *AccessController) validateStorageReadAccess(req *AccessCheckRequest, access *ContractAccess) (*AccessCheckResult, bool) {
-	method := req.EffectiveMethod()
-	if !isStorageReadMethod(method) || hasClaim(access.Claims, ClaimAdmin) {
+	if !req.anyMethodToJudge(isStorageReadMethod) || hasClaim(access.Claims, ClaimAdmin) {
 		return nil, false
 	}
 	deny := &AccessCheckResult{
 		Allowed: false,
 		Reason:  ErrContractAccessDenied,
 	}
-	keys, ok := requestedStorageKeys(method, req.Params)
-	if !ok {
-		slog.Debug("access denied: malformed storage key list from non-admin user",
-			"method", req.Method, "contract", req.TargetAddress, "user", req.UserExternalID)
-		return deny, true
-	}
-	for _, key := range keys {
-		if !IsWellKnownStorageSlot(key) {
-			slog.Debug("access denied: non-admin user accessing non-well-known storage slot",
-				"method", req.Method, "slot", key, "contract", req.TargetAddress, "user", req.UserExternalID)
+	for _, method := range req.methodsToJudge() {
+		if !isStorageReadMethod(method) {
+			continue
+		}
+		keys, ok := requestedStorageKeys(method, req.Params)
+		if !ok {
+			slog.Debug("access denied: malformed storage key list from non-admin user",
+				"method", req.Method, "contract", req.TargetAddress, "user", req.UserExternalID)
 			return deny, true
+		}
+		for _, key := range keys {
+			if !IsWellKnownStorageSlot(key) {
+				slog.Debug("access denied: non-admin user accessing non-well-known storage slot",
+					"method", req.Method, "slot", key, "contract", req.TargetAddress, "user", req.UserExternalID)
+				return deny, true
+			}
 		}
 	}
 	return nil, false

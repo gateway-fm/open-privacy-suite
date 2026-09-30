@@ -237,7 +237,7 @@ All methods that accept a target address enforce cross-org isolation at the addr
 | `eth_createAccessList` | Storage slots and addresses accessed | Contract internals |
 | `eth_sendTransaction` | Submits transaction | Write access |
 
-`eth_getStorageAt` and `eth_getProof` use **tiered access based on claims** (admin: all slots, non-admin: EIP-1967 / EIP-2535 proxy slots only, method not in allowlist: blocked). See [Response Filtering](/docs/security/response-filtering#eth_getstorageat----tiered-access) for details.
+`eth_getStorageAt` and `eth_getProof` use **tiered access based on claims** (admin: all slots, non-admin: EIP-1967 / EIP-2535 proxy slots only, no access to the contract: blocked). See [Response Filtering](/docs/security/response-filtering#eth_getstorageat----tiered-access) for details.
 
 ### Plain CREATE Pre-registration
 
