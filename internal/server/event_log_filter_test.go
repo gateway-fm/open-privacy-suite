@@ -552,7 +552,7 @@ func TestFilterLogsWithEventRules_EmptyEventRules_AllLogsStripped(t *testing.T) 
 	logsJSON, _ := json.Marshal(logs)
 	rpcResponse := `{"jsonrpc":"2.0","id":1,"result":` + string(logsJSON) + `}`
 
-	got := FilterLogsWithEventRules(
+	got := FilterLogsWithEventRules(rbac.ReadProfileStandard,
 		[]byte(rpcResponse),
 		[]string{userAddr},
 		perms,
@@ -754,7 +754,7 @@ func TestFilterLogs_I14_NoRules_DenyAll(t *testing.T) {
 		{"address": contractAddr, "topics": []string{integTransferTopic0, otherPadded}, "data": "0x"},
 	}
 
-	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, &testABIProviderServer{}, nil, nil)
+	got := FilterLogsWithEventRules(rbac.ReadProfileStandard, buildLogsRPCResponse(t, logs), []string{userAddr}, perms, &testABIProviderServer{}, nil, nil)
 	result := parseLogsResult(t, got)
 
 	if len(result) != 0 {
@@ -783,7 +783,7 @@ func TestFilterLogs_I15_AllowTransferOnly(t *testing.T) {
 		{"address": contractAddr, "topics": []string{integApprovalTopic0}, "data": "0x"},
 	}
 
-	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, &testABIProviderServer{}, nil, nil)
+	got := FilterLogsWithEventRules(rbac.ReadProfileStandard, buildLogsRPCResponse(t, logs), []string{userAddr}, perms, &testABIProviderServer{}, nil, nil)
 	result := parseLogsResult(t, got)
 
 	if len(result) != 1 {
@@ -828,7 +828,7 @@ func TestFilterLogs_I16_ParamRuleSelfMatch(t *testing.T) {
 		{"address": contractAddr, "topics": []string{integTransferTopic0, paddedUser, otherPadded}, "data": "0x0000000000000000000000000000000000000000000000000000000000000064"},
 	}
 
-	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, abiProv, nil, nil)
+	got := FilterLogsWithEventRules(rbac.ReadProfileStandard, buildLogsRPCResponse(t, logs), []string{userAddr}, perms, abiProv, nil, nil)
 	result := parseLogsResult(t, got)
 
 	if len(result) != 1 {
@@ -864,7 +864,7 @@ func TestFilterLogs_I17_ParamRuleSelfNoMatch(t *testing.T) {
 		{"address": contractAddr, "topics": []string{integTransferTopic0, otherPadded, otherPadded}, "data": "0x0000000000000000000000000000000000000000000000000000000000000064"},
 	}
 
-	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, abiProv, nil, nil)
+	got := FilterLogsWithEventRules(rbac.ReadProfileStandard, buildLogsRPCResponse(t, logs), []string{userAddr}, perms, abiProv, nil, nil)
 	result := parseLogsResult(t, got)
 
 	if len(result) != 0 {
@@ -892,7 +892,7 @@ func TestFilterLogs_I18_EmptyRulesDenyAll(t *testing.T) {
 		{"address": contractAddr, "topics": []string{integApprovalTopic0, paddedUser}, "data": "0x"},
 	}
 
-	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, &testABIProviderServer{}, nil, nil)
+	got := FilterLogsWithEventRules(rbac.ReadProfileStandard, buildLogsRPCResponse(t, logs), []string{userAddr}, perms, &testABIProviderServer{}, nil, nil)
 	result := parseLogsResult(t, got)
 
 	if len(result) != 0 {
@@ -918,7 +918,7 @@ func TestFilterLogs_I19_NoGrant_NoLogs(t *testing.T) {
 		{"address": contractAddr, "topics": []string{integTransferTopic0}, "data": "0x"},
 	}
 
-	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, &testABIProviderServer{}, nil, nil)
+	got := FilterLogsWithEventRules(rbac.ReadProfileStandard, buildLogsRPCResponse(t, logs), []string{userAddr}, perms, &testABIProviderServer{}, nil, nil)
 	result := parseLogsResult(t, got)
 
 	if len(result) != 0 {
@@ -960,7 +960,7 @@ func TestFilterLogs_I20_MixedContracts_DifferentRules(t *testing.T) {
 		{"address": contractZ, "topics": []string{integApprovalTopic0, "0x000000000000000000000000bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}, "data": "0x"},
 	}
 
-	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, &testABIProviderServer{}, nil, nil)
+	got := FilterLogsWithEventRules(rbac.ReadProfileStandard, buildLogsRPCResponse(t, logs), []string{userAddr}, perms, &testABIProviderServer{}, nil, nil)
 	result := parseLogsResult(t, got)
 
 	if len(result) != 1 {
@@ -993,7 +993,7 @@ func TestFilterLogs_I25_CrossOrg_NoAccess(t *testing.T) {
 		{"address": orgBContract, "topics": []string{integTransferTopic0}, "data": "0x"},
 	}
 
-	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, &testABIProviderServer{}, nil, nil)
+	got := FilterLogsWithEventRules(rbac.ReadProfileStandard, buildLogsRPCResponse(t, logs), []string{userAddr}, perms, &testABIProviderServer{}, nil, nil)
 	result := parseLogsResult(t, got)
 
 	if len(result) != 0 {
@@ -1032,7 +1032,7 @@ func TestFilterLogs_I26_PartialContractAccess(t *testing.T) {
 		{"address": contractZ, "topics": []string{integTransferTopic0}, "data": "0x"},
 	}
 
-	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, &testABIProviderServer{}, nil, nil)
+	got := FilterLogsWithEventRules(rbac.ReadProfileStandard, buildLogsRPCResponse(t, logs), []string{userAddr}, perms, &testABIProviderServer{}, nil, nil)
 	result := parseLogsResult(t, got)
 
 	if len(result) != 2 {
@@ -1110,7 +1110,7 @@ func TestFilterLogs_I28_AdminClaim_Bypass(t *testing.T) {
 	}
 
 	adminMap := map[string]bool{contractAddr: true}
-	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{"0xadmin"}, perms, &testABIProviderServer{}, nil, adminMap)
+	got := FilterLogsWithEventRules(rbac.ReadProfileStandard, buildLogsRPCResponse(t, logs), []string{"0xadmin"}, perms, &testABIProviderServer{}, nil, adminMap)
 	result := parseLogsResult(t, got)
 
 	if len(result) != 2 {
@@ -1143,7 +1143,7 @@ func TestFilterLogs_I29_OrgAdmin_Bypass(t *testing.T) {
 
 	userAddr := "0xabc1234567890123456789012345678901234567"
 	adminMap := map[string]bool{contractAddr: true}
-	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, &testABIProviderServer{}, nil, adminMap)
+	got := FilterLogsWithEventRules(rbac.ReadProfileStandard, buildLogsRPCResponse(t, logs), []string{userAddr}, perms, &testABIProviderServer{}, nil, adminMap)
 	result := parseLogsResult(t, got)
 
 	if len(result) != 2 {
@@ -1171,7 +1171,7 @@ func TestFilterLogs_I30_ReadClaim_NoBypass(t *testing.T) {
 		{"address": contractAddr, "topics": []string{integApprovalTopic0}, "data": "0x"},
 	}
 
-	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{"0xuser"}, perms, &testABIProviderServer{}, nil, nil)
+	got := FilterLogsWithEventRules(rbac.ReadProfileStandard, buildLogsRPCResponse(t, logs), []string{"0xuser"}, perms, &testABIProviderServer{}, nil, nil)
 	result := parseLogsResult(t, got)
 
 	if len(result) != 1 {
@@ -1207,7 +1207,7 @@ func TestFilterLogs_I31_UnionRules(t *testing.T) {
 		{"address": contractAddr, "topics": []string{integApprovalTopic0}, "data": "0x"},
 	}
 
-	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{"0xuser"}, perms, &testABIProviderServer{}, nil, nil)
+	got := FilterLogsWithEventRules(rbac.ReadProfileStandard, buildLogsRPCResponse(t, logs), []string{"0xuser"}, perms, &testABIProviderServer{}, nil, nil)
 	result := parseLogsResult(t, got)
 
 	if len(result) != 2 {
@@ -1237,7 +1237,7 @@ func TestFilterLogs_I32_NilRulesDenyAll(t *testing.T) {
 		{"address": contractAddr, "topics": []string{"0x1111111111111111111111111111111111111111111111111111111111111111", paddedUser}, "data": "0x"},
 	}
 
-	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, &testABIProviderServer{}, nil, nil)
+	got := FilterLogsWithEventRules(rbac.ReadProfileStandard, buildLogsRPCResponse(t, logs), []string{userAddr}, perms, &testABIProviderServer{}, nil, nil)
 	result := parseLogsResult(t, got)
 
 	if len(result) != 0 {
@@ -1278,7 +1278,7 @@ func TestFilterLogs_I33_UnionParamRules(t *testing.T) {
 		{"address": contractAddr, "topics": []string{integTransferTopic0, otherPadded, paddedUser}, "data": "0x0000000000000000000000000000000000000000000000000000000000000064"},
 	}
 
-	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, abiProv, nil, nil)
+	got := FilterLogsWithEventRules(rbac.ReadProfileStandard, buildLogsRPCResponse(t, logs), []string{userAddr}, perms, abiProv, nil, nil)
 	result := parseLogsResult(t, got)
 
 	if len(result) != 1 {
@@ -1329,7 +1329,7 @@ func TestFilterLogs_I34_NonIndexed_SelfMatch(t *testing.T) {
 		{"address": contractAddr, "topics": []string{customTopic0, idTopic}, "data": "0x" + userAddrPadded},
 	}
 
-	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, abiProv, nil, nil)
+	got := FilterLogsWithEventRules(rbac.ReadProfileStandard, buildLogsRPCResponse(t, logs), []string{userAddr}, perms, abiProv, nil, nil)
 	result := parseLogsResult(t, got)
 
 	if len(result) != 1 {
@@ -1374,7 +1374,7 @@ func TestFilterLogs_I35_NonIndexed_SelfNoMatch(t *testing.T) {
 		{"address": contractAddr, "topics": []string{customTopic0, idTopic}, "data": "0x" + otherAddrPadded},
 	}
 
-	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, abiProv, nil, nil)
+	got := FilterLogsWithEventRules(rbac.ReadProfileStandard, buildLogsRPCResponse(t, logs), []string{userAddr}, perms, abiProv, nil, nil)
 	result := parseLogsResult(t, got)
 
 	if len(result) != 0 {
@@ -1416,7 +1416,7 @@ func TestFilterLogs_I36_NoABI_FailClosed(t *testing.T) {
 		{"address": contractAddr, "topics": []string{customTopic0, idTopic}, "data": "0x" + userAddrPadded},
 	}
 
-	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, nil, nil, nil)
+	got := FilterLogsWithEventRules(rbac.ReadProfileStandard, buildLogsRPCResponse(t, logs), []string{userAddr}, perms, nil, nil, nil)
 	result := parseLogsResult(t, got)
 
 	if len(result) != 0 {
@@ -1456,7 +1456,7 @@ func TestFilterLogs_I37_CacheInvalidation_Stateless(t *testing.T) {
 	}
 	rpcResp := buildLogsRPCResponse(t, logs)
 
-	got1 := FilterLogsWithEventRules(rpcResp, []string{"0xuser"}, perms1, &testABIProviderServer{}, nil, nil)
+	got1 := FilterLogsWithEventRules(rbac.ReadProfileStandard, rpcResp, []string{"0xuser"}, perms1, &testABIProviderServer{}, nil, nil)
 	result1 := parseLogsResult(t, got1)
 	if len(result1) != 1 {
 		t.Errorf("I37 first call: expected 1 (Transfer only), got %d", len(result1))
@@ -1475,7 +1475,7 @@ func TestFilterLogs_I37_CacheInvalidation_Stateless(t *testing.T) {
 		},
 	}
 
-	got2 := FilterLogsWithEventRules(rpcResp, []string{"0xuser"}, perms2, &testABIProviderServer{}, nil, nil)
+	got2 := FilterLogsWithEventRules(rbac.ReadProfileStandard, rpcResp, []string{"0xuser"}, perms2, &testABIProviderServer{}, nil, nil)
 	result2 := parseLogsResult(t, got2)
 	if len(result2) != 2 {
 		t.Errorf("I37 second call: expected 2 (Transfer+Approval), got %d", len(result2))
@@ -1870,7 +1870,7 @@ func TestFilterLogsWithEventRules_NoLinkedAddresses_VisibleToStillWorks(t *testi
 	}
 
 	// No linked addresses — bank user has only a DID
-	got := FilterLogsWithEventRules(
+	got := FilterLogsWithEventRules(rbac.ReadProfileStandard,
 		[]byte(rpcResponse),
 		nil, // empty user addresses
 		perms,

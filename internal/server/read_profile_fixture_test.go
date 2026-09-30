@@ -5,13 +5,18 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/db"
+	"privacy-proxy/internal/explorer"
 	"privacy-proxy/internal/rbac"
 	"privacy-proxy/internal/server/middleware"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
@@ -239,4 +244,34 @@ func rpResult(t *testing.T, body []byte) json.RawMessage {
 // with or without the 0x prefix, including inside zero-padded topics).
 func rpHasAddr(body []byte, addr string) bool {
 	return strings.Contains(strings.ToLower(string(body)), strings.TrimPrefix(strings.ToLower(addr), "0x"))
+}
+
+// wireExplorer installs an explorer redaction engine wired like production
+// (wireExplorerRedactor) with the given profile, and sets the server's profile,
+// so explorer handlers and the RPC processor run the same policy.
+func (f *rpFixture) wireExplorer(profile rbac.ReadProfile) {
+	engine := explorer.NewRedactionEngine(f.srv.explorerStore, f.db, profile)
+	wireExplorerRedactor(engine, f.db, f.srv.rbacAccessCtrl, f.srv.explorerStore, nil)
+	f.srv.explorerRedactor = engine
+	f.srv.config.ReadProfile = profile
+}
+
+// explorerRouter mounts every explorer endpoint (production binding) behind
+// the optional-JWT middleware.
+func (f *rpFixture) explorerRouter() *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	g := router.Group("/api/v1/explorer")
+	g.Use(auth.OptionalJWTAuthMiddleware(f.srv.jwtService, f.srv.db))
+	f.srv.bindExplorerEndpoints(g)
+	return router
+}
+
+func (f *rpFixture) explorerGet(t *testing.T, router *gin.Engine, v rpViewer, path string) (int, []byte) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	req.Header.Set("Authorization", "Bearer "+issueTestJWT(t, f.srv, v.did))
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	return rr.Code, rr.Body.Bytes()
 }

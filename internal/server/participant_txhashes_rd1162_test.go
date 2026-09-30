@@ -196,7 +196,7 @@ func TestGetLogsParticipantPath_AddresslessOwnTxLogAdmitted_RD1162(t *testing.T)
 
 	participants := p.buildParticipantTxHashes([]string{user}, resp)
 	visCtx := &rbac.TxVisibilityContext{ParticipantTxHashes: participants}
-	got := FilterLogsWithEventRules(resp, []string{user}, perms, &testABIProviderServer{}, visCtx, nil)
+	got := FilterLogsWithEventRules(rbac.ReadProfileStandard, resp, []string{user}, perms, &testABIProviderServer{}, visCtx, nil)
 
 	var out struct {
 		Result []struct {

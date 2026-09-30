@@ -373,7 +373,7 @@ func (s *Server) handleDryRun(c *gin.Context) {
 		}
 		switch req.RPC.Method {
 		case "eth_getLogs":
-			rawResp = FilterLogsWithEventRules([]byte(rawResp), addrs, userPerms, abiProv, nil, nil)
+			rawResp = FilterLogsWithEventRules(s.readProfile(), []byte(rawResp), addrs, userPerms, abiProv, nil, nil)
 			if s.jsonrpcProcessor != nil && viewerDID != "" {
 				rawResp = s.jsonrpcProcessor.redactLogsArrayResponseFields(ctx, viewerDID, []byte(rawResp))
 			}
@@ -673,13 +673,13 @@ func extractLogsFromCallTrace(raw json.RawMessage) []json.RawMessage {
 // (*Server).filterDryRunLogs) which additionally wires an ABI
 // provider. The wrapper passes nil for those, matching pre-M3 test
 // expectations.
-func filterDryRunLogs(logs []json.RawMessage, perms *rbac.EffectivePermissions, user *rbac.User, viewerDID string) []json.RawMessage {
+func filterDryRunLogs(profile rbac.ReadProfile, logs []json.RawMessage, perms *rbac.EffectivePermissions, user *rbac.User, viewerDID string) []json.RawMessage {
 	if len(logs) == 0 || perms == nil {
 		return nil
 	}
 	_ = user
 	_ = viewerDID
-	return rbac.FilterEventLogs(logs, perms, []string{}, nil, nil, nil)
+	return rbac.FilterEventLogs(profile, logs, perms, []string{}, nil, nil, nil)
 }
 
 // filterDryRunLogs runs the impersonated user's RBAC view over the
@@ -736,7 +736,7 @@ func (s *Server) filterDryRunLogs(ctx context.Context, logs []json.RawMessage, p
 
 	_ = viewerDID
 	_ = orgID
-	return rbac.FilterEventLogs(logs, perms, addrs, abiProv, nil, nil)
+	return rbac.FilterEventLogs(s.readProfile(), logs, perms, addrs, abiProv, nil, nil)
 }
 
 // forwardDryRunRead forwards a read-only RPC call to the upstream node

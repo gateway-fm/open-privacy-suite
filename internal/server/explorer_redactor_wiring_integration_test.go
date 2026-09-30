@@ -34,13 +34,13 @@ import (
 //     to a non-nil resolver. Reflection-based so a future Set5Resolver
 //     method auto-fails until wireExplorerRedactor learns about it.
 //  2. The wired engine actually enforces the rules end-to-end:
-//       - null event_rules ⇒ deny (RD-888 fix is alive)
-//       - allowlist ⇒ only listed topic0 passes
-//       - allowlist + ParamRule(must_be:self) ⇒ topic1 must encode
-//         the viewer's address (this fact alone failed in pre-fix
-//         code because EventRuleInfo had no ParamRules field)
-//       - tier-2 org admin ⇒ ABI-less contract logs visible
-//       - non-admin viewer + ABI-less contract ⇒ logs dropped
+//     - null event_rules ⇒ deny (RD-888 fix is alive)
+//     - allowlist ⇒ only listed topic0 passes
+//     - allowlist + ParamRule(must_be:self) ⇒ topic1 must encode
+//     the viewer's address (this fact alone failed in pre-fix
+//     code because EventRuleInfo had no ParamRules field)
+//     - tier-2 org admin ⇒ ABI-less contract logs visible
+//     - non-admin viewer + ABI-less contract ⇒ logs dropped
 //
 // If any of these regresses, this test stays red, and so does the PR.
 //
@@ -130,7 +130,7 @@ func TestExplorerRedactorWiring_FullStack(t *testing.T) {
 	// no-op stub.
 	accessCtrl := rbac.NewAccessController(database, 1*time.Minute)
 	t.Cleanup(accessCtrl.Stop)
-	engine := explorer.NewRedactionEngine(noopContractStore{}, database)
+	engine := explorer.NewRedactionEngine(noopContractStore{}, database, rbac.ReadProfileStandard)
 	// RD-939: wireExplorerRedactor now also wires the log-participant
 	// store. The test asserts wiring completeness via reflection
 	// (expectedSetters below); to satisfy SetLogParticipantStore we pass
@@ -159,11 +159,11 @@ func TestExplorerRedactorWiring_FullStack(t *testing.T) {
 
 	logs := []explorer.Log{
 		{ID: 1, Address: contractRules, TxHash: "0xtx1", Topic0: &tr, Topic1: &otherTopic, Data: "0x"},
-		{ID: 2, Address: contractRules, TxHash: "0xtx2", Topic0: &ap, Topic1: &otherTopic, Data: "0x"}, // not allowlisted
+		{ID: 2, Address: contractRules, TxHash: "0xtx2", Topic0: &ap, Topic1: &otherTopic, Data: "0x"},  // not allowlisted
 		{ID: 3, Address: contractParam, TxHash: "0xtx3", Topic0: &tr, Topic1: &viewerTopic, Data: "0x"}, // self => pass
-		{ID: 4, Address: contractParam, TxHash: "0xtx4", Topic0: &tr, Topic1: &otherTopic, Data: "0x"}, // not self => drop
-		{ID: 5, Address: contractDeny, TxHash: "0xtx5", Topic0: &tr, Topic1: &otherTopic, Data: "0x"},  // null rules => drop
-		{ID: 6, Address: contractNoABI, TxHash: "0xtx6", Topic0: &tr, Topic1: &otherTopic, Data: "0x"}, // no ABI => drop for non-admin
+		{ID: 4, Address: contractParam, TxHash: "0xtx4", Topic0: &tr, Topic1: &otherTopic, Data: "0x"},  // not self => drop
+		{ID: 5, Address: contractDeny, TxHash: "0xtx5", Topic0: &tr, Topic1: &otherTopic, Data: "0x"},   // null rules => drop
+		{ID: 6, Address: contractNoABI, TxHash: "0xtx6", Topic0: &tr, Topic1: &otherTopic, Data: "0x"},  // no ABI => drop for non-admin
 	}
 
 	// Regular viewer.

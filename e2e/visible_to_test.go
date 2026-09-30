@@ -224,11 +224,11 @@ func TestVisibleToE2E_FilterIntegration(t *testing.T) {
 	}
 
 	// Viewer without visibleTo: should not see the log (not "self")
-	resultWithout := rbac.FilterEventLogs(logs, perms, []string{setup.viewerAddr}, nil, nil, nil)
+	resultWithout := rbac.FilterEventLogs(rbac.ReadProfileStandard, logs, perms, []string{setup.viewerAddr}, nil, nil, nil)
 	assert.Len(t, resultWithout, 0, "viewer should not see log without visibleTo")
 
 	// Viewer with visibleTo: should see the log
-	resultWith := rbac.FilterEventLogs(logs, perms, []string{setup.viewerAddr}, nil, visCtx, nil)
+	resultWith := rbac.FilterEventLogs(rbac.ReadProfileStandard, logs, perms, []string{setup.viewerAddr}, nil, visCtx, nil)
 	assert.Len(t, resultWith, 1, "viewer should see log with visibleTo")
 
 	// Unlisted user with visibleTo context: should NOT see the log
@@ -236,7 +236,7 @@ func TestVisibleToE2E_FilterIntegration(t *testing.T) {
 		ViewerDID:    "did:privado:unlisted",
 		TxVisibility: visibility,
 	}
-	resultUnlisted := rbac.FilterEventLogs(logs, perms, []string{"0xcccccccccccccccccccccccccccccccccccccccc"}, nil, unlistedVisCtx, nil)
+	resultUnlisted := rbac.FilterEventLogs(rbac.ReadProfileStandard, logs, perms, []string{"0xcccccccccccccccccccccccccccccccccccccccc"}, nil, unlistedVisCtx, nil)
 	assert.Len(t, resultUnlisted, 0, "unlisted user should not see log even with visCtx")
 }
 
@@ -320,6 +320,7 @@ func TestVisibleToE2E_TxNotVisibleToListedDID(t *testing.T) {
 
 	// Viewer WITH visibleTo: should see the log via eth_getLogs.
 	logsResult := server.FilterLogsWithEventRules(
+		rbac.ReadProfileStandard,
 		logsBody,
 		[]string{setup.viewerAddr},
 		perms,
@@ -388,6 +389,7 @@ func TestVisibleToE2E_GetLogsWithVisibleTo(t *testing.T) {
 	}
 
 	resultListed := server.FilterLogsWithEventRules(
+		rbac.ReadProfileStandard,
 		logsBody,
 		[]string{setup.viewerAddr},
 		perms,
@@ -410,6 +412,7 @@ func TestVisibleToE2E_GetLogsWithVisibleTo(t *testing.T) {
 	unlistedAddr := "0xcccccccccccccccccccccccccccccccccccccccc"
 
 	resultUnlisted := server.FilterLogsWithEventRules(
+		rbac.ReadProfileStandard,
 		logsBody,
 		[]string{unlistedAddr},
 		perms,
@@ -426,6 +429,7 @@ func TestVisibleToE2E_GetLogsWithVisibleTo(t *testing.T) {
 
 	// No visCtx at all: should also NOT see the log (backward compat).
 	resultNone := server.FilterLogsWithEventRules(
+		rbac.ReadProfileStandard,
 		logsBody,
 		[]string{setup.viewerAddr},
 		perms,

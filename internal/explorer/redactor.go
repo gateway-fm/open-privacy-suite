@@ -256,6 +256,11 @@ type RedactionEngine struct {
 	dynamicPayloadAllowedResolver DynamicPayloadAllowedResolver
 	logParticipantStore           LogParticipantStore
 	pseudonymKey                  []byte // RD-1164 #8: HMAC key for address pseudonyms (nil = unkeyed HMAC, still non-reversible)
+
+	// readProfile is the deployment-wide read privacy profile (RD-1299),
+	// fixed at construction. The zero value (unset) is enforced as strict,
+	// so an engine whose profile was never wired fails closed.
+	readProfile rbac.ReadProfile
 }
 
 // Database interface for the methods RedactionEngine needs from the main DB
@@ -271,11 +276,19 @@ type Database interface {
 	GetBatchEventAccess(ctx context.Context, viewerDID string, contractAddresses []string) (map[string]bool, error)
 }
 
-func NewRedactionEngine(store ContractStore, db Database) *RedactionEngine {
+// NewRedactionEngine builds a redaction engine. The read profile is required
+// (RD-1299): pass the configured PRIVACY_READ_PROFILE value.
+func NewRedactionEngine(store ContractStore, db Database, profile rbac.ReadProfile) *RedactionEngine {
 	return &RedactionEngine{
-		store: store,
-		db:    db,
+		store:       store,
+		db:          db,
+		readProfile: profile,
 	}
+}
+
+// ReadProfile reports the read privacy profile this engine enforces.
+func (r *RedactionEngine) ReadProfile() rbac.ReadProfile {
+	return r.readProfile
 }
 
 // SetEventRuleChecker sets an optional event rule checker for log-level filtering.
@@ -2290,6 +2303,14 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 		return v
 	}
 
+	// RD-1299: under the strict read profile every log must name one of the
+	// viewer's linked addresses in an ABI-indexed address parameter.
+	strict := r.readProfile.Strict()
+	var selfMatcher *rbac.IndexedSelfMatcher
+	if strict {
+		selfMatcher = rbac.NewIndexedSelfMatcher()
+	}
+
 	// Phase 4: apply redactions.
 	var result []Log
 	for _, l := range logs {
@@ -2358,17 +2379,22 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 		// be decoded/redacted.
 		resolvedABI := resolveABIOnce(contractAddr)
 		facts.ABIResolvable = r.abiResolver == nil || resolvedABI != ""
+		var abiForCheck json.RawMessage
+		if raw, ok := contractABIs[contractAddr]; ok && len(raw) > 0 {
+			abiForCheck = raw
+		} else if resolvedABI != "" {
+			abiForCheck = json.RawMessage(resolvedABI)
+		}
 		if l.Topic0 != nil {
-			var abiForCheck json.RawMessage
-			if raw, ok := contractABIs[contractAddr]; ok && len(raw) > 0 {
-				abiForCheck = raw
-			} else if resolvedABI != "" {
-				abiForCheck = json.RawMessage(resolvedABI)
-			}
 			if len(abiForCheck) > 0 && !allowDynamicPayload[contractAddr] &&
 				eventHasDynamicNonIndexedParam(abiForCheck, *l.Topic0) {
 				facts.DynamicPayloadDropped = true
 			}
+		}
+		// Strict read profile (RD-1299): the same IndexedSelf predicate the RPC
+		// filter applies, on the same ABI. No ABI → never matches.
+		if strict {
+			facts.IndexedSelf = selfMatcher.Match(string(abiForCheck), collectLogTopics(l), l.Data, viewerAddrs)
 		}
 
 		// event_rules resolution (RD-888). When no checker is wired (legacy
@@ -2418,7 +2444,7 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 			facts.Rules = rbac.LogEventRulesWildcard
 		}
 
-		decision := rbac.DecideLogEmitter(facts)
+		decision := rbac.DecideLogEmitter(r.readProfile, facts)
 		if !decision.Admit {
 			continue
 		}

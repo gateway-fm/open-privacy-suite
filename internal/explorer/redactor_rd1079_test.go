@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"privacy-proxy/internal/rbac"
 )
 
 // rd1079DB is a redactor DB stub exposing a detailed visibility map and
@@ -42,7 +44,7 @@ const (
 )
 
 func rd1079Engine() *RedactionEngine {
-	return &RedactionEngine{store: nil, db: &rd1079DB{
+	return &RedactionEngine{readProfile: rbac.ReadProfileStandard, store: nil, db: &rd1079DB{
 		visMap: VisibilityMap{
 			rd1079Charlie: VisibilityHidden,
 			rd1079Eve:     VisibilityPseudonymous,

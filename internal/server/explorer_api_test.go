@@ -1544,7 +1544,7 @@ func setupTestServerForExplorerTransactions(t *testing.T) (*Server, *db.DB, *sql
 		disclosureService: disclosure.NewService(database),
 		config:            cfg,
 		explorerStore:     explorerStore,
-		explorerRedactor:  explorer.NewRedactionEngine(explorerStore, database),
+		explorerRedactor:  explorer.NewRedactionEngine(explorerStore, database, rbac.ReadProfileStandard),
 	}
 
 	t.Cleanup(func() {

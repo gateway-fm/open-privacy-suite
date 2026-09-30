@@ -5,6 +5,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"privacy-proxy/internal/rbac"
 )
 
 // countingDB wraps the level + reason maps a test wants and counts how many
@@ -111,7 +113,7 @@ func TestRedactor_RD1123_SingleVisibilityFetchPerCall(t *testing.T) {
 	}
 
 	db := newCountingDB(visMap, []string{viewer})
-	engine := &RedactionEngine{store: nil, db: db}
+	engine := &RedactionEngine{readProfile: rbac.ReadProfileStandard, store: nil, db: db}
 
 	ctx := context.Background()
 
@@ -170,7 +172,7 @@ func TestRedactor_RD1123_LogsSingleFetchAcrossPhases(t *testing.T) {
 	visMap := VisibilityMap{contract: VisibilityFull}
 
 	db := newCountingDB(visMap, nil)
-	engine := &RedactionEngine{store: nil, db: db}
+	engine := &RedactionEngine{readProfile: rbac.ReadProfileStandard, store: nil, db: db}
 
 	tr := eventTopic0("Transfer(address,address,uint256)")
 	if _, err := engine.RedactLogs(context.Background(), []Log{
@@ -211,7 +213,7 @@ func TestRedactor_RD1123_DedupUsesDetailedLevels(t *testing.T) {
 			to:   {Address: to, Level: VisibilityHidden, Reason: ReasonNoAccess},
 		},
 	}
-	engine := &RedactionEngine{store: nil, db: db}
+	engine := &RedactionEngine{readProfile: rbac.ReadProfileStandard, store: nil, db: db}
 
 	// Viewer is NOT a participant (no linked addresses) → G10 applies: a row
 	// with one Hidden side must be dropped. This only happens if the redactor

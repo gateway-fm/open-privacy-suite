@@ -104,6 +104,7 @@ func rawAdmittedLogs(admitted []rbac.AdmittedLog) []json.RawMessage {
 // filterLogsWithEventRules with JSONRPCProcessor.logFieldRenderer, which
 // applies each log's payload policy (RD-1214 masking / RD-874 unlock).
 func FilterLogsWithEventRules(
+	profile rbac.ReadProfile,
 	responseBody []byte,
 	userAddresses []string,
 	perms *rbac.EffectivePermissions,
@@ -111,13 +112,14 @@ func FilterLogsWithEventRules(
 	visCtx *rbac.TxVisibilityContext,
 	isAdminByContract map[string]bool,
 ) []byte {
-	return filterLogsWithEventRules(responseBody, userAddresses, perms, abiProvider, visCtx, isAdminByContract, nil)
+	return filterLogsWithEventRules(profile, responseBody, userAddresses, perms, abiProvider, visCtx, isAdminByContract, nil)
 }
 
 // filterLogsWithEventRules is FilterLogsWithEventRules with the admitted logs
 // rendered by render (nil = verbatim). Every failure path fails closed to an
 // empty result, never to the upstream body.
 func filterLogsWithEventRules(
+	profile rbac.ReadProfile,
 	responseBody []byte,
 	userAddresses []string,
 	perms *rbac.EffectivePermissions,
@@ -156,7 +158,7 @@ func filterLogsWithEventRules(
 	// Single-pass: FilterEventLogsDetailed handles both event-rule and default
 	// address-based filtering depending on whether EventRules is configured,
 	// and attaches each admitted log's payload policy for the renderer.
-	finalLogs := render(rbac.FilterEventLogsDetailed(rawLogs, perms, userAddresses, abiProvider, visCtx, isAdminByContract))
+	finalLogs := render(rbac.FilterEventLogsDetailed(profile, rawLogs, perms, userAddresses, abiProvider, visCtx, isAdminByContract))
 	if finalLogs == nil {
 		finalLogs = []json.RawMessage{}
 	}
@@ -358,7 +360,7 @@ func decideReceipt(
 	// Filter the logs once. applyEventRulesToReceipt calls the shared engine
 	// and returns how many logs the viewer is entitled to — the RD-1183
 	// envelope-admission signal.
-	result, entitledLogs := applyEventRulesToReceipt(raw, perms, userAddresses, abiProvider, logVisCtx, isAdminByContract, render)
+	result, entitledLogs := applyEventRulesToReceipt(profile, raw, perms, userAddresses, abiProvider, logVisCtx, isAdminByContract, render)
 
 	// Envelope admission (rbac.DecideTxEnvelope):
 	//   - standard receipt: participant / visibleTo / admin, or RD-1183: a
@@ -385,6 +387,7 @@ func decideReceipt(
 // the count-0 paths must map to a null envelope for such a viewer, not to an
 // unfiltered receipt.
 func applyEventRulesToReceipt(
+	profile rbac.ReadProfile,
 	rawReceipt json.RawMessage,
 	perms *rbac.EffectivePermissions,
 	userAddresses []string,
@@ -411,7 +414,7 @@ func applyEventRulesToReceipt(
 		return receiptWithEmptyLogs(rawReceipt), 0 // fail-closed
 	}
 
-	admitted := rbac.FilterEventLogsDetailed(arr, perms, userAddresses, abiProvider, visCtx, isAdminByContract)
+	admitted := rbac.FilterEventLogsDetailed(profile, arr, perms, userAddresses, abiProvider, visCtx, isAdminByContract)
 	rendered := render(admitted)
 	if rendered == nil {
 		rendered = []json.RawMessage{}

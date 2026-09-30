@@ -1138,7 +1138,7 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 		// Admission and rendering in one pass (see the receipt case above):
 		// masked per RD-1214 unless the log is an RD-874 unlock (RD-1300).
 		abiProv := p.contractABIProvider(ctx)
-		return filterLogsWithEventRules(responseBody, addrs, perms, abiProv, visCtx, adminMap, p.logFieldRenderer(ctx, req.UserID, abiProv))
+		return filterLogsWithEventRules(p.readProfile, responseBody, addrs, perms, abiProv, visCtx, adminMap, p.logFieldRenderer(ctx, req.UserID, abiProv))
 
 	case strings.EqualFold(m, rbac.MethodGetBlockByHash),
 		strings.EqualFold(m, rbac.MethodGetBlockByNumber):

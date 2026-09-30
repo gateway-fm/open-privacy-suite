@@ -289,7 +289,7 @@ func (s *Server) explorerReconnectLoop(dbURL string, rbacDB *db.DB, indexerURL s
 		}
 		s.explorerMu.Lock()
 		s.explorerStore = backend
-		s.explorerRedactor = explorer.NewRedactionEngine(backend, rbacDB)
+		s.explorerRedactor = explorer.NewRedactionEngine(backend, rbacDB, s.readProfile())
 		// Wire ABI / admin / event-rule / log-participant resolvers so the
 		// explorer redactor mirrors RPC-layer decisions (RD-875 / RD-889 /
 		// RD-890 / RD-939 / event-rule wiring fix). One call site, one
@@ -684,7 +684,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		azureStateStore:    azureStateStore,
 		metrics:            m,
 		explorerStore:      explorerBackend,
-		explorerRedactor:   explorer.NewRedactionEngine(explorerBackend, database),
+		explorerRedactor:   explorer.NewRedactionEngine(explorerBackend, database, cfg.ReadProfile),
 		redisCloser:        redisCloser,
 	}
 	// RD-889: wire the unified ABI resolver so the explorer redactor
