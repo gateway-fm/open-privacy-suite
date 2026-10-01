@@ -1,0 +1,136 @@
+import { Callout } from "@/components/mdx/callout";
+
+export const metadata = {
+  title: "Strict read profile",
+  description:
+    "PRIVACY_READ_PROFILE=strict returns a transaction or receipt only to its participant and an event only to a party its indexed address parameters name, on JSON-RPC and the Explorer Data API alike.",
+};
+
+# Strict read profile
+
+`PRIVACY_READ_PROFILE` selects the read privacy policy for transactions, receipts and events. It applies deployment-wide, to JSON-RPC and to the Explorer Data API (proxy mode) alike, and is fixed at startup.
+
+| Value | Policy |
+|-------|--------|
+| `standard` (default) | The policy described in [Response Filtering](/docs/security/response-filtering) and [Privacy Requirements](/docs/security/privacy-requirements). Contract and org admins can read transactions sent to their contracts and all events of their contracts, `visibleTo` shares a transaction with its listed recipients, and the per-contract `visibleTo` unlock shares full event payloads. |
+| `strict` | A transaction or receipt reaches only a **transaction participant**. An event reaches only a party that one of its **indexed address parameters** names. Administrative authority, `visibleTo` and participation grant no other read access. |
+
+Any other value, including a value of only spaces, refuses to start. When the environment variable is empty, the `CONFIG_FILE` value applies, and without one the profile is `standard`.
+
+---
+
+## What strict enforces
+
+A **participant** is a viewer whose linked address is the transaction's `from` or `to`. Nothing else counts as participation: an address in the calldata, in an event, or in a token transfer does not.
+
+| Data | Who receives it under `strict` | Everyone else |
+|------|-------------------------------|---------------|
+| Transaction object: `eth_getTransactionByHash`, `eth_getTransactionByBlockHashAndIndex`, `eth_getTransactionByBlockNumberAndIndex`, full-object `eth_getBlockByHash` / `eth_getBlockByNumber` | Participants | `null`, or omitted from the block |
+| Receipt: `eth_getTransactionReceipt`, `eth_getBlockReceipts` | Participants | `null`, or omitted from the list |
+| Explorer transaction pages, transaction lists, block and address feeds, counts and statistics | Participants | Not found (404) / not listed / not counted |
+| Internal calls: explorer internal transactions | Participants of the parent transaction | Not listed |
+| `debug_traceTransaction` | Participants, as the top-level call frame only: the call tracer without internal frames or logs. Any other tracer or tracer setting is refused (HTTP 400) | Not found (HTTP 404), the same answer as for an unknown transaction hash |
+| Events: `eth_getLogs`, the logs in a receipt, explorer log endpoints | A viewer named by an indexed `address` parameter of the event (see below) | Removed |
+| Token transfers (explorer) | A viewer the underlying Transfer event names, under the same rule as events. The viewer's own side is shown. The other side is shown only when it is visible to the viewer by itself, such as a contract or the zero address; another user's address shows as `[PRIVATE]`. The amount is shown | Not listed |
+| Token-transfer count and category on an explorer transaction row | Not shown to anyone. The count would reveal how many transfers the event rule hides; the transfers view lists the ones the viewer may see | Not shown |
+| Search suggestions for a transaction hash | Viewers who may open that transaction | Not suggested |
+
+### The event rule
+
+Under `strict` an event is returned only when **all** of these hold:
+
+1. The emitting contract has a registered ABI (a custom upload, or a `metadata.token_type` of the built-in registry), and it declares the event's signature (`topic0`) as a standard, non-anonymous event.
+2. One of the event's **indexed `address` parameters** equals one of the viewer's linked addresses.
+3. The viewer holds a contract grant on the emitting contract whose event rules allow the event. For an org admin or a contract admin, admin authority stands in for the event rules. It never stands in for condition 2.
+4. The dynamic-payload gate passes. See `events_allow_dynamic_payload` in [Response Filtering](/docs/security/response-filtering).
+
+The event is hidden when any of the following holds:
+
+- the ABI is unknown or does not declare the event;
+- the event is anonymous;
+- the topics do not match the declared indexed parameters;
+- an address topic is not canonically padded;
+- the data does not decode against the ABI.
+
+Addresses of other users embedded in an admitted event stay masked, as under `standard`.
+
+<Callout variant="warning" title="Events without an indexed viewer address are hidden from everyone">
+  Under `strict`, an event that does not carry the reader's address as an indexed `address` parameter is hidden from everyone, including the contract's admins and the transaction's own sender. This covers:
+
+  - business events keyed by an identifier, for example `PaymentCompleted(bytes32 indexed paymentId)`;
+  - lifecycle events such as `Initialized(uint8)` or `Upgraded(address indexed implementation)`, where the implementation is a contract and not a user;
+  - events whose address parameter is not indexed, for example `Paused(address account)`.
+
+  Applications that rely on such events do not see them under `strict`. Emit each party that must see the event as an indexed `address` parameter, or give the reader an approved disclosure grant.
+</Callout>
+
+---
+
+## What strict switches off
+
+| Mechanism | `standard` | `strict` |
+|-----------|-----------|---------|
+| Contract / org admin reading other users' transactions and receipts | Allowed | Off |
+| Admin reading all events of the admin's contracts | Allowed | Off. Events that index the admin's own address remain visible |
+| `ORG_ADMIN_VIEW_USER_TXS` audit view | As configured | No effect. A startup warning is logged when it is set |
+| `visibleTo` sharing of a transaction and its receipt | On | Off. A send that carries a `visibleTo` (or `privateFor`) field is rejected with HTTP 400, whatever the field lists, before it is traced or forwarded, and nothing is stored |
+| `visibleTo` event fallback and the per-contract `visibleTo` unlock | On | Off |
+| A participant's own address-less events | Visible | Hidden (see the warning above) |
+| Receipt for a viewer entitled to one of its events | Returned | `null` |
+| Explorer participation via calldata or event topics | On | Off |
+| [View as user](/docs/security/view-as-user) | Available | Refused (HTTP 403), audited |
+| Admin dry-run of read methods | Available | Refused (HTTP 403), audited. A dry-run of a send returns only the allow/deny verdict, without the trace or its logs |
+| `debug_traceTransaction` of another user's transaction | Allowed (same org) | Not found |
+| `debug_traceTransaction` of the caller's own transaction | The requested tracer | The top-level call frame only (see above) |
+
+The only access strict keeps beyond participation and indexed addresses is an approved [selective disclosure](/docs/disclosure) grant on the Explorer Data API. A disclosure grant does not add JSON-RPC access.
+
+---
+
+## Residual surfaces the profile does not govern
+
+The read profile covers transactions, receipts, events and traces. It does not change:
+
+- **Address state.** `eth_getBalance`, `eth_getTransactionCount` (an account's nonce), `eth_getStorageAt`, `eth_getProof` and `eth_call` are governed by the method allowlist and the per-address checks. Org admins also keep access to historical-state queries.
+- **`debug_traceCall`.** This simulates a call the caller composes and is governed by the method allowlist and trace validation.
+- **Operator-added RPC namespaces.** Methods enabled through `EXTRA_RPC_NAMESPACES_FILE` are not covered by the profile's response filters. Do not enable methods that return transactions, receipts, logs or traces (for example `trace_*`, `ots_*` or `eth_getRawTransactionByHash`) on a deployment that must run `strict`.
+- **Block position of a receipt.** A participant's receipt carries `transactionIndex` and `cumulativeGasUsed`, which reflect how many transactions, and how much gas, precede it in the block.
+- **Compliance records.** Compliance decision logs and travel-rule records in the admin API remain readable by org admins.
+- **Access-log parameters.** With `AUDIT_LOG_PARAMS=true`, the access log records redacted request parameters, which can include transaction hashes and addresses.
+
+Assess these separately when a deployment must meet the strict requirement end to end.
+
+---
+
+## Enabling and proving the profile
+
+1. Set `PRIVACY_READ_PROFILE=strict` in the proxy environment and redeploy. If `ORG_ADMIN_VIEW_USER_TXS=true` is also set, it has no effect.
+2. Check the startup log for `read privacy profile profile=strict`.
+3. Query the effective profile. The endpoint accepts any admin credential:
+
+   ```bash
+   curl -s -H "X-Admin-Token: $ADMIN_API_TOKEN" http://<proxy>/api/v1/admin/system/read-profile
+   # {"profile":"strict","org_admin_view_user_txs":false,"org_admin_view_user_txs_configured":false}
+   ```
+
+4. Run the smoke probe against the running deployment. Use the token of a viewer who is **not** a participant of a known transaction, such as an admin of the contract it called:
+
+   ```bash
+   PROXY_URL=http://<proxy> ADMIN_AUTH="X-Admin-Token: $ADMIN_API_TOKEN" \
+   VIEWER_JWT=<non-participant token> TX_HASH=<transaction hash> \
+   EXPLORER_URL=http://<proxy> scripts/check-strict-read-profile.sh
+   ```
+
+   The probe checks four things:
+
+   - the reported profile;
+   - that `eth_getTransactionByHash` and `eth_getTransactionReceipt` return `null` to that viewer;
+   - that `debug_traceTransaction` returns no trace;
+   - optionally, that the Explorer Data API answers 404.
+
+   It exits non-zero on any failure.
+5. Run the block explorer in proxy mode (`PRIVACY_PROXY_URL`), and make sure clients cannot reach the node or the chain indexer directly.
+
+## Changing the profile back
+
+The profile is applied when data is read, not when it is written. A switch from `strict` to `standard` immediately applies the standard policy to all existing data again: admin reads, the per-contract unlock, and so on. Treat a downgrade as a disclosure event. It needs change-management approval and an audit record, and the startup log records the profile each deployment runs with.

@@ -12,6 +12,10 @@ The Open Privacy Suite enforces privacy at two distinct layers. **Request filter
 
 Request filtering alone is insufficient for financial privacy. Consider a contract with ten participants who all have access: without response filtering, every participant can read every other participant's transaction calldata, nonces, and event log parameters. Response filtering closes this gap by restricting response data to information that involves the requesting user's own addresses.
 
+<Callout variant="info" title="Standard and strict read profiles">
+  This page describes the default `standard` read profile. With `PRIVACY_READ_PROFILE=strict` a transaction, receipt or trace reaches only a transaction participant and an event only a viewer named by one of its indexed address parameters; admin claims, `visibleTo` and the `visibleTo` unlock grant no read access. See [Strict Read Profile](/docs/security/strict-read-profile).
+</Callout>
+
 ---
 
 ## How It Works
@@ -194,7 +198,7 @@ When `fullTxObjects=true`, the `transactions` array contains full transaction ob
 
 ## Block Receipts (eth\_getBlockReceipts)
 
-`eth_getBlockReceipts` returns all transaction receipts in a block. The filter applies the same per-receipt participant check as `eth_getTransactionReceipt`: for each receipt, it checks whether `from` or `to` matches a linked address. Non-participant receipts are **removed from the array entirely**, consistent with how `eth_getBlockByNumber` removes non-participant transactions. The returned array contains only receipts for transactions the user was a party to, and just like single receipt queries, their inner `logs` arrays are strictly filtered and `logsBloom` is zeroed.
+`eth_getBlockReceipts` returns all transaction receipts in a block. For each receipt it checks whether `from` or `to` matches a linked address. Non-participant receipts are **removed from the array entirely**, consistent with how `eth_getBlockByNumber` removes non-participant transactions. Each kept receipt's `logs` array goes through exactly the same event filtering and address masking as `eth_getTransactionReceipt` for the same user (contract grant, registered ABI, event rules, own-transaction logs), and `logsBloom` is zeroed.
 
 ---
 
@@ -277,7 +281,7 @@ By default `visibleTo` is **additive** -- it never restricts existing access:
 - If a viewer is denied an event because `must_be=self` param rules fail, `visibleTo` serves as a fallback: the log is visible if the viewer's DID appears in that transaction's list. This fallback applies **only on contracts the viewer already holds a grant to**, and only the sender's listing counts — being a party to a token transfer in the transaction does not. In the block explorer this fallback, like the unlock, currently applies on a transaction's log view, not in the global or per-address log lists.
 - `visibleTo` does **not** grant access to a contract the viewer has **no** grant on. Logs from an ungranted contract stay hidden even when the viewer is listed in the tx's `visibleTo` — grant eligibility is required. (The viewer still receives the transaction/receipt envelope, but its logs are filtered.) Standalone `visibleTo`-based event access requires the per-contract unlock opt-in below.
 - `visibleTo` does **not** bypass the topic0 allowlist. If an event's signature is not in the allowed event rules, it remains hidden regardless of `visibleTo`.
-- Admin users always see all events -- `visibleTo` does not change which events they see. On a contract that enables the unlock described below, a listed org admin also receives those logs with the full payload instead of masked addresses.
+- Under the standard profile, admin users always see all events -- `visibleTo` does not change which events they see. On a contract that enables the unlock described below, a listed org admin also receives those logs with the full payload instead of masked addresses.
 
 Per-contract operators can opt **out of additive-only** behaviour and into the unlock semantic described below.
 
