@@ -158,8 +158,9 @@ func parseExplicitMethods(ns string, data []byte) ([]ExtraRPCMethod, error) {
 			return nil, fmt.Errorf("namespace %q: entry missing 'method' field: %s", ns, string(entry))
 		}
 		// The node executes the method as named (the request body is
-		// forwarded verbatim) while access control keys on the alias target,
-		// so re-aliasing a standard method would strip it of its own checks.
+		// forwarded verbatim) while many access decisions key on the alias
+		// target, so re-aliasing a standard method would strip it of its own
+		// checks.
 		if rbac.IsStandardMethod(m.Method) {
 			return nil, fmt.Errorf("namespace %q: %q is a standard RPC method and cannot be configured as an extra method; extra methods are chain-specific methods that alias a standard one (to allow a standard method, list it in the group's allowed_methods)", ns, m.Method)
 		}

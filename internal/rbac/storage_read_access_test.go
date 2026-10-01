@@ -308,8 +308,9 @@ func TestCheckAccess_AnonymousAliasDeploymentDenied(t *testing.T) {
 
 // TestCheckAccess_BuiltinAliasKeyKeepsRawMethodChecks covers a standard
 // method name used as an alias key (e.g. eth_getStorageAt → eth_call). Config
-// loading refuses that (config.parseExplicitMethods); these rows set the
-// registry directly to pin the defence in depth behind it. The node executes
+// loading refuses that (config.parseExplicitMethods); these rows set
+// AccessMethod on the request directly (bypassing config loading) to pin the
+// defence in depth behind it. The node executes
 // the raw method (the body is forwarded verbatim), so every floor keyed on
 // method semantics must hold for the raw method as well as for the alias
 // target.

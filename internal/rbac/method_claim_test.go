@@ -552,9 +552,9 @@ func TestIsStandardMethod_CoversClassifiedMethods(t *testing.T) {
 }
 
 // TestIsStandardMethod_CoversNameKeyedMethods pins the methods that gates or
-// response filters currently key on by name (through the alias target), so a
-// reserved method cannot drop out of the reserved set unnoticed. Add any new
-// name-keyed method here.
+// response filters currently key on by name (mostly through the alias
+// target), so a reserved method cannot drop out of the reserved set
+// unnoticed. Add any new name-keyed method here.
 func TestIsStandardMethod_CoversNameKeyedMethods(t *testing.T) {
 	for _, m := range []string{
 		MethodGetTransactionByHash, MethodGetTransactionReceipt,
