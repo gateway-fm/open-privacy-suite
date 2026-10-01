@@ -67,3 +67,14 @@ func TestOrgAdminViewUserTxsEffective_StrictWins(t *testing.T) {
 	assert.False(t, (&Server{}).orgAdminViewUserTxsEffective(), "nil config must not enable the audit view")
 	assert.True(t, (&Server{}).readProfile().Strict(), "nil config must enforce strict")
 }
+
+// Both explorer construction paths (startup and the reconnect loop) go through
+// newExplorerRedactor, which installs the server's read profile; an engine
+// built without a config enforces strict.
+func TestNewExplorerRedactor_UsesServerReadProfile(t *testing.T) {
+	for _, p := range []rbac.ReadProfile{rbac.ReadProfileStandard, rbac.ReadProfileStrict} {
+		s := &Server{config: &config.Config{ReadProfile: p}}
+		assert.Equal(t, p, s.newExplorerRedactor(nil, nil).ReadProfile())
+	}
+	assert.True(t, (&Server{}).newExplorerRedactor(nil, nil).ReadProfile().Strict())
+}

@@ -7,6 +7,8 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"privacy-proxy/internal/apimodels"
+	"privacy-proxy/internal/db"
+	"privacy-proxy/internal/explorer"
 	"privacy-proxy/internal/rbac"
 )
 
@@ -29,6 +31,29 @@ func (s *Server) orgAdminViewUserTxsEffective() bool {
 		return false
 	}
 	return s.config.OrgAdminViewUserTxs && !s.readProfile().Strict()
+}
+
+// newExplorerRedactor is the single construction path of the explorer
+// redaction engine, used at startup and by the explorer reconnect loop: the
+// server's read profile (RD-1299) and every resolver wired by
+// wireExplorerRedactor (ABI, admin, event rules, visibleTo unlock, dynamic
+// payload, log participants, parent-transaction data).
+func (s *Server) newExplorerRedactor(backend explorer.ExplorerBackend, rbacDB *db.DB) *explorer.RedactionEngine {
+	engine := explorer.NewRedactionEngine(backend, rbacDB, s.readProfile())
+	var key []byte
+	if s.config != nil {
+		key = s.config.ExplorerPseudonymKey
+	}
+	var store rbac.Store
+	if rbacDB != nil {
+		store = rbacDB
+	}
+	var chainData explorerChainData
+	if backend != nil {
+		chainData = backend
+	}
+	wireExplorerRedactor(engine, store, s.rbacAccessCtrl, chainData, key)
+	return engine
 }
 
 // logReadProfile records the effective read profile at startup, and warns when
