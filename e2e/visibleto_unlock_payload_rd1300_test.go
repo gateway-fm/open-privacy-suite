@@ -136,7 +136,8 @@ func TestVisibleToUnlockFullPayload_FullRPCPath_RD1300(t *testing.T) {
 	listener.Close()
 	serverURL := fmt.Sprintf("http://localhost:%d", port)
 	cfg := &config.Config{
-		NodeURL: upstream.URL, DatabaseURL: dbURL, AuditDatabaseURL: dbURL, AuditAdminDatabaseURL: dbURL,
+		ReadProfile: rbac.ReadProfileStandard,
+		NodeURL:     upstream.URL, DatabaseURL: dbURL, AuditDatabaseURL: dbURL, AuditAdminDatabaseURL: dbURL,
 		PrivadoRPCURL: "https://rpc-mainnet.privado.id", IPFSGateway: "https://ipfs-proxy-cache.privado.id",
 		JWTSecret: "test-secret-rd1300", JWTRefreshSecret: "test-refresh-secret-rd1300",
 		VerifierID: "did:privado:verifier:test", BaseURL: serverURL, Environment: "development",
