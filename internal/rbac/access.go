@@ -1450,8 +1450,10 @@ func collectAllClaims(perms *EffectivePermissions) []Claim {
 
 // WriteOpsMap classifies state-modifying RPC methods. These methods are no
 // longer gated by a "write" claim — the method allowlist is the source of
-// truth. The map is retained for reference and test completeness checks.
-// All keys must be lowercase.
+// truth. Together with ReadOpsMap it feeds IsStandardMethod, which config
+// loading uses to refuse these names as extra methods / alias keys (RD-1301):
+// every method a gate or response filter keys on by name must be in one of
+// the two maps or in the canonical method set. All keys must be lowercase.
 var WriteOpsMap = map[string]bool{
 	"eth_sendtransaction":    true,
 	"eth_sendrawtransaction": true, // Requires auth; processor enforces runtime-tracing gate
@@ -1459,9 +1461,9 @@ var WriteOpsMap = map[string]bool{
 
 // ReadOpsMap classifies read-only RPC methods that access blockchain state.
 // These methods are no longer gated by a "read" claim — the method allowlist
-// is the source of truth. The map is retained for reference, test completeness
-// checks, and documentation of which methods access sensitive data on a
-// private network:
+// is the source of truth. It feeds IsStandardMethod (see WriteOpsMap), so
+// removing an entry lets config loading accept that method as an alias key.
+// It also documents which methods access sensitive data on a private network:
 //   - Contract state (balance, code, storage, logs) reveals private holdings
 //   - Block contents reveal which transactions occurred (sender, receiver, value)
 //   - Transaction details reveal identities and amounts

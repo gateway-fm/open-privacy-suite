@@ -161,7 +161,7 @@ func parseExplicitMethods(ns string, data []byte) ([]ExtraRPCMethod, error) {
 		// forwarded verbatim) while access control keys on the alias target,
 		// so re-aliasing a standard method would strip it of its own checks.
 		if rbac.IsStandardMethod(m.Method) {
-			return nil, fmt.Errorf("namespace %q: %q is a standard RPC method and cannot be configured as an extra method; extra methods are chain-specific methods that alias a standard one", ns, m.Method)
+			return nil, fmt.Errorf("namespace %q: %q is a standard RPC method and cannot be configured as an extra method; extra methods are chain-specific methods that alias a standard one (to allow a standard method, list it in the group's allowed_methods)", ns, m.Method)
 		}
 		if m.Alias == "" {
 			return nil, fmt.Errorf("namespace %q: method %q missing 'alias' field — all extra methods must have an alias to a standard Ethereum method for access control and response filtering", ns, m.Method)

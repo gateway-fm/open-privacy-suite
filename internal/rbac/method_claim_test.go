@@ -538,15 +538,38 @@ func TestIsStandardMethod(t *testing.T) {
 	}
 }
 
-// TestIsStandardMethod_CoversClassifiedMethods guards the reserved set against
-// drift: every method the proxy classifies (and may filter or gate by name)
-// must be refused as an alias key.
+// TestIsStandardMethod_CoversClassifiedMethods pins that every classified
+// method is reserved; in practice it catches a non-lowercase key in
+// ReadOpsMap / WriteOpsMap, which the lowercased lookup would miss.
 func TestIsStandardMethod_CoversClassifiedMethods(t *testing.T) {
 	for _, set := range []map[string]bool{ReadOpsMap, WriteOpsMap, ReadMethods, WriteMethods, TraceMethods} {
 		for m := range set {
 			if !IsStandardMethod(m) {
 				t.Errorf("%q is classified by the proxy but not refused as an alias key", m)
 			}
+		}
+	}
+}
+
+// TestIsStandardMethod_CoversNameKeyedMethods guards against the drift that
+// matters: a gate or response filter keyed on a method name whose method is
+// not reserved, so config could alias it away. Every named method constant
+// and every method the RPC response filters switch on must be reserved.
+func TestIsStandardMethod_CoversNameKeyedMethods(t *testing.T) {
+	for _, m := range []string{
+		MethodGetTransactionByHash, MethodGetTransactionReceipt,
+		MethodGetTransactionByBlockHashAndIndex, MethodGetTransactionByBlockNumberAndIndex,
+		MethodGetBlockByHash, MethodGetBlockByNumber, MethodGetBlockReceipts,
+		MethodGetLogs,
+		MethodNewFilter, MethodNewBlockFilter, MethodNewPendingTransactionFilter,
+		MethodGetFilterLogs, MethodGetFilterChanges, MethodUninstallFilter,
+		MethodGetStorageAt, MethodGetCode, MethodGetBalance, MethodGetTransactionCount, MethodGetProof,
+		MethodCall, MethodEstimateGas, MethodSendTransaction, MethodSendRawTransaction,
+		"eth_getBlockTransactionCountByHash", "eth_getBlockTransactionCountByNumber",
+		"eth_createAccessList", "debug_traceCall", "debug_traceTransaction",
+	} {
+		if !IsStandardMethod(m) {
+			t.Errorf("%q is checked or filtered by name but not reserved from alias keys", m)
 		}
 	}
 }

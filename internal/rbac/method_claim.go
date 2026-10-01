@@ -329,8 +329,8 @@ func IsStandardMethod(method string) bool {
 	if _, ok := canonicalMethodByLower[lower]; ok {
 		return true
 	}
-	// Methods the proxy classifies, gates or filters by name but that are not
-	// in the canonical set (e.g. eth_getBlockReceipts, the uncle queries).
+	// Methods classified in ReadOpsMap / WriteOpsMap but not in the canonical
+	// set (includes the response-filtered eth_getBlockReceipts).
 	return ReadOpsMap[lower] || WriteOpsMap[lower]
 }
 
