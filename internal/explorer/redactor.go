@@ -1907,7 +1907,9 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 			// (they can embed addresses / decoded private data).
 			// txVisibleViaGrant preserves value per the matrix (line 141):
 			// redacted/pseudonymous-grant rows keep volume/timing.
-			if !adminAuditView && !txVisibleViaGrant {
+			// A strict parent participant may see the internal amount even
+			// when the unrelated frame counterparty remains private.
+			if !adminAuditView && !txVisibleViaGrant && !(strict && ppViewer) {
 				redacted.Value = JSONString("")
 			}
 			redacted.Input = nil

@@ -403,8 +403,8 @@ func (s *Server) auditAdminUserTxView(c *gin.Context, viewerDID, endpoint, targe
 //
 // Resource type is the disclosure-grant (not explorer_user_txs) so audit
 // reviewers can pivot from a grant ID to every reveal it produced.
-// ResourceName is the endpoint label; ResourceID is the target tx hash
-// or address when single-item, empty for list surfaces.
+// ResourceName is the endpoint label. The target tx hash or address lives
+// in NewValue; ResourceID is a UUID column and cannot hold those values.
 //
 // Best-effort, matching the other audit-log call sites: a write failure
 // is logged loudly but does not fail the read.
@@ -424,9 +424,6 @@ func (s *Server) auditGrantFullReveal(c *gin.Context, viewerDID, endpoint, targe
 			"reveal_class":            "disclosure_grant_full_counterparty",
 		},
 		IPAddress: c.ClientIP(),
-	}
-	if target != "" {
-		entry.ResourceID = &target
 	}
 	if err := s.db.CreateAuditLog(c.Request.Context(), entry); err != nil {
 		slog.Error("failed to write grant-full-reveal audit log",

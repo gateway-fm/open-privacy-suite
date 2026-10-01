@@ -35,6 +35,9 @@ func TestReadProfile_Strict_DryRunReadMethodsRefused(t *testing.T) {
 			}))
 			readerDID := "did:dr:reader-" + profile.String()
 			drCreateUserInGroup(t, f.srv.db, readerDID, gid)
+			contract := "0x7777777777777777777777777777777777777777"
+			contractID := drCreateContract(t, f.srv.db, f.orgID, contract, "DRReadTarget")
+			drCreateGrant(t, f.srv.db, contractID, gid)
 
 			var forwarded atomic.Int32
 			stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -45,9 +48,13 @@ func TestReadProfile_Strict_DryRunReadMethodsRefused(t *testing.T) {
 			f.srv.proxy = proxy.New(stub.URL)
 
 			for _, m := range []string{"eth_getTransactionByHash", "eth_getTransactionReceipt", "eth_getLogs"} {
+				params := []any{"0x" + "11"}
+				if m == "eth_getLogs" {
+					params = []any{map[string]any{"address": contract}}
+				}
 				w := dryRunPost(t, f.srv, f.orgID, "jwt_admin", f.adminDID, map[string]any{
 					"user_did": readerDID,
-					"rpc":      map[string]any{"method": m, "params": []any{"0x" + "11"}},
+					"rpc":      map[string]any{"method": m, "params": params},
 				})
 				if profile.Strict() {
 					assert.Equal(t, http.StatusForbidden, w.Code, "%s: %s", m, w.Body.String())

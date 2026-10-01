@@ -250,6 +250,9 @@ func TestReadProfile_Strict_DisclosureGrantSurvives(t *testing.T) {
 
 	auditor := rpViewer{name: "auditor", did: "did:test:rp:auditor", uuid: uuid.New().String(), org: f.otherID}
 	require.NoError(t, f.db.CreateUser(ctx, &rbac.User{ID: auditor.uuid, ExternalID: auditor.did, KYC: true, Metadata: map[string]any{}}))
+	// Disclosure grants are scoped to current members of the target org.
+	auditorGroup := wiringCreateGroup(t, f.db, f.orgID, "rp-auditors", nil, false)
+	require.NoError(t, f.db.CreateMembership(ctx, &rbac.UserMembership{ID: uuid.New().String(), UserID: auditor.uuid, GroupID: auditorGroup, Source: rbac.MembershipSourceAdmin}))
 	scope := `{"disclosure_level":"full"}`
 	requestID := uuid.New().String()
 	_, err := f.conn.ExecContext(ctx, `
@@ -265,9 +268,17 @@ func TestReadProfile_Strict_DisclosureGrantSurvives(t *testing.T) {
 
 	code, body := f.explorerGet(t, router, auditor, "/api/v1/explorer/transactions/"+rpTx1)
 	require.Equal(t, http.StatusOK, code, "the granted user's tx: %s", body)
+	var revealAudits int
+	require.NoError(t, f.conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM rbac_audit_log WHERE action='access' AND resource_type='disclosure_grant' AND new_value::jsonb->>'target'=$1`, rpTx1).Scan(&revealAudits))
+	assert.Positive(t, revealAudits, "a full disclosure reveal is audited")
 	code, body = f.explorerGet(t, router, auditor, "/api/v1/explorer/transactions/"+rpTx2)
 	assert.Equal(t, http.StatusNotFound, code, "a tx of a user not under the grant: %s", body)
-	assert.ElementsMatch(t, []string{rpTx1}, explorerTxHashes(t, f, router, auditor, "/api/v1/explorer/transactions?limit=50", ""), "/transactions")
+	code, body = f.explorerGet(t, router, auditor, "/api/v1/explorer/transactions?limit=50")
+	require.Equal(t, http.StatusOK, code, string(body))
+	var granted []explorer.Transaction
+	require.NoError(t, json.Unmarshal(body, &granted))
+	require.Len(t, granted, 1)
+	assert.Equal(t, rpTx1, strings.ToLower(granted[0].Hash))
 
 	p := f.rpProcessor(rbac.ReadProfileStrict)
 	raw := rpEnvelope(t, rpTxObject(rpTx1, rpE, rpData))
