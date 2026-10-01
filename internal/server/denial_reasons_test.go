@@ -35,6 +35,7 @@ func TestWireReason_ClosedAllowlist(t *testing.T) {
 		ReasonDeployClaimRequired,
 		ReasonComplianceBlocked,
 		ReasonInternalError,
+		ReasonNotParticipant, // RD-1299: tx existence is not the caller's own fact
 	}
 
 	for _, code := range safe {
