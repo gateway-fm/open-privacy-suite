@@ -514,3 +514,39 @@ func TestSnapshotMethodRegistriesForTest(t *testing.T) {
 		RegisterExtraNamespaces(map[string][]string{"Again": {"again_m"}}, nil, nil)
 	}, "restore must disarm (this test started un-armed)")
 }
+
+// TestIsStandardMethod pins the set config loading refuses as chain-specific
+// methods / alias keys (config.parseExplicitMethods): remapping a standard
+// method would strip the checks and response filters keyed on its name.
+func TestIsStandardMethod(t *testing.T) {
+	for m, want := range map[string]bool{
+		"eth_getStorageAt":                true,
+		"ETH_SENDTRANSACTION":             true,
+		" eth_call ":                      true,
+		"eth_getProof":                    true, // canonicalized extra standard method
+		"eth_createAccessList":            true,
+		"eth_getBlockReceipts":            true, // response-filtered by name
+		"eth_getUncleByBlockHashAndIndex": true,
+		"debug_traceCall":                 true,
+		"linea_getProof":                  false,
+		"trace_block":                     false,
+		"":                                false,
+	} {
+		if got := IsStandardMethod(m); got != want {
+			t.Errorf("IsStandardMethod(%q) = %v, want %v", m, got, want)
+		}
+	}
+}
+
+// TestIsStandardMethod_CoversClassifiedMethods guards the reserved set against
+// drift: every method the proxy classifies (and may filter or gate by name)
+// must be refused as an alias key.
+func TestIsStandardMethod_CoversClassifiedMethods(t *testing.T) {
+	for _, set := range []map[string]bool{ReadOpsMap, WriteOpsMap, ReadMethods, WriteMethods, TraceMethods} {
+		for m := range set {
+			if !IsStandardMethod(m) {
+				t.Errorf("%q is classified by the proxy but not refused as an alias key", m)
+			}
+		}
+	}
+}

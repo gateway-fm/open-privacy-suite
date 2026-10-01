@@ -1135,10 +1135,12 @@ func TestExtraRPCNamespaces_RejectsStandardMethodAsExtraMethod(t *testing.T) {
 		`{"version": 1, "namespaces": {"X": [{"method": "ETH_SENDTRANSACTION", "alias": "eth_call"}]}}`,
 		`{"version": 2, "namespaces": {"X": {"explicit": [{"method": "eth_getProof", "alias": "eth_getBalance"}]}}}`,
 		`{"version": 2, "namespaces": {"Linea": {"explicit": [{"method": "linea_getProof", "alias": "eth_getProof"}, {"method": "debug_traceCall", "alias": "eth_call"}]}}}`,
+		`{"version": 1, "namespaces": {"X": [{"method": "eth_getBlockReceipts", "alias": "eth_blockNumber"}]}}`,
 	} {
 		var cfg ExtraRPCNamespaces
-		if err := cfg.UnmarshalJSON([]byte(input)); err == nil {
-			t.Errorf("expected a standard method to be rejected as an extra method: %s", input)
+		err := cfg.UnmarshalJSON([]byte(input))
+		if err == nil || !strings.Contains(err.Error(), "standard RPC method") {
+			t.Errorf("expected a standard method to be rejected as an extra method, got %v: %s", err, input)
 		}
 	}
 

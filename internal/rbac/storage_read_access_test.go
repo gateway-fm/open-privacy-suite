@@ -430,22 +430,3 @@ type orgAdminCheckingStore struct {
 func (s *orgAdminCheckingStore) IsOrgAdmin(ctx context.Context, userID string) (bool, []string, error) {
 	return s.orgAdmin, nil, nil
 }
-
-// TestIsStandardMethod pins the set config loading refuses as chain-specific
-// methods / alias keys (see config.parseExplicitMethods).
-func TestIsStandardMethod(t *testing.T) {
-	for m, want := range map[string]bool{
-		"eth_getStorageAt":     true,
-		"ETH_SENDTRANSACTION":  true,
-		"eth_getProof":         true, // canonicalized extra standard method
-		"eth_createAccessList": true,
-		"debug_traceCall":      true,
-		"linea_getProof":       false,
-		"trace_block":          false,
-		"":                     false,
-	} {
-		if got := IsStandardMethod(m); got != want {
-			t.Errorf("IsStandardMethod(%q) = %v, want %v", m, got, want)
-		}
-	}
-}
