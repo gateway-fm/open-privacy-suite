@@ -717,6 +717,13 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 	}
 	p.recordRBACDecision("allowed")
 
+	// RD-1299: a strict refusal of visibleTo precedes tracing and compliance.
+	if req.Method == "eth_sendTransaction" {
+		if res := p.strictProfileRejectsVisibleTo(ctx, req, false); res != nil {
+			return res
+		}
+	}
+
 	// Concurrency gate moves ABOVE the trace path (RD-915 F5). Pre-RD-915
 	// fix this sat below the trace, which meant a single JWT could pin N
 	// upstream debug_traceCall connections concurrently (N == request rate
@@ -1247,6 +1254,57 @@ func rewriteToGetBlock(originalBody []byte, newMethod string, params []any) []by
 	return b
 }
 
+// strictProfileRejectsVisibleTo refuses, under the strict read profile, a send
+// that carries a visibleTo field (RD-1299): there visibleTo grants no read
+// access, so the sender is told the share did not happen (an opaque 400) and
+// nothing is stored that a later profile change could re-activate. Presence is
+// refused whatever the entries (an empty or unresolvable list too). It runs
+// right after the RBAC verdict, before tracing, compliance and forwarding.
+// rawTx selects the eth_sendRawTransaction options position. nil = proceed.
+func (p *JSONRPCProcessor) strictProfileRejectsVisibleTo(ctx context.Context, req *ProcessRequest, rawTx bool) *ProcessResult {
+	if !p.readProfile.Strict() || !visibleToFieldPresent(req, rawTx) {
+		return nil
+	}
+	req.denialReason = ReasonInvalidRequestShape
+	p.logAccess(ctx, req, http.StatusBadRequest)
+	return &ProcessResult{
+		Error: &ProcessError{
+			StatusCode: http.StatusBadRequest,
+			Message:    "visibleTo is not supported on this network",
+		},
+	}
+}
+
+// visibleToFieldPresent reports whether a send carries a visibleTo field in any
+// position the send paths accept: top-level visibleTo / privateFor, the
+// eth_sendTransaction tx object (params[0]) or the eth_sendRawTransaction
+// options (params[1]).
+func visibleToFieldPresent(req *ProcessRequest, rawTx bool) bool {
+	if len(req.Body) > 0 {
+		var env map[string]json.RawMessage
+		if json.Unmarshal(req.Body, &env) == nil {
+			if _, ok := env["visibleTo"]; ok {
+				return true
+			}
+			if _, ok := env["privateFor"]; ok {
+				return true
+			}
+		}
+	}
+	idx := 0
+	if rawTx {
+		idx = 1
+	}
+	if len(req.Params) > idx {
+		if m, ok := req.Params[idx].(map[string]any); ok {
+			if _, ok := m["visibleTo"]; ok {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // checkCompliance runs travel rule compliance checks if the checker is configured.
 // Called from both eth_sendTransaction and eth_sendRawTransaction paths.
 // Returns nil if compliance passes or is disabled, or a ProcessResult with an error.
@@ -1467,6 +1525,11 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 		}
 	}
 	p.recordRBACDecision("allowed")
+
+	// RD-1299: a strict refusal of visibleTo precedes tracing and compliance.
+	if res := p.strictProfileRejectsVisibleTo(ctx, req, true); res != nil {
+		return res
+	}
 
 	// Concurrency gate moves ABOVE the trace path (RD-915 F5). Mirrors
 	// the Process() path. Acquire before any trace so the cap covers
