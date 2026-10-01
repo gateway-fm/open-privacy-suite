@@ -72,6 +72,7 @@ func TestMatchIndexedSelf(t *testing.T) {
 		{"short topic", indexedSelfABI, []string{isTransferT0, isViewer, isTopic(isOther)}, "0x" + isWord(1), false},
 		{"data does not decode (empty)", indexedSelfABI, []string{isTransferT0, isTopic(isViewer), isTopic(isOther)}, "0x", false},
 		{"data does not decode (bad hex)", indexedSelfABI, []string{isTransferT0, isTopic(isViewer), isTopic(isOther)}, "0xnothex", false},
+		{"data has an undeclared trailing word", indexedSelfABI, []string{isTransferT0, isTopic(isViewer), isTopic(isOther)}, "0x" + isWord(1) + isWord(2), false},
 		{"indexed address[] is a hash, never a match", indexedSelfABI, []string{mixedT0, isTopic(isViewer), "0x" + isWord(5)}, "0x", false},
 	}
 	for _, tc := range cases {
@@ -134,5 +135,45 @@ func TestMatchIndexedSelf_DuplicateSignatureIsDeterministic(t *testing.T) {
 		if m.Match(dupABI, []string{isTransferT0, isTopic(isOther), isTopic(isOther)}, "0x"+isWord(5), linked) {
 			t.Fatalf("iteration %d: Transfer not naming the viewer matched", i)
 		}
+	}
+}
+
+// Indexed modifiers are absent from an event signature. If two registered
+// layouts fit the same log but disagree about whether the viewer is named,
+// the indexed-self rule cannot prove admission and must deny.
+func TestMatchIndexedSelf_AmbiguousIndexedLayoutDenies(t *testing.T) {
+	const ambiguousABI = `[
+ {"type":"event","name":"Ambiguous","anonymous":false,"inputs":[
+  {"name":"to","type":"address","indexed":true},
+  {"name":"amount","type":"uint256","indexed":false}]},
+ {"type":"event","name":"Ambiguous","anonymous":false,"inputs":[
+  {"name":"to","type":"address","indexed":false},
+  {"name":"amount","type":"uint256","indexed":true}]}
+]`
+	topics := []string{"0x" + eventTopic0Hex(t, "Ambiguous(address,uint256)"), isTopic(isViewer)}
+	linked := map[string]bool{isViewer: true}
+	for i := 0; i < 64; i++ {
+		if NewIndexedSelfMatcher().Match(ambiguousABI, topics, "0x"+isWord(42), linked) {
+			t.Fatalf("iteration %d: ambiguous event layout admitted", i)
+		}
+	}
+}
+
+// Even when both layouts name the viewer, they may disagree on which data
+// word is an address. Field masking cannot safely select one of them.
+func TestMatchIndexedSelf_AmbiguousDataAddressLayoutDenies(t *testing.T) {
+	const ambiguousABI = `[
+ {"type":"event","name":"Sensitive","anonymous":false,"inputs":[
+  {"name":"viewer","type":"address","indexed":true},
+  {"name":"secret","type":"address","indexed":false},
+  {"name":"nonce","type":"uint256","indexed":true}]},
+ {"type":"event","name":"Sensitive","anonymous":false,"inputs":[
+  {"name":"viewer","type":"address","indexed":true},
+  {"name":"secret","type":"address","indexed":true},
+  {"name":"nonce","type":"uint256","indexed":false}]}
+]`
+	topics := []string{"0x" + eventTopic0Hex(t, "Sensitive(address,address,uint256)"), isTopic(isViewer), "0x" + isWord(7)}
+	if NewIndexedSelfMatcher().Match(ambiguousABI, topics, isTopic(isOther), map[string]bool{isViewer: true}) {
+		t.Fatal("ambiguous data-address layout admitted")
 	}
 }

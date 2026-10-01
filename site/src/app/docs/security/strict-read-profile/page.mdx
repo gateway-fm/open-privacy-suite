@@ -50,7 +50,8 @@ The event is hidden when any of the following holds:
 - the event is anonymous;
 - the topics do not match the declared indexed parameters;
 - an address topic is not canonically padded;
-- the data does not decode against the ABI.
+- the data has undeclared bytes or does not decode exactly against the ABI;
+- multiple event layouts in the ABI fit the same log, leaving its fields ambiguous.
 
 Addresses of other users embedded in an admitted event stay masked, as under `standard`.
 

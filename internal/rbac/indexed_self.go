@@ -1,6 +1,7 @@
 package rbac
 
 import (
+	"bytes"
 	"encoding/hex"
 	"strings"
 
@@ -23,9 +24,9 @@ import (
 //
 // An ABI may declare several events with one topic0 (the ERC-20 and ERC-721
 // Transfer share a signature but differ in which parameters are indexed). Every
-// such candidate is evaluated, and the log names the viewer when any candidate
-// whose layout the log fits does — a deterministic answer, independent of the
-// order the ABI parser happens to keep them in.
+// such candidate is evaluated, and the log names the viewer only when exactly
+// one candidate fits and its indexed address names them. Ambiguous layouts
+// deny: their field masking may interpret the data differently.
 type IndexedSelfMatcher struct {
 	parsed map[string]map[string][]abi.Event // ABI JSON -> lower-case topic0 -> events (nil = unparseable)
 }
@@ -46,18 +47,27 @@ func (m *IndexedSelfMatcher) Match(contractABI string, topics []string, data str
 	if byTopic0 == nil {
 		return false
 	}
+	foundLayout := false
 	for _, event := range byTopic0[strings.ToLower(topics[0])] {
-		if eventNamesLinked(event, topics, data, linked) {
-			return true
+		fits, named := eventNamesLinked(event, topics, data, linked)
+		if !fits {
+			continue
 		}
+		// Indexed modifiers are not part of the event signature. A second
+		// fitting layout could reinterpret either a topic or a data word.
+		if foundLayout || !named {
+			return false
+		}
+		foundLayout = true
 	}
-	return false
+	return foundLayout
 }
 
-// eventNamesLinked evaluates one candidate event declaration for the log.
-func eventNamesLinked(event abi.Event, topics []string, data string, linked map[string]bool) bool {
+// eventNamesLinked reports whether one declaration fits the log's shape and,
+// if it does, whether an indexed address names the viewer.
+func eventNamesLinked(event abi.Event, topics []string, data string, linked map[string]bool) (fits, named bool) {
 	if event.Anonymous {
-		return false
+		return false, false
 	}
 	var indexed, nonIndexed abi.Arguments
 	for _, in := range event.Inputs {
@@ -68,32 +78,31 @@ func eventNamesLinked(event abi.Event, topics []string, data string, linked map[
 		}
 	}
 	if len(topics) != 1+len(indexed) {
-		return false // malformed: topics do not match the declared event
+		return false, false // malformed: topics do not match the declared event
 	}
 	if !dataDecodes(nonIndexed, data) {
-		return false // malformed payload
+		return false, false // malformed payload
 	}
 
-	named := false
 	for i, in := range indexed {
 		topic := strings.ToLower(topics[1+i])
 		if len(topic) != 66 || !strings.HasPrefix(topic, "0x") {
-			return false
+			return false, false
 		}
 		if _, err := hex.DecodeString(topic[2:]); err != nil {
-			return false
+			return false, false
 		}
 		if in.Type.T != abi.AddressTy {
 			continue
 		}
 		if strings.Trim(topic[2:26], "0") != "" {
-			return false // not a canonically padded address: malformed
+			return false, false // not a canonically padded address: malformed
 		}
 		if linked["0x"+topic[26:]] {
 			named = true
 		}
 	}
-	return named
+	return true, named
 }
 
 // parse returns the ABI's events grouped by lower-case topic0, memoised per
@@ -129,6 +138,12 @@ func dataDecodes(nonIndexed abi.Arguments, data string) bool {
 	if len(nonIndexed) == 0 {
 		return len(b) == 0
 	}
-	_, err = nonIndexed.Unpack(b)
-	return err == nil
+	values, err := nonIndexed.Unpack(b)
+	if err != nil {
+		return false
+	}
+	// Unpack accepts bytes after the declared fields. Require the exact
+	// canonical payload so those bytes cannot bypass field masking.
+	canonical, err := nonIndexed.Pack(values...)
+	return err == nil && bytes.Equal(canonical, b)
 }
