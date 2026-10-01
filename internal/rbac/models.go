@@ -387,13 +387,15 @@ func (r *AccessCheckRequest) EffectiveMethod() string {
 }
 
 // methodsToJudge returns the distinct method names a semantic floor (the
-// historical-state guard, the storage-slot tier, the anonymous deployment and
-// storage-read denies) must hold for: the alias target, which declares what a
-// chain-specific method does, and the raw method, which is what the node
-// executes because the body is forwarded verbatim. They differ only when an
-// operator alias is configured; checking both means an alias can neither
-// skip its target's checks nor, when a standard method name is used as an
-// alias key, the raw method's own checks.
+// historical-state guard, the storage-slot tier, the missing-target deny, the
+// basic-address carve-out's storage-read exclusion, the anonymous deployment
+// and storage-read denies) must hold for: the alias target, which declares
+// what a chain-specific method does, and the raw method, which is what the
+// node executes because the body is forwarded verbatim. They differ only when
+// an operator alias is configured. Checking the target keeps an alias from
+// skipping its target's checks; checking the raw method is defence in depth
+// for a standard method used as an alias key, which config loading already
+// refuses (config.parseExplicitMethods).
 func (r *AccessCheckRequest) methodsToJudge() []string {
 	if eff := r.EffectiveMethod(); eff != r.Method {
 		return []string{eff, r.Method}

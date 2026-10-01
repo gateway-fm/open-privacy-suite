@@ -1126,7 +1126,7 @@ func TestConfig_VerifyFirstPartyClientSecret(t *testing.T) {
 
 // A standard method can never be configured as a chain-specific method or
 // alias key: the node executes the raw method (the body is forwarded
-// verbatim) while every access decision keys on the alias target, so e.g.
+// verbatim) while many access decisions key on the alias target, so e.g.
 // eth_getStorageAt → eth_call or eth_sendTransaction → eth_call would strip
 // that method of its own checks. Both schema versions are refused at load.
 func TestExtraRPCNamespaces_RejectsStandardMethodAsExtraMethod(t *testing.T) {

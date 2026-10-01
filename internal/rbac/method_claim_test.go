@@ -551,10 +551,10 @@ func TestIsStandardMethod_CoversClassifiedMethods(t *testing.T) {
 	}
 }
 
-// TestIsStandardMethod_CoversNameKeyedMethods guards against the drift that
-// matters: a gate or response filter keyed on a method name whose method is
-// not reserved, so config could alias it away. Every named method constant
-// and every method the RPC response filters switch on must be reserved.
+// TestIsStandardMethod_CoversNameKeyedMethods pins the methods that gates or
+// response filters currently key on by name (through the alias target), so a
+// reserved method cannot drop out of the reserved set unnoticed. Add any new
+// name-keyed method here.
 func TestIsStandardMethod_CoversNameKeyedMethods(t *testing.T) {
 	for _, m := range []string{
 		MethodGetTransactionByHash, MethodGetTransactionReceipt,

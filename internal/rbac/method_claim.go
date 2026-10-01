@@ -319,11 +319,11 @@ func SnapshotMethodRegistriesForTest() (restore func()) {
 
 // IsStandardMethod reports whether method is one of the built-in standard RPC
 // methods (case-insensitive): one CanonicalizeMethod knows or one the proxy
-// classifies in ReadOpsMap / WriteOpsMap. Config
-// loading uses it to refuse a standard method as a chain-specific method or
-// alias key: the node executes the raw method (the request body is forwarded
-// verbatim) while the access decisions key on the alias target, so remapping
-// a standard method would strip it of its own checks.
+// classifies in ReadOpsMap / WriteOpsMap. Config loading uses it to refuse a
+// standard method as a chain-specific method or alias key: the node executes
+// the raw method (the request body is forwarded verbatim) while many access
+// decisions key on the alias target, so remapping a standard method would
+// strip it of its own checks.
 func IsStandardMethod(method string) bool {
 	lower := strings.ToLower(strings.TrimSpace(method))
 	if _, ok := canonicalMethodByLower[lower]; ok {
