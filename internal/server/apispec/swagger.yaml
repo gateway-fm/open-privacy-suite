@@ -7360,7 +7360,10 @@ paths:
         rejected, since impersonation reads tenant data as the user. The impersonated
         user must exist and be a member of the path org, else an opaque 404 (no cross-org
         existence leak). Every evaluation is written to the impersonation audit log
-        fail-closed. Supported methods: eth_call, eth_getLogs, eth_getTransactionReceipt,
+        fail-closed. Under the strict read privacy profile (PRIVACY_READ_PROFILE=strict)
+        read methods are refused with 403 before anything is forwarded (the refusal
+        is audited), and a simulated send returns only the allow/deny verdict, without
+        the trace or its logs. Supported methods: eth_call, eth_getLogs, eth_getTransactionReceipt,
         eth_getTransactionByHash, eth_getBalance, eth_getCode, eth_getStorageAt, eth_blockNumber,
         eth_chainId, eth_sendTransaction, eth_sendRawTransaction.'
       parameters:
@@ -7406,8 +7409,9 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
-          description: source address not on the private network, or X-Admin-Token/operator
-            credentials used (dry-run requires a tier-2 admin JWT)
+          description: source address not on the private network, X-Admin-Token/operator
+            credentials used (dry-run requires a tier-2 admin JWT), or a read method
+            under the strict read profile
         "404":
           content:
             application/json:

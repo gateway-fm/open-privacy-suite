@@ -127,7 +127,9 @@ var errImpersonationTargetNotFound = errors.New("user not found")
 func (s *Server) registerImpersonationRoutes(adminGroup *gin.RouterGroup) {
 	// Explicit-org subtree: /impersonate/:target_did/in/:org_id/...
 	impIn := adminGroup.Group("/impersonate/:target_did/in/:org_id")
-	impIn.Use(s.impersonationGateMiddleware())
+	// RD-1299: the strict read profile refuses every View-as data surface,
+	// after the gate so the attempt is still authorised and audited.
+	impIn.Use(s.impersonationGateMiddleware(), s.strictReadProfileRefusesViewAs())
 
 	// Explorer subtree is re-mounted at /api/v1/explorer (matching its
 	// production prefix) so the BFF just prepends
@@ -172,6 +174,22 @@ func (s *Server) registerImpersonationRoutes(adminGroup *gin.RouterGroup) {
 	s.bindImpersonationBareReject(bareExplorer, bareReject)
 	bare.Any("/rpc", bareReject)
 	bare.Any("/rpc/:nested_org_id", bareReject)
+}
+
+// strictReadProfileRefusesViewAs refuses View-as under the strict read profile
+// (RD-1299): viewing as a member shows that member's own transactions,
+// receipts and events to an administrator, and strict never turns
+// administrative authority into read access to a member's chain data.
+func (s *Server) strictReadProfileRefusesViewAs() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if s.readProfile().Strict() {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+				"error": "view as user is not available under the strict read privacy profile",
+			})
+			return
+		}
+		c.Next()
+	}
 }
 
 // bindImpersonationBareReject mirrors the explorer endpoint shapes registered
