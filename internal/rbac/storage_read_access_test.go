@@ -346,7 +346,7 @@ func TestCheckAccess_BuiltinAliasKeyKeepsRawMethodChecks(t *testing.T) {
 
 	for _, tc := range []struct {
 		name, alias, reason string
-		orgAdmin            bool // exempt from the historical guard, still non-admin on the contract
+		orgAdmin            bool // isolates the slot tier from the historical guard (a real org admin also holds the admin claim)
 		params              []any
 	}{
 		// Target extracted per the alias (eth_call reads params[0].to) is empty.
@@ -357,6 +357,10 @@ func TestCheckAccess_BuiltinAliasKeyKeepsRawMethodChecks(t *testing.T) {
 			[]any{rd1301Contract, rd1301Ordinary, "latest"}},
 		{"remapped, at a block number", "eth_blockNumber", "historical state queries not permitted", false,
 			[]any{rd1301Contract, rd1301Impl, "0x10"}},
+		// Remapped to a basic address query, on an address no org owns: the
+		// balance/nonce carve-out must not serve a raw storage read.
+		{"remapped to a basic address query on an unregistered address", "eth_getBalance", ErrContractAccessDenied, true,
+			[]any{"0x00000000000000000000000000000000000000ee", rd1301Ordinary, "latest"}},
 	} {
 		t.Run("authenticated "+tc.name, func(t *testing.T) {
 			store := NewMockCrossOrgStore()
@@ -425,4 +429,23 @@ type orgAdminCheckingStore struct {
 
 func (s *orgAdminCheckingStore) IsOrgAdmin(ctx context.Context, userID string) (bool, []string, error) {
 	return s.orgAdmin, nil, nil
+}
+
+// TestIsStandardMethod pins the set config loading refuses as chain-specific
+// methods / alias keys (see config.parseExplicitMethods).
+func TestIsStandardMethod(t *testing.T) {
+	for m, want := range map[string]bool{
+		"eth_getStorageAt":     true,
+		"ETH_SENDTRANSACTION":  true,
+		"eth_getProof":         true, // canonicalized extra standard method
+		"eth_createAccessList": true,
+		"debug_traceCall":      true,
+		"linea_getProof":       false,
+		"trace_block":          false,
+		"":                     false,
+	} {
+		if got := IsStandardMethod(m); got != want {
+			t.Errorf("IsStandardMethod(%q) = %v, want %v", m, got, want)
+		}
+	}
 }

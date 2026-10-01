@@ -317,6 +317,17 @@ func SnapshotMethodRegistriesForTest() (restore func()) {
 	}
 }
 
+// IsStandardMethod reports whether method is one of the built-in standard RPC
+// methods (case-insensitive), i.e. one CanonicalizeMethod knows. Config
+// loading uses it to refuse a standard method as a chain-specific method or
+// alias key: the node executes the raw method (the request body is forwarded
+// verbatim) while the access decisions key on the alias target, so remapping
+// a standard method would strip it of its own checks.
+func IsStandardMethod(method string) bool {
+	_, ok := canonicalMethodByLower[strings.ToLower(method)]
+	return ok
+}
+
 // RegisterExtraNamespaces registers operator-configured chain-specific methods,
 // their access control aliases, and any prefix-wildcard configurations. Called
 // once at startup from server initialization, strictly before

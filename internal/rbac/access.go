@@ -698,10 +698,10 @@ func (c *AccessController) resolveAndValidateUser(ctx context.Context, req *Acce
 // admin claim (tier 3) is not an exemption. The check is made on the
 // alias target and the raw method (methodsToJudge), so an operator
 // alias of a state-reading method (e.g. linea_getProof → eth_getProof)
-// is subject to the same guard as its target. When the extension is not implemented (test fixtures
-// using a minimal mock store) we err on the side of allowing
-// historical queries — those fixtures don't model multi-tenant
-// ownership changes, so the leak isn't reproducible there.
+// is subject to the same guard as its target. When the extension is
+// not implemented (test fixtures using a minimal mock store) we err on
+// the side of allowing historical queries — those fixtures don't model
+// multi-tenant ownership changes, so the leak isn't reproducible there.
 // The production store (*db.DB) is guaranteed to implement
 // OrgAdminChecker at compile time (see the `var _ rbac.OrgAdminChecker`
 // assertion in internal/db, RD-1164 #14), so this fail-open branch is
@@ -1007,7 +1007,7 @@ func (c *AccessController) classifyValueTransferCarveout(ctx context.Context, re
 // tier (admin=all slots, non-admin=well-known only) enforced in
 // validateContractAccess.
 func (c *AccessController) classifyBasicAddressQueryCarveout(ctx context.Context, req *AccessCheckRequest, user *User, org *Organization, orgCtx *OrgContext, perms *EffectivePermissions) (*AccessCheckResult, bool, error) {
-	if req.TargetAddress != "" && isBasicAddressQuery(req.EffectiveMethod()) {
+	if req.TargetAddress != "" && isBasicAddressQuery(req.EffectiveMethod()) && !req.anyMethodToJudge(isStorageReadMethod) {
 		addr := strings.ToLower(req.TargetAddress)
 		if !perms.IsContractRegistered(addr) {
 			ownerOrgID, err := orgCtx.OwnerOrgID(ctx, addr)

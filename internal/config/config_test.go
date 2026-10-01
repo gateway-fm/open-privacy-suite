@@ -1123,3 +1123,27 @@ func TestConfig_VerifyFirstPartyClientSecret(t *testing.T) {
 		t.Fatalf("empty client_id should not verify")
 	}
 }
+
+// A standard method can never be configured as a chain-specific method or
+// alias key: the node executes the raw method (the body is forwarded
+// verbatim) while every access decision keys on the alias target, so e.g.
+// eth_getStorageAt → eth_call or eth_sendTransaction → eth_call would strip
+// that method of its own checks. Both schema versions are refused at load.
+func TestExtraRPCNamespaces_RejectsStandardMethodAsExtraMethod(t *testing.T) {
+	for _, input := range []string{
+		`{"version": 1, "namespaces": {"X": [{"method": "eth_getStorageAt", "alias": "eth_call"}]}}`,
+		`{"version": 1, "namespaces": {"X": [{"method": "ETH_SENDTRANSACTION", "alias": "eth_call"}]}}`,
+		`{"version": 2, "namespaces": {"X": {"explicit": [{"method": "eth_getProof", "alias": "eth_getBalance"}]}}}`,
+		`{"version": 2, "namespaces": {"Linea": {"explicit": [{"method": "linea_getProof", "alias": "eth_getProof"}, {"method": "debug_traceCall", "alias": "eth_call"}]}}}`,
+	} {
+		var cfg ExtraRPCNamespaces
+		if err := cfg.UnmarshalJSON([]byte(input)); err == nil {
+			t.Errorf("expected a standard method to be rejected as an extra method: %s", input)
+		}
+	}
+
+	var ok ExtraRPCNamespaces
+	if err := ok.UnmarshalJSON([]byte(`{"version": 1, "namespaces": {"Linea": [{"method": "linea_getProof", "alias": "eth_getProof"}]}}`)); err != nil {
+		t.Fatalf("a chain-specific method must still load: %v", err)
+	}
+}

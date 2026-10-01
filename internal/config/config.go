@@ -17,6 +17,7 @@ import (
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/netguard"
 	"privacy-proxy/internal/proxy"
+	"privacy-proxy/internal/rbac"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -155,6 +156,12 @@ func parseExplicitMethods(ns string, data []byte) ([]ExtraRPCMethod, error) {
 		}
 		if m.Method == "" {
 			return nil, fmt.Errorf("namespace %q: entry missing 'method' field: %s", ns, string(entry))
+		}
+		// The node executes the method as named (the request body is
+		// forwarded verbatim) while access control keys on the alias target,
+		// so re-aliasing a standard method would strip it of its own checks.
+		if rbac.IsStandardMethod(m.Method) {
+			return nil, fmt.Errorf("namespace %q: %q is a standard RPC method and cannot be configured as an extra method; extra methods are chain-specific methods that alias a standard one", ns, m.Method)
 		}
 		if m.Alias == "" {
 			return nil, fmt.Errorf("namespace %q: method %q missing 'alias' field — all extra methods must have an alias to a standard Ethereum method for access control and response filtering", ns, m.Method)

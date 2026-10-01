@@ -106,8 +106,9 @@ func requestedStorageKeys(method string, params []any) (keys []string, ok bool) 
 	return nil, false
 }
 
-// isStorageReadMethod reports whether the (alias-resolved) method returns raw
-// contract storage values and is therefore subject to the storage-slot tier.
+// isStorageReadMethod reports whether the method returns raw contract storage
+// values and is therefore subject to the storage-slot tier. Callers apply it
+// to both the alias target and the raw method (methodsToJudge).
 func isStorageReadMethod(method string) bool {
 	return method == MethodGetStorageAt || method == MethodGetProof
 }
