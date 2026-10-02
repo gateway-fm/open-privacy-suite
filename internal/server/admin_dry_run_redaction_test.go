@@ -389,13 +389,16 @@ func TestDryRun_ReadResponse_Passthrough_NoRedaction(t *testing.T) {
 	upstreamBody := `{"jsonrpc":"2.0","id":1,"result":"0xdeadbeefcafef00d"}`
 	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		// Verify we received an eth_call request (not a debug_traceCall).
 		var req struct {
 			Method string `json:"method"`
 		}
 		_ = json.Unmarshal(body, &req)
-		assert.Equal(t, "eth_call", req.Method)
 		w.Header().Set("Content-Type", "application/json")
+		if req.Method == "debug_traceCall" {
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"type":"CALL","from":"0x0000000000000000000000000000000000000000","to":"` + f.contractAddr + `"}}`))
+			return
+		}
+		assert.Equal(t, "eth_call", req.Method)
 		_, _ = w.Write([]byte(upstreamBody))
 	}))
 	t.Cleanup(stub.Close)

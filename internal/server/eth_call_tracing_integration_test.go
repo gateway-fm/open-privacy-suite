@@ -220,6 +220,27 @@ func TestEthCallTracing_DeniesCrossOrgInternalCall(t *testing.T) {
 	assert.NotContains(t, err.Message, strings.TrimPrefix(addrB, "0x"))
 }
 
+func TestEthCreateAccessListTracing_DeniesCrossOrgInternalCall(t *testing.T) {
+	addrA := fixedAddr(0xaa)
+	addrB := fixedAddr(0xbb)
+	scripted := newScriptedTracer(t, traceFrame{
+		Type: "CALL", From: fixedAddr(0xee), To: addrA,
+		Calls: []traceFrame{{Type: "STATICCALL", From: addrA, To: addrB}},
+	})
+	proc, ts := setupProcessorWithMockTracer(t, scripted)
+
+	ctx := context.Background()
+	did, _ := callerSameOrg(t, ctx, ts, addrA)
+	registerForeignOrgContract(t, ctx, ts, addrB)
+	req := ethCallReq(did, addrA)
+	req.Method = "eth_createAccessList"
+
+	err := proc.validateEthCallWithTracing(ctx, req, addrA)
+	require.NotNil(t, err, "live eth_createAccessList must deny nested foreign calls")
+	assert.Equal(t, http.StatusForbidden, err.StatusCode)
+	assert.Equal(t, ethCallDenyCrossOrg, err.Message)
+}
+
 func TestEthCallTracing_PinnedOrgDeniesOtherMembershipOrg(t *testing.T) {
 	addrA := fixedAddr(0xaa)
 	addrB := fixedAddr(0xbb)

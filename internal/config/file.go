@@ -46,26 +46,27 @@ var fileConfigErr error
 // foot-gun we close structurally rather than rely on someone noticing a
 // warning. Inject secrets via the environment, which overrides the file anyway.
 var secretKeys = map[string]bool{
-	"JWT_SECRET":                  true,
-	"JWT_REFRESH_SECRET":          true,
-	"JWT_SECRET_PREVIOUS":         true, // rotation-window validation secrets (RD-1164 #15)
-	"JWT_REFRESH_SECRET_PREVIOUS": true,
-	"ADMIN_API_TOKEN":             true,
-	"OPERATOR_API_TOKEN":          true, // restricted admin bearer token (X-Admin-Token); grants org create + org-admin minting (RD-1132)
-	"AZURE_AD_CLIENT_SECRET":      true,
-	"DATABASE_URL":                true, // bears a password in the DSN
-	"AUDIT_DATABASE_URL":          true, // separate append-only audit DB, restricted-role DSN (RD-1147)
-	"AUDIT_ADMIN_DATABASE_URL":    true, // separate append-only audit DB, admin/owner DSN (RD-1147)
-	"EXPLORER_DATABASE_URL":       true, // bears a password in the DSN
-	"REDIS_URL":                   true, // bears a password in the DSN
-	"REDIS_PASSWORD":              true,
-	"POSTGRES_PASSWORD":           true,
-	"RPC_API_KEY":                 true,
-	"RPC_API_KEY_ENCRYPTION_KEY":  true,
-	"EXPLORER_PSEUDONYM_KEY":      true, // HMAC key for explorer address pseudonyms (RD-1164 #8)
-	"OAUTH_FIRST_PARTY_CLIENTS":   true, // client_id:bcrypt-hash pairs
-	"AUDIT_CHECKPOINT_KEY":        true, // HMAC key signing audit-chain checkpoints (RD-1112)
-	"SIEM_AUTH_HEADER":            true, // verbatim outbound Authorization header to the SIEM webhook (RD-1141)
+	"JWT_SECRET":                           true,
+	"JWT_REFRESH_SECRET":                   true,
+	"JWT_SECRET_PREVIOUS":                  true, // rotation-window validation secrets (RD-1164 #15)
+	"JWT_REFRESH_SECRET_PREVIOUS":          true,
+	"ADMIN_API_TOKEN":                      true,
+	"OPERATOR_API_TOKEN":                   true, // restricted admin bearer token (X-Admin-Token); grants org create + org-admin minting (RD-1132)
+	"CROSS_ORG_AUTHORIZATION_ORACLE_TOKEN": true,
+	"AZURE_AD_CLIENT_SECRET":               true,
+	"DATABASE_URL":                         true, // bears a password in the DSN
+	"AUDIT_DATABASE_URL":                   true, // separate append-only audit DB, restricted-role DSN (RD-1147)
+	"AUDIT_ADMIN_DATABASE_URL":             true, // separate append-only audit DB, admin/owner DSN (RD-1147)
+	"EXPLORER_DATABASE_URL":                true, // bears a password in the DSN
+	"REDIS_URL":                            true, // bears a password in the DSN
+	"REDIS_PASSWORD":                       true,
+	"POSTGRES_PASSWORD":                    true,
+	"RPC_API_KEY":                          true,
+	"RPC_API_KEY_ENCRYPTION_KEY":           true,
+	"EXPLORER_PSEUDONYM_KEY":               true, // HMAC key for explorer address pseudonyms (RD-1164 #8)
+	"OAUTH_FIRST_PARTY_CLIENTS":            true, // client_id:bcrypt-hash pairs
+	"AUDIT_CHECKPOINT_KEY":                 true, // HMAC key signing audit-chain checkpoints (RD-1112)
+	"SIEM_AUTH_HEADER":                     true, // verbatim outbound Authorization header to the SIEM webhook (RD-1141)
 }
 
 // loadConfigFile reads the optional TOML file named by CONFIG_FILE into the

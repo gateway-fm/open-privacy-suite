@@ -77,6 +77,22 @@ func TestEthEstimateGasTracing_InvalidFromReturns400(t *testing.T) {
 	assert.Contains(t, err.Message, "invalid request shape")
 }
 
+func TestEthCreateAccessListTracing_InvalidFromReturns400(t *testing.T) {
+	proc, _ := setupEthCallProc(t)
+	req := &ProcessRequest{
+		UserID: "did:privado:any",
+		Method: "eth_createAccessList",
+		Params: []any{map[string]any{
+			"to":   "0x2222222222222222222222222222222222222222",
+			"from": "0xnope",
+		}},
+	}
+	err := proc.validateEthCallWithTracing(context.Background(), req, "0x2222222222222222222222222222222222222222")
+	require.NotNil(t, err, "eth_createAccessList must go through the live tracing gate")
+	assert.Equal(t, 400, err.StatusCode)
+	assert.Contains(t, err.Message, "invalid request shape")
+}
+
 func TestEthCallTracing_EmptyTargetBypasses(t *testing.T) {
 	proc, _ := setupEthCallProc(t)
 	req := &ProcessRequest{

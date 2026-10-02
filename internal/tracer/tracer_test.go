@@ -129,6 +129,44 @@ func TestExtractCallTargets_CreateOperations(t *testing.T) {
 	}
 }
 
+func TestParseCallTraceResult_AcceptsNestedSelfdestruct(t *testing.T) {
+	raw := `{"type":"CALL","from":"0x1","to":"0x2","calls":[{"type":"SELFDESTRUCT","from":"0x2","to":"0x2"}]}`
+	result, err := ParseCallTraceResult(json.RawMessage(raw))
+	if err != nil {
+		t.Fatalf("expected nested SELFDESTRUCT to parse: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+}
+
+func TestParseCallTraceResult_RejectsRootSelfdestruct(t *testing.T) {
+	if _, err := ParseCallTraceResult(json.RawMessage(`{"type":"SELFDESTRUCT","from":"0x1","to":"0x1"}`)); err == nil {
+		t.Fatal("expected root SELFDESTRUCT to fail closed")
+	}
+}
+
+func TestParseCallTraceResult_RejectsMissingCallTarget(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+	}{
+		{name: "root", raw: `{"type":"CALL"}`},
+		{
+			name: "nested",
+			raw:  `{"type":"CALL","to":"0xroot","calls":[{"type":"STATICCALL"}]}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := ParseCallTraceResult(json.RawMessage(tt.raw)); err == nil {
+				t.Fatal("expected missing call target to fail closed")
+			}
+		})
+	}
+}
+
 func TestTraceCall_MockServer(t *testing.T) {
 	// Create a mock server that returns a valid trace result
 	mockResponse := map[string]any{
@@ -392,6 +430,33 @@ func TestTraceCall_RPCError(t *testing.T) {
 	_, err := tracer.TraceCall(context.Background(), "0xsender", "0xcontract", "0x", "", "latest")
 	if err == nil {
 		t.Fatal("expected error for RPC error response")
+	}
+}
+
+func TestParseCallTraceResultRejectsStructurallyEmptyRoot(t *testing.T) {
+	for _, raw := range []string{
+		`null`,
+		`{}`,
+		`{ }`,
+		`{"foo":"bar"}`,
+		`{"type":"BOGUS","from":"0x1","to":"0x2"}`,
+	} {
+		t.Run(raw, func(t *testing.T) {
+			_, err := ParseCallTraceResult(json.RawMessage(raw))
+			if err == nil {
+				t.Fatalf("ParseCallTraceResult(%s) unexpectedly succeeded", raw)
+			}
+		})
+	}
+}
+
+func TestParseCallTraceResultRejectsUnknownNestedFrame(t *testing.T) {
+	raw := json.RawMessage(`{
+		"type":"CALL","from":"0x1","to":"0x2",
+		"calls":[{"type":"BOGUS","from":"0x2","to":"0x3"}]
+	}`)
+	if _, err := ParseCallTraceResult(raw); err == nil {
+		t.Fatal("expected unknown nested frame to fail closed")
 	}
 }
 

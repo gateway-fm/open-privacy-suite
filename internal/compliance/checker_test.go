@@ -13,20 +13,22 @@ import (
 
 // mockComplianceStore implements Store with configurable return values.
 type mockComplianceStore struct {
-	config      *ComplianceConfig
-	configErr   error
-	tokenPrice  *TokenPrice
-	tokenPriceErr error
+	config          *ComplianceConfig
+	configErr       error
+	tokenPrice      *TokenPrice
+	tokenPriceErr   error
 	sanctionedAddrs map[string]bool // key = lowercased address
 	sanctionErr     error
 	claimedRecord   *TravelRuleRecord
 	claimErr        error
+	findCalls       int
+	claimCalls      int
 	logs            []*ComplianceLog
-	logErr          error // if set, CreateComplianceLog returns this error
+	logErr          error                                // if set, CreateComplianceLog returns this error
 	addrOverrides   map[string]*AddressThresholdOverride // key = lowercased address
-	addrOverrideErr error // if set, GetAddressThresholdOverride returns this error
-	systemPrices  map[string]*SystemTokenPrice // key = coingecko_id
-	systemSetting string                       // value returned by GetSystemSetting (e.g. base_currency)
+	addrOverrideErr error                                // if set, GetAddressThresholdOverride returns this error
+	systemPrices    map[string]*SystemTokenPrice         // key = coingecko_id
+	systemSetting   string                               // value returned by GetSystemSetting (e.g. base_currency)
 }
 
 func (m *mockComplianceStore) GetComplianceConfig(_ context.Context, _ string) (*ComplianceConfig, error) {
@@ -66,10 +68,12 @@ func (m *mockComplianceStore) GetTravelRuleRecord(_ context.Context, _ string) (
 }
 
 func (m *mockComplianceStore) FindUnusedTravelRuleRecord(_ context.Context, _, _, _, _ string, _ float64) (*TravelRuleRecord, error) {
-	panic("not implemented")
+	m.findCalls++
+	return m.claimedRecord, m.claimErr
 }
 
 func (m *mockComplianceStore) ClaimUnusedTravelRuleRecord(_ context.Context, _, _, _, _ string, _ float64) (*TravelRuleRecord, error) {
+	m.claimCalls++
 	return m.claimedRecord, m.claimErr
 }
 
@@ -173,7 +177,6 @@ func (m *mockComplianceStore) SetSystemSetting(_ context.Context, _, _ string) e
 	panic("not implemented")
 }
 
-
 // enabledConfig returns a ComplianceConfig with compliance enabled and the given threshold.
 func enabledConfig(threshold float64) *ComplianceConfig {
 	return &ComplianceConfig{
@@ -193,6 +196,34 @@ func nativePrice(priceFiat float64) *TokenPrice {
 		Symbol:       "ETH",
 		Decimals:     18,
 		PriceFiat:    priceFiat,
+	}
+}
+
+func TestCheckPreviewDoesNotClaimOrLog(t *testing.T) {
+	store := &mockComplianceStore{
+		config:        enabledConfig(1000),
+		tokenPrice:    nativePrice(1000),
+		claimedRecord: &TravelRuleRecord{ID: "tr-preview"},
+	}
+	checker := NewChecker(store, 24*time.Hour, 15*time.Minute)
+	result, err := checker.CheckPreview(context.Background(), &CheckRequest{
+		OrgID: "org-1", UserID: "user-1",
+		From:  "0x0000000000000000000000000000000000000001",
+		To:    "0x0000000000000000000000000000000000000002",
+		Value: "0x1bc16d674ec80000",
+	})
+
+	if err != nil {
+		t.Fatalf("CheckPreview() error = %v", err)
+	}
+	if !result.Allowed {
+		t.Fatalf("CheckPreview() allowed = false, reason = %q", result.Reason)
+	}
+	if store.findCalls != 1 || store.claimCalls != 0 {
+		t.Fatalf("record lookups = find %d, claim %d; want find 1, claim 0", store.findCalls, store.claimCalls)
+	}
+	if len(store.logs) != 0 {
+		t.Fatalf("preview wrote %d compliance logs", len(store.logs))
 	}
 }
 
@@ -389,7 +420,7 @@ func TestCheckerCheck(t *testing.T) {
 			req: &CheckRequest{
 				OrgID:  orgID,
 				UserID: userID,
-				From:   "0xSpenderAddress0000000000000000000000000", // msg.sender (spender)
+				From:   "0xSpenderAddress0000000000000000000000000",  // msg.sender (spender)
 				To:     "0xcccccccccccccccccccccccccccccccccccccccc", // token contract
 				// transferFrom(allowanceOwner, recipient, amount) — info.FromAddress will be allowanceOwner
 				Data:  buildERC20TransferFromData(from, to, new(big.Int).SetUint64(1000000000000000000)),
@@ -589,8 +620,8 @@ func TestCheckerPerAddressThreshold(t *testing.T) {
 			},
 			req: &CheckRequest{
 				OrgID: "org-1", UserID: "user-1",
-				From: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-				To:   "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+				From:  "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				To:    "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 				Value: hexTenthETH, // $200 > $100 override
 			},
 			wantAllowed: false,
@@ -609,8 +640,8 @@ func TestCheckerPerAddressThreshold(t *testing.T) {
 			},
 			req: &CheckRequest{
 				OrgID: "org-1", UserID: "user-1",
-				From: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-				To:   "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+				From:  "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				To:    "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 				Value: hexTenthETH, // $200 < $500 override
 			},
 			wantAllowed: true,
@@ -624,8 +655,8 @@ func TestCheckerPerAddressThreshold(t *testing.T) {
 			},
 			req: &CheckRequest{
 				OrgID: "org-1", UserID: "user-1",
-				From: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-				To:   "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+				From:  "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				To:    "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 				Value: hexTenthETH, // $200 < $1000 global
 			},
 			wantAllowed: true,
@@ -639,8 +670,8 @@ func TestCheckerPerAddressThreshold(t *testing.T) {
 			},
 			req: &CheckRequest{
 				OrgID: "org-1", UserID: "user-1",
-				From: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-				To:   "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+				From:  "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				To:    "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 				Value: "0x1", // tiniest possible transfer
 			},
 			wantAllowed: false,
@@ -659,8 +690,8 @@ func TestCheckerPerAddressThreshold(t *testing.T) {
 			},
 			req: &CheckRequest{
 				OrgID: "org-1", UserID: "user-1",
-				From: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-				To:   "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+				From:  "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				To:    "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 				Value: "0x1",
 			},
 			wantAllowed: false,
@@ -682,8 +713,8 @@ func TestCheckerPerAddressThreshold(t *testing.T) {
 			},
 			req: &CheckRequest{
 				OrgID: "org-1", UserID: "user-1",
-				From: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-				To:   "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+				From:  "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				To:    "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 				Value: hexTenthETH, // $200 > $50 (lowest override wins)
 			},
 			wantAllowed: false,
@@ -1538,7 +1569,6 @@ func TestCheckerUnknownPricePolicy(t *testing.T) {
 			}
 			// No token price set -> price is unknown
 
-			
 			checker := NewChecker(store, 24*time.Hour, 15*time.Minute)
 			res, err := checker.Check(context.Background(), req)
 			if err != nil {

@@ -105,6 +105,10 @@ type Store interface {
 	ListUserMemberships(ctx context.Context, userID string) ([]*UserMembership, error)
 	ListUserMembershipsInOrg(ctx context.Context, userID, orgID string) ([]*MembershipWithDetails, error)
 	ListUserMembershipsWithDetails(ctx context.Context, userID string) ([]*MembershipWithDetails, error)
+	// ListActiveUserMembershipsWithDetails excludes expired memberships. Use it
+	// for authorization and trace validation; ListUserMembershipsWithDetails
+	// stays complete for the admin membership listing.
+	ListActiveUserMembershipsWithDetails(ctx context.Context, userID string) ([]*MembershipWithDetails, error)
 	ListGroupMembers(ctx context.Context, groupID string) ([]*UserMembership, error)
 	DeleteMembership(ctx context.Context, id string) error
 	DeleteExpiredMemberships(ctx context.Context) (int64, error)

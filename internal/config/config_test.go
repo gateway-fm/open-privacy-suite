@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -472,6 +473,66 @@ func validPoHConfig(t *testing.T) *Config {
 			},
 		},
 	}
+}
+
+func TestCrossOrgAuthorizationOracleValidation(t *testing.T) {
+	orgID := "00000000-0000-0000-0000-000000000001"
+	base := func() *Config {
+		return &Config{
+			Environment:                       "development",
+			AdminAPIToken:                     "admin",
+			OperatorAPIToken:                  "operator",
+			CrossOrgAuthorizationOracleMode:   "verdict_only",
+			CrossOrgAuthorizationOracleToken:  "oracle",
+			CrossOrgAuthorizationOracleOrgIDs: []string{orgID},
+		}
+	}
+
+	t.Run("disabled needs no credential", func(t *testing.T) {
+		cfg := &Config{Environment: "development", CrossOrgAuthorizationOracleMode: "disabled"}
+		require.NoError(t, cfg.Validate())
+	})
+	t.Run("unknown mode fails", func(t *testing.T) {
+		cfg := base()
+		cfg.CrossOrgAuthorizationOracleMode = "surprise"
+		require.ErrorContains(t, cfg.Validate(), "must be disabled, verdict_only, or full_simulation")
+	})
+	t.Run("enabled requires token", func(t *testing.T) {
+		cfg := base()
+		cfg.CrossOrgAuthorizationOracleToken = ""
+		require.ErrorContains(t, cfg.Validate(), "TOKEN is required")
+	})
+	t.Run("token differs from admin", func(t *testing.T) {
+		cfg := base()
+		cfg.CrossOrgAuthorizationOracleToken = cfg.AdminAPIToken
+		require.ErrorContains(t, cfg.Validate(), "must differ from ADMIN_API_TOKEN")
+	})
+	t.Run("token differs from operator", func(t *testing.T) {
+		cfg := base()
+		cfg.CrossOrgAuthorizationOracleToken = cfg.OperatorAPIToken
+		require.ErrorContains(t, cfg.Validate(), "must differ from OPERATOR_API_TOKEN")
+	})
+	t.Run("enabled requires allowlist", func(t *testing.T) {
+		cfg := base()
+		cfg.CrossOrgAuthorizationOracleOrgIDs = nil
+		require.ErrorContains(t, cfg.Validate(), "must contain at least one organization")
+	})
+	t.Run("allowlist contains UUIDs", func(t *testing.T) {
+		cfg := base()
+		cfg.CrossOrgAuthorizationOracleOrgIDs = []string{"not-an-org"}
+		require.ErrorContains(t, cfg.Validate(), "invalid organization ID")
+	})
+	t.Run("allowlist UUIDs are canonicalized", func(t *testing.T) {
+		cfg := base()
+		cfg.CrossOrgAuthorizationOracleOrgIDs = []string{"AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"}
+		require.NoError(t, cfg.Validate())
+		require.Equal(t, []string{"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"}, cfg.CrossOrgAuthorizationOracleOrgIDs)
+	})
+	t.Run("valid full simulation", func(t *testing.T) {
+		cfg := base()
+		cfg.CrossOrgAuthorizationOracleMode = "full_simulation"
+		require.NoError(t, cfg.Validate())
+	})
 }
 
 func TestConfig_ValidateProofOfHumanity(t *testing.T) {

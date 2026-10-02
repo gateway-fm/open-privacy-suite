@@ -26,6 +26,62 @@ components:
         media_type:
           type: string
       type: object
+    internal_server.policyCheckArtifacts:
+      properties:
+        logs:
+          items: {}
+          type: array
+          uniqueItems: false
+        trace: {}
+      type: object
+    internal_server.policyCheckRPCBlock:
+      properties:
+        method:
+          type: string
+        params:
+          items: {}
+          type: array
+          uniqueItems: false
+      required:
+      - method
+      type: object
+    internal_server.policyCheckRequest:
+      properties:
+        operation:
+          $ref: '#/components/schemas/internal_server.policyCheckRPCBlock'
+        org_id:
+          description: OrgID is optional; omitted, CheckAccess resolves it as a live
+            request would.
+          type: string
+        subject:
+          $ref: '#/components/schemas/internal_server.policyCheckSubject'
+      required:
+      - operation
+      - subject
+      type: object
+    internal_server.policyCheckResponse:
+      properties:
+        allowed:
+          type: boolean
+        artifacts:
+          $ref: '#/components/schemas/internal_server.policyCheckArtifacts'
+        reason:
+          type: string
+      type: object
+    internal_server.policyCheckSubject:
+      oneOf:
+      - properties:
+          did:
+            type: string
+        required:
+        - did
+        type: object
+      - properties:
+          address:
+            type: string
+        required:
+        - address
+        type: object
     privacy-proxy_internal_apimodels.APIError:
       properties:
         error:
@@ -869,6 +925,10 @@ components:
     privacy-proxy_internal_apimodels.DryRunResponseDoc:
       properties:
         decision:
+          enum:
+          - allow
+          - deny
+          - indeterminate
           example: allow
           type: string
         logs_emitted:
@@ -4210,6 +4270,85 @@ paths:
       summary: Look up a contract by address (cross-org)
       tags:
       - 'Admin: RBAC'
+  /api/v1/admin/cross-org-authorization-oracle:
+    post:
+      description: Cross-organization privacy-policy oracle for an explicitly trusted
+        infrastructure caller. Subject is a DID or Ethereum address. Operation is
+        a JSON-RPC method and params. EVM execution methods use debug_traceCall with
+        the same upstream credential as live calls. Write methods also run a side-effect-free
+        compliance preview. The endpoint does not submit the call or consume a travel-rule
+        record. A supplied sender must link to the subject. Trace checks share the
+        per-caller concurrency and rate budget of live calls. debug_traceCall and
+        debug_traceTransaction are not supported. Requires the dedicated X-Cross-Org-Authorization-Oracle-Token
+        credential and an allowlisted organization. Admin, operator, and JWT credentials
+        are not accepted. Every evaluation is audited and fails closed. Operational
+        failures (upstream trace errors, concurrency or rate exhaustion) return 429
+        or 503, never a policy verdict.
+      parameters:
+      - description: Dedicated cross-org oracle token
+        in: header
+        name: X-Cross-Org-Authorization-Oracle-Token
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/internal_server.policyCheckRequest'
+        description: subject, operation, and optional org_id
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/internal_server.policyCheckResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
+          description: invalid body, missing operation.method, an invalid subject
+            address, or subject has neither/both of did and address
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
+          description: missing or invalid X-Cross-Org-Authorization-Oracle-Token
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
+          description: source address not on the private network, or the credential
+            cannot read tenant policy
+        "429":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
+          description: concurrency or rate budget exhausted; operational, not a policy
+            verdict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
+          description: internal error (includes audit-log write failure, response
+            withheld)
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
+          description: policy simulation unavailable (upstream trace failure); operational,
+            not a policy verdict
+      summary: Check whether a subject would be allowed to make an RPC call
+      tags:
+      - 'Admin: RBAC'
   /api/v1/admin/dev/deploy-demo-erc20:
     post:
       description: 'Deploys a DemoToken (DEMO) ERC-20 contract via the configured
@@ -7332,18 +7471,21 @@ paths:
   /api/v1/admin/orgs/{org_id}/dry-run:
     post:
       description: 'Evaluates "what would this user see if they made this RPC call?"
-        in the path org, without mutating chain state. Read methods are forwarded
-        and redacted as the impersonated user; write methods (eth_sendTransaction
-        / eth_sendRawTransaction) are translated to debug_traceCall so the RBAC verdict
-        and the events the tx would emit (and the subset visible to the user) can
-        be inspected. Requires a tier-2 org-admin JWT of the path org: X-Admin-Token
-        credentials (both the full super-admin token and the operator token) are explicitly
-        rejected, since impersonation reads tenant data as the user. The impersonated
-        user must exist and be a member of the path org, else an opaque 404 (no cross-org
-        existence leak). Every evaluation is written to the impersonation audit log
-        fail-closed. Supported methods: eth_call, eth_getLogs, eth_getTransactionReceipt,
-        eth_getTransactionByHash, eth_getBalance, eth_getCode, eth_getStorageAt, eth_blockNumber,
-        eth_chainId, eth_sendTransaction, eth_sendRawTransaction.'
+        strictly in the path org, without mutating chain state. Returns allow or deny
+        for definitive local decisions. If nested execution reaches a contract owned
+        by another organization, returns decision=indeterminate and reason=external_scope_required
+        without evaluating that foreign policy. Read methods are forwarded and redacted
+        as the impersonated user; write methods (eth_sendTransaction / eth_sendRawTransaction)
+        are translated to debug_traceCall so the RBAC verdict and the events the tx
+        would emit (and the subset visible to the user) can be inspected. Requires
+        a tier-2 org-admin JWT of the path org: X-Admin-Token credentials (both the
+        full super-admin token and the operator token) are explicitly rejected, since
+        impersonation reads tenant data as the user. The impersonated user must exist
+        and be a member of the path org, else an opaque 404 (no cross-org existence
+        leak). Every evaluation is written to the impersonation audit log fail-closed.
+        Supported methods: eth_call, eth_getLogs, eth_getTransactionReceipt, eth_getTransactionByHash,
+        eth_getBalance, eth_getCode, eth_getStorageAt, eth_blockNumber, eth_chainId,
+        eth_sendTransaction, eth_sendRawTransaction.'
       parameters:
       - description: Organization ID (UUID)
         in: path
@@ -7409,6 +7551,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
           description: upstream node error or trace failure
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
+          description: trace or compliance preview unavailable
       security:
       - AdminToken: []
       summary: Dry-run an RPC call as a user
