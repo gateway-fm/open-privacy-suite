@@ -403,6 +403,12 @@ describe('ContractGrantsManager — event rules display', () => {
       expect(
         (await import('@testing-library/react')).within(dialog).getByText(/including embedded addresses/i),
       ).toBeInTheDocument();
+      expect(
+        (await import('@testing-library/react')).within(dialog).getByText(/org-admin membership there/i),
+      ).toBeInTheDocument();
+      expect(
+        (await import('@testing-library/react')).within(dialog).getByText(/default and system groups are excluded/i),
+      ).toBeInTheDocument();
       const cancelBtn = (await import('@testing-library/react')).within(dialog).getByRole('button', { name: /cancel/i });
       await user.click(cancelBtn);
       

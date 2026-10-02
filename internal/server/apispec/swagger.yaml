@@ -6984,10 +6984,12 @@ paths:
       - 'Admin: RBAC'
   /api/v1/admin/orgs/{org_id}/contracts/{address}/visibleto-unlock:
     put:
-      description: Enables or disables the RD-874 per-contract opt-in that lets a
-        tx sender grant per-event visibility to DIDs listed in the transaction's visibleTo.
-        Enabling it widens who can see events on this contract, so review grants first.
-        Scoped to {org_id}; the restricted operator token is rejected.
+      description: Enables or disables the per-contract opt-in that lets a tx sender
+        share full event payloads, including embedded addresses, with eligible DIDs
+        listed in that transaction's visibleTo. Eligibility requires an in-org contract
+        grant through a non-default, non-system group, or org-admin membership without
+        a grant. Cross-org and anonymous viewers remain denied. Review grants before
+        enabling. Scoped to {org_id}; the restricted operator token is rejected.
       parameters:
       - description: Organization ID
         in: path
@@ -11711,11 +11713,14 @@ paths:
       - Explorer
   /api/v1/explorer/transactions/{hash}/logs:
     get:
-      description: 'Returns the event logs emitted by a transaction. Private network
+      description: Returns the event logs emitted by a transaction. Private network
         only (serves the explorer backend); not reachable through the public ingress.
-        The response is privacy-filtered for the resolved viewer: logs are redacted
-        per the viewer''s visibility, with logs of the parent transaction revealed
-        to a viewer who is the transaction''s sender or recipient.'
+        Logs follow each emitting contract's event access rules. A sender or recipient
+        can see permitted parent-transaction logs. Where a contract enables visibleTo
+        unlock, an eligible viewer listed on this transaction receives its matching
+        logs with full event payloads, including embedded addresses; eligibility requires
+        an in-org grant through a non-default, non-system group, or org-admin membership
+        without a grant. Other contracts and transactions remain separately filtered.
       parameters:
       - description: Transaction hash (0x-prefixed)
         in: path

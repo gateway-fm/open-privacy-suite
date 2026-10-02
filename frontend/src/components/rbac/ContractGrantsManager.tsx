@@ -398,7 +398,8 @@ export default function ContractGrantsManager({
                   that transaction&apos;s events from this contract as full event
                   payloads, including embedded addresses (bypassing event rules and
                   parameter rules), with anyone they list in <code>visibleTo</code>.
-                  Listed users still need contract-level group access in this org —
+                  Listed users need an eligible contract grant in this org, or
+                  org-admin membership there. Default and system groups are excluded;
                   cross-org and anonymous viewers remain denied.
                 </p>
                 <p className="text-sm text-neutral-600 mt-2">

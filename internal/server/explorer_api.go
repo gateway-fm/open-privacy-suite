@@ -1715,7 +1715,7 @@ func (s *Server) getExplorerTransactionTransfers(c *gin.Context) {
 // getExplorerTransactionLogs returns the event logs of a tx.
 //
 // @Summary      Event logs for a transaction
-// @Description  Returns the event logs emitted by a transaction. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: logs are redacted per the viewer's visibility, with logs of the parent transaction revealed to a viewer who is the transaction's sender or recipient.
+// @Description  Returns the event logs emitted by a transaction. Private network only (serves the explorer backend); not reachable through the public ingress. Logs follow each emitting contract's event access rules. A sender or recipient can see permitted parent-transaction logs. Where a contract enables visibleTo unlock, an eligible viewer listed on this transaction receives its matching logs with full event payloads, including embedded addresses; eligibility requires an in-org grant through a non-default, non-system group, or org-admin membership without a grant. Other contracts and transactions remain separately filtered.
 // @Tags         Explorer
 // @Produce      json
 // @Param        hash path string true "Transaction hash (0x-prefixed)"

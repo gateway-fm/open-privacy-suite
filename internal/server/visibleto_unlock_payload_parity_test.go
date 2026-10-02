@@ -189,8 +189,8 @@ func (f *vtuFixture) accessResult(did string) *rbac.AccessCheckResult {
 	return &rbac.AccessCheckResult{Allowed: true, UserID: uid, OrgID: f.orgID}
 }
 
-// rpcGetLogsMulti sends ONE eth_getLogs response spanning several txs (the
-// cross-tx leak class) and returns the rendered logs keyed by their tx hash.
+// rpcGetLogsMulti sends one eth_getLogs response spanning several transactions
+// and returns the rendered logs keyed by transaction hash.
 func (f *vtuFixture) rpcGetLogsMulti(t *testing.T, did string, txHashes ...string) map[string][]vtuLog {
 	t.Helper()
 	var upstream []map[string]any
