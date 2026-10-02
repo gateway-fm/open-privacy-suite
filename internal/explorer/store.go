@@ -885,6 +885,55 @@ func (s *Store) GetLogsByTransaction(ctx context.Context, txHash string) ([]Log,
 	return s.scanLogs(rows)
 }
 
+// GetLogsByTransactions returns the event logs of the given transactions in
+// one query, ordered by transaction and log index (TxDataBatchResolver).
+func (s *Store) GetLogsByTransactions(ctx context.Context, txHashes []string) ([]Log, error) {
+	if len(txHashes) == 0 {
+		return nil, nil
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, tx_hash, log_index, address, topic0, topic1, topic2, topic3, data, block_number, timestamp, removed
+		FROM logs WHERE tx_hash = ANY($1) ORDER BY tx_hash, log_index`, txHashes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return s.scanLogs(rows)
+}
+
+// GetTransactionsByHashes returns the given transactions in one query, with
+// the same columns as GetTransaction (TxDataBatchResolver). Unknown hashes
+// are absent from the result.
+func (s *Store) GetTransactionsByHashes(ctx context.Context, hashes []string) ([]Transaction, error) {
+	if len(hashes) == 0 {
+		return nil, nil
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT t.hash, t.block_number, t.tx_index, t.from_address, t.to_address, t.value::text,
+			t.gas_used, t.gas_price, t.gas_limit, t.max_fee_per_gas, t.max_priority_fee_per_gas, t.nonce,
+			t.tx_type, t.input_data, t.status, t.error, t.revert_reason, t.created_at
+		FROM transactions t
+		WHERE t.hash = ANY($1)`, hashes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Transaction
+	for rows.Next() {
+		var tx Transaction
+		var valueStr string
+		if err := rows.Scan(
+			&tx.Hash, &tx.BlockNumber, &tx.TxIndex, &tx.From, &tx.To, &valueStr,
+			&tx.GasUsed, &tx.GasPrice, &tx.GasLimit, &tx.MaxFeePerGas, &tx.MaxPriorityFeePerGas, &tx.Nonce,
+			&tx.TxType, &tx.InputData, &tx.Status, &tx.Error, &tx.RevertReason, &tx.CreatedAt); err != nil {
+			return nil, err
+		}
+		tx.Value = JSONString(valueStr)
+		out = append(out, tx)
+	}
+	return out, rows.Err()
+}
+
 // FindLogParticipantTxs implements explorer.LogParticipantStore for the
 // SQL-backed indexer store. Returns the subset of txHashes where any of
 // viewerAddrs appears in an indexed address topic of a log whose topic0

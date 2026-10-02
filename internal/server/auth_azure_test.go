@@ -10,6 +10,7 @@ import (
 	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/config"
+	"privacy-proxy/internal/rbac"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -153,7 +154,7 @@ func TestHandleAuthProviders(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			s := &Server{config: &config.Config{Environment: "development"}}
+			s := &Server{config: &config.Config{ReadProfile: rbac.ReadProfileStandard, Environment: "development"}}
 			if tc.azureConfigured {
 				s.azureAuthenticator = mustNewTestAzureAuthenticator(t, mockOIDC.URL)
 				s.azureStateStore = NewAzureStateStore(10*time.Minute, 1*time.Minute)
@@ -207,7 +208,7 @@ func TestHandleAzureAuthURL(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			s := &Server{config: &config.Config{Environment: "development"}}
+			s := &Server{config: &config.Config{ReadProfile: rbac.ReadProfileStandard, Environment: "development"}}
 			if tc.azureConfigured {
 				s.azureAuthenticator = mustNewTestAzureAuthenticator(t, mockOIDC.URL)
 				s.azureStateStore = NewAzureStateStore(10*time.Minute, 1*time.Minute)

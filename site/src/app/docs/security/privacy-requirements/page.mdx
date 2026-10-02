@@ -22,6 +22,8 @@ Private addresses and their transaction activity are hidden from unauthorized vi
 
 Both layers work in concert. A viewer who bypasses the block explorer and queries the JSON-RPC endpoint directly will receive the same privacy enforcement — the proxy is the sole gateway.
 
+This page describes the default `standard` read profile. With `PRIVACY_READ_PROFILE=strict`, both layers return a transaction, receipt or internal call only to a transaction participant and an event only to a viewer named by one of its indexed address parameters; see [Strict Read Profile](/docs/security/strict-read-profile).
+
 ---
 
 ## Protection by Data Type
@@ -209,6 +211,10 @@ is an org-admin, rows that would `drop` under the strict-privacy table
 above instead become **keep + `[PRIVATE]` with value preserved**. The
 goal of the flag is a volume / timing audit lens — counterparty addresses
 are NEVER revealed by the flag, only the existence and amount of the row.
+
+Under `PRIVACY_READ_PROFILE=strict` the flag has no effect: an org admin
+sees only transactions they participate in (see
+[Strict Read Profile](/docs/security/strict-read-profile)).
 
 | Row class | Strict (flag off) | `ORG_ADMIN_VIEW_USER_TXS` on (admin viewer) |
 |---|---|---|

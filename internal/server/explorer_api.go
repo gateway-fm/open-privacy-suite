@@ -338,7 +338,9 @@ func (s *Server) buildRedactOptsForViewer(ctx context.Context, viewerDID string)
 // pointer through opts; auditAdminUserTxView and auditGrantFullReveal
 // inspect their respective fields.
 func (s *Server) applyAdminTxView(opts *explorer.RedactOpts) {
-	opts.OrgAdminViewUserTxs = s.config.OrgAdminViewUserTxs
+	// Strict wins (RD-1299): the audit view never applies under the strict
+	// read profile, whatever ORG_ADMIN_VIEW_USER_TXS says.
+	opts.OrgAdminViewUserTxs = s.orgAdminViewUserTxsEffective()
 	if opts.Stats == nil {
 		opts.Stats = &explorer.RedactStats{}
 	}
@@ -401,8 +403,8 @@ func (s *Server) auditAdminUserTxView(c *gin.Context, viewerDID, endpoint, targe
 //
 // Resource type is the disclosure-grant (not explorer_user_txs) so audit
 // reviewers can pivot from a grant ID to every reveal it produced.
-// ResourceName is the endpoint label; ResourceID is the target tx hash
-// or address when single-item, empty for list surfaces.
+// ResourceName is the endpoint label. The target tx hash or address lives
+// in NewValue; ResourceID is a UUID column and cannot hold those values.
 //
 // Best-effort, matching the other audit-log call sites: a write failure
 // is logged loudly but does not fail the read.
@@ -422,9 +424,6 @@ func (s *Server) auditGrantFullReveal(c *gin.Context, viewerDID, endpoint, targe
 			"reveal_class":            "disclosure_grant_full_counterparty",
 		},
 		IPAddress: c.ClientIP(),
-	}
-	if target != "" {
-		entry.ResourceID = &target
 	}
 	if err := s.db.CreateAuditLog(c.Request.Context(), entry); err != nil {
 		slog.Error("failed to write grant-full-reveal audit log",
@@ -757,6 +756,15 @@ func (s *Server) buildVisibilityFilter(ctx context.Context, viewerDID string) *e
 	// non-Full grant cells.
 	visMapDetailed, _ := s.db.GetBatchVisibilityDetailed(ctx, viewerDID, allAddrs)
 
+	// RD-1299 strict read profile: rows survive only for the viewer's own
+	// linked addresses (a transaction participant) and approved disclosure
+	// grants — no contract/admin visibility, no visibleTo shares, no RD-1009
+	// transfer-participant union — so lists, counts and stats match the
+	// participant rule the redactor and the RPC apply.
+	if s.readProfile().Strict() {
+		return strictVisibilityFilter(filter, visMapDetailed)
+	}
+
 	visibleSet := make(map[string]bool, len(visMap))
 	// fullVisible holds ONLY the addresses the viewer sees at Full. It drives
 	// the transfer-participant union below (RD-1079); the pseudonymous/redacted
@@ -845,6 +853,19 @@ func (s *Server) buildVisibilityFilter(ctx context.Context, viewerDID string) *e
 		}
 	}
 
+	return filter
+}
+
+// strictVisibilityFilter completes the SQL allowlist for the strict read
+// profile: only the viewer's own linked addresses and addresses under an
+// approved disclosure grant. A failed visibility lookup (empty map) leaves the
+// allowlist empty, which hides everything (fail closed).
+func strictVisibilityFilter(filter *explorer.VisibilityFilter, detailed map[string]explorer.AddressVisibility) *explorer.VisibilityFilter {
+	for addr, meta := range detailed {
+		if meta.Reason == explorer.ReasonOwnAddress || meta.Reason == explorer.ReasonDisclosureGrant {
+			filter.VisibleAddresses = append(filter.VisibleAddresses, strings.ToLower(addr))
+		}
+	}
 	return filter
 }
 
@@ -2883,6 +2904,21 @@ func (s *Server) getExplorerSearchSuggestions(c *gin.Context) {
 		suggestions = []explorer.SearchSuggestion{}
 	}
 
+	// RD-1299 strict read profile: a transaction hash is suggested only to a
+	// viewer who may open it (the same redactor decision as GET
+	// /transactions/:hash), so the search box is not a tx-existence oracle.
+	if s.readProfile().Strict() && len(suggestions) > 0 {
+		viewerDID := s.getViewerDIDFromRequest(c)
+		kept := suggestions[:0]
+		for _, sug := range suggestions {
+			if sug.Type == "transaction" && !s.strictTxVisible(c.Request.Context(), viewerDID, sug.Value) {
+				continue
+			}
+			kept = append(kept, sug)
+		}
+		suggestions = kept
+	}
+
 	// Filter address-type suggestions based on visibility so private org contracts
 	// cannot be discovered via search autocomplete.
 	if len(suggestions) > 0 {
@@ -2923,6 +2959,20 @@ func (s *Server) getExplorerSearchSuggestions(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, suggestions)
+}
+
+// strictTxVisible reports whether the viewer may open the transaction under
+// the redactor's decision; any lookup failure is "no" (fail closed).
+func (s *Server) strictTxVisible(ctx context.Context, viewerDID, hash string) bool {
+	if viewerDID == "" || s.explorerRedactor == nil {
+		return false
+	}
+	tx, err := s.explorerStore.GetTransaction(ctx, hash)
+	if err != nil || tx == nil {
+		return false
+	}
+	out, err := s.explorerRedactor.RedactTransactions(ctx, []explorer.Transaction{*tx}, viewerDID, s.buildRedactOptsForViewer(ctx, viewerDID))
+	return err == nil && len(out) == 1
 }
 
 // --- Stats ---

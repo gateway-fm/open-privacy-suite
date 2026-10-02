@@ -54,6 +54,11 @@ const (
 	// ReasonInternalError: an internal failure (500) — generic by construction.
 	ReasonInternalError = "internal_error"
 
+	// ReasonNotParticipant: under the strict read profile (RD-1299) the caller
+	// is not a participant (tx from/to) of the transaction whose data was
+	// requested. Collapsed on the wire (not in the wireReason allowlist).
+	ReasonNotParticipant = "not_participant"
+
 	// ReasonWireGenericDenied is the single value oracle-sensitive (and any
 	// unrecognized) reason codes collapse to on the wire (RD-1137 Part A). It
 	// carries no tenant state — it only tells the caller "denied."

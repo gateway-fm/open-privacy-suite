@@ -517,6 +517,10 @@ Tier-2 org admins can ask the proxy "what would user X see if they made this RPC
 
 <ApiEndpoint method="POST" path="/api/orgs/:org_id/dry-run" description="Dry-run an RPC call as another user (admin diagnostic)" />
 
+<Callout variant="info" title="Strict read profile">
+  With `PRIVACY_READ_PROFILE=strict`, dry-run of a read method is refused with 403 (and audited) because it would show the member's own chain data to the admin; a dry-run of a send still returns the allow/deny verdict, without the simulated trace or its logs. See [Strict Read Profile](/docs/security/strict-read-profile).
+</Callout>
+
 ### Who can call it
 
 - **Tier-2 org admin** in `:org_id` — yes, via JWT.

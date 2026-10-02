@@ -47,6 +47,7 @@ func setupAdminAuthTestServer(t *testing.T, adminToken string) (*Server, *gin.En
 	require.NoError(t, err)
 
 	cfg := &config.Config{
+		ReadProfile: rbac.ReadProfileStandard,
 		AdminAPIToken: adminToken,
 	}
 

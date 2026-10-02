@@ -94,6 +94,7 @@ func newVTUFixture(t *testing.T) *vtuFixture {
 	wireExplorerRedactor(srv.explorerRedactor, database, srv.rbacAccessCtrl, noopLogParticipantStore{}, nil)
 
 	proc := NewJSONRPCProcessor(JSONRPCProcessorConfig{
+		ReadProfile:               rbac.ReadProfileStandard,
 		RBACAccessCtrl:            srv.rbacAccessCtrl,
 		RateLimiter:               &noopRateLimiter{},
 		AccessLogger:              database,

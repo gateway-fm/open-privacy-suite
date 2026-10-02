@@ -98,6 +98,7 @@ services:
       - DEMO_AUTO_AUTH_DELAY=${DEMO_AUTO_AUTH_DELAY:-}  # Auto-complete auth after N seconds for demos (empty = disabled)
       - ENABLE_TRAVEL_RULE=true  # Enable travel rule compliance enforcement (threshold-based transfer checks)
       - ORG_ADMIN_VIEW_USER_TXS=${ORG_ADMIN_VIEW_USER_TXS:-false}  # Org-admin audit view of user↔user txs (value preserved, addresses stay [PRIVATE], reveals audit-logged). Off = strict privacy.
+      - PRIVACY_READ_PROFILE=${PRIVACY_READ_PROFILE:-}  # Read privacy profile: standard | strict (participant-only txs/receipts, indexed-self events). Empty = CONFIG_FILE value, else standard. Unknown value refuses to start.
       - EXTRA_RPC_NAMESPACES_FILE=${EXTRA_RPC_NAMESPACES_FILE:-}  # Path to JSON file with chain-specific RPC methods
       - DISABLE_COINGECKO=${DISABLE_COINGECKO:-false}  # Set true to disable CoinGecko price fetching
       - EXPLORER_DATABASE_URL=${EXPLORER_DATABASE_URL:-postgres://postgres:postgres@explorer-postgres:5432/explorer?sslmode=disable}

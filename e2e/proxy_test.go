@@ -153,6 +153,7 @@ func setupE2EWithVerifier(t *testing.T, verifier server.PrivadoVerifier) (*serve
 	}
 
 	cfg := &config.Config{
+		ReadProfile: rbac.ReadProfileStandard,
 		NodeURL:     nodeURL,
 		DatabaseURL: dbURL,
 		// RD-1147: audit logs live in a separate DB via the real server.New path.

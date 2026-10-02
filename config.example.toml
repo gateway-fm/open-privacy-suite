@@ -99,6 +99,7 @@ RETENTION_ACCESS_LOGS = "2160h"                  # 90 days
 RETENTION_COMPLIANCE_LOGS = "61320h"             # ~7 years
 MAX_ACCESS_LOG_ROWS = 0                          # 0 = no FIFO cap
 ORG_ADMIN_VIEW_USER_TXS = false
+PRIVACY_READ_PROFILE = "standard"               # "standard" or "strict" (see docs: Configuration)
 
 # -----------------------------------------------------------------------------
 # Auto-KYC provisioning policy (RD-1131)

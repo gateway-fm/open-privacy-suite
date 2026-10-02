@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"privacy-proxy/internal/config"
+	"privacy-proxy/internal/rbac"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -42,7 +43,7 @@ func writeTunnelFile(t *testing.T, content string) string {
 // ---------------------------------------------------------------------------
 
 func TestLocalOrigin(t *testing.T) {
-	s := newTestServerWithConfig(&config.Config{})
+	s := newTestServerWithConfig(&config.Config{ReadProfile: rbac.ReadProfileStandard})
 
 	tests := []struct {
 		name   string
@@ -82,56 +83,56 @@ func TestPublicURL(t *testing.T) {
 	}{
 		{
 			name: "explicit BASE_URL not default",
-			cfg:  &config.Config{BaseURL: "https://proxy.example.com", Port: "8080"},
+			cfg:  &config.Config{ReadProfile: rbac.ReadProfileStandard, BaseURL: "https://proxy.example.com", Port: "8080"},
 			want: "https://proxy.example.com",
 		},
 		{
 			name:     "BASE_URL always respected even if localhost",
-			cfg:      &config.Config{BaseURL: "http://localhost:8080", Port: "8080", Environment: "development"},
+			cfg:      &config.Config{ReadProfile: rbac.ReadProfileStandard, BaseURL: "http://localhost:8080", Port: "8080", Environment: "development"},
 			fwdProto: "https",
 			fwdHost:  "tunnel.example.com",
 			want:     "http://localhost:8080",
 		},
 		{
 			name:     "empty BASE_URL falls through to X-Forwarded headers",
-			cfg:      &config.Config{BaseURL: "", Port: "8080"},
+			cfg:      &config.Config{ReadProfile: rbac.ReadProfileStandard, BaseURL: "", Port: "8080"},
 			fwdProto: "https",
 			fwdHost:  "proxy.example.com",
 			want:     "https://proxy.example.com",
 		},
 		{
 			name:    "empty BASE_URL + no headers + production uses https",
-			cfg:     &config.Config{BaseURL: "", Port: "8080", Environment: "production"},
+			cfg:     &config.Config{ReadProfile: rbac.ReadProfileStandard, BaseURL: "", Port: "8080", Environment: "production"},
 			reqHost: "proxy.example.com:8080",
 			want:    "https://proxy.example.com:8080",
 		},
 		{
 			name:    "empty BASE_URL + no headers + dev uses http",
-			cfg:     &config.Config{BaseURL: "", Port: "8080", Environment: "development"},
+			cfg:     &config.Config{ReadProfile: rbac.ReadProfileStandard, BaseURL: "", Port: "8080", Environment: "development"},
 			reqHost: "myhost:8080",
 			want:    "http://myhost:8080",
 		},
 		{
 			name:    "host with port swaps to backend port",
-			cfg:     &config.Config{BaseURL: "", Port: "9090", Environment: "development"},
+			cfg:     &config.Config{ReadProfile: rbac.ReadProfileStandard, BaseURL: "", Port: "9090", Environment: "development"},
 			reqHost: "myhost:5173",
 			want:    "http://myhost:9090",
 		},
 		{
 			name:    "host without port no port in result",
-			cfg:     &config.Config{BaseURL: "", Port: "8080", Environment: "development"},
+			cfg:     &config.Config{ReadProfile: rbac.ReadProfileStandard, BaseURL: "", Port: "8080", Environment: "development"},
 			reqHost: "tunnel.example.com",
 			want:    "http://tunnel.example.com",
 		},
 		{
 			name:    "IPv6 host with port",
-			cfg:     &config.Config{BaseURL: "", Port: "8080", Environment: "development"},
+			cfg:     &config.Config{ReadProfile: rbac.ReadProfileStandard, BaseURL: "", Port: "8080", Environment: "development"},
 			reqHost: "[::1]:8080",
 			want:    "http://[::1]:8080",
 		},
 		{
 			name:    "IPv6 host without port",
-			cfg:     &config.Config{BaseURL: "", Port: "8080", Environment: "development"},
+			cfg:     &config.Config{ReadProfile: rbac.ReadProfileStandard, BaseURL: "", Port: "8080", Environment: "development"},
 			reqHost: "[::1]",
 			want:    "http://[::1]",
 		},
@@ -163,6 +164,7 @@ func TestPublicURL(t *testing.T) {
 
 func TestPublicURL_NoHostFallsBackToBaseURL(t *testing.T) {
 	s := newTestServerWithConfig(&config.Config{
+		ReadProfile: rbac.ReadProfileStandard,
 		BaseURL:     "http://localhost:8080",
 		Port:        "8080",
 		Environment: "development",
@@ -197,19 +199,19 @@ func TestCallbackURL(t *testing.T) {
 		// --- Local origin cases ---
 		{
 			name:           "local origin + tunnel configured returns tunnel URL",
-			cfg:            &config.Config{TunnelURLFile: tunnelFile, Port: "8080"},
+			cfg:            &config.Config{ReadProfile: rbac.ReadProfileStandard, TunnelURLFile: tunnelFile, Port: "8080"},
 			callbackOrigin: "http://localhost:5173",
 			want:           "https://abc123.trycloudflare.com",
 		},
 		{
 			name:           "local origin + no tunnel + explicit BASE_URL returns BASE_URL",
-			cfg:            &config.Config{BaseURL: "https://ngrok.example.com", Port: "8080"},
+			cfg:            &config.Config{ReadProfile: rbac.ReadProfileStandard, BaseURL: "https://ngrok.example.com", Port: "8080"},
 			callbackOrigin: "http://localhost:5173",
 			want:           "https://ngrok.example.com",
 		},
 		{
 			name:           "local origin + no tunnel + BASE_URL set returns BASE_URL",
-			cfg:            &config.Config{BaseURL: "http://localhost:8080", Port: "8080", Environment: "development"},
+			cfg:            &config.Config{ReadProfile: rbac.ReadProfileStandard, BaseURL: "http://localhost:8080", Port: "8080", Environment: "development"},
 			callbackOrigin: "http://localhost:5173",
 			fwdProto:       "https",
 			fwdHost:        "detected.example.com",
@@ -219,13 +221,13 @@ func TestCallbackURL(t *testing.T) {
 		// --- Non-local origin cases ---
 		{
 			name:           "non-local origin with port swaps to backend port",
-			cfg:            &config.Config{Port: "8080"},
+			cfg:            &config.Config{ReadProfile: rbac.ReadProfileStandard, Port: "8080"},
 			callbackOrigin: "http://192.168.1.100:5173",
 			want:           "http://192.168.1.100:8080",
 		},
 		{
 			name:           "non-local origin without port returns as-is",
-			cfg:            &config.Config{Port: "8080"},
+			cfg:            &config.Config{ReadProfile: rbac.ReadProfileStandard, Port: "8080"},
 			callbackOrigin: "https://tunnel.example.com",
 			want:           "https://tunnel.example.com",
 		},
@@ -233,7 +235,7 @@ func TestCallbackURL(t *testing.T) {
 		// --- Empty origin ---
 		{
 			name:           "empty origin falls through to getPublicURL",
-			cfg:            &config.Config{BaseURL: "https://proxy.example.com", Port: "8080"},
+			cfg:            &config.Config{ReadProfile: rbac.ReadProfileStandard, BaseURL: "https://proxy.example.com", Port: "8080"},
 			callbackOrigin: "",
 			want:           "https://proxy.example.com",
 		},
@@ -241,7 +243,7 @@ func TestCallbackURL(t *testing.T) {
 		// --- Phone-on-same-WiFi scenario ---
 		{
 			name:           "phone on same WiFi uses origin with port swap",
-			cfg:            &config.Config{Port: "8080", BaseURL: "http://localhost:8080", Environment: "development"},
+			cfg:            &config.Config{ReadProfile: rbac.ReadProfileStandard, Port: "8080", BaseURL: "http://localhost:8080", Environment: "development"},
 			callbackOrigin: "http://192.168.1.100:5173",
 			want:           "http://192.168.1.100:8080",
 		},
@@ -249,7 +251,7 @@ func TestCallbackURL(t *testing.T) {
 		// --- Phone on mobile data, tunnel configured ---
 		{
 			name:           "phone on mobile data with tunnel URL as origin returns tunnel URL as-is",
-			cfg:            &config.Config{TunnelURLFile: tunnelFile, Port: "8080"},
+			cfg:            &config.Config{ReadProfile: rbac.ReadProfileStandard, TunnelURLFile: tunnelFile, Port: "8080"},
 			callbackOrigin: "https://abc123.trycloudflare.com",
 			want:           "https://abc123.trycloudflare.com",
 		},
@@ -257,7 +259,7 @@ func TestCallbackURL(t *testing.T) {
 		// --- Phone on mobile data, no tunnel, public BASE_URL ---
 		{
 			name:           "phone on mobile data no tunnel public BASE_URL uses origin",
-			cfg:            &config.Config{BaseURL: "https://proxy.public.com", Port: "8080"},
+			cfg:            &config.Config{ReadProfile: rbac.ReadProfileStandard, BaseURL: "https://proxy.public.com", Port: "8080"},
 			callbackOrigin: "https://proxy.public.com",
 			want:           "https://proxy.public.com",
 		},
@@ -265,7 +267,7 @@ func TestCallbackURL(t *testing.T) {
 		// --- Port fallback when config.Port is empty ---
 		{
 			name:           "empty config port defaults to 8080 on port swap",
-			cfg:            &config.Config{Port: ""},
+			cfg:            &config.Config{ReadProfile: rbac.ReadProfileStandard, Port: ""},
 			callbackOrigin: "http://192.168.1.100:5173",
 			want:           "http://192.168.1.100:8080",
 		},
@@ -300,6 +302,7 @@ func TestCallbackURL(t *testing.T) {
 func TestCallbackURL_TunnelFileEdgeCases(t *testing.T) {
 	t.Run("tunnel file does not exist", func(t *testing.T) {
 		s := newTestServerWithConfig(&config.Config{
+			ReadProfile: rbac.ReadProfileStandard,
 			TunnelURLFile: "/nonexistent/path/tunnel-url",
 			BaseURL:       "https://fallback.example.com",
 			Port:          "8080",
@@ -313,6 +316,7 @@ func TestCallbackURL_TunnelFileEdgeCases(t *testing.T) {
 	t.Run("tunnel file is empty", func(t *testing.T) {
 		path := writeTunnelFile(t, "")
 		s := newTestServerWithConfig(&config.Config{
+			ReadProfile: rbac.ReadProfileStandard,
 			TunnelURLFile: path,
 			BaseURL:       "https://fallback.example.com",
 			Port:          "8080",
@@ -326,6 +330,7 @@ func TestCallbackURL_TunnelFileEdgeCases(t *testing.T) {
 	t.Run("tunnel file contains http not https is rejected", func(t *testing.T) {
 		path := writeTunnelFile(t, "http://insecure-tunnel.example.com")
 		s := newTestServerWithConfig(&config.Config{
+			ReadProfile: rbac.ReadProfileStandard,
 			TunnelURLFile: path,
 			BaseURL:       "https://fallback.example.com",
 			Port:          "8080",
@@ -339,6 +344,7 @@ func TestCallbackURL_TunnelFileEdgeCases(t *testing.T) {
 	t.Run("tunnel file whitespace is trimmed", func(t *testing.T) {
 		path := writeTunnelFile(t, "  https://trimmed.trycloudflare.com  \n")
 		s := newTestServerWithConfig(&config.Config{
+			ReadProfile: rbac.ReadProfileStandard,
 			TunnelURLFile: path,
 			Port:          "8080",
 		})
@@ -356,6 +362,7 @@ func TestCallbackURL_TunnelFileEdgeCases(t *testing.T) {
 func TestCallbackURL_BaseURLAlwaysRespected(t *testing.T) {
 	// BASE_URL is always used when set, even if it matches what would be the default.
 	s := newTestServerWithConfig(&config.Config{
+		ReadProfile: rbac.ReadProfileStandard,
 		BaseURL:     "http://localhost:8080",
 		Port:        "8080",
 		Environment: "development",

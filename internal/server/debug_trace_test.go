@@ -29,6 +29,7 @@ func setupProcessorWithoutTracing(t *testing.T) (*JSONRPCProcessor, *testServerR
 	ts := setupTestServerForRBAC(t)
 
 	proc := NewJSONRPCProcessor(JSONRPCProcessorConfig{
+		ReadProfile:        rbac.ReadProfileStandard,
 		RBACAccessCtrl:     ts.rbacAccessCtrl,
 		RateLimiter:        &noopRateLimiter{},
 		Proxy:              nil, // no proxy needed for negative path tests
@@ -55,6 +56,7 @@ func setupProcessorWithTracing(t *testing.T) (*JSONRPCProcessor, *testServerRBAC
 	tv := rbac.NewTraceValidator(ts.db)
 
 	proc := NewJSONRPCProcessor(JSONRPCProcessorConfig{
+		ReadProfile:        rbac.ReadProfileStandard,
 		RBACAccessCtrl:     ts.rbacAccessCtrl,
 		RateLimiter:        &noopRateLimiter{},
 		Proxy:              nil, // no proxy needed

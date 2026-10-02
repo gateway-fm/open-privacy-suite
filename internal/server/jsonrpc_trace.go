@@ -656,6 +656,9 @@ func (p *JSONRPCProcessor) processDebugTrace(ctx context.Context, req *ProcessRe
 	// debug_traceTransaction, which replays a historical mined tx the caller
 	// did not necessarily originate — see the RD-1053 scoping note below.
 	var debugCallTarget string
+	// forwardBody replaces the caller's body upstream when non-nil (the strict
+	// profile's top-frame call-tracer request, RD-1299).
+	var forwardBody []byte
 
 	if req.Method == "debug_traceTransaction" {
 		if len(req.Params) == 0 {
@@ -665,6 +668,13 @@ func (p *JSONRPCProcessor) processDebugTrace(ctx context.Context, req *ProcessRe
 		if !ok {
 			return &ProcessResult{Error: &ProcessError{StatusCode: http.StatusBadRequest, Message: "invalid transaction hash"}}
 		}
+		strictBody, configOK := p.strictTraceForwardBody(req)
+		if !configOK {
+			req.denialReason = ReasonInvalidRequestShape
+			p.logAccess(ctx, req, http.StatusBadRequest)
+			return &ProcessResult{Error: &ProcessError{StatusCode: http.StatusBadRequest, Message: strictTraceUnsupportedConfig}}
+		}
+		forwardBody = strictBody
 		traceResult, traceErr = p.runtimeTracer.TraceMinedTransaction(ctx, txHash)
 	} else if req.Method == "debug_traceCall" {
 		from, to, data, value := extractTxParams(req.Params)
@@ -672,16 +682,38 @@ func (p *JSONRPCProcessor) processDebugTrace(ctx context.Context, req *ProcessRe
 		traceResult, traceErr = p.runtimeTracer.TraceTransaction(ctx, from, to, data, value)
 	}
 
+	// RD-1299: under strict, a mined-transaction trace that fails or returns
+	// nothing (e.g. an unknown hash) answers exactly like a non-participant's
+	// request below, so the response does not tell an existing transaction from
+	// a missing one.
+	strictMined := req.Method == "debug_traceTransaction" && p.readProfile.Strict()
 	if traceErr != nil {
-		p.logAccess(ctx, req, http.StatusForbidden)
 		// RD-1178: opaque to the client — never echo the raw upstream node
 		// error (matches the eth_call/send opaque-constant convention, KD-3).
 		slog.Warn("jsonrpc: trace execution failed", "method", req.Method, "err", traceErr)
+		if strictMined {
+			p.logAccess(ctx, req, http.StatusForbidden, http.StatusNotFound)
+			return &ProcessResult{Error: &ProcessError{StatusCode: http.StatusNotFound, Message: "transaction not found"}}
+		}
+		p.logAccess(ctx, req, http.StatusForbidden)
 		return &ProcessResult{Error: &ProcessError{StatusCode: http.StatusForbidden, Message: "trace execution failed"}}
 	}
 	if traceResult == nil {
+		if strictMined {
+			p.logAccess(ctx, req, http.StatusForbidden, http.StatusNotFound)
+			return &ProcessResult{Error: &ProcessError{StatusCode: http.StatusNotFound, Message: "transaction not found"}}
+		}
 		p.logAccess(ctx, req, http.StatusForbidden)
 		return &ProcessResult{Error: &ProcessError{StatusCode: http.StatusForbidden, Message: "trace returned no result"}}
+	}
+
+	// RD-1299: under the strict read profile a mined transaction's trace is
+	// returned only to a participant of that transaction (opaque 404, the same
+	// answer as for a trace that fails above).
+	if req.Method == "debug_traceTransaction" && !p.strictTraceAllowed(ctx, req.UserID, traceResult) {
+		req.denialReason = ReasonNotParticipant
+		p.logAccess(ctx, req, http.StatusForbidden, http.StatusNotFound)
+		return &ProcessResult{Error: &ProcessError{StatusCode: http.StatusNotFound, Message: "transaction not found"}}
 	}
 
 	// RD-1053: extend intra-org grant scoping to debug_traceCall — it runs
@@ -737,7 +769,11 @@ func (p *JSONRPCProcessor) processDebugTrace(ctx context.Context, req *ProcessRe
 		return &ProcessResult{Error: &ProcessError{StatusCode: http.StatusTooManyRequests, Message: "upstream rate limited, retry in 1s"}}
 	}
 	forwardStart := time.Now()
-	responseBody, statusCode, err := p.proxy.ForwardWithAPIKeyHeader(req.Body, traceAPIKeyHeader, traceAPIKey, req.ClientIP)
+	upstreamBody := req.Body
+	if forwardBody != nil {
+		upstreamBody = forwardBody
+	}
+	responseBody, statusCode, err := p.proxy.ForwardWithAPIKeyHeader(upstreamBody, traceAPIKeyHeader, traceAPIKey, req.ClientIP)
 	if p.metrics != nil {
 		p.metrics.RPCNodeForwardDuration.WithLabelValues(metrics.NormalizeRPCMethod(req.Method)).Observe(time.Since(forwardStart).Seconds())
 	}

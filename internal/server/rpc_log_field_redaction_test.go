@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"privacy-proxy/internal/explorer"
+	"privacy-proxy/internal/rbac"
 )
 
 // mockAddrVisResolver implements addressVisibilityResolver for unit tests. Any
@@ -65,7 +66,7 @@ func TestRPCFieldRedaction_DataFieldNonIndexedAddress(t *testing.T) {
 	amountSlot := fmt.Sprintf("%064x", 1000)
 	data := "0x" + recipientSlot + amountSlot
 
-	p := &JSONRPCProcessor{addrVisResolver: &mockAddrVisResolver{vis: map[string]explorer.VisibilityLevel{
+	p := &JSONRPCProcessor{readProfile: rbac.ReadProfileStandard, addrVisResolver: &mockAddrVisResolver{vis: map[string]explorer.VisibilityLevel{
 		strings.ToLower(payer): explorer.VisibilityFull,
 	}}}
 	abiProv := mapABIProvider{strings.ToLower(emitter): paymentABI}
@@ -131,7 +132,7 @@ func TestRPCFieldRedaction_ZeroesNonVisibleEmbeddedAddress(t *testing.T) {
 	eventSig := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
 	thirdParty := "0x9999999999999999999999999999999999999999"
 
-	p := &JSONRPCProcessor{addrVisResolver: &mockAddrVisResolver{vis: map[string]explorer.VisibilityLevel{}}}
+	p := &JSONRPCProcessor{readProfile: rbac.ReadProfileStandard, addrVisResolver: &mockAddrVisResolver{vis: map[string]explorer.VisibilityLevel{}}}
 	logs := []json.RawMessage{rawLogJSON(t, "0x1111111111111111111111111111111111111111",
 		[]string{eventSig, topicOf(thirdParty)}, "0x")}
 
@@ -162,7 +163,7 @@ func TestRPCFieldRedaction_KeepsVisibleEmbeddedAddress(t *testing.T) {
 	ownAddr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	thirdParty := "0x9999999999999999999999999999999999999999"
 
-	p := &JSONRPCProcessor{addrVisResolver: &mockAddrVisResolver{vis: map[string]explorer.VisibilityLevel{
+	p := &JSONRPCProcessor{readProfile: rbac.ReadProfileStandard, addrVisResolver: &mockAddrVisResolver{vis: map[string]explorer.VisibilityLevel{
 		strings.ToLower(ownAddr): explorer.VisibilityFull,
 	}}}
 	logs := []json.RawMessage{rawLogJSON(t, "0x1111111111111111111111111111111111111111",
@@ -184,7 +185,7 @@ func TestRPCFieldRedaction_FailClosedOnResolverError(t *testing.T) {
 	eventSig := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
 	ownAddr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
-	p := &JSONRPCProcessor{addrVisResolver: &mockAddrVisResolver{
+	p := &JSONRPCProcessor{readProfile: rbac.ReadProfileStandard, addrVisResolver: &mockAddrVisResolver{
 		vis: map[string]explorer.VisibilityLevel{strings.ToLower(ownAddr): explorer.VisibilityFull},
 		err: context.DeadlineExceeded, // resolver fails
 	}}
@@ -204,7 +205,7 @@ func TestRPCFieldRedaction_NilResolverNoOp(t *testing.T) {
 	eventSig := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
 	thirdParty := "0x9999999999999999999999999999999999999999"
 
-	p := &JSONRPCProcessor{} // addrVisResolver nil
+	p := &JSONRPCProcessor{readProfile: rbac.ReadProfileStandard} // addrVisResolver nil
 	logs := []json.RawMessage{rawLogJSON(t, "0x1111111111111111111111111111111111111111",
 		[]string{eventSig, topicOf(thirdParty)}, "0x")}
 

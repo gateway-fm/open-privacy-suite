@@ -141,6 +141,7 @@ type logEntry struct {
 // log's payload policy (RD-1300): the raw logs here still carry every
 // embedded address.
 func FilterEventLogs(
+	profile ReadProfile,
 	logs []json.RawMessage,
 	perms *EffectivePermissions,
 	userAddresses []string,
@@ -151,7 +152,7 @@ func FilterEventLogs(
 	if len(logs) == 0 {
 		return logs
 	}
-	admitted := FilterEventLogsDetailed(logs, perms, userAddresses, abiProvider, visCtx, isAdminByContract)
+	admitted := FilterEventLogsDetailed(profile, logs, perms, userAddresses, abiProvider, visCtx, isAdminByContract)
 	out := make([]json.RawMessage, len(admitted))
 	for i, a := range admitted {
 		out[i] = a.Raw
@@ -170,8 +171,11 @@ type AdmittedLog struct {
 
 // FilterEventLogsDetailed is FilterEventLogs returning, for every admitted log,
 // the payload policy decided by DecideLogEmitter for that exact log: its own
-// emitting contract and its own transaction hash. Order is preserved.
+// emitting contract and its own transaction hash. Order is preserved. The read
+// profile is a required argument (RD-1299); under strict each log's
+// IndexedSelf fact is resolved from the emitter's ABI.
 func FilterEventLogsDetailed(
+	profile ReadProfile,
 	logs []json.RawMessage,
 	perms *EffectivePermissions,
 	userAddresses []string,
@@ -188,6 +192,12 @@ func FilterEventLogsDetailed(
 	addrSet := make(map[string]bool, len(userAddresses))
 	for _, a := range userAddresses {
 		addrSet[strings.ToLower(a)] = true
+	}
+
+	strict := profile.Strict()
+	var selfMatcher *IndexedSelfMatcher
+	if strict {
+		selfMatcher = NewIndexedSelfMatcher()
 	}
 
 	filtered := make([]AdmittedLog, 0, len(logs))
@@ -245,6 +255,13 @@ func FilterEventLogsDetailed(
 			facts.DynamicPayloadDropped = !allowDynamic && eventHasDynamicNonIndexedParam(contractABI, entry.Topics[0])
 		}
 
+		// Strict read profile (RD-1299): the log must name one of the viewer's
+		// linked addresses in an ABI-indexed address parameter. Without a
+		// resolvable ABI (including a nil provider) it never does.
+		if strict {
+			facts.IndexedSelf = selfMatcher.Match(contractABI, entry.Topics, entry.Data, addrSet)
+		}
+
 		// event_rules resolution — only needed when a grant exists (the engine
 		// drops no-grant emitters before consulting rules).
 		if access != nil {
@@ -266,7 +283,7 @@ func FilterEventLogsDetailed(
 			}
 		}
 
-		if d := DecideLogEmitter(facts); d.Admit {
+		if d := DecideLogEmitter(profile, facts); d.Admit {
 			filtered = append(filtered, AdmittedLog{Raw: rawLog, Payload: d.Payload})
 		}
 	}

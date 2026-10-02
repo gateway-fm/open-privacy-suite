@@ -104,6 +104,7 @@ func setupProcessorWithMockTracer(t *testing.T, scripted *scriptedTracerServer) 
 	tv := rbac.NewTraceValidator(ts.db)
 
 	proc := NewJSONRPCProcessor(JSONRPCProcessorConfig{
+		ReadProfile:        rbac.ReadProfileStandard,
 		RBACAccessCtrl:     ts.rbacAccessCtrl,
 		RateLimiter:        &noopRateLimiter{},
 		AccessLogger:       ts.db,

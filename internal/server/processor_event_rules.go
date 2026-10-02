@@ -441,6 +441,23 @@ func extractContractAddressesFromResponse(responseBody []byte) []string {
 		}
 	}
 
+	// Try as an array of receipts (eth_getBlockReceipts): each receipt's `to`
+	// and its logs' emitting contracts.
+	var receipts []struct {
+		To   string `json:"to"`
+		Logs []struct {
+			Address string `json:"address"`
+		} `json:"logs"`
+	}
+	if err := json.Unmarshal(resp.Result, &receipts); err == nil {
+		for _, r := range receipts {
+			add(r.To)
+			for _, l := range r.Logs {
+				add(l.Address)
+			}
+		}
+	}
+
 	// Try as a single transaction object (has "to", no "logs").
 	var tx struct {
 		To string `json:"to"`

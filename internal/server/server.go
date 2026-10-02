@@ -12,6 +12,11 @@ import (
 	"net/url"
 	"slices"
 
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
 	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/audit"
 	"privacy-proxy/internal/audit/buffer"
@@ -33,10 +38,6 @@ import (
 	privacyredis "privacy-proxy/internal/redis"
 	"privacy-proxy/internal/server/middleware"
 	"privacy-proxy/internal/tracer"
-	"strconv"
-	"strings"
-	"sync"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/iden3/iden3comm/v2/protocol"
@@ -288,12 +289,9 @@ func (s *Server) explorerReconnectLoop(dbURL string, rbacDB *db.DB, indexerURL s
 		}
 		s.explorerMu.Lock()
 		s.explorerStore = backend
-		s.explorerRedactor = explorer.NewRedactionEngine(backend, rbacDB)
-		// Wire ABI / admin / event-rule / log-participant resolvers so the
-		// explorer redactor mirrors RPC-layer decisions (RD-875 / RD-889 /
-		// RD-890 / RD-939 / event-rule wiring fix). One call site, one
-		// helper — see wireExplorerRedactor for why this is consolidated.
-		wireExplorerRedactor(s.explorerRedactor, rbacDB, s.rbacAccessCtrl, backend, s.config.ExplorerPseudonymKey)
+		// Same construction path as startup (newExplorerRedactor): the
+		// configured read profile and every resolver wired.
+		s.explorerRedactor = s.newExplorerRedactor(backend, rbacDB)
 		s.explorerMu.Unlock()
 		slog.Info("explorer backend connected — explorer endpoints now available")
 		return
@@ -683,7 +681,6 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		azureStateStore:    azureStateStore,
 		metrics:            m,
 		explorerStore:      explorerBackend,
-		explorerRedactor:   explorer.NewRedactionEngine(explorerBackend, database),
 		redisCloser:        redisCloser,
 	}
 	// RD-889: wire the unified ABI resolver so the explorer redactor
@@ -699,7 +696,11 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	// Approval, ApprovalForAll, TransferSingle/Batch, Deposit,
 	// Withdrawal). Closes the over-redaction bug where custom-selector
 	// mints to the viewer left them unable to see their own tx.
-	wireExplorerRedactor(s.explorerRedactor, database, s.rbacAccessCtrl, explorerBackend, cfg.ExplorerPseudonymKey)
+	s.explorerRedactor = s.newExplorerRedactor(explorerBackend, database)
+
+	// RD-1299: record the enforced read privacy profile (and warn when strict
+	// overrides ORG_ADMIN_VIEW_USER_TXS) so the effective policy is in the log.
+	s.logReadProfile()
 
 	// Start background explorer DB reconnection if initial connection failed
 	if cfg.ExplorerDatabaseURL != "" && explorerSQL == nil {
@@ -954,6 +955,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 			Timeout: cfg.EthCallTraceTimeout,
 		},
 		IntraOrgGrantTracingEnabled: cfg.RuntimeTracingIntraOrgGrantsEnabled,
+		ReadProfile:                 cfg.ReadProfile,
 	})
 
 	// RD-858: scheduled audit hash-chain integrity verifier. Default
@@ -1258,6 +1260,10 @@ func (s *Server) setupRouter() *gin.Engine {
 			// RD-1023: build identity of the running binary. Read-only,
 			// admin-gated; intentionally not on /health or web3_clientVersion.
 			system.GET("/version", s.handleGetVersion)
+
+			// RD-1299: effective read privacy profile (PRIVACY_READ_PROFILE)
+			// and the effective org-admin audit view. Read-only, any admin.
+			system.GET("/read-profile", s.handleGetReadProfile)
 		}
 	}
 
