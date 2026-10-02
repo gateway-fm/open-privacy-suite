@@ -514,3 +514,62 @@ func TestSnapshotMethodRegistriesForTest(t *testing.T) {
 		RegisterExtraNamespaces(map[string][]string{"Again": {"again_m"}}, nil, nil)
 	}, "restore must disarm (this test started un-armed)")
 }
+
+// TestIsStandardMethod pins the set config loading refuses as chain-specific
+// methods / alias keys (config.parseExplicitMethods): remapping a standard
+// method would strip the checks and response filters keyed on its name.
+func TestIsStandardMethod(t *testing.T) {
+	for m, want := range map[string]bool{
+		"eth_getStorageAt":                true,
+		"ETH_SENDTRANSACTION":             true,
+		" eth_call ":                      true,
+		"eth_getProof":                    true, // canonicalized extra standard method
+		"eth_createAccessList":            true,
+		"eth_getBlockReceipts":            true, // response-filtered by name
+		"eth_getUncleByBlockHashAndIndex": true,
+		"debug_traceCall":                 true,
+		"linea_getProof":                  false,
+		"trace_block":                     false,
+		"":                                false,
+	} {
+		if got := IsStandardMethod(m); got != want {
+			t.Errorf("IsStandardMethod(%q) = %v, want %v", m, got, want)
+		}
+	}
+}
+
+// TestIsStandardMethod_CoversClassifiedMethods pins that every classified
+// method is reserved; in practice it catches a non-lowercase key in
+// ReadOpsMap / WriteOpsMap, which the lowercased lookup would miss.
+func TestIsStandardMethod_CoversClassifiedMethods(t *testing.T) {
+	for _, set := range []map[string]bool{ReadOpsMap, WriteOpsMap, ReadMethods, WriteMethods, TraceMethods} {
+		for m := range set {
+			if !IsStandardMethod(m) {
+				t.Errorf("%q is classified by the proxy but not refused as an alias key", m)
+			}
+		}
+	}
+}
+
+// TestIsStandardMethod_CoversNameKeyedMethods pins the methods that gates or
+// response filters currently key on by name (mostly through the alias
+// target), so a reserved method cannot drop out of the reserved set
+// unnoticed. Add any new name-keyed method here.
+func TestIsStandardMethod_CoversNameKeyedMethods(t *testing.T) {
+	for _, m := range []string{
+		MethodGetTransactionByHash, MethodGetTransactionReceipt,
+		MethodGetTransactionByBlockHashAndIndex, MethodGetTransactionByBlockNumberAndIndex,
+		MethodGetBlockByHash, MethodGetBlockByNumber, MethodGetBlockReceipts,
+		MethodGetLogs,
+		MethodNewFilter, MethodNewBlockFilter, MethodNewPendingTransactionFilter,
+		MethodGetFilterLogs, MethodGetFilterChanges, MethodUninstallFilter,
+		MethodGetStorageAt, MethodGetCode, MethodGetBalance, MethodGetTransactionCount, MethodGetProof,
+		MethodCall, MethodEstimateGas, MethodSendTransaction, MethodSendRawTransaction,
+		"eth_getBlockTransactionCountByHash", "eth_getBlockTransactionCountByNumber",
+		"eth_createAccessList", "debug_traceCall", "debug_traceTransaction",
+	} {
+		if !IsStandardMethod(m) {
+			t.Errorf("%q is checked or filtered by name but not reserved from alias keys", m)
+		}
+	}
+}
