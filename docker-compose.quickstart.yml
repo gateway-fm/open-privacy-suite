@@ -63,7 +63,7 @@ services:
   chain-indexer:
     # Published image — see docker-compose.privacy.dev.yml for why ≥ 0.2.0
     # is required and how to swap in your own build via INDEXER_VERSION.
-    image: gatewayfm/chain-indexer:${INDEXER_VERSION:-0.3.0}
+    image: gatewayfm/chain-indexer:${INDEXER_VERSION:-0.4.0}
     profiles: ["explorer"]
     environment:
       - RPC_URL=http://anvil:8545
