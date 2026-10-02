@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -1147,5 +1148,26 @@ func TestExtraRPCNamespaces_RejectsStandardMethodAsExtraMethod(t *testing.T) {
 	var ok ExtraRPCNamespaces
 	if err := ok.UnmarshalJSON([]byte(`{"version": 1, "namespaces": {"Linea": [{"method": "linea_getProof", "alias": "eth_getProof"}]}}`)); err != nil {
 		t.Fatalf("a chain-specific method must still load: %v", err)
+	}
+}
+
+func TestExtraRPCNamespaces_ValidatesAliasTargets(t *testing.T) {
+	for _, target := range []string{" ", "linea_unknown", "eth_getProoof"} {
+		var cfg ExtraRPCNamespaces
+		input := `{"version": 1, "namespaces": {"Linea": [{"method": "linea_getProof", "alias": ` + strconv.Quote(target) + `}]}}`
+		if err := cfg.UnmarshalJSON([]byte(input)); err == nil {
+			t.Errorf("alias target %q must be rejected", target)
+		}
+	}
+
+	var cfg ExtraRPCNamespaces
+	if err := cfg.UnmarshalJSON([]byte(`{"version": 1, "namespaces": {"Linea": [{"method": "linea_getProof", "alias": " ETH_GETPROOF "}, {"method": "linea_getBlockReceipts", "alias": " ETH_GETBLOCKRECEIPTS "}]}}`)); err != nil {
+		t.Fatalf("a padded standard alias target must be accepted: %v", err)
+	}
+	if got := cfg.Aliases()["linea_getProof"]; got != "eth_getProof" {
+		t.Errorf("alias target = %q, want canonical eth_getProof", got)
+	}
+	if got := cfg.Aliases()["linea_getBlockReceipts"]; got != "eth_getBlockReceipts" {
+		t.Errorf("alias target = %q, want canonical eth_getBlockReceipts", got)
 	}
 }

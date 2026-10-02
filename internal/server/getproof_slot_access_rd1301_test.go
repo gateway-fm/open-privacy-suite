@@ -23,12 +23,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// RD-1301 — eth_getProof must not bypass the non-admin storage-slot policy
-// that eth_getStorageAt enforces (RD-805). An EIP-1186 proof carries
-// storageProof[].value for every requested key, so an unchecked key list is a
-// raw storage read. These tests drive the full JSONRPCProcessor.Process path
-// (alias resolution, CheckAccess, forwarding) against a counting upstream so a
-// denial is proven to never reach the node.
+// RD-1301 — eth_getProof follows the non-admin storage-slot policy used by
+// eth_getStorageAt (RD-805). These tests drive the full JSONRPCProcessor.Process
+// path (alias resolution, CheckAccess, forwarding) against a counting upstream
+// so denied requests are confirmed before forwarding.
 
 // The four well-known infrastructure slots a non-admin may read.
 const (
@@ -41,13 +39,41 @@ const (
 	rd1301HistoricalBN = "0x10"
 )
 
-// rd1301UpstreamBody is the canned EIP-1186 proof every upstream request gets.
-var rd1301UpstreamBody = `{"jsonrpc":"2.0","id":1,"result":{"address":"0xc1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1","balance":"0x0","nonce":"0x1","codeHash":"0x` +
-	strings.Repeat("ab", 32) + `","storageHash":"0x` + strings.Repeat("cd", 32) +
-	`","accountProof":[],"storageProof":[{"key":"0x1","value":"0x2a","proof":[]}]}}`
+// rd1301ProofResponse models a compliant node: storageProof contains exactly
+// the requested keys. An account-only proof has no storageProof entries.
+func rd1301ProofResponse(body []byte) []byte {
+	var req struct {
+		Method string            `json:"method"`
+		Params []json.RawMessage `json:"params"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		return nil
+	}
+	if req.Method == "eth_getStorageAt" || req.Method == "linea_getStorageAt" {
+		return []byte(`{"jsonrpc":"2.0","id":1,"result":"0x2a"}`)
+	}
+	var address string
+	var keys []string
+	if len(req.Params) < 2 || json.Unmarshal(req.Params[0], &address) != nil || json.Unmarshal(req.Params[1], &keys) != nil {
+		return nil
+	}
+	proofs := make([]map[string]any, 0, len(keys))
+	for _, key := range keys {
+		proofs = append(proofs, map[string]any{"key": key, "value": "0x2a", "proof": []string{}})
+	}
+	response, _ := json.Marshal(map[string]any{
+		"jsonrpc": "2.0", "id": 1,
+		"result": map[string]any{
+			"address": address, "balance": "0x0", "nonce": "0x1",
+			"codeHash":     "0x" + strings.Repeat("ab", 32),
+			"storageHash":  "0x" + strings.Repeat("cd", 32),
+			"accountProof": []string{}, "storageProof": proofs,
+		},
+	})
+	return response
+}
 
-// countingUpstream answers every JSON-RPC request with a canned EIP-1186
-// proof, counts how many requests reached it and keeps the last body.
+// countingUpstream counts requests and returns proofs for the requested keys.
 type countingUpstream struct {
 	srv   *httptest.Server
 	count atomic.Int32
@@ -65,7 +91,7 @@ func newCountingUpstream(t *testing.T) *countingUpstream {
 		u.mu.Unlock()
 		u.count.Add(1)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(rd1301UpstreamBody))
+		_, _ = w.Write(rd1301ProofResponse(body))
 	}))
 	t.Cleanup(u.srv.Close)
 	return u
@@ -258,7 +284,22 @@ func runRD1301Cases(t *testing.T, f *rd1301Fixture, cases []rd1301Case) {
 				require.Nil(t, res.Error, "expected the request to be allowed")
 				assert.Equal(t, int32(1), reached, "an allowed request is forwarded exactly once")
 				assert.Equal(t, body, f.upstream.lastBody(), "the node receives the validated body verbatim")
-				assert.JSONEq(t, rd1301UpstreamBody, string(res.ResponseBody), "an allowed proof is returned unmodified")
+				assert.JSONEq(t, string(rd1301ProofResponse(body)), string(res.ResponseBody), "an allowed proof is returned unmodified")
+				if tc.method == "eth_getProof" || tc.method == "linea_getProof" {
+					var proof struct {
+						Result struct {
+							StorageProof []struct {
+								Key string `json:"key"`
+							} `json:"storageProof"`
+						} `json:"result"`
+					}
+					require.NoError(t, json.Unmarshal(res.ResponseBody, &proof))
+					requested := tc.params[1].([]any)
+					require.Len(t, proof.Result.StorageProof, len(requested))
+					for i, key := range requested {
+						assert.Equal(t, key, proof.Result.StorageProof[i].Key)
+					}
+				}
 				return
 			}
 			require.NotNil(t, res.Error, "expected an RBAC denial; a proof response would expose the slot value")

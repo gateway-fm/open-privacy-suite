@@ -13,32 +13,32 @@ import (
 // Note: No longer used for claim gating — retained for AllAllowedMethods() and reference.
 var ReadMethods = map[string]bool{
 	// Chain/Network info
-	"eth_chainId":      true,
-	"eth_blockNumber":  true,
-	"net_version":      true,
-	"net_listening":    true,
-	"net_peerCount":    true,
+	"eth_chainId":        true,
+	"eth_blockNumber":    true,
+	"net_version":        true,
+	"net_listening":      true,
+	"net_peerCount":      true,
 	"web3_clientVersion": true,
-	"web3_sha3":        true,
-	"eth_syncing":      true,
-	"eth_accounts":     true,
+	"web3_sha3":          true,
+	"eth_syncing":        true,
+	"eth_accounts":       true,
 
 	// Account/Balance queries
-	"eth_getBalance":           true,
-	"eth_getCode":              true,
-	"eth_getStorageAt":         true,
-	"eth_getTransactionCount":  true,
+	"eth_getBalance":          true,
+	"eth_getCode":             true,
+	"eth_getStorageAt":        true,
+	"eth_getTransactionCount": true,
 
 	// Block queries
-	"eth_getBlockByHash":                     true,
-	"eth_getBlockByNumber":                   true,
-	"eth_getBlockTransactionCountByHash":     true,
-	"eth_getBlockTransactionCountByNumber":   true,
+	"eth_getBlockByHash":                   true,
+	"eth_getBlockByNumber":                 true,
+	"eth_getBlockTransactionCountByHash":   true,
+	"eth_getBlockTransactionCountByNumber": true,
 
 	// Transaction queries
-	"eth_getTransactionByHash":              true,
-	"eth_getTransactionReceipt":             true,
-	"eth_getTransactionByBlockHashAndIndex": true,
+	"eth_getTransactionByHash":                true,
+	"eth_getTransactionReceipt":               true,
+	"eth_getTransactionByBlockHashAndIndex":   true,
 	"eth_getTransactionByBlockNumberAndIndex": true,
 
 	// Contract calls (read-only)
@@ -54,12 +54,12 @@ var ReadMethods = map[string]bool{
 	"eth_getLogs": true,
 
 	// Filter methods (used for event polling)
-	"eth_newFilter":                  true,
-	"eth_newBlockFilter":             true,
+	"eth_newFilter":                   true,
+	"eth_newBlockFilter":              true,
 	"eth_newPendingTransactionFilter": true,
-	"eth_getFilterChanges":           true,
-	"eth_getFilterLogs":              true,
-	"eth_uninstallFilter":            true,
+	"eth_getFilterChanges":            true,
+	"eth_getFilterLogs":               true,
+	"eth_uninstallFilter":             true,
 }
 
 // WriteMethods classifies state-modifying RPC methods.
@@ -120,6 +120,11 @@ var canonicalMethodByLower = func() map[string]string {
 var canonicalExtraMethods = []string{
 	"eth_getProof",
 	"eth_createAccessList",
+	"eth_getBlockReceipts",
+	"eth_getUncleByBlockHashAndIndex",
+	"eth_getUncleByBlockNumberAndIndex",
+	"eth_getUncleCountByBlockHash",
+	"eth_getUncleCountByBlockNumber",
 }
 
 // CanonicalizeMethod normalizes a JSON-RPC method name to its canonical
