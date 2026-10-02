@@ -185,8 +185,11 @@ func (s *Server) DB() *db.DB {
 }
 
 // Stop gracefully stops all background goroutines.
-// Should be called before server shutdown.
+// Call after HTTP shutdown has stopped and drained incoming requests.
 func (s *Server) Stop() {
+	if s.jsonrpcProcessor != nil && s.jsonrpcProcessor.nodeApprovals != nil {
+		s.jsonrpcProcessor.nodeApprovals.Close()
+	}
 	if s.sessionStore != nil {
 		s.sessionStore.Stop()
 	}
@@ -928,6 +931,20 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	if s.auditBuffer != nil {
 		procAuditBuffer = s.auditBuffer
 	}
+	approvals, err := nodeApprovalsFromEnv(cfg.NodeURL, nodeTransport)
+	if err != nil {
+		return nil, err
+	}
+	approvalBudget, err := newApprovalPreflightLimiter(approvals, redisClient)
+	if err == nil {
+		err = registerNodeApprovalMetrics(approvals, m.Registry)
+	}
+	if err != nil {
+		if approvals != nil {
+			approvals.Close()
+		}
+		return nil, err
+	}
 	s.jsonrpcProcessor = NewJSONRPCProcessor(JSONRPCProcessorConfig{
 		RBACAccessCtrl:            rbacAccessCtrl,
 		RateLimiter:               rateLimiter,
@@ -937,6 +954,8 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		ConcurrencyLimiter:        middleware.NewConcurrencyLimiter(cfg.MaxConcurrentRequests, cfg.MaxConcurrentAnonymousRequests),
 		DefaultRPCAPIKey:          cfg.RPCAPIKey,
 		RuntimeTracer:             runtimeTracer,
+		NodeApprovals:             approvals,
+		ApprovalPreflightLimiter:  approvalBudget,
 		TraceValidator:            traceValidator,
 		Metrics:                   m,
 		TxVisibilityStore:         database,
@@ -1332,7 +1351,7 @@ const MaxRequestBodySize = 1 << 20 // 1MB
 // @Failure      403 {object} apimodels.APIError "runtime-trace or compliance denial"
 // @Failure      404 {object} apimodels.APIError "method not allowed for the caller (denials are masked as method not found)"
 // @Failure      413 {object} apimodels.APIError "request body too large"
-// @Failure      429 {object} apimodels.APIError "concurrency limit or upstream rate limit"
+// @Failure      429 {object} apimodels.APIError "concurrency limit, signed-approval simulation budget, or upstream rate limit"
 // @Failure      500 {object} apimodels.APIError "trace-validation or compliance-check error"
 // @Failure      502 {object} apimodels.APIError "failed to forward to the upstream node"
 // @Security     BearerAuth

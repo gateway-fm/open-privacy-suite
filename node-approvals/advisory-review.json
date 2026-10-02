@@ -1,0 +1,14 @@
+{
+  "reviewed_on": "2026-09-29",
+  "recheck_by": "2026-12-29",
+  "required_versions": {"alloy-provider": "2.3.0"},
+  "exceptions": [
+    {"ecosystem": "Maven", "name": "org.bouncycastle:bcprov-jdk18on", "version": "1.84", "id": "GHSA-9pwp-9qqc-pr26", "reason": "Not reachable from ApprovalVerifier: it calls math.ec.rfc8032.Ed25519.verify with raw fixed-length keys/signatures and bounded message bytes, with no certificate or PKIX name-constraint parsing. Upstream fix 2c28b25 changes PKIXNameConstraintValidator. This exact-version review covers the approval plugin only, not other Besu certificate/TLS uses; 1.84 is supplied by the pinned Besu runtime, not bundled by this plugin. Reassess on crypto API, trust-key format or host-version changes; see docs/implementation/approvals-release-review.md."},
+    {"ecosystem": "Maven", "name": "org.bouncycastle:bcprov-jdk18on", "version": "1.84", "id": "GHSA-qp49-qgx5-5m26", "reason": "Not reachable from ApprovalVerifier: raw Ed25519 verification uses byte decoding, curve arithmetic and SHA-512, with no ASN.1 parser. Upstream fix 77454da changes the lazy ASN.1 sequence parsing depth guard. This exact-version review covers the approval plugin only, not other Besu ASN.1 uses; 1.84 is supplied by the pinned Besu runtime, not bundled by this plugin. Reassess on crypto API, trust-key format or host-version changes; see docs/implementation/approvals-release-review.md."},
+    {"ecosystem": "crates.io", "name": "bincode", "version": "1.3.3", "id": "RUSTSEC-2025-0141", "reason": "Maintenance notice, not a reported vulnerability. Retained by pinned upstream dependencies; replacing serialization needs upstream compatibility review."},
+    {"ecosystem": "crates.io", "name": "derivative", "version": "2.2.0", "id": "RUSTSEC-2024-0388", "reason": "Unmaintained compile-time derive macro; no runtime vulnerability in this advisory. Track upstream replacement."},
+    {"ecosystem": "crates.io", "name": "paste", "version": "1.0.15", "id": "RUSTSEC-2024-0436", "reason": "Unmaintained compile-time macro; no runtime vulnerability in this advisory. Track upstream replacement."},
+    {"ecosystem": "crates.io", "name": "proc-macro-error2", "version": "2.0.1", "id": "RUSTSEC-2026-0173", "reason": "Unmaintained compile-time diagnostic macro; no runtime vulnerability in this advisory. Track upstream replacement."},
+    {"ecosystem": "crates.io", "name": "lru", "version": "0.16.4", "id": "RUSTSEC-2026-0253", "reason": "Not reachable in the pinned alloy-provider 2.3.0 usage: blocks.rs keys are BlockNumber/u64 and layers/cache.rs keys are B256. Both are primitive/Copy keys with no panicking Drop, which the advisory requires. The other lru dependency is updated to 0.18.2. Reassess on any provider/key-type change."}
+  ]
+}

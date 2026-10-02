@@ -1,0 +1,158 @@
+[
+  {
+    "test": "same_org_nested_call_executes",
+    "passed": true,
+    "hash": "0x6a043a1667ad307c143462bd590d142e28a7ea71e53aa1deb5d9c8ebdfcffb35"
+  },
+  {
+    "test": "delegatecall_uses_caller_storage",
+    "passed": true
+  },
+  {
+    "test": "EIP1559_signed_transaction",
+    "passed": true
+  },
+  {
+    "test": "same_block_cross_org_divergence",
+    "passed": true,
+    "hash": "0x6a043a1667ad307c143462bd590d142e28a7ea71e53aa1deb5d9c8ebdfcffb35"
+  },
+  {
+    "test": "caught_call_cannot_bypass",
+    "passed": true,
+    "hash": "0x65074c44aa438aeaadfc27ef9e96ba3ff472f9ff77cbbef717fd84353eeb88e0"
+  },
+  {
+    "test": "same_org_storage_divergence",
+    "passed": true,
+    "hash": "0x6a043a1667ad307c143462bd590d142e28a7ea71e53aa1deb5d9c8ebdfcffb35"
+  },
+  {
+    "test": "stock_control_executes_cross_org",
+    "passed": true,
+    "hash": "0x6a043a1667ad307c143462bd590d142e28a7ea71e53aa1deb5d9c8ebdfcffb35"
+  },
+  {
+    "test": "no_write_cross_org_call_denied_despite_identical_return_and_storage",
+    "passed": true
+  },
+  {
+    "test": "fingerprint_zero_deletion_unchanged_write_and_read",
+    "passed": true
+  },
+  {
+    "test": "fingerprint_log_positions_dynamic_output_and_caught_revert",
+    "passed": true
+  },
+  {
+    "test": "waiting_tx_does_not_block_ready_sender",
+    "passed": true,
+    "ready_block_wall_ms": 250.53
+  },
+  {
+    "test": "timeout_then_client_retry_same_signed_tx",
+    "passed": true
+  },
+  {
+    "test": "128_missing_approvals_do_not_block_ready_sender",
+    "passed": true,
+    "ready_block_wall_ms": 251.54199998360127
+  },
+  {
+    "test": "forged_signature_denied_then_valid_retry",
+    "passed": true
+  },
+  {
+    "test": "real_OPS_DB_RBAC_trace_signature_forwarding_and_Reth_commit",
+    "passed": true,
+    "hash": "0x6a043a1667ad307c143462bd590d142e28a7ea71e53aa1deb5d9c8ebdfcffb35"
+  },
+  {
+    "test": "actual_restart_loses_approval_then_client_retry_succeeds",
+    "passed": true
+  },
+  {
+    "test": "historical_import_without_approvals",
+    "passed": true,
+    "block": "0x89619b526008af08678d2a2d7990e705521e29a3b6b3ab4082c09137dee9ec2f"
+  },
+  {
+    "test": "one_signature_authorizes_32_independent_transactions",
+    "passed": true,
+    "stats": {
+      "batch_sizes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "invalid_envelopes": 0,
+      "max_wait_ns": 0,
+      "ready_on_first_seen": 32,
+      "resolved_waits": 0,
+      "verification_ns": 60875,
+      "verification_queue_full": 0,
+      "verified": 32,
+      "verified_batches": 1,
+      "wait_bucket_upper_us": [
+        100,
+        500,
+        1000,
+        5000,
+        10000,
+        50000,
+        100000,
+        null
+      ],
+      "wait_histogram": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "wait_ns": 0,
+      "waiting_on_first_seen": 0
+    }
+  },
+  {
+    "test": "divergent_member_does_not_cancel_other_batch_member",
+    "passed": true
+  },
+  {
+    "test": "tampering_rejects_entire_batch_then_late_valid_retry_succeeds",
+    "passed": true
+  }
+]

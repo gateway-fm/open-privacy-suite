@@ -191,6 +191,10 @@ var orgFreeMetadataMethods = map[string]bool{
 
 // blockedMethodPrefixes is used for future-proofing (checked after exact match fails)
 var blockedMethodPrefixes = []string{
+	// Node-side approval preparation returns private execution facts. It is
+	// called only by the internal preflight client, never by an RPC caller,
+	// including a caller whose group grants all methods.
+	"ops_",
 	"debug_",
 	"admin_",
 	"personal_",
@@ -1441,12 +1445,12 @@ var ReadOpsMap = map[string]bool{
 	// Node keystore accounts — may expose signer addresses on private PoA networks
 	"eth_accounts": true,
 	// Log filters — functionally equivalent to eth_getLogs, same auth requirement
-	"eth_newfilter":                    true,
-	"eth_newblockfilter":               true,
-	"eth_newpendingtransactionfilter":  true,
-	"eth_getfilterchanges":             true,
-	"eth_getfilterlogs":                true,
-	"eth_uninstallfilter":              true,
+	"eth_newfilter":                   true,
+	"eth_newblockfilter":              true,
+	"eth_newpendingtransactionfilter": true,
+	"eth_getfilterchanges":            true,
+	"eth_getfilterlogs":               true,
+	"eth_uninstallfilter":             true,
 	// Block contents (include transaction lists with from/to/value)
 	"eth_getblockbyhash":                   true,
 	"eth_getblockbynumber":                 true,
@@ -1457,9 +1461,9 @@ var ReadOpsMap = map[string]bool{
 	"eth_getunclecountbyblockhash":         true,
 	"eth_getunclecountbyblocknumber":       true,
 	// Transaction details (sender, receiver, value, input data)
-	"eth_gettransactionbyhash":                 true,
-	"eth_gettransactionbyblockhashandindex":    true,
-	"eth_gettransactionbyblocknumberandindex":  true,
+	"eth_gettransactionbyhash":                true,
+	"eth_gettransactionbyblockhashandindex":   true,
+	"eth_gettransactionbyblocknumberandindex": true,
 	// Receipts (logs, status, contract address)
 	"eth_gettransactionreceipt": true,
 	"eth_getblockreceipts":      true, // Block receipts (same privacy requirements as eth_getLogs)

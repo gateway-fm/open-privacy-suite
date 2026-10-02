@@ -1,0 +1,1132 @@
+[
+  {
+    "kind": "synthetic-approval-delivery",
+    "node": "reth",
+    "rate": 5000,
+    "seconds": 60.0,
+    "capacity": 100000,
+    "retain": 100000,
+    "ttl": "10m",
+    "phases": [
+      {
+        "name": "steady",
+        "accepted": 300000,
+        "accepted_per_second": 4999.999444500062,
+        "confirmed_at_end": 310000,
+        "elapsed_seconds": 60.000006666,
+        "enqueue_ns": {
+          "max": 88875,
+          "p50": 209,
+          "p95": 584,
+          "p99": 916
+        },
+        "not_offered_before_deadline": 0,
+        "refused": 0,
+        "requested": 300000,
+        "schedule_lag_ns": {
+          "max": 8558166,
+          "p50": 18833,
+          "p95": 38166,
+          "p99": 45958
+        },
+        "started_unix_ms": 1790332970899,
+        "drain": {
+          "confirmed": 310000,
+          "elapsed_seconds": 5.6375e-05,
+          "reached": true
+        },
+        "fresh_delivery_ms_upper_bounds": {
+          "p50": 0.25,
+          "p95": 0.25,
+          "p99": 0.25
+        },
+        "confirmations_during_sending": 300000,
+        "confirmations_total_delta": 300000,
+        "delivery_calls_delta": 299618,
+        "retry_calls_delta": 0,
+        "retained": 100000,
+        "evicted_delta": 210000,
+        "unconfirmed_dropped_delta": 0,
+        "sender_live_heap_bytes": 70912864,
+        "gc_pause_ns_delta": 2828084,
+        "node_restart_seconds": null,
+        "pending_probe": null
+      },
+      {
+        "name": "restart-with-fresh-traffic",
+        "accepted": 100000,
+        "accepted_per_second": 4999.99867725035,
+        "confirmed_at_end": 492147,
+        "elapsed_seconds": 20.000005291,
+        "enqueue_ns": {
+          "max": 61959,
+          "p50": 209,
+          "p95": 750,
+          "p99": 1375
+        },
+        "not_offered_before_deadline": 0,
+        "refused": 0,
+        "requested": 100000,
+        "schedule_lag_ns": {
+          "max": 9836250,
+          "p50": 18166,
+          "p95": 38083,
+          "p99": 100041
+        },
+        "started_unix_ms": 1790333031556,
+        "drain": {
+          "confirmed": 492147,
+          "elapsed_seconds": 30.006778584,
+          "reached": false
+        },
+        "fresh_delivery_ms_upper_bounds": {
+          "p50": 0.25,
+          "p95": 0.5,
+          "p99": 1.0
+        },
+        "confirmations_during_sending": 182146,
+        "confirmations_total_delta": 182146,
+        "delivery_calls_delta": 181323,
+        "retry_calls_delta": 0,
+        "retained": 100000,
+        "evicted_delta": 100000,
+        "unconfirmed_dropped_delta": 0,
+        "sender_live_heap_bytes": 70569104,
+        "gc_pause_ns_delta": 2191581,
+        "node_restart_seconds": 0.542030124925077,
+        "pending_probe": {
+          "hash": "0xe089c0aaee7f9db967206b505f94088aa00473a06cf0e7e9331c9135b539ba5d",
+          "receipt_status": "0x1",
+          "submission_to_receipt_seconds": 0.40618300007190555,
+          "new_preflight_after_restart": false
+        }
+      }
+    ],
+    "verify_workers": 2,
+    "warmup_seconds": 10.000159125,
+    "error": null,
+    "case": "reth-5000-final",
+    "source_report_sha256": "652e0f7a6834f658b76067ef379e9a423916ee86026c31b912557e8bf414931c",
+    "supporting_files_sha256": {},
+    "peak_rss_bytes": {
+      "node_rss_bytes": 2612527104,
+      "sender_rss_bytes": 191627264
+    },
+    "memory_sampling_error": null
+  },
+  {
+    "kind": "synthetic-approval-delivery",
+    "node": "besu",
+    "rate": 5000,
+    "seconds": 60.0,
+    "capacity": 100000,
+    "retain": 100000,
+    "ttl": "10m",
+    "phases": [
+      {
+        "name": "steady",
+        "accepted": 300000,
+        "accepted_per_second": 4999.999715250016,
+        "confirmed_at_end": 251160,
+        "elapsed_seconds": 60.000003417,
+        "enqueue_ns": {
+          "max": 195542,
+          "p50": 250,
+          "p95": 959,
+          "p99": 2125
+        },
+        "not_offered_before_deadline": 0,
+        "refused": 0,
+        "requested": 300000,
+        "schedule_lag_ns": {
+          "max": 5109833,
+          "p50": 39833,
+          "p95": 75875,
+          "p99": 250292
+        },
+        "started_unix_ms": 1790333098623,
+        "drain": {
+          "confirmed": 310000,
+          "elapsed_seconds": 14.545790667,
+          "reached": true
+        },
+        "fresh_delivery_ms_upper_bounds": {
+          "p50": 10000,
+          "p95": "> largest finite bucket",
+          "p99": "> largest finite bucket"
+        },
+        "confirmations_during_sending": 241160,
+        "confirmations_total_delta": 300000,
+        "delivery_calls_delta": 296063,
+        "retry_calls_delta": 0,
+        "retained": 100000,
+        "evicted_delta": 210000,
+        "unconfirmed_dropped_delta": 0,
+        "sender_live_heap_bytes": 70831096,
+        "gc_pause_ns_delta": 3704666,
+        "node_restart_seconds": null,
+        "pending_probe": null
+      }
+    ],
+    "verify_workers": 2,
+    "warmup_seconds": 10.000048,
+    "error": null,
+    "case": "besu-5000-workers2",
+    "source_report_sha256": "429784e4c01f830fef0dda4a9290abff61ef0c31f898ec3714886665c601e565",
+    "supporting_files_sha256": {},
+    "peak_rss_bytes": {
+      "node_rss_bytes": 685195264,
+      "sender_rss_bytes": 188514304
+    },
+    "memory_sampling_error": null
+  },
+  {
+    "kind": "synthetic-approval-delivery",
+    "node": "besu",
+    "rate": 5000,
+    "seconds": 60.0,
+    "capacity": 100000,
+    "retain": 100000,
+    "ttl": "10m",
+    "phases": [
+      {
+        "name": "steady",
+        "accepted": 300000,
+        "accepted_per_second": 4999.99710766834,
+        "confirmed_at_end": 309998,
+        "elapsed_seconds": 60.000034708,
+        "enqueue_ns": {
+          "max": 109125,
+          "p50": 292,
+          "p95": 834,
+          "p99": 1459
+        },
+        "not_offered_before_deadline": 0,
+        "refused": 0,
+        "requested": 300000,
+        "schedule_lag_ns": {
+          "max": 2872667,
+          "p50": 32375,
+          "p95": 55750,
+          "p99": 75458
+        },
+        "started_unix_ms": 1790333189211,
+        "drain": {
+          "confirmed": 310000,
+          "elapsed_seconds": 5e-05,
+          "reached": true
+        },
+        "fresh_delivery_ms_upper_bounds": {
+          "p50": 1.0,
+          "p95": 1.0,
+          "p99": 2.5
+        },
+        "confirmations_during_sending": 299998,
+        "confirmations_total_delta": 300000,
+        "delivery_calls_delta": 299477,
+        "retry_calls_delta": 0,
+        "retained": 100000,
+        "evicted_delta": 210000,
+        "unconfirmed_dropped_delta": 0,
+        "sender_live_heap_bytes": 70922984,
+        "gc_pause_ns_delta": 3328755,
+        "node_restart_seconds": null,
+        "pending_probe": null
+      },
+      {
+        "name": "restart-with-fresh-traffic",
+        "accepted": 97371,
+        "accepted_per_second": 4868.543011693361,
+        "confirmed_at_end": 441984,
+        "elapsed_seconds": 20.000028708,
+        "enqueue_ns": {
+          "max": 153083,
+          "p50": 417,
+          "p95": 875,
+          "p99": 1541
+        },
+        "not_offered_before_deadline": 0,
+        "refused": 2629,
+        "requested": 100000,
+        "schedule_lag_ns": {
+          "max": 3420167,
+          "p50": 36333,
+          "p95": 63250,
+          "p99": 85958
+        },
+        "started_unix_ms": 1790333254333,
+        "drain": {
+          "confirmed": 441987,
+          "elapsed_seconds": 30.005724375,
+          "reached": false
+        },
+        "fresh_delivery_ms_upper_bounds": {
+          "p50": 2.5,
+          "p95": 2.5,
+          "p99": 100.0
+        },
+        "confirmations_during_sending": 131983,
+        "confirmations_total_delta": 131986,
+        "delivery_calls_delta": 131645,
+        "retry_calls_delta": 0,
+        "retained": 100000,
+        "evicted_delta": 97371,
+        "unconfirmed_dropped_delta": 0,
+        "sender_live_heap_bytes": 70570096,
+        "gc_pause_ns_delta": 1093957,
+        "node_restart_seconds": 4.952849124907516,
+        "pending_probe": {
+          "hash": "0xe089c0aaee7f9db967206b505f94088aa00473a06cf0e7e9331c9135b539ba5d",
+          "receipt_status": "0x1",
+          "submission_to_receipt_seconds": 1.4944221670739353,
+          "new_preflight_after_restart": false
+        }
+      }
+    ],
+    "verify_workers": 4,
+    "warmup_seconds": 10.000051333,
+    "error": null,
+    "case": "besu-5000-workers4",
+    "source_report_sha256": "6f4cfdd04fc4409f32df6dd1f5431fb5ba6ecfffcaa865f686802c1241c2e4aa",
+    "supporting_files_sha256": {},
+    "peak_rss_bytes": {
+      "node_rss_bytes": 682229760,
+      "sender_rss_bytes": 192626688
+    },
+    "memory_sampling_error": null
+  },
+  {
+    "kind": "synthetic-approval-delivery",
+    "node": "reth",
+    "rate": 5000,
+    "seconds": 20.0,
+    "capacity": 300000,
+    "retain": 300000,
+    "ttl": "10m",
+    "phases": [
+      {
+        "name": "steady",
+        "accepted": 100000,
+        "accepted_per_second": 4999.994343756399,
+        "confirmed_at_end": 110000,
+        "elapsed_seconds": 20.000022625,
+        "enqueue_ns": {
+          "max": 129083,
+          "p50": 209,
+          "p95": 667,
+          "p99": 959
+        },
+        "not_offered_before_deadline": 0,
+        "refused": 0,
+        "requested": 100000,
+        "schedule_lag_ns": {
+          "max": 494500,
+          "p50": 17542,
+          "p95": 33584,
+          "p99": 42792
+        },
+        "started_unix_ms": 1790333316122,
+        "drain": {
+          "confirmed": 110000,
+          "elapsed_seconds": 5.9667e-05,
+          "reached": true
+        },
+        "fresh_delivery_ms_upper_bounds": {
+          "p50": 0.25,
+          "p95": 0.25,
+          "p99": 0.25
+        },
+        "confirmations_during_sending": 100000,
+        "confirmations_total_delta": 100000,
+        "delivery_calls_delta": 99965,
+        "retry_calls_delta": 0,
+        "retained": 110000,
+        "evicted_delta": 0,
+        "unconfirmed_dropped_delta": 0,
+        "sender_live_heap_bytes": 76687784,
+        "gc_pause_ns_delta": 1806584,
+        "node_restart_seconds": null,
+        "pending_probe": null
+      },
+      {
+        "name": "restart-with-fresh-traffic",
+        "accepted": 100000,
+        "accepted_per_second": 4999.998010500792,
+        "confirmed_at_end": 320002,
+        "elapsed_seconds": 20.000007958,
+        "enqueue_ns": {
+          "max": 171375,
+          "p50": 250,
+          "p95": 750,
+          "p99": 1542
+        },
+        "not_offered_before_deadline": 0,
+        "refused": 0,
+        "requested": 100000,
+        "schedule_lag_ns": {
+          "max": 17892333,
+          "p50": 17667,
+          "p95": 37083,
+          "p99": 61250
+        },
+        "started_unix_ms": 1790333336864,
+        "drain": {
+          "confirmed": 320002,
+          "elapsed_seconds": 6.3416e-05,
+          "reached": true
+        },
+        "fresh_delivery_ms_upper_bounds": {
+          "p50": 0.25,
+          "p95": 0.5,
+          "p99": 1.0
+        },
+        "confirmations_during_sending": 210001,
+        "confirmations_total_delta": 210001,
+        "delivery_calls_delta": 209786,
+        "retry_calls_delta": 0,
+        "retained": 210001,
+        "evicted_delta": 0,
+        "unconfirmed_dropped_delta": 0,
+        "sender_live_heap_bytes": 144797512,
+        "gc_pause_ns_delta": 1417458,
+        "node_restart_seconds": 0.6347652090480551,
+        "pending_probe": {
+          "hash": "0xe089c0aaee7f9db967206b505f94088aa00473a06cf0e7e9331c9135b539ba5d",
+          "receipt_status": "0x1",
+          "submission_to_receipt_seconds": 0.47707870905287564,
+          "new_preflight_after_restart": false
+        }
+      }
+    ],
+    "verify_workers": 2,
+    "warmup_seconds": 10.00011,
+    "error": null,
+    "case": "reth-recovery-headroom",
+    "source_report_sha256": "6688851b0209807d87e850a20ef3a9f167d5d334c1bc73bfef98fba16e2bb6cd",
+    "supporting_files_sha256": {},
+    "peak_rss_bytes": {
+      "node_rss_bytes": 2675277824,
+      "sender_rss_bytes": 279724032
+    },
+    "memory_sampling_error": null
+  },
+  {
+    "kind": "synthetic-approval-delivery",
+    "node": "besu",
+    "rate": 5000,
+    "seconds": 20.0,
+    "capacity": 300000,
+    "retain": 300000,
+    "ttl": "10m",
+    "phases": [
+      {
+        "name": "steady",
+        "accepted": 100000,
+        "accepted_per_second": 4999.988448026689,
+        "confirmed_at_end": 109997,
+        "elapsed_seconds": 20.000046208,
+        "enqueue_ns": {
+          "max": 66208,
+          "p50": 292,
+          "p95": 834,
+          "p99": 1292
+        },
+        "not_offered_before_deadline": 0,
+        "refused": 0,
+        "requested": 100000,
+        "schedule_lag_ns": {
+          "max": 2851625,
+          "p50": 32375,
+          "p95": 54833,
+          "p99": 69291
+        },
+        "started_unix_ms": 1790333376008,
+        "drain": {
+          "confirmed": 110000,
+          "elapsed_seconds": 4.6167e-05,
+          "reached": true
+        },
+        "fresh_delivery_ms_upper_bounds": {
+          "p50": 1.0,
+          "p95": 1.0,
+          "p99": 2.5
+        },
+        "confirmations_during_sending": 99997,
+        "confirmations_total_delta": 100000,
+        "delivery_calls_delta": 99862,
+        "retry_calls_delta": 0,
+        "retained": 110000,
+        "evicted_delta": 0,
+        "unconfirmed_dropped_delta": 0,
+        "sender_live_heap_bytes": 76606392,
+        "gc_pause_ns_delta": 1945253,
+        "node_restart_seconds": null,
+        "pending_probe": null
+      },
+      {
+        "name": "restart-with-fresh-traffic",
+        "accepted": 97141,
+        "accepted_per_second": 4857.039223444222,
+        "confirmed_at_end": 258879,
+        "elapsed_seconds": 20.000044375,
+        "enqueue_ns": {
+          "max": 391583,
+          "p50": 458,
+          "p95": 917,
+          "p99": 1584
+        },
+        "not_offered_before_deadline": 0,
+        "refused": 2859,
+        "requested": 100000,
+        "schedule_lag_ns": {
+          "max": 3413709,
+          "p50": 39417,
+          "p95": 65417,
+          "p99": 102750
+        },
+        "started_unix_ms": 1790333401450,
+        "drain": {
+          "confirmed": 317143,
+          "elapsed_seconds": 7.490288833,
+          "reached": true
+        },
+        "fresh_delivery_ms_upper_bounds": {
+          "p50": 2.5,
+          "p95": 2.5,
+          "p99": 100.0
+        },
+        "confirmations_during_sending": 148878,
+        "confirmations_total_delta": 207142,
+        "delivery_calls_delta": 206550,
+        "retry_calls_delta": 0,
+        "retained": 207142,
+        "evicted_delta": 0,
+        "unconfirmed_dropped_delta": 0,
+        "sender_live_heap_bytes": 142753688,
+        "gc_pause_ns_delta": 1012417,
+        "node_restart_seconds": 5.343167959013954,
+        "pending_probe": {
+          "hash": "0xe089c0aaee7f9db967206b505f94088aa00473a06cf0e7e9331c9135b539ba5d",
+          "receipt_status": "0x1",
+          "submission_to_receipt_seconds": 2.1102485000155866,
+          "new_preflight_after_restart": false
+        }
+      }
+    ],
+    "verify_workers": 4,
+    "warmup_seconds": 10.000054291,
+    "error": null,
+    "case": "besu-recovery-headroom",
+    "source_report_sha256": "1c3611f0fa2a4652e52f45274f6e58355b28d732a1c3d05087ba1e710b9cceda",
+    "supporting_files_sha256": {},
+    "peak_rss_bytes": {
+      "node_rss_bytes": 694583296,
+      "sender_rss_bytes": 319946752
+    },
+    "memory_sampling_error": null
+  },
+  {
+    "kind": "full-transaction-stack",
+    "node": "reth",
+    "requested_rate": 5000,
+    "seconds": 60,
+    "gate": true,
+    "retain": 100000,
+    "receipts": {
+      "unique_logged_hashes": 122980,
+      "successful": 121081,
+      "reverted": 0,
+      "missing": 1899,
+      "included_during_sending": 117730,
+      "included_during_sending_tps": 1962.1666666666667,
+      "queue_to_commit_ms": {
+        "p50": 2273,
+        "p95": 2838,
+        "p99": 3093,
+        "max": 3835
+      }
+    },
+    "rpc_ms_upper_bounds": {
+      "p50": 500.0,
+      "p95": 1000.0,
+      "p99": 1000.0
+    },
+    "max_concurrent_requests": 5000,
+    "verify_workers": 2,
+    "send_rpc_outcomes": {
+      "error": 731.0,
+      "preflight_unavailable": 11.0,
+      "rbac_denied": 282.0,
+      "success": 121694.0
+    },
+    "all_rpc_http_statuses": {
+      "200": 127376.0,
+      "400": 8.0,
+      "403": 11.0,
+      "404": 1054.0,
+      "500": 105.0
+    },
+    "generator": {
+      "txSent": 122980,
+      "txConfirmed": 121081,
+      "txFailed": 0,
+      "status": "completed"
+    },
+    "missing_by_generator_status": {
+      "discarded": 1899
+    },
+    "loadgen_sha256": "852492618d2cb9b1c096e50af7bf87283749f0ed0c189a68fb3715085657022e",
+    "error": null,
+    "case": "reth-transactions-5000",
+    "source_report_sha256": "e2165439ee58b886e092c01a53fd879d58a46e8bf79844f1835c1b60f84464f7",
+    "supporting_files_sha256": {
+      "metrics-before.txt": "be75acb160c7b082f0e2052dec4fc61a8c7fcda42bcd160c9893e11ab07bfc8f",
+      "metrics-after.txt": "110ffda793b26f09475deaa477076fa5e9da84e124f1d7de8fa49f9d539946d2",
+      "transactions.json": "2df792d06a5dd7887f46192181ccb2f34c4f3fad733e09db8d4042e1b84fad3d",
+      "receipts.json": "50eed4d7abb5152ca1decba789e2bb4c20c74d86814e7eeea499e7e2ad0ce096"
+    },
+    "peak_rss_bytes": {
+      "node_rss_bytes": 2047639552,
+      "ops_rss_bytes": 453197824,
+      "loadgen_rss_bytes": 467599360
+    },
+    "memory_sampling_error": null
+  },
+  {
+    "kind": "full-transaction-stack",
+    "node": "reth",
+    "requested_rate": 5000,
+    "seconds": 60,
+    "gate": false,
+    "retain": 100000,
+    "receipts": {
+      "unique_logged_hashes": 164840,
+      "successful": 163063,
+      "reverted": 0,
+      "missing": 1777,
+      "included_during_sending": 158318,
+      "included_during_sending_tps": 2638.633333333333,
+      "queue_to_commit_ms": {
+        "p50": 1906,
+        "p95": 2445,
+        "p99": 2642,
+        "max": 3124
+      }
+    },
+    "rpc_ms_upper_bounds": {
+      "p50": 500.0,
+      "p95": 1000.0,
+      "p99": 1000.0
+    },
+    "max_concurrent_requests": 5000,
+    "verify_workers": 2,
+    "send_rpc_outcomes": {
+      "error": 609.0,
+      "rbac_denied": 339.0,
+      "send_trace_denied": 3.0,
+      "success": 163603.0
+    },
+    "all_rpc_http_statuses": {
+      "200": 170658.0,
+      "400": 8.0,
+      "403": 3.0,
+      "404": 989.0,
+      "500": 126.0
+    },
+    "generator": {
+      "txSent": 164840,
+      "txConfirmed": 163063,
+      "txFailed": 0,
+      "status": "completed"
+    },
+    "missing_by_generator_status": {
+      "discarded": 1777
+    },
+    "loadgen_sha256": "852492618d2cb9b1c096e50af7bf87283749f0ed0c189a68fb3715085657022e",
+    "error": null,
+    "case": "reth-off-5000",
+    "source_report_sha256": "d8b3418b8956e4e8d9d53128ccaca9197a21929f4723493cee492f525125f3fb",
+    "supporting_files_sha256": {
+      "metrics-before.txt": "f1b3471a6768e4e56d304e39f78371df88807501537634b637c2380dc9f4c11e",
+      "metrics-after.txt": "9aac9f7e87b5169f7bba2804fb80c0a2261ceaa17629a8676cf41802c1646cf3",
+      "transactions.json": "8beb624ca3d18a651ebd05009c8b94597c906dd98887f29b1b1a6a55f97f9c1f",
+      "receipts.json": "3686f1610a04f63d61dd35698f971947447e40d7920b706e395b7f66c2457d21"
+    },
+    "peak_rss_bytes": {
+      "node_rss_bytes": 2036924416,
+      "ops_rss_bytes": 283738112,
+      "loadgen_rss_bytes": 545357824
+    },
+    "memory_sampling_error": null
+  },
+  {
+    "kind": "full-transaction-stack",
+    "node": "besu",
+    "requested_rate": 5000,
+    "seconds": 60,
+    "gate": true,
+    "retain": 100000,
+    "receipts": {
+      "unique_logged_hashes": 87396,
+      "successful": 86940,
+      "reverted": 0,
+      "missing": 456,
+      "included_during_sending": 77779,
+      "included_during_sending_tps": 1296.3166666666666,
+      "queue_to_commit_ms": {
+        "p50": 6427,
+        "p95": 14652,
+        "p99": 50630,
+        "max": 60736
+      }
+    },
+    "rpc_ms_upper_bounds": {
+      "p50": 500.0,
+      "p95": 1000.0,
+      "p99": 2500.0
+    },
+    "max_concurrent_requests": 5000,
+    "verify_workers": 2,
+    "send_rpc_outcomes": {
+      "error": 2.0,
+      "preflight_unavailable": 47.0,
+      "rbac_denied": 1.0,
+      "success": 104168.0
+    },
+    "all_rpc_http_statuses": {
+      "200": 117197.0,
+      "400": 4.0,
+      "403": 47.0,
+      "404": 43.0,
+      "500": 41.0
+    },
+    "generator": {
+      "txSent": 103860,
+      "txConfirmed": 86755,
+      "txFailed": 16675,
+      "status": "completed"
+    },
+    "missing_by_generator_status": {
+      "discarded": 456
+    },
+    "loadgen_sha256": "852492618d2cb9b1c096e50af7bf87283749f0ed0c189a68fb3715085657022e",
+    "error": null,
+    "case": "besu-on-5000",
+    "source_report_sha256": "19e4175e51dc6d31cadd1fb7b3b0956481266a2326960cf9acec9b37792f044a",
+    "supporting_files_sha256": {
+      "metrics-before.txt": "69fb755b78cdc19c00ae692585679ff195571c30dd10a233f12a5b0624843e91",
+      "metrics-after.txt": "b11d6413021e7c0a33b48d9a480b04bea79604a209de845515a0e5675138fbb2",
+      "transactions.json": "48b838460035341af1ddb99214b10eb4538a60fd40390e0d06f768478f3027a7",
+      "receipts.json": "c9e187f16d4874d76c4473258bc597797eb27332db3569ef8fd63e147af40ce0"
+    },
+    "peak_rss_bytes": {
+      "node_rss_bytes": 2178072576,
+      "ops_rss_bytes": 519553024,
+      "loadgen_rss_bytes": 435732480
+    },
+    "memory_sampling_error": null
+  },
+  {
+    "kind": "full-transaction-stack",
+    "node": "besu",
+    "requested_rate": 5000,
+    "seconds": 60,
+    "gate": false,
+    "retain": 100000,
+    "receipts": {
+      "unique_logged_hashes": 142098,
+      "successful": 139956,
+      "reverted": 0,
+      "missing": 2142,
+      "included_during_sending": 137888,
+      "included_during_sending_tps": 2298.133333333333,
+      "queue_to_commit_ms": {
+        "p50": 1669,
+        "p95": 2298,
+        "p99": 2575,
+        "max": 3182
+      }
+    },
+    "rpc_ms_upper_bounds": {
+      "p50": 500.0,
+      "p95": 1000.0,
+      "p99": 1000.0
+    },
+    "max_concurrent_requests": 5000,
+    "verify_workers": 2,
+    "send_rpc_outcomes": {
+      "error": 521.0,
+      "rbac_denied": 460.0,
+      "send_trace_denied": 12.0,
+      "success": 140680.0
+    },
+    "all_rpc_http_statuses": {
+      "200": 145379.0,
+      "400": 8.0,
+      "403": 12.0,
+      "404": 1021.0,
+      "500": 230.0
+    },
+    "generator": {
+      "txSent": 142100,
+      "txConfirmed": 139956,
+      "txFailed": 2,
+      "status": "completed"
+    },
+    "missing_by_generator_status": {
+      "discarded": 2142
+    },
+    "loadgen_sha256": "852492618d2cb9b1c096e50af7bf87283749f0ed0c189a68fb3715085657022e",
+    "error": null,
+    "case": "besu-off-5000",
+    "source_report_sha256": "990b97a6b011ff1ccdb89c6ff5d565ca2da6f4cacdf0ab0276e2ddb16aa01493",
+    "supporting_files_sha256": {
+      "metrics-before.txt": "2974773f4d77ba3c906141109d9941f0f82ea315ac8a51ebd46db715b0858d32",
+      "metrics-after.txt": "f42df48081521b64c78c0100fa972bb3b8faa230f222a3311fe0b6114a3c06f6",
+      "transactions.json": "695a422dad6c005887eff248d8c78f5e5c56f4573e5454d8cad889940e674e4b",
+      "receipts.json": "31e55c09616f1a2f818afdd7831c645b7756878ca8f7b85500f12616ea831afe"
+    },
+    "peak_rss_bytes": {
+      "node_rss_bytes": 2435809280,
+      "ops_rss_bytes": 303693824,
+      "loadgen_rss_bytes": 515014656
+    },
+    "memory_sampling_error": null
+  },
+  {
+    "kind": "full-transaction-stack",
+    "node": "reth",
+    "requested_rate": 5000,
+    "seconds": 60,
+    "gate": true,
+    "retain": 100000,
+    "receipts": {
+      "unique_logged_hashes": 110317,
+      "successful": 107038,
+      "reverted": 0,
+      "missing": 3279,
+      "included_during_sending": 105097,
+      "included_during_sending_tps": 1751.6166666666666,
+      "queue_to_commit_ms": {
+        "p50": 2552,
+        "p95": 3784,
+        "p99": 4994,
+        "max": 6759
+      }
+    },
+    "rpc_ms_upper_bounds": {
+      "p50": 500.0,
+      "p95": 1000.0,
+      "p99": 1000.0
+    },
+    "max_concurrent_requests": 256,
+    "verify_workers": 2,
+    "send_rpc_outcomes": {
+      "concurrent_limit": 22382.0,
+      "success": 109316.0
+    },
+    "all_rpc_http_statuses": {
+      "200": 117633.0,
+      "400": 8.0,
+      "404": 40.0,
+      "429": 22428.0
+    },
+    "generator": {
+      "txSent": 110320,
+      "txConfirmed": 107038,
+      "txFailed": 3,
+      "status": "completed"
+    },
+    "missing_by_generator_status": {
+      "discarded": 3279
+    },
+    "loadgen_sha256": "852492618d2cb9b1c096e50af7bf87283749f0ed0c189a68fb3715085657022e",
+    "error": null,
+    "case": "reth-bounded-5000",
+    "source_report_sha256": "760607ed5a6d660da4f7bef2e890eae170e7a071ec5ad57f685f65b6ffbba095",
+    "supporting_files_sha256": {
+      "metrics-before.txt": "d001229b388ceb584498b58a262c6e908dd406607699bdceec4ae2998a1d8041",
+      "metrics-after.txt": "3b8185b6c61b2367bcb92f696995f10a34520dd316c3a87fee9a5ed59afbb127",
+      "transactions.json": "6ab8cbf0e8ffc20ac93e3d4ac30610446738f1aaa3523edfab424a3b62839f42",
+      "receipts.json": "07af4b4595959809991da0f2cea3b88a5e84ab9822bd31a33369b55e3a18bcdc"
+    },
+    "peak_rss_bytes": {
+      "node_rss_bytes": 2397405184,
+      "ops_rss_bytes": 451641344,
+      "loadgen_rss_bytes": 445792256
+    },
+    "memory_sampling_error": null
+  },
+  {
+    "kind": "full-transaction-stack",
+    "node": "besu",
+    "requested_rate": 5000,
+    "seconds": 60,
+    "gate": true,
+    "retain": 100000,
+    "receipts": {
+      "unique_logged_hashes": 76319,
+      "successful": 73091,
+      "reverted": 0,
+      "missing": 3228,
+      "included_during_sending": 57566,
+      "included_during_sending_tps": 959.4333333333333,
+      "queue_to_commit_ms": {
+        "p50": 11724,
+        "p95": 21920,
+        "p99": 24125,
+        "max": 27055
+      }
+    },
+    "rpc_ms_upper_bounds": {
+      "p50": 250.0,
+      "p95": 1000.0,
+      "p99": 1000.0
+    },
+    "max_concurrent_requests": 256,
+    "verify_workers": 2,
+    "send_rpc_outcomes": {
+      "concurrent_limit": 43067.0,
+      "error": 654.0,
+      "preflight_unavailable": 12.0,
+      "rbac_denied": 449.0,
+      "success": 93944.0
+    },
+    "all_rpc_http_statuses": {
+      "200": 113821.0,
+      "400": 8.0,
+      "403": 12.0,
+      "404": 1144.0,
+      "429": 43150.0,
+      "500": 111.0
+    },
+    "generator": {
+      "txSent": 95480,
+      "txConfirmed": 73091,
+      "txFailed": 19417,
+      "status": "completed"
+    },
+    "missing_by_generator_status": {
+      "discarded": 3228
+    },
+    "loadgen_sha256": "852492618d2cb9b1c096e50af7bf87283749f0ed0c189a68fb3715085657022e",
+    "error": null,
+    "case": "besu-bounded-5000",
+    "source_report_sha256": "ec085eb56139f6cd5b2d329407bc5c537ebac3bb071f0a594f6cc3e107f858f7",
+    "supporting_files_sha256": {
+      "metrics-before.txt": "66773c26ca1698fb12b63d5ce8f04b7861ae72b74e8c5c2b73383f501746cbf7",
+      "metrics-after.txt": "c32e3764ef8346152c3c93bae80cba91aa242aa024cf317c5db0a518803cfac0",
+      "transactions.json": "40a5e2dd5099c7d96619c6040bae458b4f4dc0560e4be1206d61bb2366311838",
+      "receipts.json": "c347f22798ac014d73c33eb04f196636df6c0e7f0764d3076185266edae3fb1c"
+    },
+    "peak_rss_bytes": {
+      "node_rss_bytes": 2147450880,
+      "ops_rss_bytes": 441171968,
+      "loadgen_rss_bytes": 396607488
+    },
+    "memory_sampling_error": null
+  },
+  {
+    "kind": "full-transaction-stack",
+    "node": "besu",
+    "requested_rate": 5000,
+    "seconds": 60,
+    "gate": true,
+    "retain": 100000,
+    "receipts": {
+      "unique_logged_hashes": 63763,
+      "successful": 61547,
+      "reverted": 0,
+      "missing": 2216,
+      "included_during_sending": 45120,
+      "included_during_sending_tps": 752.0,
+      "queue_to_commit_ms": {
+        "p50": 16204,
+        "p95": 27036,
+        "p99": 29912,
+        "max": 32792
+      }
+    },
+    "rpc_ms_upper_bounds": {
+      "p50": 250.0,
+      "p95": 1000.0,
+      "p99": 1000.0
+    },
+    "max_concurrent_requests": 256,
+    "verify_workers": 4,
+    "send_rpc_outcomes": {
+      "concurrent_limit": 33669.0,
+      "error": 889.0,
+      "preflight_unavailable": 4.0,
+      "rbac_denied": 294.0,
+      "success": 89158.0
+    },
+    "all_rpc_http_statuses": {
+      "200": 108199.0,
+      "400": 8.0,
+      "403": 4.0,
+      "404": 1224.0,
+      "429": 33734.0,
+      "500": 94.0
+    },
+    "generator": {
+      "txSent": 90539,
+      "txConfirmed": 61547,
+      "txFailed": 27046,
+      "status": "completed"
+    },
+    "missing_by_generator_status": {
+      "discarded": 2216
+    },
+    "loadgen_sha256": "852492618d2cb9b1c096e50af7bf87283749f0ed0c189a68fb3715085657022e",
+    "error": null,
+    "case": "besu-bounded-workers4-5000",
+    "source_report_sha256": "c7a38e22f94b3bff500aa80022923188d145394ee08bfd8358bb28eec01c1f75",
+    "supporting_files_sha256": {
+      "metrics-before.txt": "24c598a9ffb27e759bd50140004b59ebb27d76a23eda0063d45fee7844a8ce39",
+      "metrics-after.txt": "0a40044c28ff8ec369609e89b837ac699accf73b438505711d2f5abc4efdf3c3",
+      "transactions.json": "b3e807ce6d31974ab8b25d5e7b88cceb0d33999274480283a5bfbb53a6ee7dc6",
+      "receipts.json": "23955e355866bd122803e4941d628f5c0601359a8b29a61f0987bbd6abfd71df"
+    },
+    "peak_rss_bytes": {
+      "node_rss_bytes": 1836597248,
+      "ops_rss_bytes": 392298496,
+      "loadgen_rss_bytes": 370966528
+    },
+    "memory_sampling_error": null
+  },
+  {
+    "kind": "full-transaction-stack",
+    "node": "reth",
+    "requested_rate": 1000,
+    "seconds": 30,
+    "gate": true,
+    "retain": 100000,
+    "receipts": {
+      "unique_logged_hashes": 30011,
+      "successful": 29956,
+      "reverted": 0,
+      "missing": 55,
+      "included_during_sending": 29049,
+      "included_during_sending_tps": 968.3,
+      "queue_to_commit_ms": {
+        "p50": 1486,
+        "p95": 1966,
+        "p99": 2085,
+        "max": 2382
+      }
+    },
+    "rpc_ms_upper_bounds": {
+      "p50": 50.0,
+      "p95": 250.0,
+      "p99": 500.0
+    },
+    "max_concurrent_requests": 256,
+    "verify_workers": 2,
+    "send_rpc_outcomes": {
+      "preflight_unavailable": 25.0,
+      "success": 29985.0
+    },
+    "all_rpc_http_statuses": {
+      "200": 32346.0,
+      "400": 4.0,
+      "403": 25.0,
+      "404": 40.0,
+      "500": 1.0
+    },
+    "generator": {
+      "txSent": 30011,
+      "txConfirmed": 29956,
+      "txFailed": 0,
+      "status": "completed"
+    },
+    "missing_by_generator_status": {
+      "discarded": 55
+    },
+    "loadgen_sha256": "852492618d2cb9b1c096e50af7bf87283749f0ed0c189a68fb3715085657022e",
+    "error": null,
+    "case": "reth-bounded-1000",
+    "source_report_sha256": "0f4bbbfb2ba98c26cce404a39e86187372651837b55bf105c638998cf2b6668c",
+    "supporting_files_sha256": {
+      "metrics-before.txt": "921d93852c9a6d296138fe8d5168c246adc25939c767b31a1d9107f8525cac2b",
+      "metrics-after.txt": "2feae03c0043ce5e1921bc046d5fa71bffe2dee9a158656cbce2c85e709f4f43",
+      "transactions.json": "4cf1a8940a1040d17013c57cc4e8eb8723bccbf5936e7718b7f65707e122ff10",
+      "receipts.json": "cdbc683a29b560964a7d8d5e85f2345fee3849feda0e1e0c41ce003f1b1c2525"
+    },
+    "peak_rss_bytes": {
+      "node_rss_bytes": 2568781824,
+      "ops_rss_bytes": 222183424,
+      "loadgen_rss_bytes": 159268864
+    },
+    "memory_sampling_error": null
+  },
+  {
+    "kind": "full-transaction-stack",
+    "node": "besu",
+    "requested_rate": 1000,
+    "seconds": 30,
+    "gate": true,
+    "retain": 100000,
+    "receipts": {
+      "unique_logged_hashes": 30011,
+      "successful": 29841,
+      "reverted": 0,
+      "missing": 170,
+      "included_during_sending": 28847,
+      "included_during_sending_tps": 961.5666666666667,
+      "queue_to_commit_ms": {
+        "p50": 1113,
+        "p95": 2091,
+        "p99": 2808,
+        "max": 3146
+      }
+    },
+    "rpc_ms_upper_bounds": {
+      "p50": 50.0,
+      "p95": 500.0,
+      "p99": 500.0
+    },
+    "max_concurrent_requests": 256,
+    "verify_workers": 4,
+    "send_rpc_outcomes": {
+      "concurrent_limit": 516.0,
+      "error": 20.0,
+      "preflight_unavailable": 11.0,
+      "rbac_denied": 17.0,
+      "success": 29956.0
+    },
+    "all_rpc_http_statuses": {
+      "200": 31491.0,
+      "400": 4.0,
+      "403": 11.0,
+      "404": 77.0,
+      "429": 519.0,
+      "500": 7.0
+    },
+    "generator": {
+      "txSent": 30011,
+      "txConfirmed": 29841,
+      "txFailed": 0,
+      "status": "completed"
+    },
+    "missing_by_generator_status": {
+      "discarded": 170
+    },
+    "loadgen_sha256": "852492618d2cb9b1c096e50af7bf87283749f0ed0c189a68fb3715085657022e",
+    "error": null,
+    "case": "besu-bounded-workers4-1000",
+    "source_report_sha256": "5f1b0f5ed78605a6ca7dfb0370f69a6080ede9ec602989d7cd19689901eeafdb",
+    "supporting_files_sha256": {
+      "metrics-before.txt": "30d3770e61474675069a6786931c7f2d60ee5fb6bb32de5a3a514e065ca80cd0",
+      "metrics-after.txt": "3afd36d1b687b3993d796b80b4f9cbac202aace2e79262dca6c2d753a937d187",
+      "transactions.json": "c685da75c05facf8c1b8b73bac4dbd3fecc07e221e2f5031a094e3121d53e0d9",
+      "receipts.json": "779adf97850753a03311fc7d9863e395d23fe11c7d76a75ec8fe73e4f031663d"
+    },
+    "peak_rss_bytes": {
+      "node_rss_bytes": 1689092096,
+      "ops_rss_bytes": 208994304,
+      "loadgen_rss_bytes": 143884288
+    },
+    "memory_sampling_error": null
+  }
+]

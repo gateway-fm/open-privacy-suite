@@ -1,0 +1,74 @@
+{
+  "capturedAt": "2026-09-15T07:01:18.797Z",
+  "triggeringSample": {
+    "status": "running",
+    "txSent": 41841,
+    "txConfirmed": 41212,
+    "txFailed": 0,
+    "currentTps": 762.7491622068587,
+    "averageTps": 756.6731770833334,
+    "elapsedMs": 55296,
+    "durationMs": 60000,
+    "targetTps": 850,
+    "pattern": "adaptive",
+    "transactionType": "eth-transfer",
+    "warnings": [
+      "Insufficient accounts for target TPS: have 10 accounts (can sustain ~150 TPS), but targeting 200 TPS. Recommended: 100 accounts. Current capacity: 10% of target."
+    ],
+    "peakTps": 762,
+    "flowStats": {
+      "directConfirmed": 41212,
+      "pendingConfirmed": 0,
+      "preconfConfirmed": 0,
+      "droppedRequeued": 0,
+      "revokedFlow": 0,
+      "failedFlow": 0,
+      "totalTracked": 41842,
+      "avgStageCount": 1.9849433583480713
+    },
+    "latency": {
+      "count": 41212,
+      "min": 368,
+      "max": 1623,
+      "avg": 1010.9952926332136,
+      "p50": 1014.5,
+      "p75": 1262,
+      "p90": 1416,
+      "p95": 1475,
+      "p99": 1552,
+      "buckets": [
+        {
+          "label": "0-250ms",
+          "count": 0
+        },
+        {
+          "label": "250-500ms",
+          "count": 976
+        },
+        {
+          "label": "500-1s",
+          "count": 19059
+        },
+        {
+          "label": "1-2s",
+          "count": 21177
+        },
+        {
+          "label": "2s+",
+          "count": 0
+        }
+      ]
+    },
+    "totalGasUsed": 1730904000,
+    "blockCount": 55,
+    "peakMgasPerSec": 37.597718598811056,
+    "avgMgasPerSec": 31.30251736111111,
+    "avgFillRate": 15.73549090909091,
+    "currentMgasPerSec": 35.15844484339212,
+    "blockAttestationEnabled": false,
+    "hsmFailoverEnabled": false,
+    "privacyAvailable": false,
+    "privacyMode": false
+  },
+  "visibleText": ">\n_\nGasStorm\nDashboard\nLoad Test\nHistory\n|\nPrivacy\nDocs\nL1\nL2\nLoadGen\nLoad Test\nRunning\nMode\nDirect\nThrough Privacy Proxy\nGasless\nOff\nGasless network\n\nSkips funding and sends 0-value transactions — for chains with zero gas fees.\n\nPattern\nConstant\nRamp\nSpike\nAdaptive\nMixed\nRealistic\n\nAdaptive rate that finds maximum throughput\n\nTransaction type\nETH Transfer\n~21k gas\n\nSimple native ETH transfer\n\nInitial (tx/s)\nStep (tx/s)\nTarget pending\nDuration\ns (1m 0s)\nFix nonce gaps\n\n55.00s / 1m 0.0s · 536 tx/s / 850 target · 791 peak\n\n41,747 sent·41,212 conf·535 pending\n\nStop\nThroughput Over Time\nCurrent: 36.00 Mgas/s\nPeak: 37.60 Mgas/s\nTPS: 536 / 791 peak\nFill %Mgas/stx/s\n0:01\n0:03\n0:06\n0:08\n0:10\n0:12\n0:14\n0:16\n0:18\n0:20\n0:22\n0:25\n0:27\n0:29\n0:31\n0:33\n0:36\n0:38\n0:40\n0:42\n0:44\n0:47\n0:49\n0:51\n0:53\n0\n9\n18\n27\n36\nMgas/s\n0\n200\n400\n600\n800\ntx/s\nLive Metrics\n\nTHROUGHPUT\n\nNow\n\n31.4Mgas/s\n\nPeak\n\n37.6Mgas/s\n\nTPS\n\n536\n\nPeak TPS\n\n791\n\nBLOCKS\n\nBlock\n\n—\n\nAvg Block\n\n—\n\nFill\n\n15.7%\n\nBlocks\n\n55\n\nGAS\n\nBase Fee\n\n—\n\nGas Price\n\n—\n\nTotal Gas\n\n1.73 Ggas\n\nTotal Txs\n\n41,212\n\nPROVENANCE\n\nAttestation\n\nOFF\n\nHSM Provider\n\n—\n\nHSM Key\n\n—\n\nHSM Failover\n\nOFF\n\nTransaction Verification\n41,747\nSent\n41,212\nConfirmed\n0\nFailed\n535\nPending\nConfirmation Rate\n98.7%\nAverage TPS\n756 tx/s\nTest in progress...\nPending Latency\nAvg: -P50: -P95: -P99: -\nWaiting for pending events...\nPreconfirmation Latency\nAvg: -P50: -P95: -P99: -\nWaiting for preconfirmations...\nConfirmation Latency\nAvg: 1011msP50: 1015msP95: 1475msP99: 1552ms\n0-250ms\n250-500ms\n500-1s\n1-2s\n2s+\n0\n5500\n11000\n16500\n22000\n41,212 transactions\nStatistics Summary\nMetric\tMin\tMean\tp50\tp75\tp90\tp95\tp99\tMax\nTX Latency\t368ms\t1.01s\t1.01s\t1.26s\t1.42s\t1.48s\t1.55s\t1.62s\nGas Throughput\t0.00Mgas/s\t0.00Mgas/s\t0.00Mgas/s\t0.00Mgas/s\t0.00Mgas/s\t0.00Mgas/s\t0.00Mgas/s\t0.00Mgas/s\nTX Throughput\t0.0tx/s\t0.0tx/s\t0.0tx/s\t0.0tx/s\t0.0tx/s\t0.0tx/s\t0.0tx/s\t0.0tx/s\nBlock Fill\t0.0%\t0.0%\t0.0%\t0.0%\t0.0%\t0.0%\t0.0%\t0.0%\n>\nGasStorm\nv0.1.0-dev\n0:53"
+}

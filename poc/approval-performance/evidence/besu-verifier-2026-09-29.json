@@ -1,0 +1,1092 @@
+{
+  "measured_on": "2026-09-29",
+  "hardware": "Apple M2 Max, 12 cores, 32 GiB, macOS 26.6.1",
+  "source_base": "61d91e15816603b3c775443abe9174bdab685d64",
+  "candidate_source_dirty": true,
+  "runtime": {
+    "besu": "26.8.1",
+    "java": "Temurin 25.0.4.1+1",
+    "go": "1.26.6",
+    "bouncycastle": "1.84"
+  },
+  "settings": {
+    "requested_tps": 5000,
+    "sending_seconds": 60,
+    "wallets": 10,
+    "transaction_type": "ETH transfer",
+    "node_http_max_conns_per_host": 256,
+    "nominal_block_interval_seconds": 1,
+    "build_window_seconds": 0.8,
+    "gas_limit": 200000000,
+    "identity": "local mock; real RBAC, policy, preflight and signatures",
+    "diagnostics": false
+  },
+  "excluded_attempt": {
+    "reason": "Original JDK plugin baseline hit macOS EADDRNOTAVAIL during sending, before the new plugin was tested. Excluded from TPS comparisons. Both comparison cases will use the same existing NODE_HTTP_MAX_CONNS_PER_HOST=256 fixture setting.",
+    "error": "EADDRNOTAVAIL",
+    "source_changed": false
+  },
+  "validation": {
+    "java": {
+      "tests": 105,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "real_besu": {
+      "passed": 26,
+      "total": 26
+    },
+    "ops_http": {
+      "ops": "http://127.0.0.1:49515",
+      "besu": "http://127.0.0.1:49436",
+      "checks": [
+        {
+          "name": "same_org_executes",
+          "tx": "0x6a043a1667ad307c143462bd590d142e28a7ea71e53aa1deb5d9c8ebdfcffb35"
+        },
+        {
+          "name": "ops_rejects_cross_org",
+          "response": {
+            "error": "transaction denied: cross-org access not permitted",
+            "http_status": 403
+          }
+        },
+        {
+          "name": "besu_excludes_divergent_execution",
+          "tx": "0xf34f22c369a88232c1823da4ade767e229df9ff1d0a55c827899a68c18ceb873",
+          "decisions": [
+            "deny tx=0xf34f22c369a88232c1823da4ade767e229df9ff1d0a55c827899a68c18ceb873 reason=OPS_APPROVAL_MISMATCH detail=approved 0xbabb630a2f7c7ff75f7e7d3f29bc0074263249864b9937a5434af7468e1866ac actual 0x7458081dd03073f9962d1ea20ab2559a939fe224fbc2494542874c5a0fdc3490"
+          ]
+        },
+        {
+          "name": "deployment_included_and_registered",
+          "address": "0x71c95911e9a5d330f4d621842ec243ee1343292e"
+        }
+      ]
+    }
+  },
+  "advisory_audit": {
+    "checked_at": "2026-09-29T14:39:09.524952+00:00",
+    "source": "https://api.osv.dev",
+    "ecosystem": "Maven",
+    "dependencies_checked": 66,
+    "findings": [
+      {
+        "name": "org.bouncycastle:bcprov-jdk18on",
+        "version": "1.84",
+        "advisories": [
+          {
+            "id": "GHSA-9pwp-9qqc-pr26",
+            "review": "Not reachable from ApprovalVerifier: it calls math.ec.rfc8032.Ed25519.verify with raw fixed-length keys/signatures and bounded message bytes, with no certificate or PKIX name-constraint parsing. Upstream fix 2c28b25 changes PKIXNameConstraintValidator. This exact-version review covers the approval plugin only, not other Besu certificate/TLS uses; 1.84 is supplied by the pinned Besu runtime, not bundled by this plugin. Reassess on crypto API, trust-key format or host-version changes; see docs/implementation/approvals-release-review.md."
+          },
+          {
+            "id": "GHSA-qp49-qgx5-5m26",
+            "review": "Not reachable from ApprovalVerifier: raw Ed25519 verification uses byte decoding, curve arithmetic and SHA-512, with no ASN.1 parser. Upstream fix 77454da changes the lazy ASN.1 sequence parsing depth guard. This exact-version review covers the approval plugin only, not other Besu ASN.1 uses; 1.84 is supplied by the pinned Besu runtime, not bundled by this plugin. Reassess on crypto API, trust-key format or host-version changes; see docs/implementation/approvals-release-review.md."
+          }
+        ]
+      }
+    ],
+    "review_current": true,
+    "scope": "Resolved Besu compile/runtime coordinates or registry packages in the Reth lockfile; not a reachability analysis, native-library or OS scan."
+  },
+  "source_files_sha256": {
+    "node-approvals/besu/src/main/java/ops/approvals/ApprovalVerifier.java": "909ce2074c075fe36bc17198b851d634dd23b79d329f4e4d43e9d60c388e5c00",
+    "node-approvals/besu/build.gradle": "b03cc91e316a51af7c5dfb3a5bb5a64e04585408103dfd9545c6f8c585456895",
+    ".tmp/besu-verifier-change/run_transactions.py": "6782fd99fba7f0335ec3f2140bf5081359f5c98206096caff9fec59ae389278a",
+    ".tmp/besu-verifier-change/run_performance.py": "05631f63dbef1e954bf304e26787dc1ebd797a97ab9b00be3ee0660bd05bbf58"
+  },
+  "focused_probe": {
+    "crypto": [
+      {
+        "members": 1,
+        "mode": "bc-cached-point",
+        "rounds": 3,
+        "median_wall_us": 48.614,
+        "min_wall_us": 48.443,
+        "max_wall_us": 48.728,
+        "median_cpu_us_per_verify": 48.597,
+        "median_allocated_bytes_per_verify": 7032.0
+      },
+      {
+        "members": 1,
+        "mode": "bc-raw",
+        "rounds": 3,
+        "median_wall_us": 53.874,
+        "min_wall_us": 53.668,
+        "max_wall_us": 53.915,
+        "median_cpu_us_per_verify": 53.767,
+        "median_allocated_bytes_per_verify": 7592.0
+      },
+      {
+        "members": 1,
+        "mode": "production-jdk",
+        "rounds": 3,
+        "median_wall_us": 417.844,
+        "min_wall_us": 417.115,
+        "max_wall_us": 419.977,
+        "median_cpu_us_per_verify": 417.457,
+        "median_allocated_bytes_per_verify": 55034.4
+      },
+      {
+        "members": 1,
+        "mode": "reth-ed25519-dalek-2.2.0",
+        "rounds": 3,
+        "median_wall_us": 30.71,
+        "min_wall_us": 30.622,
+        "max_wall_us": 30.792
+      },
+      {
+        "members": 1,
+        "mode": "reuse-jdk",
+        "rounds": 3,
+        "median_wall_us": 390.441,
+        "min_wall_us": 387.5,
+        "max_wall_us": 391.085,
+        "median_cpu_us_per_verify": 389.785,
+        "median_allocated_bytes_per_verify": 35418.4
+      },
+      {
+        "members": 32,
+        "mode": "bc-cached-point",
+        "rounds": 3,
+        "median_wall_us": 60.466,
+        "min_wall_us": 60.339,
+        "max_wall_us": 60.519,
+        "median_cpu_us_per_verify": 60.381,
+        "median_allocated_bytes_per_verify": 7032.0
+      },
+      {
+        "members": 32,
+        "mode": "bc-raw",
+        "rounds": 3,
+        "median_wall_us": 66.029,
+        "min_wall_us": 65.846,
+        "max_wall_us": 66.189,
+        "median_cpu_us_per_verify": 66.022,
+        "median_allocated_bytes_per_verify": 7592.0
+      },
+      {
+        "members": 32,
+        "mode": "production-jdk",
+        "rounds": 3,
+        "median_wall_us": 428.621,
+        "min_wall_us": 427.153,
+        "max_wall_us": 430.645,
+        "median_cpu_us_per_verify": 428.275,
+        "median_allocated_bytes_per_verify": 62839.6
+      },
+      {
+        "members": 32,
+        "mode": "reth-ed25519-dalek-2.2.0",
+        "rounds": 3,
+        "median_wall_us": 36.578,
+        "min_wall_us": 36.232,
+        "max_wall_us": 36.831
+      },
+      {
+        "members": 32,
+        "mode": "reuse-jdk",
+        "rounds": 3,
+        "median_wall_us": 400.064,
+        "min_wall_us": 397.97,
+        "max_wall_us": 400.168,
+        "median_cpu_us_per_verify": 399.822,
+        "median_allocated_bytes_per_verify": 43223.6
+      }
+    ],
+    "delivery_cases": [
+      {
+        "case": "headroom-10000-bc-2w-8f",
+        "workers": 2,
+        "inflight": 8,
+        "bc": true,
+        "rate": 10000,
+        "seconds": 30.0,
+        "confirmed_during_sending": 299999,
+        "confirmed_per_second": 9999.966666666667,
+        "accepted": 300000,
+        "backlog_at_end": 1,
+        "mean_batch_size": 1.00106780565937,
+        "retries": 0,
+        "drops": 0,
+        "drain_seconds": 4.15e-05,
+        "latency": {
+          "mean_ms": 0.16046162465630603,
+          "p50_ms_upper": 0.25,
+          "p95_ms_upper": 0.25,
+          "p99_ms_upper": 0.5
+        },
+        "receiver": {
+          "store": {
+            "total_ns": 1112427788,
+            "p99_us_upper": 16,
+            "mean_us": 3.7120521489588896,
+            "count": 299680,
+            "p50_us_upper": 4,
+            "p95_us_upper": 8,
+            "max_us": 4363.083
+          },
+          "worker": {
+            "total_ns": 21743424918,
+            "p99_us_upper": 128,
+            "mean_us": 72.55547556727176,
+            "count": 299680,
+            "p50_us_upper": 128,
+            "p95_us_upper": 128,
+            "max_us": 5805.583
+          },
+          "decode": {
+            "total_ns": 84575321,
+            "p99_us_upper": 1,
+            "mean_us": 0.2822187700213561,
+            "count": 299680,
+            "p50_us_upper": 1,
+            "p95_us_upper": 1,
+            "max_us": 5731.208
+          },
+          "max_queue_size": 7,
+          "verify": {
+            "total_ns": 19527443880,
+            "p99_us_upper": 128,
+            "mean_us": 65.16098465029364,
+            "count": 299680,
+            "p50_us_upper": 128,
+            "p95_us_upper": 128,
+            "max_us": 5312.459
+          },
+          "queue": {
+            "total_ns": 2085249050,
+            "p99_us_upper": 64,
+            "mean_us": 6.958252302455953,
+            "count": 299680,
+            "p50_us_upper": 8,
+            "p95_us_upper": 16,
+            "max_us": 4146.417
+          },
+          "process_cpu_ns": 42269844000,
+          "nano_time": 928674939115041,
+          "store_size": 100000,
+          "connections": 1
+        },
+        "receiver_cpu_percent": 117.25905374797587
+      },
+      {
+        "case": "matrix1-bc-2w-8f",
+        "workers": 2,
+        "inflight": 8,
+        "bc": true,
+        "rate": 5000,
+        "seconds": 30.0,
+        "confirmed_during_sending": 150000,
+        "confirmed_per_second": 5000.0,
+        "accepted": 150000,
+        "backlog_at_end": 0,
+        "mean_batch_size": 1.0006938143779687,
+        "retries": 0,
+        "drops": 0,
+        "drain_seconds": 4.0042e-05,
+        "latency": {
+          "mean_ms": 0.1396202965989798,
+          "p50_ms_upper": 0.25,
+          "p95_ms_upper": 0.25,
+          "p99_ms_upper": 0.25
+        },
+        "receiver": {
+          "queue": {
+            "p95_us_upper": 8,
+            "max_us": 3915.375,
+            "total_ns": 821536656,
+            "p99_us_upper": 16,
+            "mean_us": 5.480710999626408,
+            "count": 149896,
+            "p50_us_upper": 8
+          },
+          "store": {
+            "p95_us_upper": 8,
+            "max_us": 5024.5,
+            "total_ns": 496396912,
+            "p99_us_upper": 16,
+            "mean_us": 3.311608795431499,
+            "count": 149896,
+            "p50_us_upper": 4
+          },
+          "worker": {
+            "p95_us_upper": 128,
+            "max_us": 5102.041,
+            "total_ns": 10459578485,
+            "p99_us_upper": 128,
+            "mean_us": 69.7789032729359,
+            "count": 149896,
+            "p50_us_upper": 128
+          },
+          "decode": {
+            "p95_us_upper": 1,
+            "max_us": 3831.292,
+            "total_ns": 44155404,
+            "p99_us_upper": 2,
+            "mean_us": 0.29457359769440145,
+            "count": 149896,
+            "p50_us_upper": 1
+          },
+          "max_queue_size": 5,
+          "verify": {
+            "p95_us_upper": 128,
+            "max_us": 4871.791,
+            "total_ns": 9512168361,
+            "p99_us_upper": 128,
+            "mean_us": 63.45845360116348,
+            "count": 149896,
+            "p50_us_upper": 64
+          },
+          "process_cpu_ns": 24356223000,
+          "nano_time": 928419106518166,
+          "store_size": 100000,
+          "connections": 1
+        },
+        "receiver_cpu_percent": 58.245180121372854
+      },
+      {
+        "case": "matrix1-jdk-2w-32f",
+        "workers": 2,
+        "inflight": 32,
+        "bc": false,
+        "rate": 5000,
+        "seconds": 30.0,
+        "confirmed_during_sending": 125245,
+        "confirmed_per_second": 4174.833333333333,
+        "accepted": 150000,
+        "backlog_at_end": 24755,
+        "mean_batch_size": 1.0005069235079107,
+        "retries": 0,
+        "drops": 0,
+        "drain_seconds": 5.8950552080000005,
+        "latency": {
+          "mean_ms": 2938.8913996262672,
+          "p50_ms_upper": 5000,
+          "p95_ms_upper": 10000,
+          "p99_ms_upper": 10000
+        },
+        "receiver": {
+          "max_queue_size": 29,
+          "verify": {
+            "mean_us": 469.54493269923427,
+            "count": 149924,
+            "p50_us_upper": 512,
+            "p95_us_upper": 512,
+            "max_us": 3669.584,
+            "total_ns": 70396054490,
+            "p99_us_upper": 1024
+          },
+          "queue": {
+            "mean_us": 7077.318774945973,
+            "count": 149924,
+            "p50_us_upper": 8192,
+            "p95_us_upper": 8192,
+            "max_us": 14287.334,
+            "total_ns": 1061059940015,
+            "p99_us_upper": 16384
+          },
+          "store": {
+            "mean_us": 3.5107690429817775,
+            "count": 149924,
+            "p50_us_upper": 4,
+            "p95_us_upper": 8,
+            "max_us": 4656.208,
+            "total_ns": 526348538,
+            "p99_us_upper": 16
+          },
+          "worker": {
+            "mean_us": 478.1608572943625,
+            "count": 149924,
+            "p50_us_upper": 512,
+            "p95_us_upper": 512,
+            "max_us": 5108.375,
+            "total_ns": 71687788369,
+            "p99_us_upper": 1024
+          },
+          "decode": {
+            "mean_us": 0.19765922067180705,
+            "count": 149924,
+            "p50_us_upper": 1,
+            "p95_us_upper": 1,
+            "max_us": 14.709,
+            "total_ns": 29633861,
+            "p99_us_upper": 1
+          },
+          "process_cpu_ns": 91022472000,
+          "nano_time": 928377328712875,
+          "store_size": 100000,
+          "connections": 1
+        },
+        "receiver_cpu_percent": 221.66735070290434
+      },
+      {
+        "case": "matrix1-jdk-2w-8f",
+        "workers": 2,
+        "inflight": 8,
+        "bc": false,
+        "rate": 5000,
+        "seconds": 30.0,
+        "confirmed_during_sending": 125025,
+        "confirmed_per_second": 4167.5,
+        "accepted": 150000,
+        "backlog_at_end": 24975,
+        "mean_batch_size": 1.002104419280489,
+        "retries": 0,
+        "drops": 0,
+        "drain_seconds": 5.9565167500000005,
+        "latency": {
+          "mean_ms": 2994.709918383942,
+          "p50_ms_upper": 5000,
+          "p95_ms_upper": 10000,
+          "p99_ms_upper": 10000
+        },
+        "receiver": {
+          "max_queue_size": 6,
+          "verify": {
+            "p99_us_upper": 1024,
+            "mean_us": 470.76587879213014,
+            "count": 149685,
+            "p50_us_upper": 512,
+            "p95_us_upper": 512,
+            "max_us": 5016.792,
+            "total_ns": 70466590567
+          },
+          "queue": {
+            "p99_us_upper": 2048,
+            "mean_us": 1335.7936411931723,
+            "count": 149685,
+            "p50_us_upper": 2048,
+            "p95_us_upper": 2048,
+            "max_us": 6743.166,
+            "total_ns": 199948271182
+          },
+          "store": {
+            "p99_us_upper": 16,
+            "mean_us": 3.5345014864548885,
+            "count": 149685,
+            "p50_us_upper": 4,
+            "p95_us_upper": 8,
+            "max_us": 5319.375,
+            "total_ns": 529061855
+          },
+          "worker": {
+            "p99_us_upper": 1024,
+            "mean_us": 479.7410003340348,
+            "count": 149685,
+            "p50_us_upper": 512,
+            "p95_us_upper": 1024,
+            "max_us": 5784.541,
+            "total_ns": 71810031635
+          },
+          "decode": {
+            "p99_us_upper": 1,
+            "mean_us": 0.19993671376557437,
+            "count": 149685,
+            "p50_us_upper": 1,
+            "p95_us_upper": 1,
+            "max_us": 30.208,
+            "total_ns": 29927527
+          },
+          "process_cpu_ns": 91059273000,
+          "nano_time": 928329653349125,
+          "store_size": 100000,
+          "connections": 1
+        },
+        "receiver_cpu_percent": 219.73975274618178
+      },
+      {
+        "case": "matrix1-jdk-2w-8f-repeat",
+        "workers": 2,
+        "inflight": 8,
+        "bc": false,
+        "rate": 5000,
+        "seconds": 30.0,
+        "confirmed_during_sending": 124950,
+        "confirmed_per_second": 4165.0,
+        "accepted": 150000,
+        "backlog_at_end": 25050,
+        "mean_batch_size": 1.0007004903432404,
+        "retries": 0,
+        "drops": 0,
+        "drain_seconds": 5.995357917,
+        "latency": {
+          "mean_ms": 2980.1136266953204,
+          "p50_ms_upper": 5000,
+          "p95_ms_upper": 10000,
+          "p99_ms_upper": 10000
+        },
+        "receiver": {
+          "verify": {
+            "count": 149895,
+            "mean_us": 471.16450654791686,
+            "p99_us_upper": 1024,
+            "total_ns": 70625203709,
+            "max_us": 4054.333,
+            "p95_us_upper": 512,
+            "p50_us_upper": 512
+          },
+          "max_queue_size": 7,
+          "decode": {
+            "count": 149895,
+            "mean_us": 0.2108210280529704,
+            "p99_us_upper": 1,
+            "total_ns": 31601018,
+            "max_us": 2757.75,
+            "p95_us_upper": 1,
+            "p50_us_upper": 1
+          },
+          "worker": {
+            "count": 149895,
+            "mean_us": 479.6684038026619,
+            "p99_us_upper": 1024,
+            "total_ns": 71899895388,
+            "max_us": 5018.0,
+            "p95_us_upper": 512,
+            "p50_us_upper": 512
+          },
+          "store": {
+            "count": 149895,
+            "mean_us": 3.5078983288301813,
+            "p99_us_upper": 16,
+            "total_ns": 525816420,
+            "max_us": 4545.75,
+            "p95_us_upper": 8,
+            "p50_us_upper": 4
+          },
+          "queue": {
+            "count": 149895,
+            "mean_us": 1337.0022900363588,
+            "p99_us_upper": 2048,
+            "total_ns": 200409958265,
+            "max_us": 5856.125,
+            "p95_us_upper": 2048,
+            "p50_us_upper": 2048
+          },
+          "process_cpu_ns": 90912476000,
+          "nano_time": 928508659922333,
+          "store_size": 100000,
+          "connections": 1
+        },
+        "receiver_cpu_percent": 220.96061693206363
+      },
+      {
+        "case": "matrix1-jdk-4w-8f",
+        "workers": 4,
+        "inflight": 8,
+        "bc": false,
+        "rate": 5000,
+        "seconds": 30.0,
+        "confirmed_during_sending": 149998,
+        "confirmed_per_second": 4999.933333333333,
+        "accepted": 150000,
+        "backlog_at_end": 2,
+        "mean_batch_size": 1.00094756369363,
+        "retries": 0,
+        "drops": 0,
+        "drain_seconds": 4.7333e-05,
+        "latency": {
+          "mean_ms": 0.5979085104432212,
+          "p50_ms_upper": 1.0,
+          "p95_ms_upper": 1.0,
+          "p99_ms_upper": 2.5
+        },
+        "receiver": {
+          "queue": {
+            "max_us": 3606.709,
+            "p95_us_upper": 16,
+            "p50_us_upper": 8,
+            "count": 149858,
+            "mean_us": 12.177001247847963,
+            "p99_us_upper": 512,
+            "total_ns": 1824821053
+          },
+          "verify": {
+            "max_us": 10542.0,
+            "p95_us_upper": 512,
+            "p50_us_upper": 512,
+            "count": 149858,
+            "mean_us": 483.56853580723083,
+            "p99_us_upper": 1024,
+            "total_ns": 72466613639
+          },
+          "max_queue_size": 6,
+          "decode": {
+            "max_us": 31.25,
+            "p95_us_upper": 1,
+            "p50_us_upper": 1,
+            "count": 149858,
+            "mean_us": 0.22955966982076365,
+            "p99_us_upper": 1,
+            "total_ns": 34401353
+          },
+          "worker": {
+            "max_us": 10555.791,
+            "p95_us_upper": 1024,
+            "p50_us_upper": 512,
+            "count": 149858,
+            "mean_us": 492.9777790841997,
+            "p99_us_upper": 1024,
+            "total_ns": 73876664018
+          },
+          "store": {
+            "max_us": 3921.958,
+            "p95_us_upper": 8,
+            "p50_us_upper": 4,
+            "count": 149858,
+            "mean_us": 3.9419280385431543,
+            "p99_us_upper": 16,
+            "total_ns": 590729452
+          },
+          "process_cpu_ns": 93753704000,
+          "nano_time": 928460903211750,
+          "store_size": 100000,
+          "connections": 1
+        },
+        "receiver_cpu_percent": 273.307070593588
+      }
+    ],
+    "compatibility": {
+      "wycheproof_totals": {
+        "invalid": 63,
+        "valid": 88
+      },
+      "mismatches": 0,
+      "golden_vectors": [
+        {
+          "bc": true,
+          "malleable_s_plus_order_accepted_bc": false,
+          "jdk": true,
+          "fixture": "batch.json",
+          "malleable_s_plus_order_accepted_jdk": false
+        },
+        {
+          "bc": true,
+          "malleable_s_plus_order_accepted_bc": false,
+          "jdk": true,
+          "fixture": "call-batch.json",
+          "malleable_s_plus_order_accepted_jdk": false
+        }
+      ]
+    }
+  },
+  "full_transaction_cases": [
+    {
+      "case": "jdk",
+      "config": {
+        "gate": true,
+        "plugin_sha256": "c41a9ca903606aa5e6a1c0f75c3794085d4060eb40b9451181a9da036379b986",
+        "ops_binary_sha256": "2dd3bbfcb5e818bd77c91b18254f8b0620592062fc8ed46816fc95091fba04fe",
+        "diagnostics": false,
+        "policy_or_crypto_bypass": false,
+        "max_batch": 32,
+        "verify_workers": 2,
+        "max_in_flight": 8,
+        "node_http_max_conns_per_host": 256,
+        "max_concurrent_requests": 5000
+      },
+      "receipts": {
+        "unique_logged_hashes": 139360,
+        "successful": 138840,
+        "reverted": 0,
+        "missing": 520,
+        "included_during_sending": 135343,
+        "included_during_sending_tps": 2255.7166666666667,
+        "queue_to_commit_ms": {
+          "p50": 2021,
+          "p95": 3851,
+          "p99": 5099,
+          "max": 5352
+        }
+      },
+      "generator": {
+        "txSent": 139360,
+        "txConfirmed": 138840,
+        "txFailed": 0,
+        "status": "completed",
+        "elapsedMs": 90314
+      },
+      "missing_by_generator_status": {
+        "discarded": 520
+      },
+      "generator_error_counts": {},
+      "approval_delivery": {
+        "mean_ms": 197.29506129609973,
+        "histogram_count": 98836.0,
+        "cumulative_buckets_seconds": {
+          "0.0001": 0.0,
+          "0.00025": 0.0,
+          "0.0005": 0.0,
+          "0.001": 3183.0,
+          "0.0025": 13824.0,
+          "0.005": 18817.0,
+          "0.01": 23871.0,
+          "0.025": 33762.0,
+          "0.05": 43114.0,
+          "0.1": 59128.0,
+          "0.25": 77081.0,
+          "0.5": 84408.0,
+          "1.0": 93835.0,
+          "2.5": 98836.0,
+          "5.0": 98836.0,
+          "10.0": 98836.0,
+          "inf": 98836.0
+        },
+        "percentile_upper_bounds_ms": {
+          "p50": 100.0,
+          "p95": 2500.0,
+          "p99": 2500.0
+        }
+      },
+      "mean_approvals_per_batch": 1.4052066048808127,
+      "approval_counter_deltas": [
+        {
+          "name": "privacyproxy_approval_batches_total",
+          "labels": {
+            "code": "OK"
+          },
+          "value": 98836.0
+        },
+        {
+          "name": "privacyproxy_approval_confirmed_total",
+          "labels": {},
+          "value": 138885.0
+        },
+        {
+          "name": "privacyproxy_approval_dropped_total",
+          "labels": {
+            "reason": "evicted"
+          },
+          "value": 0.0
+        },
+        {
+          "name": "privacyproxy_approval_dropped_total",
+          "labels": {
+            "reason": "expired"
+          },
+          "value": 0.0
+        },
+        {
+          "name": "privacyproxy_approval_dropped_total",
+          "labels": {
+            "reason": "permanent"
+          },
+          "value": 0.0
+        },
+        {
+          "name": "privacyproxy_approval_evicted_total",
+          "labels": {},
+          "value": 38885.0
+        },
+        {
+          "name": "privacyproxy_approval_redeliveries_total",
+          "labels": {},
+          "value": 0.0
+        },
+        {
+          "name": "privacyproxy_approval_retries_total",
+          "labels": {},
+          "value": 0.0
+        }
+      ],
+      "producer_counter_deltas": [
+        {
+          "name": "ops_approval_approvals_stored_total",
+          "labels": {},
+          "value": 138885.0
+        },
+        {
+          "name": "ops_approval_batches_total",
+          "labels": {
+            "status": "OK"
+          },
+          "value": 98836.0
+        },
+        {
+          "name": "ops_approval_decisions_total",
+          "labels": {
+            "decision": "allow",
+            "reason": "matched"
+          },
+          "value": 207746.0
+        },
+        {
+          "name": "ops_approval_decisions_total",
+          "labels": {
+            "decision": "wait",
+            "reason": "pending"
+          },
+          "value": 339.0
+        }
+      ],
+      "producer_final_gauges": [
+        {
+          "name": "ops_approval_connections",
+          "labels": {},
+          "value": 1.0
+        },
+        {
+          "name": "ops_approval_store_size",
+          "labels": {},
+          "value": 45.0
+        }
+      ],
+      "loadgen_sha256": "852492618d2cb9b1c096e50af7bf87283749f0ed0c189a68fb3715085657022e",
+      "source_files_sha256": {
+        "receipts.json.gz": "1e1e629d051be50e83eefd4b25d63c25754dd419ccedae1e8c17238a47c61782",
+        "genesis.json": "51b2765f4a4f54bf01501c07478792b4b2a6d8e4ec775f2fc7377a61da4d194f",
+        "besu-metrics-after.txt": "9dec7c90660a9a5b4d0c47b2e778803dbff1d32e6d6958b54de919f6c12ac72f",
+        "transactions-besu-rpc.json.gz": "2b60c6e24234cd5e560388bd9e5819df85e86e2ad8c34223ab4a661feaac737f",
+        "transactions.json.gz": "61be5035739cda9ce77c67fad1fd177b79c1d32cd43a31f0c694888416fec3f6",
+        "besu-metrics-before.txt": "c80ebe38d25cb8da79cbb94d284afd0ec6204eec270b95fa0ce57dc04cda44f7",
+        "contracts.json": "6871890c65c4e4e0f901384a8dbc6d162898e24625f7891d7436485223c76d54",
+        "status-samples.json": "7c1878250cb8f7cdebf4c1b576e2e1fabb77cc95ed81d2271dd95c28255517a0",
+        "transactions-besu-ops.log.gz": "737b877ce166aa4634ed4570d6b9ed615c308abc92ddb76640088fe1503278c9",
+        "metrics-before.txt": "65ea893c5206a6180b0e2377477337a807bbad3a770c9af213c3e59a8688eddf",
+        "transactions-report.json": "e86507956241714d4a43dff36b157b79dfeb8494bf8247b040200f5d60d0b48f",
+        "verifier-config.json": "d21220f79ecfacc4f6be2bfc90fbf76bbd531100164cbc5ae645f3e6869e8677",
+        "metrics-after.txt": "a4b0aefdc102cf00b0da67c1009c358302faa22e127e9ffb109c0f62a372bf58"
+      },
+      "memory_sampling_error": null
+    },
+    {
+      "case": "bouncy-castle",
+      "config": {
+        "gate": true,
+        "plugin_sha256": "8694a7fa7a571358460061a1f9fa775f207b113f32a2967e131fe1cfcd91f276",
+        "ops_binary_sha256": "2dd3bbfcb5e818bd77c91b18254f8b0620592062fc8ed46816fc95091fba04fe",
+        "diagnostics": false,
+        "policy_or_crypto_bypass": false,
+        "max_batch": 32,
+        "verify_workers": 2,
+        "max_in_flight": 8,
+        "node_http_max_conns_per_host": 256,
+        "max_concurrent_requests": 5000
+      },
+      "receipts": {
+        "unique_logged_hashes": 141980,
+        "successful": 141234,
+        "reverted": 0,
+        "missing": 746,
+        "included_during_sending": 139420,
+        "included_during_sending_tps": 2323.6666666666665,
+        "queue_to_commit_ms": {
+          "p50": 1794,
+          "p95": 3146,
+          "p99": 3436,
+          "max": 4286
+        }
+      },
+      "generator": {
+        "txSent": 141980,
+        "txConfirmed": 141234,
+        "txFailed": 0,
+        "status": "completed",
+        "elapsedMs": 88308
+      },
+      "missing_by_generator_status": {
+        "discarded": 746
+      },
+      "generator_error_counts": {},
+      "approval_delivery": {
+        "mean_ms": 2.0662807964497065,
+        "histogram_count": 106863.0,
+        "cumulative_buckets_seconds": {
+          "0.0001": 0.0,
+          "0.00025": 5896.0,
+          "0.0005": 44734.0,
+          "0.001": 78072.0,
+          "0.0025": 94172.0,
+          "0.005": 99457.0,
+          "0.01": 103263.0,
+          "0.025": 105256.0,
+          "0.05": 106120.0,
+          "0.1": 106830.0,
+          "0.25": 106863.0,
+          "0.5": 106863.0,
+          "1.0": 106863.0,
+          "2.5": 106863.0,
+          "5.0": 106863.0,
+          "10.0": 106863.0,
+          "inf": 106863.0
+        },
+        "percentile_upper_bounds_ms": {
+          "p50": 1.0,
+          "p95": 10.0,
+          "p99": 50.0
+        }
+      },
+      "mean_approvals_per_batch": 1.3239381263861205,
+      "approval_counter_deltas": [
+        {
+          "name": "privacyproxy_approval_batches_total",
+          "labels": {
+            "code": "OK"
+          },
+          "value": 106863.0
+        },
+        {
+          "name": "privacyproxy_approval_confirmed_total",
+          "labels": {},
+          "value": 141480.0
+        },
+        {
+          "name": "privacyproxy_approval_dropped_total",
+          "labels": {
+            "reason": "evicted"
+          },
+          "value": 0.0
+        },
+        {
+          "name": "privacyproxy_approval_dropped_total",
+          "labels": {
+            "reason": "expired"
+          },
+          "value": 0.0
+        },
+        {
+          "name": "privacyproxy_approval_dropped_total",
+          "labels": {
+            "reason": "permanent"
+          },
+          "value": 0.0
+        },
+        {
+          "name": "privacyproxy_approval_evicted_total",
+          "labels": {},
+          "value": 41481.0
+        },
+        {
+          "name": "privacyproxy_approval_redeliveries_total",
+          "labels": {},
+          "value": 0.0
+        },
+        {
+          "name": "privacyproxy_approval_retries_total",
+          "labels": {},
+          "value": 0.0
+        }
+      ],
+      "producer_counter_deltas": [
+        {
+          "name": "ops_approval_approvals_stored_total",
+          "labels": {},
+          "value": 141480.0
+        },
+        {
+          "name": "ops_approval_batches_total",
+          "labels": {
+            "status": "OK"
+          },
+          "value": 106863.0
+        },
+        {
+          "name": "ops_approval_decisions_total",
+          "labels": {
+            "decision": "allow",
+            "reason": "matched"
+          },
+          "value": 210575.0
+        },
+        {
+          "name": "ops_approval_decisions_total",
+          "labels": {
+            "decision": "wait",
+            "reason": "pending"
+          },
+          "value": 8.0
+        }
+      ],
+      "producer_final_gauges": [
+        {
+          "name": "ops_approval_connections",
+          "labels": {},
+          "value": 1.0
+        },
+        {
+          "name": "ops_approval_store_size",
+          "labels": {},
+          "value": 246.0
+        }
+      ],
+      "loadgen_sha256": "852492618d2cb9b1c096e50af7bf87283749f0ed0c189a68fb3715085657022e",
+      "source_files_sha256": {
+        "receipts.json.gz": "7d7228637bbfa371793122e7b0ff5e369d0cc00bd5eed10ca190aa2003526fda",
+        "genesis.json": "51b2765f4a4f54bf01501c07478792b4b2a6d8e4ec775f2fc7377a61da4d194f",
+        "besu-metrics-after.txt": "82daf2fd9ebfb4fcd34f8c2fea6d50129f3656599d611491bb302c22f9b2d874",
+        "transactions-besu-rpc.json.gz": "34485a17474ca0b5ea4b017635c20aecb0810bbe379a72a5b6be7ce88b333247",
+        "transactions.json.gz": "6d20337c5247b58cdcebec7010bab1dd6f86b23f56a63ef81995e2f21ff4557b",
+        "besu-metrics-before.txt": "c80ebe38d25cb8da79cbb94d284afd0ec6204eec270b95fa0ce57dc04cda44f7",
+        "contracts.json": "6871890c65c4e4e0f901384a8dbc6d162898e24625f7891d7436485223c76d54",
+        "status-samples.json": "c2f10582f479389f6de5b32926559bd07b33d31d34f5a0f508185ff6ec8911db",
+        "transactions-besu-ops.log.gz": "b23374f32380e2f60a2facbcaed44e54c2f6291535107018d5936b7c7042fd30",
+        "metrics-before.txt": "cd270b6c169c46d10e444a83b70ff806803934f9561c23c3ad534fdab75c570b",
+        "transactions-report.json": "fa632bec1281babb5c995c3f9a2a9e84cbb8339cf09ab0e0b405a2e65511b858",
+        "verifier-config.json": "9e1fe914b9714cbc46adfedb0a2f3e7a247b20eccaff8caf8201aad68c80cc6a",
+        "metrics-after.txt": "9492ac1066d901b048a1a1df2c67ffd129deca7113e1ef31ae6f6aad649a7c0c"
+      },
+      "memory_sampling_error": null
+    },
+    {
+      "case": "approvals-off",
+      "config": {
+        "gate": false,
+        "plugin_sha256": "8694a7fa7a571358460061a1f9fa775f207b113f32a2967e131fe1cfcd91f276",
+        "ops_binary_sha256": "2dd3bbfcb5e818bd77c91b18254f8b0620592062fc8ed46816fc95091fba04fe",
+        "diagnostics": false,
+        "policy_or_crypto_bypass": false,
+        "max_batch": 32,
+        "verify_workers": 2,
+        "max_in_flight": 8,
+        "node_http_max_conns_per_host": 256,
+        "max_concurrent_requests": 5000
+      },
+      "receipts": {
+        "unique_logged_hashes": 176420,
+        "successful": 175954,
+        "reverted": 0,
+        "missing": 466,
+        "included_during_sending": 172144,
+        "included_during_sending_tps": 2869.0666666666666,
+        "queue_to_commit_ms": {
+          "p50": 1493,
+          "p95": 2229,
+          "p99": 2821,
+          "max": 3499
+        }
+      },
+      "generator": {
+        "txSent": 176420,
+        "txConfirmed": 175954,
+        "txFailed": 0,
+        "status": "completed",
+        "elapsedMs": 91292
+      },
+      "missing_by_generator_status": {
+        "discarded": 466
+      },
+      "generator_error_counts": {},
+      "approval_delivery": null,
+      "mean_approvals_per_batch": null,
+      "approval_counter_deltas": [],
+      "producer_counter_deltas": [],
+      "producer_final_gauges": [],
+      "loadgen_sha256": "852492618d2cb9b1c096e50af7bf87283749f0ed0c189a68fb3715085657022e",
+      "source_files_sha256": {
+        "receipts.json.gz": "afddabee22b902e992c4e3e11ef953ff0aa0e3a912b8689eda0753c687008e10",
+        "genesis.json": "51b2765f4a4f54bf01501c07478792b4b2a6d8e4ec775f2fc7377a61da4d194f",
+        "transactions-besu-rpc.json.gz": "88208a70a238b33aa2f443b347d2285b9c87665af97a0292316fa2fc675b6a60",
+        "transactions.json.gz": "83d1783cdc143b65d01f0d6ce5f36149e7b4fbc3f3b6432903b92697c804d384",
+        "contracts.json": "6871890c65c4e4e0f901384a8dbc6d162898e24625f7891d7436485223c76d54",
+        "status-samples.json": "20dbfd856650b26b319cd2ec46f9ad756006dabd8c24746afea225f13ff31c90",
+        "transactions-besu-ops.log.gz": "a74f727db083def0b9ecaa44afebe54c123e3e8f1c7d3026e143ee506c082c7a",
+        "metrics-before.txt": "3c1c411d670deb2e7465858d97246df48cef6848c1763913ac295564e8023992",
+        "transactions-report.json": "d63beea99ca7f1feecdc78564cacf61308ca0d168efc081edd5c05cb140c4a05",
+        "verifier-config.json": "a4d1a721b7f77791b34b566bbbbd9d5786ed0410bd189f21d3555b42341e861a",
+        "metrics-after.txt": "b5a16b07ddbb7ee9d6b2ddd8314a0682f86616ac01d21df454b9fb2b6f60ebee"
+      },
+      "memory_sampling_error": null
+    }
+  ]
+}

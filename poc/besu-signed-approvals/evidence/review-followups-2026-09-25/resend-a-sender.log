@@ -1,0 +1,2 @@
+{"time":"2026-09-25T06:52:19.147216+02:00","level":"WARN","msg":"approval producer restarted; redelivering the retained approvals, newest first","target":"127.0.0.1:56537","boot_id":"51158ccf35ee28a47ad73bd96387c44f","previous_boot_id":"639eb3ccbe6edffcad0187a840fc9258","batches":1}
+{"time":"2026-09-25T06:52:20.698503+02:00","level":"INFO","msg":"approval connections used","count":2,"target":"127.0.0.1:56537"}

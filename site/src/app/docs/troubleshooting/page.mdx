@@ -267,10 +267,15 @@ docker-compose pull
 
 If you are receiving `429 Too Many Requests`:
 
-- Determine whether the response is a local concurrency rejection or an
-  upstream rate-limit/circuit-breaker rejection by checking proxy metrics and logs.
+- Determine whether the response is a local concurrency rejection, a
+  signed-approval simulation budget rejection, or an upstream
+  rate-limit/circuit-breaker rejection by checking proxy metrics and logs.
 - For a local concurrency rejection, reduce simultaneous in-flight requests and
   retry after existing requests finish.
+- For `rate limit exceeded (requests per second)` on `eth_sendRawTransaction`
+  with signed approvals enabled, the identity used up its simulation budget:
+  spread submissions out, or raise `OPS_APPROVAL_PREFLIGHT_RATE` /
+  `OPS_APPROVAL_PREFLIGHT_BURST` if the workload legitimately needs more.
 - For an upstream rejection, check the rate tier associated with the group's
   `rpc_api_key` (or the global fallback key) in the upstream RPC proxy.
 - Respect `Retry-After` when present. Changing group permissions inside

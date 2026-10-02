@@ -1,0 +1,64 @@
+package sender
+
+import (
+    "context"
+    "testing"
+    "time"
+
+    "github.com/gateway-fm/loadgenerator/internal/rpc"
+)
+
+type heldBatchClient struct {
+    rpc.Client
+    entered chan struct{}
+    release chan struct{}
+    received chan string
+}
+
+func (c *heldBatchClient) SendRawTransactionBatch(ctx context.Context, batch [][]byte) []error {
+    close(c.entered)
+    select {
+    case <-c.release:
+    case <-ctx.Done():
+        return []error{ctx.Err()}
+    }
+    c.received <- string(batch[0])
+    return []error{nil}
+}
+
+// The production senderWorker reuses these outer slice buffers immediately
+// after SendBatchAsync returns, while RPC and callbacks remain in flight.
+func TestBatchRetainsTransactionsAndCallbacksAfterCallerReusesBuffers(t *testing.T) {
+    ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+    defer cancel()
+    c := &heldBatchClient{entered: make(chan struct{}), release: make(chan struct{}), received: make(chan string, 1)}
+    s := New(Config{Client: c, Concurrency: 1})
+    called := make(chan string, 1)
+    transactions := [][]byte{[]byte("nonce-4673")}
+    callbacks := []func(error){func(error) { called <- "nonce-4673" }}
+    if !s.SendBatchAsync(ctx, transactions, callbacks) {
+        t.Fatal("first batch was rejected")
+    }
+    select {
+    case <-c.entered:
+    case <-ctx.Done():
+        t.Fatal("sender did not start")
+    }
+    transactions[0] = []byte("nonce-4674")
+    callbacks[0] = func(error) { called <- "nonce-4674" }
+    close(c.release)
+    select {
+    case got := <-c.received:
+        t.Logf("actual transaction submitted: %s", got)
+        if got != "nonce-4673" { t.Errorf("queued transaction was replaced: got %s", got) }
+    case <-ctx.Done():
+        t.Fatal("send timed out")
+    }
+    select {
+    case got := <-called:
+        t.Logf("actual completion callback: %s", got)
+        if got != "nonce-4673" { t.Errorf("completion delivered to wrong transaction: got %s", got) }
+    case <-ctx.Done():
+        t.Fatal("callback timed out")
+    }
+}

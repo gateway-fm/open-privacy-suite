@@ -21,6 +21,7 @@ import (
 	"privacy-proxy/internal/compliance"
 	"privacy-proxy/internal/db"
 	"privacy-proxy/internal/metrics"
+	"privacy-proxy/internal/nodeapproval"
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
 	"privacy-proxy/internal/server/middleware"
@@ -38,6 +39,7 @@ type AuditBuffer interface {
 // It separates concerns from HTTP handling, making the logic testable
 // and reusable.
 type JSONRPCProcessor struct {
+	nodeApprovals     *nodeapproval.Service
 	rbacAccessCtrl    *rbac.AccessController
 	rateLimiter       RateLimiterInterface
 	proxy             *proxy.Proxy
@@ -75,6 +77,7 @@ type JSONRPCProcessor struct {
 	// Circuit breaker + concurrency limiter (replaces rate limiter for authenticated users)
 	circuitBreaker         *middleware.CircuitBreaker
 	concurrencyLimiter     *middleware.ConcurrencyLimiter
+	preflightLimiter       preflightLimiter // missing budget refuses signed preflight
 	defaultRPCAPIKey       string
 	defaultRPCAPIKeyHeader string // operator-wide header name from RPC_API_KEY_HEADER; empty => proxy.DefaultAPIKeyHeader
 
@@ -241,6 +244,10 @@ type JSONRPCProcessorConfig struct {
 	RuntimeTracer  *tracer.RuntimeTracer
 	TraceValidator *rbac.TraceValidator
 
+	// Signed approvals are opt-in; an enabled service without a budget fails closed.
+	NodeApprovals            *nodeapproval.Service
+	ApprovalPreflightLimiter preflightLimiter
+
 	// Optional wiring. Zero values reproduce the unwired behavior exactly:
 	// nil Metrics = no metrics; nil TxVisibilityStore = visibleTo resolution
 	// skipped; nil AddressVisibilityResolver = RPC log field-redaction no-op
@@ -275,6 +282,8 @@ func NewJSONRPCProcessor(cfg JSONRPCProcessorConfig) *JSONRPCProcessor {
 		proxy:                  cfg.Proxy,
 		accessLogger:           cfg.AccessLogger,
 		runtimeTracer:          cfg.RuntimeTracer,
+		nodeApprovals:          cfg.NodeApprovals,
+		preflightLimiter:       cfg.ApprovalPreflightLimiter,
 		traceValidator:         cfg.TraceValidator,
 		circuitBreaker:         cfg.CircuitBreaker,
 		concurrencyLimiter:     cfg.ConcurrencyLimiter,
@@ -1502,8 +1511,39 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 	// The bytecode analyzer keeps running as a thinner fallback for
 	// operators without debug_* on the upstream node, but the
 	// authoritative gate is the trace.
+	var prepared *nodeapproval.Prepared
+	if p.nodeApprovals != nil {
+		// No producer can take an approval: refuse before the node spends a preflight on it.
+		if !p.nodeApprovals.Accepting() {
+			return p.refuseApprovalDelivery(ctx, req, start)
+		}
+		if limited := p.limitPreflight(ctx, req, start); limited != nil {
+			return limited
+		}
+		prepared, err = p.nodeApprovals.Prepare(ctx, rawTxHex)
+		if err != nil {
+			slog.Warn("signed preflight failed", "error", err)
+			p.recordRPCOutcome(req.Method, "preflight_unavailable", start)
+			req.denialReason = ReasonTracingUnavailable
+			p.logAccess(ctx, req, http.StatusForbidden)
+			return &ProcessResult{Error: &ProcessError{StatusCode: http.StatusForbidden, Message: "signed preflight unavailable or unsupported transaction", Reason: ReasonTracingUnavailable}}
+		}
+	}
 	var runtimeCreateTargets []rbac.CreateTarget
-	if to != "" {
+	if prepared != nil {
+		// Root EOA transfers keep the existing RBAC/compliance policy. The pinned
+		// trace proves no contract or nested call is being skipped.
+		if !prepared.PlainValueTransfer {
+			targets, traceErr := p.validateRawTxWithPreparedTrace(ctx, req, from, to, data, value, prepared)
+			if traceErr != nil {
+				p.recordRPCOutcome(req.Method, "send_trace_denied", start)
+				req.denialReason = traceErr.Reason
+				p.logAccess(ctx, req, traceErr.StatusCode)
+				return &ProcessResult{Error: traceErr}
+			}
+			runtimeCreateTargets = targets
+		}
+	} else if to != "" {
 		skipTrace := false
 		if isSimpleValueTransfer(data) {
 			// Only skip tracing for simple value transfers to EOAs.
@@ -1633,7 +1673,7 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 
 	// Pre-register plain CREATE for raw transactions (nonce is embedded in the signed tx).
 	var rawTxPlainCreateAddr string
-	if isDeployment {
+	if isDeployment && (prepared == nil || prepared.SurvivingCreations[strings.ToLower(gethcrypto.CreateAddress(gethcommon.HexToAddress(from), txNonce).Hex())]) {
 		fromAddr := gethcommon.HexToAddress(from)
 		contractAddr := gethcrypto.CreateAddress(fromAddr, txNonce)
 		addrStr := strings.ToLower(contractAddr.Hex())
@@ -1651,6 +1691,24 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 		runtimeCreateAddrs = p.preRegisterRuntimeCreates(ctx, result.OrgID, runtimeCreateTargets)
 	}
 
+	// Queue only after every OPS gate has passed. Delivery has process lifetime,
+	// runs independently of forwarding, and does not wait for a Reth ACK.
+	if prepared != nil {
+		if err := p.nodeApprovals.Enqueue(prepared); err != nil {
+			// No transaction was forwarded. Release the registrations made above.
+			for _, addr := range append(runtimeCreateAddrs, rawTxPlainCreateAddr) {
+				if addr != "" {
+					if cleanupErr := p.rbacAccessCtrl.Store().DeletePreregisteredAddressByAddress(context.Background(), addr); cleanupErr != nil {
+						slog.Warn("failed to clean up creation after approval queue failure", "address", addr, "error", cleanupErr)
+					}
+				}
+			}
+			return p.refuseApprovalDelivery(ctx, req, start)
+		}
+	}
+	if prepared != nil {
+		p.nodeApprovals.TraceForward(prepared)
+	}
 	// Forward the original raw transaction to node
 	forwardStart := time.Now()
 	responseBody, statusCode, err := p.proxy.ForwardWithAPIKeyHeader(req.Body, apiKeyHeader, apiKey, req.ClientIP)
@@ -1738,7 +1796,11 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 			rpcResp2.Result != ""
 
 		if nodeAccepted {
-			go p.pollAndFinalizeRuntimeCreates(rpcResp2.Result, runtimeCreateAddrs, result.OrgID, result.UserID)
+			if prepared != nil {
+				go p.pollAndFinalizeRuntimeCreates(rpcResp2.Result, runtimeCreateAddrs, result.OrgID, result.UserID, prepared.SurvivingCreations)
+			} else {
+				go p.pollAndFinalizeRuntimeCreates(rpcResp2.Result, runtimeCreateAddrs, result.OrgID, result.UserID)
+			}
 		} else {
 			// Node rejected — clean up pre-registrations
 			for _, addr := range runtimeCreateAddrs {
@@ -2214,7 +2276,7 @@ func (p *JSONRPCProcessor) preRegisterRuntimeCreates(ctx context.Context, orgID 
 // pollAndFinalizeRuntimeCreates polls for the receipt of a transaction that contains
 // runtime CREATE/CREATE2 operations, then reconciles pre-registered addresses with
 // the actual addresses from the mined trace.
-func (p *JSONRPCProcessor) pollAndFinalizeRuntimeCreates(txHash string, preRegAddrs []string, orgID, userID string) {
+func (p *JSONRPCProcessor) pollAndFinalizeRuntimeCreates(txHash string, preRegAddrs []string, orgID, userID string, approved ...map[string]bool) {
 	ctx := context.Background()
 	const maxAttempts = 12
 	const baseDelay = 2 * time.Second
@@ -2245,7 +2307,13 @@ func (p *JSONRPCProcessor) pollAndFinalizeRuntimeCreates(txHash string, preRegAd
 
 		// Transaction succeeded — trace to get actual created addresses
 		actualAddrs := make(map[string]bool)
-		if p.runtimeTracer != nil {
+		if len(approved) != 0 {
+			// Reth has enforced these exact surviving creations. Do not register
+			// caught/reverted/temporary creations from a broader mined call trace.
+			for addr := range approved[0] {
+				actualAddrs[addr] = true
+			}
+		} else if p.runtimeTracer != nil {
 			traceResult, traceErr := p.runtimeTracer.TraceMinedTransaction(ctx, txHash)
 			if traceErr == nil && traceResult != nil {
 				for _, target := range traceResult.CallTargets {

@@ -1,0 +1,1365 @@
+diff --git a/cmd/loadgen/main.go b/cmd/loadgen/main.go
+index 0d571f2..7644115 100644
+--- a/cmd/loadgen/main.go
++++ b/cmd/loadgen/main.go
+@@ -4,6 +4,7 @@ import (
+ 	"flag"
+ 	"log/slog"
+ 	"net/http"
++	_ "net/http/pprof"
+ 	"os"
+ 	"os/signal"
+ 	"strconv"
+@@ -174,4 +175,4 @@ func main() {
+ 		logger.Error("HTTP server failed", "error", err)
+ 		os.Exit(1)
+ 	}
+-}
+\ No newline at end of file
++}
+diff --git a/internal/account/account.go b/internal/account/account.go
+index 90423e7..833b85a 100644
+--- a/internal/account/account.go
++++ b/internal/account/account.go
+@@ -19,6 +19,7 @@ type Account struct {
+ 	PrivateKey *ecdsa.PrivateKey
+ 	Address    common.Address
+ 	nonce      uint64
++	nonceFloor uint64   // confirmed consumed nonces; late callbacks cannot reuse them
+ 	freeNonces []uint64 // rolled-back nonces available for reuse (sorted ascending)
+ 	mu         sync.Mutex
+ }
+@@ -59,6 +60,27 @@ func (n *Nonce) Commit() {
+ 	n.committed.Store(true)
+ }
+ 
++// Consumed handles a node's nonce-too-low response: this and all lower
++// nonces are already on-chain, even if an earlier send timed out locally.
++func (n *Nonce) Consumed() {
++	n.Commit()
++	n.account.mu.Lock()
++	defer n.account.mu.Unlock()
++	n.account.advanceFloor(n.value + 1)
++}
++
++// Caller holds mu. Preserve failed reservations at or above the chain floor.
++func (a *Account) advanceFloor(nonce uint64) {
++	if nonce > a.nonceFloor {
++		a.nonceFloor = nonce
++	}
++	if a.nonce < a.nonceFloor {
++		a.nonce = a.nonceFloor
++	}
++	i := sort.Search(len(a.freeNonces), func(i int) bool { return a.freeNonces[i] >= a.nonceFloor })
++	a.freeNonces = a.freeNonces[i:]
++}
++
+ // Rollback returns the nonce to the pool if not committed.
+ // Safe to call multiple times (idempotent).
+ // Typically called via defer.
+@@ -108,6 +130,10 @@ func (a *Account) rollback(nonce uint64) {
+ 	a.mu.Lock()
+ 	defer a.mu.Unlock()
+ 
++	if nonce < a.nonceFloor {
++		return
++	}
++
+ 	// Fast path: if this was the most recent nonce, just decrement
+ 	if a.nonce == nonce+1 {
+ 		a.nonce = nonce
+@@ -137,36 +163,26 @@ func (a *Account) Resync(ctx context.Context, client rpc.Client) error {
+ 		return err
+ 	}
+ 	a.mu.Lock()
+-	// Only update if the fetched nonce is higher to avoid going backwards.
+-	// This prevents race conditions where another goroutine reserved nonces
+-	// between the RPC call and this lock acquisition.
++	defer a.mu.Unlock()
+ 	if nonce > a.nonce {
+ 		a.nonce = nonce
+ 	}
+-	// Clear free list — chain state is authoritative after resync
+-	a.freeNonces = a.freeNonces[:0]
+-	a.mu.Unlock()
++	// The pending nonce identifies the first gap, not proof of mining. Keep
++	// reservations at/above it; only confirmed state sets the permanent floor.
++	i := sort.Search(len(a.freeNonces), func(i int) bool { return a.freeNonces[i] >= nonce })
++	a.freeNonces = a.freeNonces[i:]
+ 	return nil
+ }
+ 
+-// ResyncFromChain fetches the confirmed nonce directly from the chain, bypassing any cache.
+-// Use this when starting a fresh test to ensure nonces match the true chain state.
+-// Uses set-if-higher pattern to avoid race conditions with concurrent nonce reservations.
++// ResyncFromChain advances the consumed floor without abandoning unmined gaps.
+ func (a *Account) ResyncFromChain(ctx context.Context, client rpc.Client) error {
+ 	nonce, err := client.GetConfirmedNonce(ctx, a.Address.Hex())
+ 	if err != nil {
+ 		return err
+ 	}
+ 	a.mu.Lock()
+-	// Only update if the fetched nonce is higher to avoid going backwards.
+-	// This prevents race conditions where another goroutine reserved nonces
+-	// between the RPC call and this lock acquisition.
+-	if nonce > a.nonce {
+-		a.nonce = nonce
+-	}
+-	// Clear free list — chain state is authoritative after resync
+-	a.freeNonces = a.freeNonces[:0]
+-	a.mu.Unlock()
++	defer a.mu.Unlock()
++	a.advanceFloor(nonce)
+ 	return nil
+ }
+ 
+@@ -184,6 +200,7 @@ func (a *Account) ForceResync(ctx context.Context, client rpc.Client) error {
+ 	}
+ 	a.mu.Lock()
+ 	a.nonce = nonce
++	a.nonceFloor = 0 // explicit between-run reset may follow a reorg
+ 	a.freeNonces = a.freeNonces[:0]
+ 	a.mu.Unlock()
+ 	return nil
+@@ -198,6 +215,7 @@ func (a *Account) ForceResyncFromChain(ctx context.Context, client rpc.Client) e
+ 	}
+ 	a.mu.Lock()
+ 	a.nonce = nonce
++	a.nonceFloor = 0 // explicit between-run reset may follow a reorg
+ 	a.freeNonces = a.freeNonces[:0]
+ 	a.mu.Unlock()
+ 	return nil
+@@ -208,6 +226,7 @@ func (a *Account) ForceResyncFromChain(ctx context.Context, client rpc.Client) e
+ func (a *Account) SetNonce(nonce uint64) {
+ 	a.mu.Lock()
+ 	a.nonce = nonce
++	a.nonceFloor = 0 // explicit between-run reset may follow a reorg
+ 	a.freeNonces = a.freeNonces[:0]
+ 	a.mu.Unlock()
+ }
+diff --git a/internal/loadgen/api.go b/internal/loadgen/api.go
+index 05afdf8..9a17f75 100644
+--- a/internal/loadgen/api.go
++++ b/internal/loadgen/api.go
+@@ -262,7 +262,7 @@ func (lg *LoadGenerator) CheckBuilderRPC() error {
+ // Reset resets the test state.
+ func (lg *LoadGenerator) Reset() {
+ 	lg.statusMu.Lock()
+-	if lg.status == types.StatusRunning {
++	if lg.status == types.StatusRunning || lg.status == types.StatusInitializing || lg.status == types.StatusVerifying {
+ 		lg.statusMu.Unlock()
+ 		return
+ 	}
+@@ -368,4 +368,4 @@ func (lg *LoadGenerator) RecycleFunds() (int, error) {
+ 	}
+ 
+ 	return lg.accountMgr.RecycleFunds(context.Background(), lg.builderClient)
+-}
+\ No newline at end of file
++}
+diff --git a/internal/loadgen/init.go b/internal/loadgen/init.go
+index 6ad26e6..78601e1 100644
+--- a/internal/loadgen/init.go
++++ b/internal/loadgen/init.go
+@@ -60,6 +60,22 @@ func buildPrivacyClient(cfg *config.Config, logger *slog.Logger) (rpc.Client, st
+ }
+ 
+ func (lg *LoadGenerator) runInitialization(req types.StartTestRequest) {
++	initializationCtx := lg.initCtx
++	if initializationCtx == nil {
++		initializationCtx = context.Background()
++	}
++	defer func() {
++		if initializationCtx.Err() != nil {
++			lg.wg.Wait()
++			lg.statusMu.Lock()
++			if lg.status == types.StatusInitializing || lg.status == types.StatusError {
++				lg.status = types.StatusCompleted
++				lg.testError = ""
++			}
++			lg.statusMu.Unlock()
++		}
++	}()
++
+ 	// Defer error handling - if we panic or error, set status to error
+ 	defer func() {
+ 		if r := recover(); r != nil {
+@@ -104,7 +120,7 @@ func (lg *LoadGenerator) runInitialization(req types.StartTestRequest) {
+ 	// the reported id matches the default, so this is a no-op there. Best-effort:
+ 	// on query failure we keep the configured id.
+ 	{
+-		cidCtx, cidCancel := context.WithTimeout(context.Background(), 10*time.Second)
++		cidCtx, cidCancel := context.WithTimeout(initializationCtx, 10*time.Second)
+ 		if raw, err := lg.l2Client.Call(cidCtx, "eth_chainId", nil); err == nil {
+ 			s := strings.TrimPrefix(strings.Trim(string(raw), "\""), "0x")
+ 			if v, ok := new(big.Int).SetString(s, 16); ok && v.Sign() > 0 {
+@@ -234,7 +250,7 @@ func (lg *LoadGenerator) runInitialization(req types.StartTestRequest) {
+ 			}
+ 			lg.initAccountsGen = dynamicCount
+ 
+-			fundCtx, fundCancel := context.WithTimeout(context.Background(), 5*time.Minute)
++			fundCtx, fundCancel := context.WithTimeout(initializationCtx, 5*time.Minute)
+ 			defer fundCancel()
+ 
+ 			if lg.gasless {
+@@ -292,7 +308,7 @@ func (lg *LoadGenerator) runInitialization(req types.StartTestRequest) {
+ 	// Initialize nonces for built-in accounts
+ 	lg.initPhase = types.InitPhaseInitNonces
+ 	lg.initProgress = "Initializing nonces for built-in accounts..."
+-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
++	ctx, cancel := context.WithTimeout(initializationCtx, 30*time.Second)
+ 	defer cancel()
+ 	// CRITICAL: Use builderClient to sync through builder (eth_getPendingNonce)
+ 	// This ensures load generator and builder have the same nonce view, preventing
+@@ -427,7 +443,7 @@ func (lg *LoadGenerator) runInitialization(req types.StartTestRequest) {
+ 			lg.statusMu.Unlock()
+ 		}
+ 
+-		preMintCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
++		preMintCtx, cancel := context.WithTimeout(initializationCtx, 10*time.Minute)
+ 		if err := lg.deployer.PreMintNFTs(preMintCtx, minter, nftAddr, req.Erc721PreMint, preMintProgress); err != nil {
+ 			cancel()
+ 			lg.setError(fmt.Sprintf("failed to pre-mint NFTs: %v", err))
+@@ -535,14 +551,14 @@ func (lg *LoadGenerator) runInitialization(req types.StartTestRequest) {
+ 			PrivacyMode:      req.PrivacyMode,
+ 			CustomName:       &defaultName,
+ 		}
+-		if err := lg.storage.CreateTestRun(context.Background(), testRun); err != nil {
++		if err := lg.storage.CreateTestRun(initializationCtx, testRun); err != nil {
+ 			lg.logger.Error("failed to create test run in storage", "error", err)
+ 			// Continue anyway - storage is non-critical
+ 		}
+ 	}
+ 
+ 	// Create context
+-	lg.ctx, lg.cancel = context.WithCancel(context.Background())
++	lg.ctx, lg.cancel = context.WithCancel(initializationCtx)
+ 
+ 	// Connect to preconf WebSocket if the execution layer supports it and URL is configured.
+ 	// The chain-poller fallback (for execution layers without a preconf channel) is
+@@ -595,7 +611,7 @@ func (lg *LoadGenerator) runInitialization(req types.StartTestRequest) {
+ 
+ 	// Query starting block number via RPC (fallback for when WebSocket fails)
+ 	if lg.l2Client != nil {
+-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
++		ctx, cancel := context.WithTimeout(initializationCtx, 5*time.Second)
+ 		if startBlock, err := lg.l2Client.GetBlockNumber(ctx); err == nil {
+ 			lg.blockMetricsMu.Lock()
+ 			lg.testStartBlockNumber = startBlock
+@@ -615,7 +631,8 @@ func (lg *LoadGenerator) runInitialization(req types.StartTestRequest) {
+ 	// confirmed even though txs land on-chain. Started here (not earlier) so the
+ 	// poller anchors at `testStartBlockNumber` rather than scanning from block 0.
+ 	if !lg.cfg.Capabilities.SupportsPreconfirmations || lg.cfg.PreconfWSURL == "" {
+-		go lg.connectChainPoller()
++		lg.wg.Add(1)
++		go func() { defer lg.wg.Done(); lg.connectChainPoller() }()
+ 	}
+ 
+ 	// Privacy routing. Three cases:
+@@ -655,6 +672,10 @@ func (lg *LoadGenerator) runInitialization(req types.StartTestRequest) {
+ 	dynamicAccounts := lg.accountMgr.GetDynamicAccounts()
+ 	allAccounts = append(allAccounts, dynamicAccounts...)
+ 
++	// Cancel may arrive during funding, nonce synchronization or deployment.
++	if initializationCtx.Err() != nil {
++		return
++	}
+ 	// Start sender workers
+ 	// More workers = better parallelism, but must not exceed semaphore capacity
+ 	numWorkers := len(allAccounts)
+@@ -684,9 +705,14 @@ func (lg *LoadGenerator) runInitialization(req types.StartTestRequest) {
+ 	lg.wg.Add(1)
+ 	go lg.backpressureMonitor()
+ 
+-	// Start completion watcher (NOT in WaitGroup because it calls StopTest which waits on wg)
+-	go lg.completionWatcher()
++	// Fetch builder config to get txOrdering for incremental verification
++	if env := lg.fetchBuilderConfig(); env != nil {
++		lg.txOrdering = env.BuilderTxOrdering
++		lg.logger.Info("fetched builder tx ordering for verification", "ordering", lg.txOrdering)
++	}
+ 
++	// Start incremental verification for long-running tests
++	lg.startIncrementalVerification()
+ 	// Initialization complete - transition to running
+ 	lg.statusMu.Lock()
+ 	lg.status = types.StatusRunning
+@@ -694,19 +720,16 @@ func (lg *LoadGenerator) runInitialization(req types.StartTestRequest) {
+ 	lg.initProgress = ""
+ 	lg.statusMu.Unlock()
+ 
+-	// Fetch builder config to get txOrdering for incremental verification
+-	if env := lg.fetchBuilderConfig(); env != nil {
+-		lg.txOrdering = env.BuilderTxOrdering
+-		lg.logger.Info("fetched builder tx ordering for verification", "ordering", lg.txOrdering)
++	// Only publish completion after all worker WaitGroup additions are finished.
++	go lg.completionWatcher()
++	if initializationCtx.Err() != nil {
++		lg.StopTest()
+ 	}
+ 
+-	// Start incremental verification for long-running tests
+-	lg.startIncrementalVerification()
+-
+ 	lg.logger.Info("test started",
+ 		"pattern", req.Pattern,
+ 		"txType", lg.currentTxType,
+ 		"duration", lg.currentDuration,
+ 		"accounts", numAccounts,
+ 	)
+-}
+\ No newline at end of file
++}
+diff --git a/internal/loadgen/loadgen.go b/internal/loadgen/loadgen.go
+index 4353021..c632953 100644
+--- a/internal/loadgen/loadgen.go
++++ b/internal/loadgen/loadgen.go
+@@ -40,13 +40,13 @@ type LoadGenerator struct {
+ 	builderClient        rpc.Client
+ 	privacyBuilderClient rpc.Client // Privacy-routed builder client (optional)
+ 	l2Client             rpc.Client
+-	accountMgr    AccountManager
+-	patternReg    *pattern.Registry
+-	txBuilderReg  *txbuilder.Registry
+-	metricsCol    metrics.Collector
+-	deployer      ContractDeployer
+-	storage       storage.Storage
+-	cacheStorage  storage.CacheStorage
++	accountMgr           AccountManager
++	patternReg           *pattern.Registry
++	txBuilderReg         *txbuilder.Registry
++	metricsCol           metrics.Collector
++	deployer             ContractDeployer
++	storage              storage.Storage
++	cacheStorage         storage.CacheStorage
+ 
+ 	// Contract addresses
+ 	erc20Contract       common.Address
+@@ -162,7 +162,10 @@ type LoadGenerator struct {
+ 	// forceStop is set (atomic) by the user-facing Stop button to abort the
+ 	// post-test confirmation sequence (grace period, receipt resolution, on-chain
+ 	// verification) so the test ends promptly. Natural completion leaves it 0.
+-	forceStop int32 // atomic
++	forceStop          int32              // atomic
++	verificationCancel context.CancelFunc // protected by statusMu
++	initCtx            context.Context
++	initCancel         context.CancelFunc
+ 
+ 	// Async transaction sender with backpressure
+ 	sender        TxSender
+@@ -213,7 +216,6 @@ type LoadGenerator struct {
+ 	logger *slog.Logger
+ }
+ 
+-
+ // Option configures a LoadGenerator. Use WithXxx functions to override defaults.
+ type Option func(*LoadGenerator)
+ 
+@@ -393,11 +395,12 @@ func (lg *LoadGenerator) initBuffers(duration time.Duration, targetTPS int) {
+ // Check GetMetrics() for initialization progress (status=initializing).
+ func (lg *LoadGenerator) StartTest(req types.StartTestRequest) error {
+ 	lg.statusMu.Lock()
+-	if lg.status == types.StatusRunning || lg.status == types.StatusInitializing {
++	if lg.status == types.StatusRunning || lg.status == types.StatusInitializing || lg.status == types.StatusVerifying {
+ 		lg.statusMu.Unlock()
+ 		return fmt.Errorf("test already running or initializing")
+ 	}
+ 	lg.status = types.StatusInitializing
++	lg.initCtx, lg.initCancel = context.WithCancel(context.Background())
+ 	lg.testError = ""
+ 	lg.initPhase = types.InitPhaseNone
+ 	lg.initProgress = "Starting initialization..."
+@@ -434,6 +437,24 @@ func (lg *LoadGenerator) StartTest(req types.StartTestRequest) error {
+ // confirmations.
+ func (lg *LoadGenerator) StopTest() {
+ 	atomic.StoreInt32(&lg.forceStop, 1)
++	lg.statusMu.RLock()
++	cancel := lg.cancel
++	verificationCancel := lg.verificationCancel
++	initializing := lg.status == types.StatusInitializing
++	initCancel := lg.initCancel
++	running := lg.status == types.StatusRunning
++	lg.statusMu.RUnlock()
++	if initializing && initCancel != nil {
++		initCancel()
++		return
++	}
++	// Also interrupt a natural completion already doing final verification.
++	if running && cancel != nil {
++		cancel()
++	}
++	if verificationCancel != nil {
++		verificationCancel()
++	}
+ 	lg.stopTest()
+ }
+ 
+@@ -457,9 +478,9 @@ func (lg *LoadGenerator) stopTest() {
+ 		return
+ 	}
+ 
+-	// Stop incremental verification and run final snapshot
++	// StopTest has already cancelled sends for a user stop. Natural completion
++	// may take its final snapshot before cancelling the workers.
+ 	lg.stopIncrementalVerification()
+-
+ 	if lg.cancel != nil {
+ 		lg.cancel()
+ 	}
+@@ -470,6 +491,9 @@ func (lg *LoadGenerator) stopTest() {
+ 	done := make(chan struct{})
+ 	go func() {
+ 		lg.wg.Wait()
++		if sender, ok := lg.sender.(interface{ Wait() }); ok {
++			sender.Wait()
++		}
+ 		close(done)
+ 	}()
+ 
+@@ -479,6 +503,9 @@ func (lg *LoadGenerator) stopTest() {
+ 	case <-time.After(stopTimeout):
+ 		lg.logger.Warn("stop timeout - some workers may still be running",
+ 			"timeout", stopTimeout)
++		// Cancellation has already been requested. Do not publish completion
++		// (and permit Reset/Start) while an old callback can still mutate state.
++		<-done
+ 	}
+ 
+ 	// Record end block number NOW - at the moment we stop sending
+@@ -641,4 +668,3 @@ func (lg *LoadGenerator) setError(msg string) {
+ 	lg.statusMu.Unlock()
+ 	lg.logger.Error("test error", "error", msg)
+ }
+-
+diff --git a/internal/loadgen/loadgen_test.go b/internal/loadgen/loadgen_test.go
+index 7a9cd24..4e9ecf7 100644
+--- a/internal/loadgen/loadgen_test.go
++++ b/internal/loadgen/loadgen_test.go
+@@ -562,3 +562,36 @@ func TestCountPendingTxs_ConcurrentAccess(t *testing.T) {
+ 	}
+ 	wg.Wait()
+ }
++
++func TestResetDoesNotResetActiveVerificationOrInitialization(t *testing.T) {
++	for _, status := range []types.TestStatus{types.StatusInitializing, types.StatusVerifying} {
++		lg := newTestLoadGenerator(t)
++		lg.status = status
++		lg.Reset()
++		if lg.status != status {
++			t.Fatalf("reset raced active %s", status)
++		}
++		if err := lg.StartTest(types.StartTestRequest{}); err == nil {
++			t.Fatalf("start overlapped %s", status)
++		}
++	}
++}
++
++func TestStopCancelsInitializationAndVerification(t *testing.T) {
++	for _, state := range []types.TestStatus{types.StatusInitializing, types.StatusVerifying} {
++		lg := newTestLoadGenerator(t)
++		ctx, cancel := context.WithCancel(context.Background())
++		defer cancel()
++		lg.status = state
++		if state == types.StatusInitializing {
++			lg.initCtx = ctx
++			lg.initCancel = cancel
++		} else {
++			lg.verificationCancel = cancel
++		}
++		lg.StopTest()
++		if ctx.Err() == nil {
++			t.Fatalf("Stop did not cancel %s", state)
++		}
++	}
++}
+diff --git a/internal/loadgen/persistence.go b/internal/loadgen/persistence.go
+index 332ad86..8556939 100644
+--- a/internal/loadgen/persistence.go
++++ b/internal/loadgen/persistence.go
+@@ -34,7 +34,11 @@ func (lg *LoadGenerator) recordTxSent(txHash common.Hash, sentAt time.Time, acco
+ 	// Store in map for later confirmation tracking.
+ 	// Use common.Hash ([32]byte) as key instead of txHash.Hex() string to avoid
+ 	// 66-byte string allocation per TX (~94 MB savings at high throughput).
+-	lg.pendingTxs.Store(txHash, entry)
++	if _, alreadyTracked := lg.pendingTxs.LoadOrStore(txHash, entry); alreadyTracked {
++		// A timed-out send can be retried after its transaction was mined.
++		// Preserve the original confirmation and log this hash only once.
++		return
++	}
+ 
+ 	// Append to buffer
+ 	lg.txLogBufMu.Lock()
+@@ -243,7 +247,13 @@ func (lg *LoadGenerator) persistTestData(snapshot metrics.Snapshot, avgTPS float
+ 	// Use a timeout context for verification to prevent hanging indefinitely
+ 	// if L2 RPC is slow or unresponsive
+ 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+-	defer cancel()
++	lg.statusMu.Lock()
++	lg.verificationCancel = cancel
++	lg.statusMu.Unlock()
++	defer func() { cancel(); lg.statusMu.Lock(); lg.verificationCancel = nil; lg.statusMu.Unlock() }()
++	if atomic.LoadInt32(&lg.forceStop) == 1 {
++		cancel()
++	}
+ 
+ 	// Calculate aggregate block metrics from time series buffer
+ 	var totalGasUsed, totalGasLimit uint64
+diff --git a/internal/loadgen/verification.go b/internal/loadgen/verification.go
+index e6ab9f9..71dc36a 100644
+--- a/internal/loadgen/verification.go
++++ b/internal/loadgen/verification.go
+@@ -2,6 +2,7 @@ package loadgen
+ 
+ import (
+ 	"context"
++	"sync/atomic"
+ 	"time"
+ 
+ 	"github.com/gateway-fm/loadgenerator/internal/storage"
+@@ -109,8 +110,10 @@ func (lg *LoadGenerator) stopIncrementalVerification() {
+ 		lg.incrementalStopCh = nil
+ 	}
+ 
+-	// Run one final incremental verification to capture any remaining data
+-	lg.runIncrementalVerification()
++	// A user Stop must not start another potentially slow network verification.
++	if atomic.LoadInt32(&lg.forceStop) == 0 {
++		lg.runIncrementalVerification()
++	}
+ }
+ 
+ // getIncrementalSnapshots returns the collected incremental verification snapshots.
+@@ -120,4 +123,4 @@ func (lg *LoadGenerator) getIncrementalSnapshots() []storage.IncrementalVerifica
+ 	result := make([]storage.IncrementalVerificationSnapshot, len(lg.incrementalSnapshots))
+ 	copy(result, lg.incrementalSnapshots)
+ 	return result
+-}
+\ No newline at end of file
++}
+diff --git a/internal/loadgen/workers.go b/internal/loadgen/workers.go
+index 375a616..4c0bf76 100644
+--- a/internal/loadgen/workers.go
++++ b/internal/loadgen/workers.go
+@@ -13,6 +13,7 @@ import (
+ 	"github.com/gateway-fm/loadgenerator/internal/account"
+ 	"github.com/gateway-fm/loadgenerator/internal/metrics"
+ 	"github.com/gateway-fm/loadgenerator/internal/pattern"
++	"github.com/gateway-fm/loadgenerator/internal/rpc"
+ 	"github.com/gateway-fm/loadgenerator/internal/txbuilder"
+ 	"github.com/gateway-fm/loadgenerator/internal/workload"
+ 	"github.com/gateway-fm/loadgenerator/pkg/types"
+@@ -216,7 +217,11 @@ func (lg *LoadGenerator) senderWorker(id int, accounts []*account.Account) {
+ 					lg.logger.Debug("async send: tx already submitted (already known), treating as sent", "txHash", txHash.Hex())
+ 					return
+ 				}
+-				nonceVal.Rollback()
++				if rpc.IsNonceTooLow(sendErr) {
++					nonceVal.Consumed()
++				} else {
++					nonceVal.Rollback()
++				}
+ 				metrics.AtomicSubSaturating(&lg.pendingCount, 1)
+ 				// A context cancellation means the test ended while this send was in
+ 				// flight — the request was aborted at the boundary, not rejected by the
+@@ -227,6 +232,9 @@ func (lg *LoadGenerator) senderWorker(id int, accounts []*account.Account) {
+ 					return
+ 				}
+ 				lg.metricsCol.RecordTxFailed("send")
++				if lg.metricsCol.GetSnapshot().TxFailed <= 5 {
++					lg.logger.Warn("transaction submission failed", "error", sendErr, "txHash", txHash.Hex())
++				}
+ 				atomic.AddInt64(&lg.recentFails, 1) // Circuit breaker tracking
+ 				lg.logger.Debug("async send failed", "error", sendErr, "txHash", txHash.Hex())
+ 			}
+@@ -245,7 +253,16 @@ func (lg *LoadGenerator) senderWorker(id int, accounts []*account.Account) {
+ 
+ 		if len(batchData) > 0 {
+ 			// Send the batch
+-			queued := lg.sender.SendBatchAsync(lg.ctx, batchData, batchCallbacks)
++			var queued bool
++			if bounded, ok := lg.sender.(interface {
++				SendBatchAwaitCapacity(context.Context, [][]byte, []func(error)) bool
++			}); ok {
++				// Wait for actual request capacity before creating another batch.
++				// This wait is cancelled by Stop; it does not consume HTTP timeout.
++				queued = bounded.SendBatchAwaitCapacity(lg.ctx, batchData, batchCallbacks)
++			} else {
++				queued = lg.sender.SendBatchAsync(lg.ctx, batchData, batchCallbacks)
++			}
+ 
+ 			if !queued {
+ 				// Sender at capacity - rollback ALL nonces in the batch and retry loop
+@@ -326,7 +343,6 @@ func (lg *LoadGenerator) tpsCalculator() {
+ 
+ 			// Update peak rate from rolling calculation (atomic for thread safety)
+ 			currentTPSInt := int64(lg.currentTPS)
+-			atomic.CompareAndSwapInt64(&lg.peakRate, atomic.LoadInt64(&lg.peakRate), currentTPSInt)
+ 			for {
+ 				oldVal := atomic.LoadInt64(&lg.peakRate)
+ 				if oldVal >= currentTPSInt || atomic.CompareAndSwapInt64(&lg.peakRate, oldVal, currentTPSInt) {
+diff --git a/internal/metrics/collector.go b/internal/metrics/collector.go
+index 207d9a0..8779364 100644
+--- a/internal/metrics/collector.go
++++ b/internal/metrics/collector.go
+@@ -26,11 +26,11 @@ type Collector interface {
+ 	RecordTxFailed(category string)
+ 
+ 	// Preconfirmation lifecycle (Flashblocks-compliant)
+-	RecordPending(txHash common.Hash, pendingTime time.Time)       // TX queued by sequencer
+-	RecordPreconfirmed(txHash common.Hash, preconfTime time.Time)  // TX selected for block
+-	RecordRevoked(txHash common.Hash, revokedTime time.Time)       // Preconf broken
+-	RecordDropped(txHash common.Hash, droppedTime time.Time)       // TX permanently dropped
+-	RecordRequeued(txHash common.Hash, requeuedTime time.Time)     // TX requeued
++	RecordPending(txHash common.Hash, pendingTime time.Time)      // TX queued by sequencer
++	RecordPreconfirmed(txHash common.Hash, preconfTime time.Time) // TX selected for block
++	RecordRevoked(txHash common.Hash, revokedTime time.Time)      // Preconf broken
++	RecordDropped(txHash common.Hash, droppedTime time.Time)      // TX permanently dropped
++	RecordRequeued(txHash common.Hash, requeuedTime time.Time)    // TX requeued
+ 
+ 	// Realistic test metrics
+ 	RecordTip(tipWei *big.Int)
+@@ -76,6 +76,8 @@ type Collector interface {
+ // MemoryCollector is an in-memory implementation of Collector.
+ type MemoryCollector struct {
+ 	// Transaction tracking
++	confirmedMu     sync.Mutex
++	confirmedHashes map[common.Hash]struct{} // exact deduplication within a test; reset between tests
+ 	txTracker       *TxTracker
+ 	flowTracker     *TxFlowTracker // TX stage flow tracking
+ 	latencyStats    *StreamingLatencyStats
+@@ -115,13 +117,14 @@ type txTypeTracker struct {
+ // NewMemoryCollector creates a new in-memory metrics collector.
+ func NewMemoryCollector() *MemoryCollector {
+ 	return &MemoryCollector{
+-		txTracker:      NewTxTracker(),
+-		flowTracker:    NewTxFlowTracker(),
+-		latencyStats:   NewStreamingLatencyStats(),
+-		preconfLatency: NewStreamingLatencyStats(),
+-		pendingLatency: NewStreamingLatencyStats(),
+-		tipHistogram:   make([]int64, 20), // 20 buckets
+-		txTypeTrackers: make(map[types.TransactionType]*txTypeTracker),
++		confirmedHashes: make(map[common.Hash]struct{}),
++		txTracker:       NewTxTracker(),
++		flowTracker:     NewTxFlowTracker(),
++		latencyStats:    NewStreamingLatencyStats(),
++		preconfLatency:  NewStreamingLatencyStats(),
++		pendingLatency:  NewStreamingLatencyStats(),
++		tipHistogram:    make([]int64, 20), // 20 buckets
++		txTypeTrackers:  make(map[types.TransactionType]*txTypeTracker),
+ 	}
+ }
+ 
+@@ -135,18 +138,29 @@ func NewInMemoryCollector(enablePrometheus bool) *MemoryCollector {
+ 
+ // RecordTxSent records when a transaction was sent.
+ func (c *MemoryCollector) RecordTxSent(txHash common.Hash, sentTime time.Time) {
++	c.confirmedMu.Lock()
++	defer c.confirmedMu.Unlock()
++	if _, confirmed := c.confirmedHashes[txHash]; confirmed {
++		return
++	}
+ 	c.txTracker.Set(txHash, sentTime)
+ 	c.flowTracker.RecordStage(txHash, StageSent, sentTime)
+ }
+ 
+ // RecordTxConfirmed records when a transaction was confirmed.
+ func (c *MemoryCollector) RecordTxConfirmed(txHash common.Hash, confirmTime time.Time) {
++	c.confirmedMu.Lock()
++	defer c.confirmedMu.Unlock()
++	if _, confirmed := c.confirmedHashes[txHash]; confirmed {
++		return
++	}
+ 	sentTime, ok := c.txTracker.GetAndDelete(txHash)
+ 	if !ok {
+ 		// Still record the stage transition even if we don't have sent time
+ 		c.flowTracker.RecordStage(txHash, StageConfirmed, confirmTime)
+ 		return
+ 	}
++	c.confirmedHashes[txHash] = struct{}{}
+ 
+ 	latencyMs := float64(confirmTime.Sub(sentTime).Milliseconds())
+ 	c.latencyStats.Add(latencyMs)
+@@ -159,6 +173,12 @@ func (c *MemoryCollector) RecordTxConfirmed(txHash common.Hash, confirmTime time
+ // beyond the test end boundary (grace period arrivals) to keep the flow tracker
+ // accurate and prevent memory leaks from unfinished flow entries.
+ func (c *MemoryCollector) RecordTxConfirmedFlowOnly(txHash common.Hash, confirmTime time.Time) {
++	c.confirmedMu.Lock()
++	defer c.confirmedMu.Unlock()
++	if _, confirmed := c.confirmedHashes[txHash]; confirmed {
++		return
++	}
++	c.confirmedHashes[txHash] = struct{}{}
+ 	c.txTracker.GetAndDelete(txHash) // Clean up sent tracker
+ 	c.flowTracker.RecordStage(txHash, StageConfirmed, confirmTime)
+ }
+@@ -444,6 +464,9 @@ func (c *MemoryCollector) GetFlowStats() *FlowStats {
+ 
+ // Reset clears all metrics.
+ func (c *MemoryCollector) Reset() {
++	c.confirmedMu.Lock()
++	defer c.confirmedMu.Unlock()
++	c.confirmedHashes = make(map[common.Hash]struct{})
+ 	c.txTracker.Reset()
+ 	c.flowTracker.Reset()
+ 	c.latencyStats.Reset()
+diff --git a/internal/rpc/client.go b/internal/rpc/client.go
+index d0dcb8f..5ada7f5 100644
+--- a/internal/rpc/client.go
++++ b/internal/rpc/client.go
+@@ -5,15 +5,18 @@ import (
+ 	"bytes"
+ 	"context"
+ 	"encoding/json"
++	"errors"
+ 	"fmt"
+ 	"io"
+ 	"log/slog"
+ 	"math/big"
+ 	"net/http"
+ 	"strconv"
++	"strings"
+ 	"time"
+ 
+ 	"github.com/ethereum/go-ethereum/common/hexutil"
++	"github.com/ethereum/go-ethereum/crypto"
+ )
+ 
+ // Client is the interface for JSON-RPC communication.
+@@ -173,8 +176,8 @@ type ClientConfig struct {
+ func DefaultClientConfig(url string) ClientConfig {
+ 	return ClientConfig{
+ 		URL:            url,
+-		Timeout:        2 * time.Second,  // Increased from 500ms - more resilient under load
+-		MaxRetries:     3,                // Increased from 1 - handle transient failures
++		Timeout:        2 * time.Second, // Increased from 500ms - more resilient under load
++		MaxRetries:     3,               // Increased from 1 - handle transient failures
+ 		InitialBackoff: 100 * time.Millisecond,
+ 		MaxBackoff:     500 * time.Millisecond,
+ 	}
+@@ -392,10 +395,23 @@ func getRetryDelay(err error, defaultBackoff time.Duration) time.Duration {
+ 	return defaultBackoff
+ }
+ 
++// IsNonceTooLow distinguishes a consumed nonce from a transient send failure.
++func IsNonceTooLow(err error) bool {
++	var rpcErr *RPCError
++	return errors.As(err, &rpcErr) && strings.HasPrefix(strings.ToLower(rpcErr.Message), "nonce too low")
++}
++
+ // SendRawTransaction sends a signed transaction.
+ func (c *HTTPClient) SendRawTransaction(ctx context.Context, txRLP []byte) error {
+ 	hexTx := hexutil.Encode(txRLP)
+ 	_, err := c.Call(ctx, "eth_sendRawTransaction", []interface{}{hexTx})
++	if IsNonceTooLow(err) {
++		// A timeout can hide a successful first send. Verify this exact transaction
++		// on-chain; a different transaction consuming the nonce is still a failure.
++		if receipt, checkErr := c.GetTransactionReceipt(ctx, crypto.Keccak256Hash(txRLP).Hex()); checkErr == nil && receipt != nil {
++			return nil
++		}
++	}
+ 	return err
+ }
+ 
+@@ -555,9 +571,9 @@ func (c *HTTPClient) GetBlockByNumberFull(ctx context.Context, blockNum uint64)
+ 
+ 	// Parse the response with full transaction data
+ 	var rawBlock struct {
+-		Number        string `json:"number"`
+-		Hash          string `json:"hash"`
+-		Transactions  []struct {
++		Number       string `json:"number"`
++		Hash         string `json:"hash"`
++		Transactions []struct {
+ 			Hash                 string `json:"hash"`
+ 			From                 string `json:"from"`
+ 			To                   string `json:"to"`
+diff --git a/internal/rpc/nobatch_client.go b/internal/rpc/nobatch_client.go
+index f3323fe..57e82b0 100644
+--- a/internal/rpc/nobatch_client.go
++++ b/internal/rpc/nobatch_client.go
+@@ -19,6 +19,10 @@ func NewNoBatchClient(c Client) *NoBatchClient {
+ 	return &NoBatchClient{Client: c}
+ }
+ 
++// BatchConcurrencyCost exposes the number of independent HTTP requests so the
++// sender's limit cannot be multiplied by the number of transactions in a batch.
++func (*NoBatchClient) BatchConcurrencyCost(transactions int) int { return transactions }
++
+ // SendRawTransactionBatch sends each transaction individually in parallel.
+ func (c *NoBatchClient) SendRawTransactionBatch(ctx context.Context, txRLPs [][]byte) []error {
+ 	if len(txRLPs) == 0 {
+diff --git a/internal/sender/sender.go b/internal/sender/sender.go
+index 9bdc36f..ffefc7b 100644
+--- a/internal/sender/sender.go
++++ b/internal/sender/sender.go
+@@ -5,6 +5,10 @@ import (
+ 	"context"
+ 	"errors"
+ 	"log/slog"
++	"sync"
++	"sync/atomic"
++
++	"golang.org/x/sync/semaphore"
+ 
+ 	"github.com/gateway-fm/loadgenerator/internal/rpc"
+ )
+@@ -14,8 +18,11 @@ var ErrAtCapacity = errors.New("sender at capacity")
+ 
+ // Sender handles async transaction sending with semaphore-based backpressure.
+ type Sender struct {
++	pending   sync.WaitGroup
+ 	client    rpc.Client
+-	semaphore chan struct{}
++	semaphore *semaphore.Weighted
++	capacity  int
++	inFlight  atomic.Int64
+ 	logger    *slog.Logger
+ }
+ 
+@@ -40,7 +47,8 @@ func New(cfg Config) *Sender {
+ 
+ 	return &Sender{
+ 		client:    cfg.Client,
+-		semaphore: make(chan struct{}, concurrency),
++		semaphore: semaphore.NewWeighted(int64(concurrency)),
++		capacity:  concurrency,
+ 		logger:    logger,
+ 	}
+ }
+@@ -49,10 +57,12 @@ func New(cfg Config) *Sender {
+ // Returns true if the send was queued, false if at capacity.
+ // The callback is called with the error result (on a goroutine).
+ func (s *Sender) SendAsync(ctx context.Context, txData []byte, callback func(error)) bool {
+-	select {
+-	case s.semaphore <- struct{}{}: // Acquired semaphore
++	if s.semaphore.TryAcquire(1) {
++		s.inFlight.Add(1)
++		s.pending.Add(1)
+ 		go func() {
+-			defer func() { <-s.semaphore }() // Release semaphore
++			defer s.pending.Done()
++			defer s.release(1)
+ 
+ 			err := s.client.SendRawTransaction(ctx, txData)
+ 			if callback != nil {
+@@ -60,10 +70,8 @@ func (s *Sender) SendAsync(ctx context.Context, txData []byte, callback func(err
+ 			}
+ 		}()
+ 		return true
+-
+-	default:
+-		return false // At capacity
+ 	}
++	return false // At capacity
+ }
+ 
+ // TrySend attempts to send a transaction.
+@@ -80,46 +88,79 @@ func (s *Sender) TrySend(ctx context.Context, txData []byte, callback func(error
+ // Uses JSON-RPC batch mode to amortize HTTP overhead across all TXs in the batch.
+ // Each callback[i] is called with the per-TX error for txDataSlice[i].
+ // Returns true if the batch was queued, false if at capacity.
+-// Only one semaphore slot is consumed for the entire batch.
++// Native JSON-RPC batches consume one slot. A NoBatchClient's individual
++// requests each consume a slot, matching the actual HTTP concurrency.
+ func (s *Sender) SendBatchAsync(ctx context.Context, txDataSlice [][]byte, callbacks []func(error)) bool {
++	return s.sendBatch(ctx, txDataSlice, callbacks, false)
++}
++
++// SendBatchAwaitCapacity applies backpressure to the producer without polling.
++// Stop cancels the wait. Producers must finish before Wait is called.
++func (s *Sender) SendBatchAwaitCapacity(ctx context.Context, txDataSlice [][]byte, callbacks []func(error)) bool {
++	return s.sendBatch(ctx, txDataSlice, callbacks, true)
++}
++
++func (s *Sender) sendBatch(ctx context.Context, txDataSlice [][]byte, callbacks []func(error), wait bool) bool {
+ 	if len(txDataSlice) == 0 {
+ 		return true
+ 	}
+-
+-	select {
+-	case s.semaphore <- struct{}{}: // Acquired semaphore
+-		go func() {
+-			defer func() { <-s.semaphore }() // Release semaphore
+-
+-			errs := s.client.SendRawTransactionBatch(ctx, txDataSlice)
+-			for i, cb := range callbacks {
+-				if cb != nil {
+-					var err error
+-					if i < len(errs) {
+-						err = errs[i]
+-					}
+-					cb(err)
++	cost := 1
++	if client, ok := s.client.(interface{ BatchConcurrencyCost(int) int }); ok {
++		cost = client.BatchConcurrencyCost(len(txDataSlice))
++	}
++	if cost < 1 || cost > s.capacity {
++		return false
++	}
++	if wait {
++		if err := s.semaphore.Acquire(ctx, int64(cost)); err != nil {
++			return false
++		}
++	} else if !s.semaphore.TryAcquire(int64(cost)) {
++		return false
++	}
++	s.inFlight.Add(int64(cost))
++	// The worker reuses the outer buffers after this call returns.
++	// Keep the encoded transaction bytes immutable until completion.
++	txDataSlice = append([][]byte(nil), txDataSlice...)
++	callbacks = append([]func(error){}, callbacks...)
++	s.pending.Add(1)
++	go func() {
++		defer s.pending.Done()
++		defer s.release(int64(cost))
++
++		errs := s.client.SendRawTransactionBatch(ctx, txDataSlice)
++		for i, cb := range callbacks {
++			if cb != nil {
++				var err error
++				if i < len(errs) {
++					err = errs[i]
+ 				}
++				cb(err)
+ 			}
+-		}()
+-		return true
++		}
++	}()
++	return true
++}
+ 
+-	default:
+-		return false // At capacity
+-	}
++func (s *Sender) release(cost int64) {
++	s.inFlight.Add(-cost)
++	s.semaphore.Release(cost)
+ }
+ 
+ // Available returns the number of available send slots.
+ func (s *Sender) Available() int {
+-	return cap(s.semaphore) - len(s.semaphore)
++	return s.capacity - int(s.inFlight.Load())
+ }
+ 
+ // Capacity returns the total send capacity.
+ func (s *Sender) Capacity() int {
+-	return cap(s.semaphore)
++	return s.capacity
+ }
+ 
+ // InFlight returns the number of transactions currently being sent.
+ func (s *Sender) InFlight() int {
+-	return len(s.semaphore)
++	return int(s.inFlight.Load())
+ }
++
++// Wait drains sends and callbacks. Call only after producers have stopped.
++func (s *Sender) Wait() { s.pending.Wait() }
+diff --git a/internal/account/nonce_recovery_test.go b/internal/account/nonce_recovery_test.go
+new file mode 100644
+index 0000000..2901c0c
+--- /dev/null
++++ b/internal/account/nonce_recovery_test.go
+@@ -0,0 +1,56 @@
++package account
++
++import (
++	"context"
++	"github.com/gateway-fm/loadgenerator/internal/rpc"
++	"testing"
++)
++
++type nonceRPC struct {
++	rpc.Client
++	value uint64
++}
++
++func (c nonceRPC) GetNonce(context.Context, string) (uint64, error)          { return c.value, nil }
++func (c nonceRPC) GetConfirmedNonce(context.Context, string) (uint64, error) { return c.value, nil }
++
++func TestResyncPreservesUnminedGap(t *testing.T) {
++	a := &Account{}
++	first := a.ReserveNonce()
++	second := a.ReserveNonce()
++	a.ReserveNonce()
++	first.Commit()
++	second.Rollback()
++	if err := a.Resync(context.Background(), nonceRPC{value: 1}); err != nil {
++		t.Fatal(err)
++	}
++	if got := a.ReserveNonce().Value(); got != 1 {
++		t.Fatalf("resync abandoned missing nonce 1; next=%d", got)
++	}
++}
++func TestOldFailureCannotRecycleConsumedNonce(t *testing.T) {
++	a := &Account{}
++	old := a.ReserveNonce()
++	a.ReserveNonce()
++	a.ReserveNonce()
++	if err := a.ResyncFromChain(context.Background(), nonceRPC{value: 3}); err != nil {
++		t.Fatal(err)
++	}
++	old.Rollback()
++	if got := a.ReserveNonce().Value(); got != 3 {
++		t.Fatalf("late failure recycled consumed nonce %d", got)
++	}
++}
++
++func TestConsumedNonceCannotBeReused(t *testing.T) {
++	a := &Account{}
++	old := a.ReserveNonce()
++	current := a.ReserveNonce()
++	future := a.ReserveNonce()
++	current.Consumed()
++	old.Rollback()
++	future.Rollback()
++	if got := a.ReserveNonce().Value(); got != 2 {
++		t.Fatalf("consumed floor skipped a gap or reused consumed nonce: %d", got)
++	}
++}
+diff --git a/internal/loadgen/drain_test.go b/internal/loadgen/drain_test.go
+new file mode 100644
+index 0000000..03eacf9
+--- /dev/null
++++ b/internal/loadgen/drain_test.go
+@@ -0,0 +1,43 @@
++package loadgen
++
++import (
++	"context"
++	"testing"
++	"time"
++
++	"github.com/gateway-fm/loadgenerator/pkg/types"
++)
++
++func TestStopDoesNotCompleteWhileOldWorkerCanStillWrite(t *testing.T) {
++	lg := newTestLoadGenerator(t)
++	lg.status = types.StatusRunning
++	lg.ctx, lg.cancel = context.WithCancel(context.Background())
++	lg.startTime = time.Now()
++	lg.l2Client = nil
++	lg.storage = nil
++	lg.wg.Add(1)
++	workerReleased := false
++	defer func() {
++		if !workerReleased {
++			lg.wg.Done()
++		}
++	}()
++	stopped := make(chan struct{})
++	go func() { lg.StopTest(); close(stopped) }()
++	select {
++	case <-stopped:
++		t.Fatal("Stop completed before the old worker was drained")
++	case <-time.After(5200 * time.Millisecond):
++	}
++	lg.Reset()
++	if err := lg.StartTest(types.StartTestRequest{}); err == nil {
++		t.Fatal("a new test overlapped the old worker")
++	}
++	lg.wg.Done()
++	workerReleased = true
++	select {
++	case <-stopped:
++	case <-time.After(2 * time.Second):
++		t.Fatal("Stop did not finish after worker drained")
++	}
++}
+diff --git a/internal/loadgen/retry_log_test.go b/internal/loadgen/retry_log_test.go
+new file mode 100644
+index 0000000..6526c5b
+--- /dev/null
++++ b/internal/loadgen/retry_log_test.go
+@@ -0,0 +1,23 @@
++package loadgen
++
++import (
++	"testing"
++	"time"
++
++	"github.com/ethereum/go-ethereum/common"
++	"github.com/gateway-fm/loadgenerator/internal/storage"
++)
++
++func TestRetryPreservesConfirmedLogEntry(t *testing.T) {
++	lg := newTestLoadGenerator(t)
++	lg.txLoggingEnabled = true
++	hash := common.Hash{1}
++	now := time.Now()
++	lg.recordTxSent(hash, now, 0, 42, 0)
++	lg.recordTxConfirmed(hash, now.Add(time.Second))
++	lg.recordTxSent(hash, now.Add(2*time.Second), 0, 42, 0)
++	entry, _ := lg.pendingTxs.Load(hash)
++	if entry.(*storage.TxLogEntry).Status != "confirmed" || len(lg.txLogBuf) != 1 {
++		t.Fatalf("retry erased confirmation or duplicated log: entry=%+v, logs=%d", entry, len(lg.txLogBuf))
++	}
++}
+diff --git a/internal/metrics/retry_test.go b/internal/metrics/retry_test.go
+new file mode 100644
+index 0000000..ced2b25
+--- /dev/null
++++ b/internal/metrics/retry_test.go
+@@ -0,0 +1,28 @@
++package metrics
++
++import (
++	"testing"
++	"time"
++
++	"github.com/ethereum/go-ethereum/common"
++)
++
++func TestRetryAfterConfirmationDoesNotCountTwice(t *testing.T) {
++	c := NewMemoryCollector()
++	hash := common.Hash{1}
++	now := time.Now()
++	c.RecordTxSent(hash, now)
++	c.RecordTxConfirmed(hash, now.Add(time.Second))
++	// An ambiguous submission times out after mining; the retry has the same hash.
++	c.RecordTxSent(hash, now.Add(2*time.Second))
++	c.RecordTxConfirmed(hash, now.Add(3*time.Second))
++	if got := c.GetTxConfirmed(); got != 1 {
++		t.Fatalf("one mined transaction counted %d times", got)
++	}
++	c.Reset()
++	c.RecordTxSent(hash, now)
++	c.RecordTxConfirmed(hash, now.Add(time.Second))
++	if got := c.GetTxConfirmed(); got != 1 {
++		t.Fatalf("reset retained the prior test's confirmation: %d", got)
++	}
++}
+diff --git a/internal/rpc/nonce_recovery_test.go b/internal/rpc/nonce_recovery_test.go
+new file mode 100644
+index 0000000..6f40861
+--- /dev/null
++++ b/internal/rpc/nonce_recovery_test.go
+@@ -0,0 +1,55 @@
++package rpc
++
++import (
++	"context"
++	"encoding/json"
++	"github.com/ethereum/go-ethereum/crypto"
++	"net/http"
++	"net/http/httptest"
++	"testing"
++	"time"
++)
++
++func TestNonceTooLowSucceedsOnlyForExactMinedTransaction(t *testing.T) {
++	for _, mined := range []bool{true, false} {
++		t.Run(map[bool]string{true: "same transaction mined", false: "nonce consumed by another transaction"}[mined], func(t *testing.T) {
++			raw := []byte{2, 1, 2, 3}
++			lookups := 0
++			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++				var q JSONRPCRequest
++				if err := json.NewDecoder(r.Body).Decode(&q); err != nil {
++					t.Error(err)
++				}
++				response := map[string]any{"jsonrpc": "2.0", "id": q.ID}
++				switch q.Method {
++				case "eth_sendRawTransaction":
++					response["error"] = map[string]any{"code": -32000, "message": "nonce too low: next nonce 3, tx nonce 1"}
++				case "eth_getTransactionReceipt":
++					lookups++
++					if q.Params[0] != crypto.Keccak256Hash(raw).Hex() {
++						t.Error("looked up wrong transaction")
++					}
++					response["result"] = nil
++					if mined {
++						response["result"] = map[string]any{"status": "0x1", "gasUsed": "0x5208", "blockNumber": "0x3", "effectiveGasPrice": "0x7"}
++					}
++				default:
++					t.Error("unexpected method", q.Method)
++				}
++				json.NewEncoder(w).Encode(response)
++			}))
++			defer server.Close()
++			c := NewHTTPClient(ClientConfig{URL: server.URL, Timeout: time.Second})
++			err := c.SendRawTransaction(context.Background(), raw)
++			if mined && err != nil {
++				t.Fatal(err)
++			}
++			if !mined && !IsNonceTooLow(err) {
++				t.Fatalf("another transaction cannot count as success: %v", err)
++			}
++			if lookups != 1 {
++				t.Fatalf("expected exact receipt lookup, got %d", lookups)
++			}
++		})
++	}
++}
+diff --git a/internal/sender/budget_test.go b/internal/sender/budget_test.go
+new file mode 100644
+index 0000000..8628aad
+--- /dev/null
++++ b/internal/sender/budget_test.go
+@@ -0,0 +1,59 @@
++package sender
++
++import (
++	"context"
++	"testing"
++	"time"
++)
++
++type individualBatchClient struct{ *heldBatchClient }
++
++func (*individualBatchClient) BatchConcurrencyCost(n int) int { return n }
++
++func TestUnbatchedRequestsUseIndividualConcurrencySlots(t *testing.T) {
++	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
++	defer cancel()
++	c := &individualBatchClient{&heldBatchClient{entered: make(chan struct{}), release: make(chan struct{}), received: make(chan string, 1)}}
++	s := New(Config{Client: c, Concurrency: 2})
++	defer close(c.release)
++	if !s.SendBatchAsync(ctx, [][]byte{[]byte("one"), []byte("two")}, nil) {
++		t.Fatal("initial batch rejected")
++	}
++	<-c.entered
++	if s.Available() != 0 {
++		t.Fatalf("two individual RPC calls used only %d slot(s)", 2-s.Available())
++	}
++	if s.SendBatchAsync(ctx, [][]byte{[]byte("three")}, nil) {
++		t.Fatal("exceeded actual RPC concurrency limit")
++	}
++}
++
++func TestWaitingProducerIsCancelledWithoutWaitingForActiveRPC(t *testing.T) {
++	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
++	defer cancel()
++	c := &individualBatchClient{&heldBatchClient{entered: make(chan struct{}), release: make(chan struct{}), received: make(chan string, 1)}}
++	s := New(Config{Client: c, Concurrency: 2})
++	defer close(c.release)
++	if !s.SendBatchAsync(ctx, [][]byte{[]byte("one"), []byte("two")}, nil) {
++		t.Fatal("initial batch rejected")
++	}
++	<-c.entered
++	waitCtx, stop := context.WithCancel(ctx)
++	defer stop()
++	queued := make(chan bool, 1)
++	go func() { queued <- s.SendBatchAwaitCapacity(waitCtx, [][]byte{[]byte("three")}, nil) }()
++	select {
++	case <-queued:
++		t.Fatal("producer did not wait for capacity")
++	case <-time.After(20 * time.Millisecond):
++	}
++	stop()
++	select {
++	case accepted := <-queued:
++		if accepted {
++			t.Fatal("cancelled producer submitted a transaction")
++		}
++	case <-ctx.Done():
++		t.Fatal("Stop did not interrupt the capacity wait")
++	}
++}
+diff --git a/internal/sender/ownership_probe_test.go b/internal/sender/ownership_probe_test.go
+new file mode 100644
+index 0000000..d4eb511
+--- /dev/null
++++ b/internal/sender/ownership_probe_test.go
+@@ -0,0 +1,100 @@
++package sender
++
++import (
++	"context"
++	"testing"
++	"time"
++
++	"github.com/gateway-fm/loadgenerator/internal/rpc"
++)
++
++type heldBatchClient struct {
++	rpc.Client
++	entered  chan struct{}
++	release  chan struct{}
++	received chan string
++}
++
++func (c *heldBatchClient) SendRawTransactionBatch(ctx context.Context, batch [][]byte) []error {
++	close(c.entered)
++	select {
++	case <-c.release:
++	case <-ctx.Done():
++		return []error{ctx.Err()}
++	}
++	c.received <- string(batch[0])
++	return []error{nil}
++}
++
++// The production senderWorker reuses these outer slice buffers immediately
++// after SendBatchAsync returns, while RPC and callbacks remain in flight.
++func TestBatchRetainsTransactionsAndCallbacksAfterCallerReusesBuffers(t *testing.T) {
++	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
++	defer cancel()
++	c := &heldBatchClient{entered: make(chan struct{}), release: make(chan struct{}), received: make(chan string, 1)}
++	s := New(Config{Client: c, Concurrency: 1})
++	called := make(chan string, 1)
++	transactions := [][]byte{[]byte("nonce-4673")}
++	callbacks := []func(error){func(error) { called <- "nonce-4673" }}
++	if !s.SendBatchAsync(ctx, transactions, callbacks) {
++		t.Fatal("first batch was rejected")
++	}
++	select {
++	case <-c.entered:
++	case <-ctx.Done():
++		t.Fatal("sender did not start")
++	}
++	transactions[0] = []byte("nonce-4674")
++	callbacks[0] = func(error) { called <- "nonce-4674" }
++	close(c.release)
++	select {
++	case got := <-c.received:
++		t.Logf("actual transaction submitted: %s", got)
++		if got != "nonce-4673" {
++			t.Errorf("queued transaction was replaced: got %s", got)
++		}
++	case <-ctx.Done():
++		t.Fatal("send timed out")
++	}
++	select {
++	case got := <-called:
++		t.Logf("actual completion callback: %s", got)
++		if got != "nonce-4673" {
++			t.Errorf("completion delivered to wrong transaction: got %s", got)
++		}
++	case <-ctx.Done():
++		t.Fatal("callback timed out")
++	}
++}
++
++func TestWaitIncludesCompletionCallback(t *testing.T) {
++	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
++	defer cancel()
++	c := &heldBatchClient{entered: make(chan struct{}), release: make(chan struct{}), received: make(chan string, 1)}
++	s := New(Config{Client: c, Concurrency: 1})
++	callbackStarted, callbackRelease := make(chan struct{}), make(chan struct{})
++	if !s.SendBatchAsync(ctx, [][]byte{[]byte("tx")}, []func(error){func(error) { close(callbackStarted); <-callbackRelease }}) {
++		t.Fatal("rejected")
++	}
++	waiter, ok := any(s).(interface{ Wait() })
++	if !ok {
++		close(callbackRelease)
++		close(c.release)
++		t.Fatal("sender cannot drain in-flight callbacks before reset")
++	}
++	close(c.release)
++	<-callbackStarted
++	done := make(chan struct{})
++	go func() { waiter.Wait(); close(done) }()
++	select {
++	case <-done:
++		t.Fatal("Wait returned before callback")
++	default:
++	}
++	close(callbackRelease)
++	select {
++	case <-done:
++	case <-ctx.Done():
++		t.Fatal("Wait did not return")
++	}
++}

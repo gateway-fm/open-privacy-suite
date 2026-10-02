@@ -1,0 +1,13 @@
+   Compiling ops-reth-approvals-poc v0.1.0 (<repo>/poc/reth-signed-approvals)
+    Finished `release` profile [optimized] target(s) in 3.67s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/main.rs (<repo>/.tmp/reth-policy-poc/target/release/deps/ops_reth_approvals_poc-740fd14e01e60143)
+
+running 3 tests
+test approvals::tests::duplicates_keep_deadline_and_capacity_is_bounded ... ok
+test fingerprint::tests::shared_go_rust_golden ... ok
+test approvals::tests::signature_binds_every_field ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

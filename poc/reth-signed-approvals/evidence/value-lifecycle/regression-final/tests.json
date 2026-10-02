@@ -1,0 +1,300 @@
+[
+  {
+    "test": "same_org_nested_call_executes",
+    "passed": true,
+    "hash": "0x6a043a1667ad307c143462bd590d142e28a7ea71e53aa1deb5d9c8ebdfcffb35"
+  },
+  {
+    "test": "delegatecall_uses_caller_storage",
+    "passed": true
+  },
+  {
+    "test": "EIP1559_signed_transaction",
+    "passed": true
+  },
+  {
+    "test": "same_block_cross_org_divergence",
+    "passed": true,
+    "hash": "0x6a043a1667ad307c143462bd590d142e28a7ea71e53aa1deb5d9c8ebdfcffb35"
+  },
+  {
+    "test": "caught_call_cannot_bypass",
+    "passed": true,
+    "hash": "0x65074c44aa438aeaadfc27ef9e96ba3ff472f9ff77cbbef717fd84353eeb88e0"
+  },
+  {
+    "test": "same_org_storage_divergence",
+    "passed": true,
+    "hash": "0x6a043a1667ad307c143462bd590d142e28a7ea71e53aa1deb5d9c8ebdfcffb35"
+  },
+  {
+    "test": "stock_control_executes_cross_org",
+    "passed": true,
+    "hash": "0x6a043a1667ad307c143462bd590d142e28a7ea71e53aa1deb5d9c8ebdfcffb35"
+  },
+  {
+    "test": "no_write_cross_org_call_denied_despite_identical_return_and_storage",
+    "passed": true
+  },
+  {
+    "test": "fingerprint_zero_deletion_unchanged_write_and_read",
+    "passed": true
+  },
+  {
+    "test": "fingerprint_log_positions_dynamic_output_and_caught_revert",
+    "passed": true
+  },
+  {
+    "test": "waiting_tx_does_not_block_ready_sender",
+    "passed": true,
+    "ready_block_wall_ms": 261.75
+  },
+  {
+    "test": "timeout_then_client_retry_same_signed_tx",
+    "passed": true
+  },
+  {
+    "test": "128_missing_approvals_do_not_block_ready_sender",
+    "passed": true,
+    "ready_block_wall_ms": 262.3963750083931
+  },
+  {
+    "test": "forged_signature_denied_then_valid_retry",
+    "passed": true
+  },
+  {
+    "test": "real_OPS_DB_RBAC_trace_signature_forwarding_and_Reth_commit",
+    "passed": true,
+    "hash": "0x6a043a1667ad307c143462bd590d142e28a7ea71e53aa1deb5d9c8ebdfcffb35"
+  },
+  {
+    "test": "actual_restart_loses_approval_then_client_retry_succeeds",
+    "passed": true
+  },
+  {
+    "test": "historical_import_without_approvals",
+    "passed": true,
+    "block": "0x39af4288725631032251e246d2f5fccc845b347965df50bc94fa64c934170006"
+  },
+  {
+    "test": "one_signature_authorizes_32_independent_transactions",
+    "passed": true,
+    "stats": {
+      "batch_sizes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "invalid_envelopes": 0,
+      "max_wait_ns": 0,
+      "ready_on_first_seen": 32,
+      "resolved_waits": 0,
+      "verification_ns": 77125,
+      "verification_queue_full": 0,
+      "verified": 32,
+      "verified_batches": 1,
+      "wait_bucket_upper_us": [
+        100,
+        500,
+        1000,
+        5000,
+        10000,
+        50000,
+        100000,
+        null
+      ],
+      "wait_histogram": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "wait_ns": 0,
+      "waiting_on_first_seen": 0
+    }
+  },
+  {
+    "test": "divergent_member_does_not_cancel_other_batch_member",
+    "passed": true
+  },
+  {
+    "test": "tampering_rejects_entire_batch_then_late_valid_retry_succeeds",
+    "passed": true
+  },
+  {
+    "test": "contract_fee_recipient_does_not_change_application_fingerprint",
+    "passed": true
+  },
+  {
+    "test": "shanghai_native_transfers_self_and_fee_recipient",
+    "passed": true
+  },
+  {
+    "test": "shanghai_payable_nested_transfer",
+    "passed": true
+  },
+  {
+    "test": "shanghai_caught_value_transfer_reverted",
+    "passed": true
+  },
+  {
+    "test": "shanghai_root_revert_only_pays_fees",
+    "passed": true
+  },
+  {
+    "test": "shanghai_payable_deployment_with_queued_nonce",
+    "passed": true,
+    "address": "0x1275d096b9dbf2347bd2a131fb6bdab0b4882487"
+  },
+  {
+    "test": "shanghai_nested_create_constructor_call_and_new_contract_call",
+    "passed": true
+  },
+  {
+    "test": "shanghai_empty_runtime_code_deployment",
+    "passed": true
+  },
+  {
+    "test": "shanghai_prefunded_create2_success_and_collision",
+    "passed": true
+  },
+  {
+    "test": "shanghai_create2_redeployment_after_destruction",
+    "passed": true
+  },
+  {
+    "test": "shanghai_existing_selfdestruct_account_effects",
+    "passed": true
+  },
+  {
+    "test": "shanghai_create_and_destroy_including_self_beneficiary",
+    "passed": true
+  },
+  {
+    "test": "shanghai_caught_revert_undoes_creation_and_destruction",
+    "passed": true
+  },
+  {
+    "test": "shanghai_reject_changed_value_recipient",
+    "passed": true
+  },
+  {
+    "test": "shanghai_reject_changed_destruction_balance",
+    "passed": true
+  },
+  {
+    "test": "shanghai_reject_changed_constructor_state",
+    "passed": true
+  },
+  {
+    "test": "shanghai_selfdestruct_self_beneficiary",
+    "passed": true
+  },
+  {
+    "test": "shanghai_selfdestruct_fee_beneficiary",
+    "passed": true
+  },
+  {
+    "test": "cancun_native_transfers_self_and_fee_recipient",
+    "passed": true
+  },
+  {
+    "test": "cancun_payable_nested_transfer",
+    "passed": true
+  },
+  {
+    "test": "cancun_caught_value_transfer_reverted",
+    "passed": true
+  },
+  {
+    "test": "cancun_root_revert_only_pays_fees",
+    "passed": true
+  },
+  {
+    "test": "cancun_payable_deployment_with_queued_nonce",
+    "passed": true,
+    "address": "0x1275d096b9dbf2347bd2a131fb6bdab0b4882487"
+  },
+  {
+    "test": "cancun_nested_create_constructor_call_and_new_contract_call",
+    "passed": true
+  },
+  {
+    "test": "cancun_empty_runtime_code_deployment",
+    "passed": true
+  },
+  {
+    "test": "cancun_prefunded_create2_success_and_collision",
+    "passed": true
+  },
+  {
+    "test": "cancun_create2_redeployment_after_destruction",
+    "passed": true
+  },
+  {
+    "test": "cancun_existing_selfdestruct_account_effects",
+    "passed": true
+  },
+  {
+    "test": "cancun_create_and_destroy_including_self_beneficiary",
+    "passed": true
+  },
+  {
+    "test": "cancun_caught_revert_undoes_creation_and_destruction",
+    "passed": true
+  },
+  {
+    "test": "cancun_reject_changed_value_recipient",
+    "passed": true
+  },
+  {
+    "test": "cancun_reject_changed_destruction_balance",
+    "passed": true
+  },
+  {
+    "test": "cancun_reject_changed_constructor_state",
+    "passed": true
+  },
+  {
+    "test": "cancun_selfdestruct_self_beneficiary",
+    "passed": true
+  },
+  {
+    "test": "cancun_selfdestruct_fee_beneficiary",
+    "passed": true
+  }
+]
