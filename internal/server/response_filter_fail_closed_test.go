@@ -136,3 +136,33 @@ func TestResponseFilters_PassNullAndErrors(t *testing.T) {
 		assert.JSONEq(t, body, string(FilterBlockTransactionCount([]byte(body), nil)))
 	}
 }
+
+func TestResponseFilters_RejectMixedErrorAndResult(t *testing.T) {
+	const body = `{"jsonrpc":"2.0","id":7,"error":{"code":-32000,"message":"upstream failure"},"result":{"from":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"}}`
+	cases := []struct {
+		name string
+		run  func([]byte) []byte
+		want string
+	}{
+		{"transaction", func(b []byte) []byte { return FilterTransactionByHash(rbac.ReadProfileStandard, b, nil, false, nil) }, "null"},
+		{"block", func(b []byte) []byte { return FilterBlockTransactions(rbac.ReadProfileStandard, b, nil, true) }, "null"},
+		{"block receipts", func(b []byte) []byte {
+			return FilterBlockReceipts(rbac.ReadProfileStandard, b, nil, nil, nil, nil, nil, nil)
+		}, "null"},
+		{"block count", func(b []byte) []byte { return FilterBlockTransactionCount(b, nil) }, "null"},
+		{"logs", func(b []byte) []byte {
+			return filterLogsWithEventRules(rbac.ReadProfileStandard, b, nil, nil, nil, nil, nil, nil)
+		}, "[]"},
+		{"receipt logs", func(b []byte) []byte {
+			return filterReceiptLogsWithEventRules(rbac.ReadProfileStandard, b, nil, nil, nil, nil, nil, nil)
+		}, "null"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out := tc.run([]byte(body))
+			assert.Equal(t, tc.want, resultOf(t, out))
+			assert.NotContains(t, string(out), "aaaaaaaa")
+			assert.NotContains(t, string(out), `"error"`)
+		})
+	}
+}

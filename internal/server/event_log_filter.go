@@ -141,6 +141,9 @@ func filterLogsWithEventRules(
 		// Fail-closed: unparseable response → return empty logs
 		return emptyLogsResponse(responseBody)
 	}
+	if resp.Error != nil && resp.Result != nil {
+		return emptyLogsResponse(responseBody)
+	}
 	if resp.Error != nil || resp.Result == nil {
 		return responseBody // RPC error or null result — pass through as-is
 	}
@@ -235,6 +238,9 @@ func filterReceiptLogsWithEventRules(
 	}
 	if err := json.Unmarshal(responseBody, &resp); err != nil {
 		return nullResult(responseBody) // fail-closed: unparseable response
+	}
+	if resp.Error != nil && resp.Result != nil {
+		return nullResult(responseBody)
 	}
 	if resp.Error != nil || resp.Result == nil {
 		return responseBody // RPC error or null result — pass through as-is

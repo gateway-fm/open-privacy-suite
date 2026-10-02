@@ -193,6 +193,23 @@ func TestExplorerRedactorWiring_FullStack(t *testing.T) {
 		gotIDs[l.ID] = true
 	}
 	require.True(t, gotIDs[6], "org admin on contractNoABI — must bypass deny gate (RD-890)")
+
+	// Exercise the strict indexed-self decision through the same production
+	// resolver wiring. The regular viewer sees the event naming their linked
+	// address; the org admin has no matching linked address and sees neither.
+	strictEngine := explorer.NewRedactionEngine(noopContractStore{}, database, rbac.ReadProfileStrict)
+	wireExplorerRedactor(strictEngine, database, accessCtrl, noopLogParticipantStore{}, nil)
+	strictLogs := []explorer.Log{
+		{ID: 7, Address: contractRules, TxHash: "0xtx7", Topic0: &tr, Topic1: &viewerTopic, Topic2: &otherTopic, Data: rpValueWord(1)},
+		{ID: 8, Address: contractRules, TxHash: "0xtx8", Topic0: &tr, Topic1: &otherTopic, Topic2: &otherTopic, Data: rpValueWord(1)},
+	}
+	out, err = strictEngine.RedactLogs(ctx, strictLogs, "did:viewer:user")
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	require.Equal(t, int64(7), out[0].ID)
+	out, err = strictEngine.RedactLogs(ctx, strictLogs, "did:viewer:orgadmin")
+	require.NoError(t, err)
+	require.Empty(t, out)
 }
 
 // interfaceTypedSetters returns the names of every Set* method on

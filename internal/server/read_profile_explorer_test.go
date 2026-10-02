@@ -63,7 +63,7 @@ func TestReadProfile_ExplorerTx_Matrix(t *testing.T) {
 				assert.ElementsMatch(t, wantHashes, explorerTxHashes(t, f, router, v, "/api/v1/explorer/transactions?limit=50", ""), "/transactions")
 				assert.ElementsMatch(t, wantHashes, explorerTxHashes(t, f, router, v, "/api/v1/explorer/transactions/paginated?limit=50", "data"), "/transactions/paginated")
 				assert.ElementsMatch(t, wantHashes, explorerTxHashes(t, f, router, v, fmt.Sprintf("/api/v1/explorer/blocks/%d/transactions", f.block), ""), "/blocks/:n/transactions")
-				if name != "other_org" {
+				if name != "other_org" && name != "anonymous" {
 					assert.ElementsMatch(t, wantHashes, explorerTxHashes(t, f, router, v, "/api/v1/explorer/addresses/"+rpC+"/transactions", "transactions"), "/addresses/:C/transactions")
 				}
 

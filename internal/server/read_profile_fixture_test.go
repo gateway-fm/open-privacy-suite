@@ -70,7 +70,7 @@ type rpFixture struct {
 }
 
 // viewer names, in matrix order
-var rpViewerNames = []string{"participant", "payee", "ordinary", "contract_admin", "org_admin", "visibleto", "other_org"}
+var rpViewerNames = []string{"participant", "payee", "ordinary", "contract_admin", "org_admin", "visibleto", "other_org", "anonymous"}
 
 func setupRPFixture(t *testing.T) *rpFixture {
 	t.Helper()
@@ -119,6 +119,7 @@ func setupRPFixture(t *testing.T) *rpFixture {
 	add("org_admin", gAdmin, f.orgID, rpAA)
 	add("contract_admin", gT3, f.orgID, rpT3)
 	add("other_org", gX, f.otherID, rpX)
+	f.viewers["anonymous"] = rpViewer{name: "anonymous"}
 	// Q and R are real users too (linked, so their addresses are private EOAs).
 	for _, a := range []struct{ did, addr string }{{"did:test:rp:q", rpQ}, {"did:test:rp:r", rpR}} {
 		wiringCreateUserInGroup(t, database, a.did, gUser)
@@ -270,7 +271,9 @@ func (f *rpFixture) explorerRouter() *gin.Engine {
 func (f *rpFixture) explorerGet(t *testing.T, router *gin.Engine, v rpViewer, path string) (int, []byte) {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, path, nil)
-	req.Header.Set("Authorization", "Bearer "+issueTestJWT(t, f.srv, v.did))
+	if v.did != "" {
+		req.Header.Set("Authorization", "Bearer "+issueTestJWT(t, f.srv, v.did))
+	}
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
 	return rr.Code, rr.Body.Bytes()

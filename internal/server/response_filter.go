@@ -79,7 +79,10 @@ func FilterTransactionByHash(profile rbac.ReadProfile, responseBody []byte, user
 	if err := json.Unmarshal(responseBody, &resp); err != nil {
 		return nullResult(responseBody) // unparseable: fail closed
 	}
-	// Pass through errors and null results unchanged
+	if resp.Error != nil && resp.Result != nil {
+		return nullResult(responseBody)
+	}
+	// Pass through standalone errors and null results unchanged.
 	if resp.Error != nil || resp.Result == nil {
 		return responseBody
 	}
@@ -170,6 +173,9 @@ func FilterBlockTransactions(profile rbac.ReadProfile, responseBody []byte, user
 	}
 	if err := json.Unmarshal(responseBody, &resp); err != nil {
 		return nullResult(responseBody) // unparseable: fail closed
+	}
+	if resp.Error != nil && resp.Result != nil {
+		return nullResult(responseBody)
 	}
 	if resp.Error != nil || resp.Result == nil {
 		return responseBody
@@ -298,6 +304,9 @@ func FilterBlockReceipts(
 	if err := json.Unmarshal(responseBody, &resp); err != nil {
 		return nullResult(responseBody) // unparseable: fail closed
 	}
+	if resp.Error != nil && resp.Result != nil {
+		return nullResult(responseBody)
+	}
 	if resp.Error != nil || resp.Result == nil {
 		return responseBody
 	}
@@ -352,6 +361,9 @@ func FilterBlockTransactionCount(responseBody []byte, userAddresses []string) []
 	}
 	if err := json.Unmarshal(responseBody, &resp); err != nil {
 		return nullResult(responseBody) // unparseable: fail closed
+	}
+	if resp.Error != nil && resp.Result != nil {
+		return nullResult(responseBody)
 	}
 	if resp.Error != nil || resp.Result == nil {
 		return responseBody

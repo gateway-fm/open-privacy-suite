@@ -44,6 +44,7 @@ func TestReadProfile_EventLogs_Matrix(t *testing.T) {
 			"org_admin":      {getLogs: all, receipt: all, txLogs: all, addrLogs: all},
 			"visibleto":      {getLogs: all, receipt: all, txLogs: all, addrLogs: []int{}},
 			"other_org":      {getLogs: []int{}, receipt: nil, txLogs: []int{}, addrLogs: []int{}, addrPage404: true},
+			"anonymous":      {getLogs: []int{}, receipt: nil, txLogs: []int{}, addrLogs: []int{}, addrPage404: true},
 		},
 		rbac.ReadProfileStrict: {
 			"participant":    {getLogs: []int{0}, receipt: []int{0}, txLogs: []int{0}, addrLogs: []int{0}},
@@ -55,6 +56,7 @@ func TestReadProfile_EventLogs_Matrix(t *testing.T) {
 			"org_admin": {getLogs: []int{2}, receipt: nil, txLogs: []int{2}, addrLogs: []int{2}},
 			"visibleto": {getLogs: []int{}, receipt: nil, txLogs: []int{}, addrLogs: []int{}},
 			"other_org": {getLogs: []int{}, receipt: nil, txLogs: []int{}, addrLogs: []int{}, addrPage404: true},
+			"anonymous": {getLogs: []int{}, receipt: nil, txLogs: []int{}, addrLogs: []int{}, addrPage404: true},
 		},
 	}
 
