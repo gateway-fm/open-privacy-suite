@@ -258,6 +258,7 @@ func (s *Server) addDisclosureAddressToFilter(filter *explorer.VisibilityFilter,
 		VisibleAddresses:    make([]string, len(filter.VisibleAddresses)+1),
 		VisibleTxHashes:     append([]string(nil), filter.VisibleTxHashes...),
 		ParticipantTxHashes: append([]string(nil), filter.ParticipantTxHashes...),
+		ListedTxHashes:      append([]string(nil), filter.ListedTxHashes...),
 	}
 	copy(newFilter.VisibleAddresses, filter.VisibleAddresses)
 	newFilter.VisibleAddresses[len(filter.VisibleAddresses)] = address
@@ -267,12 +268,21 @@ func (s *Server) addDisclosureAddressToFilter(filter *explorer.VisibilityFilter,
 // redactOptsFromFilter builds RedactOpts from a VisibilityFilter, passing
 // the visibleTo tx hashes so RedactTransactions doesn't drop them.
 func redactOptsFromFilter(filter *explorer.VisibilityFilter) explorer.RedactOpts {
-	if filter == nil || len(filter.VisibleTxHashes) == 0 {
+	if filter == nil || (len(filter.VisibleTxHashes) == 0 && len(filter.ListedTxHashes) == 0) {
 		return explorer.RedactOpts{}
 	}
 	m := make(map[string]bool, len(filter.VisibleTxHashes))
 	for _, h := range filter.VisibleTxHashes {
 		m[strings.ToLower(h)] = true
+	}
+	// RD-1307: the genuine visibleTo listings, the only input to the log
+	// unlock and param-rule fallback. Never derived from VisibleTxHashes.
+	var listed map[string]bool
+	if len(filter.ListedTxHashes) > 0 {
+		listed = make(map[string]bool, len(filter.ListedTxHashes))
+		for _, h := range filter.ListedTxHashes {
+			listed[strings.ToLower(h)] = true
+		}
 	}
 	// RD-1155: carry the label-only participant-union subset through so the
 	// redactor can distinguish participation from a visibleTo share.
@@ -283,7 +293,7 @@ func redactOptsFromFilter(filter *explorer.VisibilityFilter) explorer.RedactOpts
 			pm[strings.ToLower(h)] = true
 		}
 	}
-	return explorer.RedactOpts{VisibleTxHashes: m, ParticipantTxHashes: pm}
+	return explorer.RedactOpts{VisibleTxHashes: m, ParticipantTxHashes: pm, ListedTxHashes: listed}
 }
 
 // buildRedactOptsForViewer builds RedactOpts for single-item endpoints
@@ -778,6 +788,10 @@ func (s *Server) buildVisibilityFilter(ctx context.Context, viewerDID string) *e
 		visibleTxHashes, err := s.db.GetVisibleTxHashesForDID(ctx, viewerDID)
 		if err == nil && len(visibleTxHashes) > 0 {
 			filter.VisibleTxHashes = visibleTxHashes
+			// The genuine listings, kept apart from the transfer union below:
+			// only these may count as "the sender listed this viewer on this
+			// tx" for the log unlock and param-rule fallback (RD-1307).
+			filter.ListedTxHashes = append([]string(nil), visibleTxHashes...)
 		}
 	}
 
@@ -1701,7 +1715,7 @@ func (s *Server) getExplorerTransactionTransfers(c *gin.Context) {
 // getExplorerTransactionLogs returns the event logs of a tx.
 //
 // @Summary      Event logs for a transaction
-// @Description  Returns the event logs emitted by a transaction. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: logs are redacted per the viewer's visibility, with logs of the parent transaction revealed to a viewer who is the transaction's sender or recipient.
+// @Description  Returns the event logs emitted by a transaction. Private network only (serves the explorer backend); not reachable through the public ingress. Logs follow each emitting contract's event access rules. A sender or recipient can see permitted parent-transaction logs. Where a contract enables visibleTo unlock, an eligible viewer listed on this transaction receives its matching logs with full event payloads, including embedded addresses; eligibility requires an in-org grant through a non-default, non-system group, or org-admin membership without a grant. Other contracts and transactions remain separately filtered.
 // @Tags         Explorer
 // @Produce      json
 // @Param        hash path string true "Transaction hash (0x-prefixed)"

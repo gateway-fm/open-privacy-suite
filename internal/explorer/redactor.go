@@ -147,8 +147,8 @@ type AdminContractsResolver interface {
 // addresses where the per-contract `allow_visibleto_unlock` flag is set
 // AND the viewer is eligible for the unlock — both gates from RD-874.
 // The map is consumed by Phase 4 of RedactLogs along with the
-// visibleTxHashes opt: when both the contract is unlockable AND the
-// log's tx hash is in the visibleTo set, the log passes unredacted
+// ListedTxHashes opt: when both the contract is unlockable AND the
+// log's tx hash is one the viewer is genuinely listed on, the log passes unredacted
 // (bypasses event_rules, param_rules, and the deny-when-no-ABI gate).
 //
 // Implementations MUST be org-scoped: a viewer who is in another org
@@ -611,6 +611,14 @@ type RedactOpts struct {
 	// ReasonVisibleToGrant ("Shared") when the reveal is due to participation,
 	// not sharing (RD-1155). A nil map reproduces the pre-RD-1155 labels.
 	ParticipantTxHashes map[string]bool
+
+	// ListedTxHashes is the set of tx hashes whose visibleTo row genuinely
+	// lists the viewer (tx_visible_to only — never the RD-1009
+	// transfer-participant union that also feeds VisibleTxHashes). It is the
+	// only input RedactLogsWithOpts accepts for "the sender listed this viewer
+	// on this tx": the RD-874 visibleTo unlock and the ordinary param-rule
+	// fallback (RD-1307). A nil map lists nothing (fail-closed).
+	ListedTxHashes map[string]bool
 
 	// ParentParticipants are the parent transaction's from/to addresses,
 	// threaded into RedactInternalTransactions by the single-hash handler
@@ -1718,7 +1726,7 @@ func redactTopicAddress(addr string, level VisibilityLevel) string {
 // embedded addresses for a given (viewer, log) — symmetry by construction
 // (RD-1214, completing RD-887).
 //
-// It performs NO admission decision (that is rbac.DecideLogEmitterAccess,
+// It performs NO admission decision (that is rbac.DecideLogEmitter,
 // resolved upstream) and NO metadata emission (explorer-only, and only for the
 // addresses this primitive leaves visible). Both callers resolve visMap from the
 // SAME source — db.GetBatchVisibilityDetailed — so the per-address verdict is
@@ -2051,9 +2059,10 @@ func (r *RedactionEngine) RedactLogs(ctx context.Context, logs []Log, viewerDID 
 
 // RedactLogsWithOpts is RedactLogs with visibleTo support.
 func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, viewerDID string, opts *RedactOpts, participantAddrs ...string) ([]Log, error) {
-	var visibleTxHashes map[string]bool
+	var visibleTxHashes, listedTxHashes map[string]bool
 	if opts != nil {
 		visibleTxHashes = opts.VisibleTxHashes
+		listedTxHashes = opts.ListedTxHashes
 	}
 	if len(logs) == 0 {
 		return logs, nil
@@ -2230,15 +2239,15 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 
 	// Phase 3d (RD-874): resolve the per-contract visibleTo unlock map.
 	// True for contracts where (a) `allow_visibleto_unlock` is set in the
-	// DB AND (b) the viewer holds a contract_grant via an eligible
-	// (non-system) group in the contract's owning org. Both gates must
-	// hold; the resolver returns the conjunction. Combined with a per-tx
-	// visibleTxHashes membership check below, this drives the unlock
-	// branch in Phase 4. Mirrors processor_event_rules.go's
-	// buildVisibleToUnlockableMap so RPC and explorer agree on the
-	// (viewer, contract, tx) triple.
+	// DB AND (b) the viewer is unlock-eligible there (rbac.UnlockableContracts
+	// — the same helper the RPC's buildVisibleToUnlockableMap calls). Combined
+	// with the per-tx ListedTxHashes check below, this drives the unlock
+	// branch in Phase 4, so RPC and explorer agree on the (viewer, contract,
+	// tx) triple.
 	unlockableContracts := map[string]bool{}
-	if r.visibleToUnlockResolver != nil && viewerDID != "" && len(addrMap) > 0 {
+	// The unlock only fires on a tx the viewer is listed on, so skip the
+	// eligibility lookups entirely when this page has no listed tx.
+	if r.visibleToUnlockResolver != nil && viewerDID != "" && len(addrMap) > 0 && len(listedTxHashes) > 0 {
 		uniqueAddrs := make([]string, 0, len(addrMap))
 		for a := range addrMap {
 			uniqueAddrs = append(uniqueAddrs, a)
@@ -2258,6 +2267,27 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 			uniqueAddrs = append(uniqueAddrs, a)
 		}
 		allowDynamicPayload = r.dynamicPayloadAllowedResolver.Resolve(ctx, uniqueAddrs)
+	}
+
+	// Per-call memo of the ABI resolver (uncached DB lookup), so resolving the
+	// ABI fact for every candidate log costs one lookup per emitter.
+	abiByContract := make(map[string]string)
+	resolveABIOnce := func(addr string) string {
+		if r.abiResolver == nil {
+			return ""
+		}
+		if v, ok := abiByContract[addr]; ok {
+			return v
+		}
+		// Phase 3 already asked the same resolver (resolveContractABI prefers
+		// it when wired), including for emitters that have no ABI.
+		if raw, ok := contractABIs[addr]; ok {
+			abiByContract[addr] = string(raw)
+			return string(raw)
+		}
+		v := r.abiResolver.Resolve(ctx, addr)
+		abiByContract[addr] = v
+		return v
 	}
 
 	// Phase 4: apply redactions.
@@ -2282,7 +2312,7 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 		}
 
 		// Resolve the per-log facts and defer the admit/deny verdict to the
-		// shared decision engine (rbac.DecideLogEmitterAccess, RD-1214) — the
+		// shared decision engine (rbac.DecideLogEmitter, RD-1214/RD-1300) — the
 		// SAME function the RPC filter (rbac.FilterEventLogs) uses, so the two
 		// layers reach identical verdicts and cannot drift. The engine owns the
 		// gate order; this block only resolves the facts from the explorer's
@@ -2291,16 +2321,20 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 		facts := rbac.LogEmitterFacts{
 			// RD-890 admin bypass (per-contract, org-scoped).
 			IsAdmin: adminContracts[contractAddr],
-			// RD-874 visibleTo unlock — the only standalone-grant path.
-			Unlocked: unlockableContracts[contractAddr] && visibleTxHashes[strings.ToLower(l.TxHash)],
+			// RD-874 visibleTo unlock — the only standalone-grant path. Keyed on
+			// the viewer's genuine listing for THIS tx (ListedTxHashes), never on
+			// the RD-1009 transfer-participant union in VisibleTxHashes (RD-1307).
+			Unlocked: unlockableContracts[contractAddr] && listedTxHashes[strings.ToLower(l.TxHash)],
 			// Grant eligibility: a contract grant resolves the emitter to Full
 			// for this viewer (GetBatchVisibilityDetailed). No grant → Redacted
 			// (registered) or Hidden (unregistered/EOA). Load-bearing (RD-1208).
 			HasGrant: level == VisibilityFull,
 			// RD-1162 participant/sender (grant-bounded inside the engine).
 			IsParticipant: isParticipant,
-			// Ordinary visibleTo — additive param-rule fallback only.
-			InVisibleTo: visibleTxHashes[strings.ToLower(l.TxHash)],
+			// Ordinary visibleTo — additive param-rule fallback only. Like the
+			// unlock, keyed on the genuine listing, never the RD-1009 union
+			// (RD-1307) — matching the RPC's tx_visible_to check.
+			InVisibleTo: listedTxHashes[strings.ToLower(l.TxHash)],
 			HasTopic0:   l.Topic0 != nil,
 		}
 
@@ -2315,21 +2349,21 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 		}
 
 		// RD-889 deny-when-no-ABI + M15 dynamic-payload — the embedded-address
-		// protections. Skipped for admin/unlock (the engine admits them before
-		// these gates). Without a resolvable ABI, non-indexed address params in
-		// `data` can't be decoded/redacted.
-		facts.ABIResolvable = true
-		if r.abiResolver != nil && !facts.IsAdmin && !facts.Unlocked {
-			facts.ABIResolvable = r.abiResolver.Resolve(ctx, contractAddr) != ""
-		}
-		if !facts.IsAdmin && !facts.Unlocked && l.Topic0 != nil {
+		// protections. Resolved for EVERY candidate log, admin and unlock
+		// included, exactly as rbac.FilterEventLogs does: the engine admits
+		// admin/unlock before reading these facts, but a policy profile that
+		// switches the unlock off falls back to the ordinary verdict, which
+		// must then see the real ABI/M15 facts rather than permissive defaults.
+		// Without a resolvable ABI, non-indexed address params in `data` can't
+		// be decoded/redacted.
+		resolvedABI := resolveABIOnce(contractAddr)
+		facts.ABIResolvable = r.abiResolver == nil || resolvedABI != ""
+		if l.Topic0 != nil {
 			var abiForCheck json.RawMessage
 			if raw, ok := contractABIs[contractAddr]; ok && len(raw) > 0 {
 				abiForCheck = raw
-			} else if r.abiResolver != nil {
-				if s := r.abiResolver.Resolve(ctx, contractAddr); s != "" {
-					abiForCheck = json.RawMessage(s)
-				}
+			} else if resolvedABI != "" {
+				abiForCheck = json.RawMessage(resolvedABI)
 			}
 			if len(abiForCheck) > 0 && !allowDynamicPayload[contractAddr] &&
 				eventHasDynamicNonIndexedParam(abiForCheck, *l.Topic0) {
@@ -2384,13 +2418,17 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 			facts.Rules = rbac.LogEventRulesWildcard
 		}
 
-		if !rbac.DecideLogEmitterAccess(facts) {
+		decision := rbac.DecideLogEmitter(facts)
+		if !decision.Admit {
 			continue
 		}
 
-		// RD-874 visibleTo unlock: full reveal, no field redaction — the
-		// contract owner opted in via allow_visibleto_unlock.
-		if facts.Unlocked {
+		// Payload policy from the shared decision (RD-1300) — the SAME value the
+		// RPC renderer consumes. LogPayloadFull (the RD-874 visibleTo unlock:
+		// the contract owner opted in via allow_visibleto_unlock and the sender
+		// listed this viewer on this tx) is a full reveal with no field
+		// redaction; everything else is masked below.
+		if decision.Payload == rbac.LogPayloadFull {
 			redacted := l
 			redacted.AddressMetadata = make(map[string]VisibilityReason)
 			result = append(result, redacted)

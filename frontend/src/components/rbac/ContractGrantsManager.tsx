@@ -394,10 +394,12 @@ export default function ContractGrantsManager({
                   Enable visibleTo unlock?
                 </h3>
                 <p className="text-sm text-neutral-600 mt-1">
-                  Once enabled, any transaction sender on this contract can grant
-                  per-event visibility (bypassing event rules and parameter rules)
-                  to anyone they list in <code>visibleTo</code> on a transaction.
-                  Listed users still need contract-level group access in this org —
+                  Once enabled, any transaction sender on this contract can share
+                  that transaction&apos;s events from this contract as full event
+                  payloads, including embedded addresses (bypassing event rules and
+                  parameter rules), with anyone they list in <code>visibleTo</code>.
+                  Listed users need an eligible contract grant in this org, or
+                  org-admin membership there. Default and system groups are excluded;
                   cross-org and anonymous viewers remain denied.
                 </p>
                 <p className="text-sm text-neutral-600 mt-2">

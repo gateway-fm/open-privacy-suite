@@ -615,6 +615,13 @@ type VisibilityFilter struct {
 	// not affect SQL filtering or row survival — it only lets the redactor
 	// label a revealed counterparty "Counterparty" vs "Shared" (RD-1155).
 	ParticipantTxHashes []string
+	// ListedTxHashes are ONLY the tx hashes whose tx_visible_to row lists the
+	// viewer — genuine visibleTo shares, never the RD-1009 transfer-participant
+	// union. Not used for SQL filtering (VisibleTxHashes already covers row
+	// survival); it is the sole input to the redactor's "listed on this tx"
+	// log decisions: the RD-874 unlock and the ordinary param-rule fallback
+	// (RD-1307). A subset of VisibleTxHashes.
+	ListedTxHashes []string
 }
 
 // isFilterActive returns true if the filter has any effect.
