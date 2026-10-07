@@ -19,7 +19,10 @@ import (
 // see calling the same explorer endpoint directly. This invariant is the
 // audit-grade promise: nothing in the impersonation chain is silently
 // leaking extra data, nor silently filtering more aggressively than what
-// the target user themselves can see.
+// the target user themselves can see — with one deliberate exception: the
+// target's disclosure grants never apply under impersonation (RD-1318), so
+// for a target holding grants the disclosed parts differ (pinned in
+// impersonation_disclosure_grants_rd1318_test.go). This fixture holds none.
 //
 // We assert it against /api/v1/explorer/viewable-addresses because:
 //

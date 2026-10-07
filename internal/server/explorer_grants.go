@@ -25,7 +25,7 @@ import (
 // only echoed back for display; with no JWT the response is the empty set.
 //
 // @Summary      Addresses viewable by the resolved viewer
-// @Description  Lists the viewer's own linked addresses plus addresses disclosed to them via active disclosure grants. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: the viewer DID comes from a validated JWT (or the impersonation override) — never from a query param — and for non-full grants the disclosed address is a pseudonym or "[PRIVATE]", never the real address. Fail-closed: with no resolvable viewer, only empty lists are returned.
+// @Description  Lists the viewer's own linked addresses plus addresses disclosed to them via active disclosure grants. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: the viewer DID comes from a validated JWT (or the impersonation override) — never from a query param — and for non-full grants the disclosed address is a pseudonym or "[PRIVATE]", never the real address. Fail-closed: with no resolvable viewer, only empty lists are returned. Under the View-as mirror no disclosed addresses are listed: the target's grants are not available to the admin viewing as them.
 // @Tags         Explorer
 // @Produce      json
 // @Param        wallet query string false "Viewer wallet address (0x-prefixed hex), echoed back for display only. The viewer identity is resolved solely from the JWT — a wallet value never resolves a DID (RD-1164 #7)." example(0x0000000000000000000000000000000000000001)
@@ -89,7 +89,9 @@ func (s *Server) getViewableAddresses(c *gin.Context) {
 	}
 
 	// 3. Get disclosure grants where the viewer is the requester
-	// We need to find all grants where requester_did = viewerDID
+	// We need to find all grants where requester_did = viewerDID.
+	// RD-1318: under View-as the grants are the target's, not the admin's —
+	// none are listed (getDisclosedAddressesForViewer returns an empty list).
 	grants, err := s.getDisclosedAddressesForViewer(ctx, viewerDID)
 	if err != nil {
 		respondInternalErrorAndLog(c, "failed to get disclosed addresses",
@@ -103,7 +105,13 @@ func (s *Server) getViewableAddresses(c *gin.Context) {
 }
 
 // getDisclosedAddressesForViewer returns all addresses disclosed to a viewer via grants
+//
+// Under an impersonation (disclosure.WithoutViewerGrants) it returns an empty
+// list: the grants belong to the viewer, not to the admin viewing as them.
 func (s *Server) getDisclosedAddressesForViewer(ctx context.Context, viewerDID string) ([]apimodels.DisclosedAddress, error) {
+	if disclosure.ViewerGrantsSuppressed(ctx) {
+		return make([]apimodels.DisclosedAddress, 0), nil
+	}
 	// Query for all active grants where the viewer is the requester
 	query := `SELECT g.id, g.scope, g.expires_at, r.requester_did, u.external_id as target_did
 		FROM disclosure_grants g
@@ -191,7 +199,7 @@ func (s *Server) getDisclosedAddressesForViewer(ctx context.Context, viewerDID s
 // The explorer backend must apply appropriate redaction before sending to the frontend.
 //
 // @Summary      Resolve a grant-scoped address_id
-// @Description  Resolves an opaque address_id (issued by viewable-addresses) back to grant-scoped disclosure data for the explorer backend. Private network only (serves the explorer backend); not reachable through the public ingress. The response is scoped to the grant's disclosure level: the real address is returned ONLY for a "full" grant; a "pseudonymous" grant returns a stable pseudonym and no real address; other levels return neither. Fail-closed: a revoked or expired grant, or an address_id that does not belong to the grant, yields 403/404.
+// @Description  Resolves an opaque address_id (issued by viewable-addresses) back to grant-scoped disclosure data for the explorer backend. Private network only (serves the explorer backend); not reachable through the public ingress. The response is scoped to the grant's disclosure level: the real address is returned ONLY for a "full" grant; a "pseudonymous" grant returns a stable pseudonym and no real address; other levels return neither. Fail-closed: a revoked or expired grant, or an address_id that does not belong to the grant, yields 403/404. Under the View-as mirror it always returns 404: the target's grants are not available to the admin viewing as them.
 // @Tags         Explorer
 // @Produce      json
 // @Param        grant_id path string true "Disclosure grant ID"
@@ -209,6 +217,13 @@ func (s *Server) resolveAddressID(c *gin.Context) {
 
 	if grantID == "" || addressID == "" {
 		respondBadRequest(c, "grant_id and address_id are required")
+		return
+	}
+
+	// RD-1318: an impersonating admin never acts as the grantee. Uniform 404
+	// before any lookup, so View-as cannot even probe which grants exist.
+	if !disclosureGrantsApply(c) {
+		respondNotFound(c, "grant not found")
 		return
 	}
 
@@ -428,7 +443,7 @@ func (s *Server) collectGrantScopeTxs(ctx context.Context, address string, scope
 // The explorer backend receives pre-pseudonymized data and cannot reverse it.
 //
 // @Summary      Grant-scoped transactions for a disclosed address
-// @Description  Returns transactions for a disclosed address, rendered at the grant's disclosure level. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the grant: "full" reveals real addresses, hashes and values; "pseudonymous" replaces addresses with stable pseudonyms and hides values and hashes; "redacted" (or any unknown level) shows only direction, gas, status and timing with "[PRIVATE]" counterparties. Fail-closed: a revoked or expired grant, or an address_id that does not belong to the grant, yields 403/404.
+// @Description  Returns transactions for a disclosed address, rendered at the grant's disclosure level. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the grant: "full" reveals real addresses, hashes and values; "pseudonymous" replaces addresses with stable pseudonyms and hides values and hashes; "redacted" (or any unknown level) shows only direction, gas, status and timing with "[PRIVATE]" counterparties. Fail-closed: a revoked or expired grant, or an address_id that does not belong to the grant, yields 403/404. Under the View-as mirror it always returns 404: the target's grants are not available to the admin viewing as them.
 // @Tags         Explorer
 // @Produce      json
 // @Param        grant_id path string true "Disclosure grant ID"
@@ -454,6 +469,13 @@ func (s *Server) getGrantTransactions(c *gin.Context) {
 
 	if grantID == "" || addressID == "" {
 		respondBadRequest(c, "grant_id and address_id are required")
+		return
+	}
+
+	// RD-1318: an impersonating admin never acts as the grantee (see
+	// resolveAddressID).
+	if !disclosureGrantsApply(c) {
+		respondNotFound(c, "grant not found")
 		return
 	}
 
@@ -682,7 +704,7 @@ func (s *Server) getGrantTransactions(c *gin.Context) {
 //   - Uniform 404 for "not found" and "not your grant" to prevent enumeration.
 //
 // @Summary      Grant-scoped activity logs
-// @Description  Returns activity-log entries (method, status code, timestamp only) for a disclosure grant the caller holds. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered: a valid JWT is required, the viewer DID must match the grant's requester, the grant scope must include activity_logs or full_disclosure, and only entries inside the grant's validity window are returned. Fail-closed: anonymous callers are rejected, and "grant missing"/"not your grant"/"expired" all return the same 404 to prevent enumeration.
+// @Description  Returns activity-log entries (method, status code, timestamp only) for a disclosure grant the caller holds. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered: a valid JWT is required, the viewer DID must match the grant's requester, the grant scope must include activity_logs or full_disclosure, and only entries inside the grant's validity window are returned. Fail-closed: anonymous callers are rejected, and "grant missing"/"not your grant"/"expired" all return the same 404 to prevent enumeration. Under the View-as mirror it always returns 404: the target's grants are not available to the admin viewing as them.
 // @Tags         Explorer
 // @Produce      json
 // @Param        grant_id path string true "Disclosure grant ID"
@@ -706,6 +728,13 @@ func (s *Server) getGrantActivityLogs(c *gin.Context) {
 	viewerDID := s.getViewerDIDFromRequest(c)
 	if viewerDID == "" {
 		respondUnauthorized(c, "authentication required")
+		return
+	}
+
+	// RD-1318: an impersonating admin never acts as the grantee (see
+	// resolveAddressID).
+	if !disclosureGrantsApply(c) {
+		respondNotFound(c, "grant not found")
 		return
 	}
 
