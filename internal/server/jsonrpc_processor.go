@@ -633,8 +633,15 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 		return p.processRawTransaction(ctx, req)
 	}
 
-	// Handle debug traces specially - requires strict deep tree validation
+	// Handle debug traces specially - requires strict deep tree validation.
+	// RD-1304: also dispatch a method whose operator alias RESOLVES to a trace
+	// method (RegisterExtraNamespaces does not forbid aliasing X→debug_trace*);
+	// otherwise it would fall through to the generic path with an empty target
+	// and be forwarded unvalidated. processDebugTrace re-resolves the alias.
 	if req.Method == "debug_traceTransaction" || req.Method == "debug_traceCall" {
+		return p.processDebugTrace(ctx, req)
+	}
+	if aliased := rbac.ResolveMethodAlias(req.Method); aliased == "debug_traceTransaction" || aliased == "debug_traceCall" {
 		return p.processDebugTrace(ctx, req)
 	}
 

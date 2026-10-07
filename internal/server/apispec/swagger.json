@@ -13085,7 +13085,7 @@
                                 }
                             }
                         },
-                        "description": "invalid request body or invalid JWT"
+                        "description": "invalid request body, invalid JWT, or a trace method (debug_traceCall / debug_traceTransaction are not supported here; use dry-run or view-as-user)"
                     },
                     "401": {
                         "content": {
@@ -19209,7 +19209,7 @@
                                 }
                             }
                         },
-                        "description": "unreadable body, malformed/batch JSON-RPC, or invalid visibleTo"
+                        "description": "unreadable body, malformed/batch JSON-RPC, invalid visibleTo, or an unsupported trace request (a tracer other than callTracer, withLog, state/block overrides, or malformed trace params)"
                     },
                     "401": {
                         "content": {
@@ -19229,7 +19229,7 @@
                                 }
                             }
                         },
-                        "description": "runtime-trace or compliance denial"
+                        "description": "runtime-trace, trace-access (debug_traceTransaction for a non-participant or a missing transaction) or compliance denial"
                     },
                     "404": {
                         "content": {
@@ -19345,7 +19345,7 @@
                                 }
                             }
                         },
-                        "description": "unreadable body, malformed/batch JSON-RPC, or invalid visibleTo"
+                        "description": "unreadable body, malformed/batch JSON-RPC, invalid visibleTo, or an unsupported trace request (a tracer other than callTracer, withLog, state/block overrides, or malformed trace params)"
                     },
                     "401": {
                         "content": {
@@ -19365,7 +19365,7 @@
                                 }
                             }
                         },
-                        "description": "runtime-trace or compliance denial"
+                        "description": "runtime-trace, trace-access (debug_traceTransaction for a non-participant or a missing transaction) or compliance denial"
                     },
                     "404": {
                         "content": {
