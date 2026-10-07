@@ -14,6 +14,10 @@ import (
 // logs may reference contracts from any org the user belongs to — the RBAC
 // access check resolves a single org from the request target, but receipt
 // logs can contain events from contracts in different orgs.
+//
+// Under an impersonation scope (RD-1308, withViewerOrgScope) only the scope
+// org's permissions are resolved, and nil is returned when the viewer is not a
+// member of it (fail closed).
 func (p *JSONRPCProcessor) resolvePermsForFilter(ctx context.Context, result *rbac.AccessCheckResult) *rbac.EffectivePermissions {
 	if result == nil || result.UserID == "" {
 		return nil
@@ -21,7 +25,11 @@ func (p *JSONRPCProcessor) resolvePermsForFilter(ctx context.Context, result *rb
 
 	// Get all org IDs the user belongs to
 	orgIDs, err := p.rbacAccessCtrl.GetUserOrgIDs(ctx, result.UserID)
-	if err != nil || len(orgIDs) == 0 {
+	if err != nil {
+		return nil
+	}
+	orgIDs = restrictToViewerOrgScope(ctx, orgIDs)
+	if len(orgIDs) == 0 {
 		return nil
 	}
 
@@ -103,7 +111,13 @@ func (p *JSONRPCProcessor) viewerAdminContracts(ctx context.Context, userID stri
 	}
 
 	userOrgIDs, err := p.rbacAccessCtrl.GetUserOrgIDs(ctx, userID)
-	if err != nil || len(userOrgIDs) == 0 {
+	if err != nil {
+		return result
+	}
+	// RD-1308: under an impersonation scope, only contracts owned by the
+	// scope org can confer the admin exemption.
+	userOrgIDs = restrictToViewerOrgScope(ctx, userOrgIDs)
+	if len(userOrgIDs) == 0 {
 		return result
 	}
 	userOrgSet := make(map[string]struct{}, len(userOrgIDs))
@@ -150,7 +164,7 @@ func (p *JSONRPCProcessor) isResponseTxVisibleTo(ctx context.Context, viewerDID 
 	if len(txHashes) == 0 {
 		return false
 	}
-	visibility, err := p.txVisibilityStore.GetBatchTxVisibility(ctx, txHashes)
+	visibility, err := p.txVisibilityForViewer(ctx, txHashes)
 	if err != nil || len(visibility) == 0 {
 		return false
 	}
@@ -190,7 +204,7 @@ func (p *JSONRPCProcessor) buildTxVisibilityContext(ctx context.Context, userDID
 		return nil
 	}
 
-	visibility, err := p.txVisibilityStore.GetBatchTxVisibility(ctx, txHashes)
+	visibility, err := p.txVisibilityForViewer(ctx, txHashes)
 	if err != nil {
 		slog.Warn("failed to query visibleTo rules", "error", err)
 		return nil
@@ -241,6 +255,11 @@ func (p *JSONRPCProcessor) buildVisibleToUnlockableMap(ctx context.Context, view
 
 		contract, err := store.GetContractByAddressGlobal(ctx, addrLower)
 		if err != nil || contract == nil || !contract.AllowVisibleToUnlock {
+			continue
+		}
+		// RD-1308: under an impersonation scope, only the scope org's
+		// contracts can unlock.
+		if scope, scoped := viewerOrgScope(ctx); scoped && (scope == "" || contract.OrgID != scope) {
 			continue
 		}
 		if rbac.IsViewerEligibleForVisibleToUnlock(ctx, p.rbacAccessCtrl, viewerDID, addrLower) {

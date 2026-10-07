@@ -30,6 +30,12 @@ import (
 //     contract for read methods — if someone ever wires per-method
 //     redaction into the read path, the test changes intentionally.
 //
+// RD-1308: dry-run no longer uses `filterDryRunLogs` nor returns reads
+// unfiltered — both now go through the production response filter
+// (admin_dry_run_response_filter_test.go). The `filterDryRunLogs`
+// tests below pin the test-only wrapper's FilterEventLogs states; the
+// eth_call test still holds because eth_call has no response-filter case.
+//
 // The linked-address `must_be=self` hole in `filterDryRunLogs` (line
 // 408 hardcodes `addrs := []string{}`) is pinned as documented
 // behaviour — `TestFilterDryRunLogs_ParamRuleSelfAlwaysFails`. If the

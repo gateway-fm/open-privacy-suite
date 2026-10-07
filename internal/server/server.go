@@ -1359,6 +1359,12 @@ func (s *Server) handleJSONRPC(c *gin.Context) {
 		c.JSON(parseErr.StatusCode, gin.H{"error": parseErr.Message})
 		return
 	}
+	// RD-1308: the View-as RPC mirror serves its explicit read-method set.
+	// Reject other methods before processing.
+	if impersonating && !impersonationRPCMethods[method] {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "method not supported under impersonation"})
+		return
+	}
 
 	// Extract optional org_id from path (for the production /rpc/:org_id
 	// route).
@@ -1389,7 +1395,15 @@ func (s *Server) handleJSONRPC(c *gin.Context) {
 		CorrelationID:    middleware.GetCorrelationID(c),
 		BypassPermsCache: impersonating,
 	}
-	result := s.jsonrpcProcessor.Process(c.Request.Context(), procReq)
+	ctx := c.Request.Context()
+	if impersonating {
+		// RD-1308: CheckAccess is pinned by procReq.OrgID; the response
+		// filter and the eth_call nested-call gate are pinned by the scope,
+		// so a multi-org target's other-org grants, admin claims and shares
+		// never shape what the admin sees (same answer as the dry-run).
+		ctx = withViewerOrgScope(ctx, orgID)
+	}
+	result := s.jsonrpcProcessor.Process(ctx, procReq)
 
 	// Handle errors from processing
 	if result.Error != nil {

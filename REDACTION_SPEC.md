@@ -167,7 +167,7 @@ Log redaction depends on the visibility of the **emitting contract address**, no
 | `topics[1..3]` (emitter Full) | — | — | Scanned for zero-padded embedded addresses; ones not visible to the viewer are zeroed via the shared `RedactLogAddressFields` (RD-1214) | Yes | Yes | topics[0] is the event signature hash; the address-pattern check skips it naturally. Cross-layer parity: `TestRPCExplorerLogParity_RD1214` |
 | `data` (emitter Full + ABI registered) | — | — | Non-indexed address params decoded, ones not visible to the viewer zeroed (same shared primitive) | Yes | Yes | Parity + edge cases: `TestRPCExplorerLogParity_RD1214`, `TestRPCFieldRedaction_DataFieldNonIndexedAddress` |
 | `addressMetadata` (explorer only) | — (entry dropped) | — (entry dropped) | reason emitted ONLY for addresses that stay visible (Full) | Yes | Yes | RD-1214 leak fix: a zeroed / redacted embedded address is NEVER keyed into `addressMetadata` (pre-fix the real address leaked as a metadata key). Test: `TestRedactLogs_EmbeddedAddressMetadata_NoLeak_RD1214` |
-| `data` (when emitter full + NO ABI) | Entire log denied at both layers (RPC and Explorer) | — | — | Yes | Yes | **G5 closed (RD-875 RPC + RD-889 explorer).** Without an ABI we can't decode non-indexed `address` params; both layers fail closed (drop the log) when no ABI is resolvable for the emitting contract. Admin bypass on the RPC layer (RD-751) still applies. Operator must register a custom ABI or set `metadata.token_type` to a built-in registry value (ERC-20 / ERC-721) before any event becomes visible. Grant save handler also rejects up-front. |
+| `data` (when emitter full + NO ABI) | Entire log denied at both layers (RPC and Explorer) | — | — | Yes | Yes | **G5 closed (RD-875 RPC + RD-889 explorer).** Without an ABI we can't decode non-indexed `address` params; both layers fail closed (drop the log) when no ABI is resolvable for the emitting contract. Admin exemption on the RPC layer (RD-751) still applies. Operator must register a custom ABI or set `metadata.token_type` to a built-in registry value (ERC-20 / ERC-721) before any event becomes visible. Grant save handler also rejects up-front. |
 | `data` (when emitter visible + dynamic non-indexed params) | Entire log denied at both layers unless contract has `events_allow_dynamic_payload = true` | — | — | Yes | Yes | **M15 closed (security audit follow-up to RD-915).** Pre-M15 the static-slot scanner read only AddressTy + bytes32 slots; dynamic types (`bytes`, `string`, dynamic arrays, dynamic structs) passed through verbatim. Bridge / forwarder / smart-wallet contracts that embed foreign-org addresses inside a `bytes` payload leaked them to any reader. Both layers now drop the log when the matching event's ABI declares any dynamic non-indexed param, unless the operator has explicitly opted the contract out via `contracts.events_allow_dynamic_payload`. Admin viewers (RD-890) and visibleTo-unlock viewers (RD-874) bypass — they resolve before the gate. Opt-out is admin-only (super-admin via X-Admin-Token) via `PUT /orgs/:org_id/contracts/:address/events-allow-dynamic-payload`; default FALSE (close-by-default). |
 
 ### 3.4.1 RPC-Layer Log Filtering (Event Access Control)
@@ -179,7 +179,7 @@ Logs returned by `eth_getLogs` and `eth_getTransactionReceipt` are redacted at t
 
 Historically only step 1 existed on the RPC layer, so admitted logs were returned with their embedded addresses in the clear — the explorer zeroed them but the RPC over-shared. RD-1214 closed that asymmetry; cross-layer parity (entry **and** per-address) is enforced by `TestRPCExplorerLogParity_RD1214` (`internal/server/rpc_explorer_log_parity_test.go`). One rendering difference remains and is unavoidable: a `Pseudonymous` embedded address renders as a stable pseudonym in the explorer but is **zeroed** on the RPC (a 32-byte log topic cannot carry a pseudonym string); both hide the real address, so the security decision is identical.
 
-**Admin bypass (RD-751):** Users with the `admin` claim on a contract see ALL logs from that contract, regardless of event rules or address-in-topic checks. This applies to:
+**Admin exemption (RD-751):** Users with the `admin` claim on a contract see ALL logs from that contract, regardless of event rules or address-in-topic checks. This applies to:
 - Per-contract admin (group has `admin` in `group_access.claims` + `contract_grant`)
 - Org admin (`is_org_admin = true` group — resolver grants `admin` on all org contracts)
 
@@ -367,7 +367,7 @@ A deployment-wide boolean flag (`ORG_ADMIN_VIEW_USER_TXS`, env var; `config.OrgA
 **What it grants when `true`, for viewers who are org admins (`is_org_admin` or `admin` claim):**
 
 - **Row survival.** Transactions / token transfers / internal transactions where *both* sides are non-identifiable (user↔user activity, deploys from a private EOA) are **kept** instead of dropped. Without an admin + the flag, they are dropped as before.
-- **Value preserved.** The `value` / transfer amount on those rows (and on one-side-hidden rows the admin already sees) is **not** zeroed. This resolves a real asymmetry: the amount of a Transfer is already readable by the admin via the event log (`RedactLogs`, admin bypass RD-751), while the matching transaction record showed `value = ""`. Under the flag both agree.
+- **Value preserved.** The `value` / transfer amount on those rows (and on one-side-hidden rows the admin already sees) is **not** zeroed. This resolves a real asymmetry: the amount of a Transfer is already readable by the admin via the event log (`RedactLogs`, admin exemption RD-751), while the matching transaction record showed `value = ""`. Under the flag both agree.
 
 **What it does NOT grant:**
 
@@ -382,7 +382,7 @@ A deployment-wide boolean flag (`ORG_ADMIN_VIEW_USER_TXS`, env var; `config.OrgA
 
 ## 4. Known Gaps
 
-The following gaps are numbered. G1, G2, G3, G4, G5, G6, G7, G8, G9, G11, G14, G16, G20, G21, G22, G24 are resolved. G15, G23 are outstanding.
+The following gaps are numbered. G1, G2, G3, G4, G5, G6, G7, G8, G9, G11, G14, G16, G20, G21, G22, G24 are resolved. G15, G23, G26 are outstanding.
 
 ### Resolved
 
@@ -445,6 +445,9 @@ The following gaps are numbered. G1, G2, G3, G4, G5, G6, G7, G8, G9, G11, G14, G
 
 - **G23: Explorer log-data redaction does not cover cross-org-touched txs**
   RD-915 closes the `eth_call`-side cross-org leak at the proxy boundary, but the explorer-side log-data redaction (RD-875/RD-889) is keyed on the *emitting contract* of each log, not on whether the originating tx touched a foreign-org contract via internal calls. A tx authored by org A that internally STATICCALLs an org B contract may end up with org A logs whose `data` references org B state. The RPC-layer `eth_call` gate prevents the live-query angle; the indexed/historical explorer view is still open. Follow-up needed: extend `RedactLogs` (or add a tx-level pre-filter) so that any log of a tx whose trace touched a foreign-org address is treated as cross-org for the viewer. See `docs/rd-915-design.md` §KD-6.
+
+- **G26: Explorer View-as organization scope (RD-1315)**
+  RD-1308 scopes dry-run and the View-as RPC mirror to the path organization. Explorer organization scope is separate work tracked in RD-1315.
 
 ---
 
@@ -656,7 +659,7 @@ Table: `tx_visible_to` (migration 040, renamed from `tx_log_visible_to`)
 | tx_hash | TEXT | Transaction hash (lowercase) |
 | visible_to_dids | TEXT[] | Array of DIDs granted visibility |
 | sender_did | TEXT | DID of the transaction sender |
-| org_id | TEXT | Organization ID of the sender |
+| org_id | TEXT | Organization the send was authorised under (the send's `CheckAccess` org: explicit `/rpc/:org_id` or org slug, else the target contract's owner, else the sender's single org). Impersonated reads anchored to one org count only shares with that `org_id` (§8). |
 | created_at | TIMESTAMPTZ | When the rule was created |
 
 
@@ -668,9 +671,10 @@ A tier-2 org admin can ask the proxy "what would user X see if they made this RP
 
 ### Why it's safe at this scope
 
-- A tier-2 org admin already holds `AllClaims()` on every contract in their own org via `computeOrgAdminPermissions`. Any data the dry-run pipeline can reveal to them is already in their reach via direct RPC/explorer calls. Net new data: **zero**.
+- Read answers are the **user's view within `:org_id`**, produced by the same code a real call by that user goes through, and nothing from the user's other organizations (see *Org pinning* below).
+- The write-method `trace` and `logs_emitted` are returned unfiltered (they are the admin's diagnostic, not the user's view). That is safe because `validateDryRunTrace` first requires every frame to stay inside `:org_id`, on whose contracts a tier-2 admin already holds full claims via `computeOrgAdminPermissions`.
 - The endpoint does no JWT minting at any point. The "impersonated user" is a synthetic principal constructed inside the request handler from `(user.ID, :org_id)`; it is never persisted, never returned, never auth-credentialed.
-- Multi-org users are **structurally invisible across orgs**: `EffectivePermissions` are resolved scoped to admin's `:org_id` via `GetEffectivePermissionsByIDs(userID, :org_id)`. A user who is also in Org B has Org B's grants resolved to nothing in this context.
+- Multi-org users are **structurally invisible across orgs**: `EffectivePermissions` are resolved scoped to admin's `:org_id` via `GetEffectivePermissionsByIDs(userID, :org_id)`, and every later authorization input is pinned the same way. A user who is also in Org B has Org B's grants, admin role and shares resolved to nothing in this context.
 
 ### Hard gates
 
@@ -682,10 +686,29 @@ A tier-2 org admin can ask the proxy "what would user X see if they made this RP
 | Method allowlist | `dryRunReadMethods` ∪ `dryRunTraceMethods` | 400 with the supported set listed. |
 | Cross-org user invisible | `GetUserOrgIDs(user.ID)` must include `:org_id` | generic 404 "user not found" — identical to "user does not exist." |
 | Same RBAC pipeline | `CheckAccess` runs as the impersonated user with their own `EffectivePermissions` | no parallel implementation that could diverge from real-request behaviour. |
+| Same response filter (RD-1308) | every read response goes through `JSONRPCProcessor.applyResponseFilter` as the impersonated user, pinned to `:org_id` (`filterDryRunReadResponse`) | a transaction the user may not read is `null`; logs and receipts are filtered and field-redacted as on the live RPC. No processor wired → the upstream body is withheld. |
+
+### Org pinning (RD-1308)
+
+Dry-run and the View-as **RPC** mirror (`/impersonate/:did/in/:org_id/rpc`) carry a view scope (`internal/viewscope`) naming the path org. Under it every authorization input of the RPC read path resolves in that org only; a user's own call never carries it.
+
+| Input | User's own call | Dry-run / View-as RPC (scope = `:org_id`) |
+|---|---|---|
+| Effective permissions (`resolvePermsForFilter`) | merged across all the user's orgs | the scope org's only; not a member → none |
+| Admin exemption (`viewerAdminContracts`) | admin claim in the contract's owning org | contracts owned by the scope org only |
+| visibleTo shares (`txVisibilityForViewer`) | every `tx_visible_to` row listing the user | rows whose `org_id` (the org the send was authorised under) is the scope org |
+| visibleTo unlock (`buildVisibleToUnlockableMap`) | flagged contracts the user is eligible on | flagged contracts owned by the scope org only |
+| Nested-call gate for `eth_call` (RD-915) | all the user's orgs | the scope org (dry-run already pinned it; the mirror now does too). Like the user's own call, it runs only while runtime `eth_call` tracing is on. |
+| Embedded-address redaction (`GetBatchVisibility*`) | Full through any of the user's groups, and any of their disclosure grants | Full through the scope org's groups and disclosure grants requested in the scope org only |
+| Transaction envelope (`applyViewerOrgScopeEnvelope`) | participant / visibleTo / admin rules | additionally `null` when `to`, a receipt's `contractAddress`, or the contract a deployment transaction creates (derived from sender + nonce) is owned by another org — even for the user's own transaction |
+
+The user's own linked addresses stay theirs: a transaction between the user and an address no org owns is shown, because the user's own activity is what the tool answers about. An empty scope matches no org, so every pinned lookup fails closed.
+
+The View-as RPC mirror serves exactly the methods whose path is pinned, listed explicitly in `impersonationRPCMethods`: `eth_call`, `eth_getLogs`, `eth_getTransactionReceipt`, `eth_getTransactionByHash`, `eth_getBalance`, `eth_getCode`, `eth_getStorageAt`, `eth_blockNumber`, `eth_chainId`, `eth_gasPrice`, `net_version`, `net_listening`, `web3_clientVersion`. Any other JSON-RPC method in the GET body — writes, traces, block and block-receipt reads — is refused with 400 before processing (RD-1314). The explorer half of View-as is not pinned yet (G26).
 
 ### Write-method translation (`debug_traceCall`)
 
-Both write-method shapes are rewritten to `debug_traceCall` against the upstream node — current state, no commit. The `callTracer` preset with `withLog: true` returns nested call frames + emitted logs; the handler walks the frames, extracts logs, and runs them through `rbac.FilterEventLogs` with the impersonated user's perms so the response includes both `logs_emitted` (full trace logs) and `logs_visible_to_user` (the subset they would actually see in `eth_getTransactionReceipt`).
+Both write-method shapes are rewritten to `debug_traceCall` against the upstream node — current state, no commit. The `callTracer` preset with `withLog: true` returns nested call frames + emitted logs; the handler walks the frames, extracts logs, and returns them as `logs_emitted`. `logs_visible_to_user` is the subset the user would see in that transaction's receipt: the handler builds the receipt the node would return (sender and target from the trace's top frame, a random per-request transaction hash, the emitted logs) and runs it through the production receipt filter under the same org pin (`dryRunTraceLogsVisibleToUser`) — participant admission (RD-1162), event rules, the admin exemption and the embedded-address field redaction (RD-1214) included. A receipt the user could not read yields no visible logs.
 
 `eth_sendRawTransaction` is RLP-decoded via the same production helper (`decodeRawTransaction` in `internal/server/jsonrpc_processor.go`) used by the real-call path. Sender is recovered from the signature using the chain-id-aware signer; the trace then runs against `(from, to, data, value)` exactly as a real raw-tx call would. A malformed signed blob returns a clean decode error rather than a silent pass.
 
