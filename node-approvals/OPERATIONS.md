@@ -30,8 +30,18 @@ Set each Besu producer's `--plugin-ops-approval-listen=address:port`,
 `--plugin-ops-approval-allowed-sources` as described in the [wire settings](../docs/implementation/approvals-wire-contract.md#7-settings).
 For Reth set `OPS_APPROVALS=1`, `OPS_APPROVAL_LISTEN=address:port`,
 `OPS_APPROVAL_PUBLIC_KEYS=id=hex`, `OPS_APPROVAL_CHAIN_ID` and `OPS_APPROVAL_ALLOWED_SOURCES`.
-The chain id must match the node. Reth rejects an invalid enable flag; absent/`0` intentionally
-disables its gate for ordinary-node operation, so deployment templates must explicitly require `1`.
+The chain id must match the node. For `ops-reth-approvals node`, `OPS_APPROVALS` is required: `1`
+enforces approvals, and `0` runs the stock block builder **without** enforcement, which exists only
+for benchmark baselines and logs a warning at startup. A missing or invalid value refuses to start
+the node, so a deployment template that omits the variable cannot silently run an unenforced
+producer. Maintenance commands such as `--version`, `init`, `db` and `import` do not need it.
+
+Besu refuses to start when the plugin's required options are missing, but only with Besu's default
+`--plugin-continue-on-error=false`. Keep that default: with `true`, a plugin that fails to start is
+only logged and the node builds blocks without enforcement. If plugin loading is restricted with
+`--plugins`, include `OpsApprovalPlugin`, and do not disable external plugins
+(`--Xplugins-external-enabled=false` loads none). A producer without the plugin JAR is not
+enforcing; the activation log check below catches all of these cases.
 
 Before admitting traffic, verify every producer's activation log and OPS
 `privacyproxy_approval_target_ready{target=...}=1`. The separate
@@ -41,6 +51,25 @@ the first preflight, so verify the reported chain ID explicitly before traffic. 
 canary, submit an unapproved transaction directly: it must never enter a block. Then submit through
 OPS and verify a successful receipt. A successful delivery acknowledgement alone is not proof of
 enforcement.
+
+## What enforcement protects, and what it does not
+
+An enforcing producer only puts a transaction into a block it builds when the transaction has an
+unexpired OPS approval for its exact hash and the execution matches the approved fingerprint.
+Everything else in this section is a limit of that guarantee, with the control the operator owns.
+
+| Limit | What it means | Operator control |
+|---|---|---|
+| Producer enforcement, not a consensus rule | Only blocks this producer builds are checked; enforcement must actually be on (see *Enable and verify*). Blocks it imports are accepted as is, so a block built by any other producer, or submitted by anyone who can reach the Engine API, can contain unapproved transactions. | Run enforcement on every authorized producer (the default topology has one). Restrict the Engine API to the authorized consensus client with JWT authentication. Never add a producer without enforcement. |
+| Reads are not protected | Approvals decide which transactions enter blocks. Anyone who can call the node's JSON-RPC reads state, logs, transactions and traces directly, bypassing OPS privacy. | Keep node JSON-RPC private and never publish it beside the OPS endpoint (see the next section). |
+| Issued approvals cannot be revoked | A policy change does not cancel approvals already issued. An approved transaction can still be included until its approval expires, even if the sender has lost access since. | Treat `OPS_APPROVAL_TTL` as the revocation delay and keep it as short as the deployment allows. |
+| The signing key authorizes everything | Whoever holds the OPS signing seed can approve any transaction. | Keep the seed in the secret manager, rotate it, and follow the compromise procedure under *Key rotation and upgrades*. |
+| OPS policy is the source of truth | The producer enforces exactly what OPS approved; it does not re-evaluate policy. An approval cannot be reused for a different transaction, but anything OPS allows by mistake is enforced as allowed. | Review OPS policy changes as security changes. |
+| Fingerprint tolerance | The calls fingerprint binds the call graph, inputs, value, code, storage context and whether each call succeeded or failed. Ordinary storage, output and log changes between approval and inclusion are allowed, so rules that depend on stored values rather than on which calls happen are not re-checked at inclusion. Contract creation and lifecycle use the strict fingerprint. | Do not rely on value-dependent rules being re-checked at inclusion. |
+| Delivery is plaintext | Signatures prevent forged approvals, but an attacker on the delivery network can observe approvals and suppress them, which delays or prevents inclusion. | Keep delivery on a private network, or add an authenticated encrypted tunnel (see the next section). |
+| Pool flooding | Unapproved transactions submitted directly to the node never enter a block, but they occupy pool capacity until they are dropped. | Restrict node JSON-RPC and peer-to-peer admission. |
+| Unsupported transaction types | OPS approves only replay-protected legacy and EIP-1559 transactions. It does not approve other types (EIP-2930, EIP-4844, EIP-7702), so an enforcing producer never includes them; this fails closed. | None needed. |
+| Node operators | Anyone who controls the producer host can replace the binary, read all chain data and build arbitrary blocks. Operator blindness is outside this release. | Treat producer hosts as fully trusted infrastructure. |
 
 ## Network and API boundary
 

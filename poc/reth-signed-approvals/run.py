@@ -8,6 +8,7 @@ import platform
 from pathlib import Path
 import statistics
 import subprocess
+import tempfile
 import time
 import threading
 import urllib.request
@@ -181,6 +182,24 @@ def invalid():
         n.submit(tx);time.sleep(.6);n.make_block([])
         assert n.rpc("eth_getTransactionReceipt",tx["hash"]) is None
         c.send(batch["approvals"]);n.submit(tx);n.make_block([tx]);record("forged_signature_denied_then_valid_retry",refusal=refused)
+
+def enable_flag_required():
+    """A block producer must refuse to start, never run unenforced, when OPS_APPROVALS is absent."""
+    env={k:v for k,v in os.environ.items() if k!="OPS_APPROVALS"}
+    with tempfile.TemporaryDirectory() as datadir:
+        try:
+            # Isolated ports and no networking, so only the missing flag can stop the node.
+            args=[str(h.BINARY),"node","--dev","--datadir",datadir,"--http","--http.addr","127.0.0.1","--http.port",str(h.unused_port()),
+                  "--authrpc.addr","127.0.0.1","--authrpc.port",str(h.unused_port()),"--ipcdisable","--disable-discovery",
+                  "--addr","127.0.0.1","--port","0","--max-outbound-peers","0","--max-inbound-peers","0",
+                  "--log.file.directory",os.path.join(datadir,"logs")]
+            refused=subprocess.run(args,env=env,capture_output=True,text=True,timeout=60)
+        except subprocess.TimeoutExpired as e:
+            raise AssertionError("node started without OPS_APPROVALS instead of refusing") from e
+    assert refused.returncode!=0 and "OPS_APPROVALS is not set" in refused.stdout+refused.stderr,(refused.returncode,refused.stderr[-2000:])
+    version=subprocess.run([str(h.BINARY),"--version"],env=env,capture_output=True,text=True,timeout=60)
+    assert version.returncode==0,version.stderr[-2000:]
+    record("node_refuses_to_start_without_enable_flag",exit_code=refused.returncode)
 
 def expiry():
     """Contract §6: an approval is usable while now < expires_at; an expired one counts as absent.
@@ -380,7 +399,7 @@ def write_benchmark_report(measurements,batch):
 def node_scenarios():
     """Everything that needs only the node and the fixture client, not an OPS server."""
     divergence("same_block_cross_org_divergence");divergence("caught_call_cannot_bypass",catch=True);divergence("same_org_storage_divergence",storage_only=True);divergence("stock_control_executes_cross_org",disabled=True)
-    read_only();fingerprint_cases();waits();waiting_load();invalid();expiry();restart();successive_restarts();restart_resend();reorg();history()
+    enable_flag_required();read_only();fingerprint_cases();waits();waiting_load();invalid();expiry();restart();successive_restarts();restart_resend();reorg();history()
 
 if __name__=="__main__":
     parser=argparse.ArgumentParser();parser.add_argument("mode",choices=["smoke","node","test","bench","all"]);args=parser.parse_args();h.prepare()

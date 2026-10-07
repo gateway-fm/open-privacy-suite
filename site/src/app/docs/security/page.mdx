@@ -114,6 +114,36 @@ graph TD
 
 **Performance:** approximately 50--200 ms additional latency per transaction. Tiered validation skips tracing for calls to known org-owned addresses.
 
+### Signed Transaction Approvals: What They Protect
+
+When signed transaction approvals are enabled, an enforcing block producer only
+includes a transaction that Open Privacy Suite approved, and only if its
+execution still matches what was approved. A transaction sent straight to the
+node without an approval never enters a block and consumes no nonce or fees.
+The guarantee has limits that the deployment must cover:
+
+- **Every block producer must enforce.** Only blocks built by an enforcing
+  producer are checked; imported blocks are accepted as they are. Run
+  enforcement on every block producer (the default deployment has one), and
+  restrict the node's Engine API to the authorized consensus client.
+- **Enforcement must be switched on explicitly.** The Reth producer refuses to
+  start unless `OPS_APPROVALS` is `1` or `0`: `1` enforces, `0` disables enforcement
+  for benchmarks only. The Besu producer enforces when its plugin is installed
+  and configured; keep Besu's `--plugin-continue-on-error` at its default
+  `false`, otherwise a plugin that fails to start leaves the node unenforced.
+- **Reads are not covered.** Approvals control what is written to the chain.
+  Keep the node's JSON-RPC private: anyone who reaches it reads chain data
+  without Open Privacy Suite's privacy rules.
+- **Approvals expire but cannot be revoked.** A policy change does not cancel an
+  approval already issued. `OPS_APPROVAL_TTL` (default 10 minutes, 10 seconds to
+  1 hour) is therefore the longest delay before a revocation takes effect for
+  pending transactions.
+- **Open Privacy Suite's policy is the source of truth.** The node enforces what
+  was approved; it does not re-evaluate policy.
+
+`node-approvals/OPERATIONS.md` in the repository lists these limits with the
+operator control for each.
+
 ---
 
 ## Response-Level Privacy Filtering
