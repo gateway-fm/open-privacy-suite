@@ -262,8 +262,9 @@ func TestDebugTrace_AllowlistedReachesTracer(t *testing.T) {
 }
 
 func TestDebugTrace_WildcardAllowlistReachesTracer(t *testing.T) {
-	// A group whose allowlist is "*" (all methods) permits tracing too. Admin
-	// claim present, but it's the "*" allowlist entry that grants the method.
+	// A legacy "*" allowlist entry permits tracing too: its explicit expansion
+	// includes the trace methods. Admin claim present, but it's the "*"
+	// allowlist entry that grants the method.
 	proc, ts := setupProcessorWithTracing(t)
 	ctx := context.Background()
 

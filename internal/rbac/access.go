@@ -130,9 +130,13 @@ var GlobalBlockedMethods = map[string]bool{
 	// in CheckAccess: admin-claim users get all slots, non-admin users get only
 	// well-known infrastructure slots (EIP-1967, EIP-2535). See storage_slots.go.
 
-	// Signing methods - key exposure risk
-	"eth_sign":            true,
-	"eth_signtransaction": true,
+	// Signing methods - key exposure risk. Typed-data signing (EIP-712) is the
+	// same risk: the node signs with one of its own keys (e.g. a token permit)
+	// with no check that the caller controls that key.
+	"eth_sign":             true,
+	"eth_signtransaction":  true,
+	"eth_signtypeddata":    true,
+	"eth_signtypeddata_v4": true,
 
 	// NOTE: eth_sendRawTransaction is handled specially - it's allowed ONLY when
 	// runtime tracing is enabled. The proxy decodes the RLP transaction, extracts
@@ -537,6 +541,19 @@ func (c *AccessController) checkGlobalBlocks(req *AccessCheckRequest) (*AccessCh
 		}, true
 	}
 
+	// Default-deny method gate: a method the proxy has no model for (no
+	// target extraction, no response filter, no tracing) is never forwarded,
+	// whatever a group's allowlist holds. Canonicalized here so a mixed-case
+	// spelling of a catalog method from a caller that passes the raw name
+	// (/access/check) is judged by the allowlist below rather than refused as
+	// unknown; the allowlist itself matches exact names.
+	if !IsForwardableMethod(CanonicalizeMethod(req.Method)) {
+		return &AccessCheckResult{
+			Allowed: false,
+			Reason:  fmt.Sprintf("method %s is not supported", req.Method),
+		}, true
+	}
+
 	// Check for Multicall bypass attempts
 	if isMulticall, reason := DetectMulticall(req.Method, req.Params); isMulticall {
 		return &AccessCheckResult{
@@ -565,6 +582,16 @@ func (c *AccessController) checkAnonymousAccess(ctx context.Context, req *Access
 		return &AccessCheckResult{
 			Allowed: false,
 			Reason:  reason,
+		}, nil
+	}
+
+	// Anonymous callers get catalog methods only: operator aliases and
+	// passthrough methods require an authenticated, explicitly granted caller.
+	if !IsCatalogMethod(CanonicalizeMethod(req.Method)) {
+		return &AccessCheckResult{
+			Allowed:      false,
+			AuthRequired: true,
+			Reason:       "authentication required for this operation",
 		}, nil
 	}
 
@@ -1441,12 +1468,12 @@ var ReadOpsMap = map[string]bool{
 	// Node keystore accounts — may expose signer addresses on private PoA networks
 	"eth_accounts": true,
 	// Log filters — functionally equivalent to eth_getLogs, same auth requirement
-	"eth_newfilter":                    true,
-	"eth_newblockfilter":               true,
-	"eth_newpendingtransactionfilter":  true,
-	"eth_getfilterchanges":             true,
-	"eth_getfilterlogs":                true,
-	"eth_uninstallfilter":              true,
+	"eth_newfilter":                   true,
+	"eth_newblockfilter":              true,
+	"eth_newpendingtransactionfilter": true,
+	"eth_getfilterchanges":            true,
+	"eth_getfilterlogs":               true,
+	"eth_uninstallfilter":             true,
 	// Block contents (include transaction lists with from/to/value)
 	"eth_getblockbyhash":                   true,
 	"eth_getblockbynumber":                 true,
@@ -1457,9 +1484,9 @@ var ReadOpsMap = map[string]bool{
 	"eth_getunclecountbyblockhash":         true,
 	"eth_getunclecountbyblocknumber":       true,
 	// Transaction details (sender, receiver, value, input data)
-	"eth_gettransactionbyhash":                 true,
-	"eth_gettransactionbyblockhashandindex":    true,
-	"eth_gettransactionbyblocknumberandindex":  true,
+	"eth_gettransactionbyhash":                true,
+	"eth_gettransactionbyblockhashandindex":   true,
+	"eth_gettransactionbyblocknumberandindex": true,
 	// Receipts (logs, status, contract address)
 	"eth_gettransactionreceipt": true,
 	"eth_getblockreceipts":      true, // Block receipts (same privacy requirements as eth_getLogs)

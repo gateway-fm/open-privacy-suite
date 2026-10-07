@@ -29,7 +29,7 @@ smart contracts.
 
 The RBAC system uses a **two-layer permission model**: a method allowlist controls which RPC methods a group can call, and operational claims (`deploy`, `upgrade`, `admin`) gate specific high-privilege operations.
 
-1. **Method allowlist is the source of truth for non-privileged access** -- each group defines which RPC methods are permitted via `GroupAccess.allowed_methods`. If `eth_call` is not in the list, the user cannot call it. If `eth_sendTransaction` is not in the list, the user cannot send transactions.
+1. **Method allowlist is the source of truth for non-privileged access** -- each group defines which RPC methods are permitted via `GroupAccess.allowed_methods`. If `eth_call` is not in the list, the user cannot call it. If `eth_sendTransaction` is not in the list, the user cannot send transactions. The list names methods exactly, and it can only hold methods the proxy supports: the built-in methods plus the chain-specific methods the operator declares (see [Extra RPC Namespaces](/docs/configuration#extra-rpc-namespaces)). A method the proxy does not support is refused for everyone, whatever the list says.
 
 2. **Operational claims gate privileged operations** -- only `deploy`, `upgrade`, and `admin` are claim-gated. Contract deployment requires the `deploy` claim. Proxy upgrades require the `upgrade` claim. The `admin` claim implies both.
 
@@ -160,10 +160,10 @@ Non-privileged method access (reads + non-mutating calls + ordinary writes) is c
 
 The `debug_traceTransaction` and `debug_traceCall` methods are gated by the method
 allowlist like every other RPC method: a group can use them only if they appear in that
-group's allowed methods (or the group allows all methods). The `deploy` claim does **not**
+group's allowed methods. The `deploy` claim does **not**
 grant tracing — a group that holds `deploy` but does not list `debug_trace*` in its allowed
 methods cannot trace. This includes **org-admin groups**: an org-admin group that should be
-able to trace must include `debug_traceTransaction` / `debug_traceCall` (or `*`) in its
+able to trace must include `debug_traceTransaction` / `debug_traceCall` in its
 allowed methods. Cross-organization isolation on trace results is always enforced separately,
 regardless of the allowlist.
 

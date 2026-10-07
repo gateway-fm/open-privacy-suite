@@ -54,11 +54,17 @@ export default function GroupAccessForm({
   const [presetApplied, setPresetApplied] = useState(false);
   // Extra RPC namespaces from server config (chain-specific methods)
   const [extraNamespaces, setExtraNamespaces] = useState<Record<string, string[]>>({});
-  // Wildcard-enabled namespaces: namespace name → { prefix, deny[] }. When a
-  // namespace appears here the form renders a single "Allow all <prefix>*"
-  // toggle that, when checked, stores the literal "<prefix>*" glob in
-  // allowed_methods (the backend honors it via HasMethod + MatchWildcard).
-  const [extraWildcards, setExtraWildcards] = useState<Record<string, { prefix: string; deny?: string[] }>>({});
+  // Operator passthrough methods: forwarded to the node unfiltered (no
+  // per-address access check, no response filtering, no tracing). Shown with
+  // an "Unfiltered" badge so the admin grants them knowingly.
+  const [extraPassthrough, setExtraPassthrough] = useState<string[]>([]);
+  // Every method the proxy lets a group hold (from /status). null = unknown
+  // (older backend or status failed): stored entries are then kept as-is.
+  const [supportedMethods, setSupportedMethods] = useState<string[] | null>(null);
+  // Stored "*" / "<prefix>*" entries. The proxy grants methods by exact name
+  // only, so they are not loaded into the picker; saving replaces them with
+  // the methods selected here, which the notice below says.
+  const [storedWildcards, setStoredWildcards] = useState<string[]>([]);
 
   // reason: intentional reload-on-groupId. loadAccess/loadExtraNamespaces are
   // non-memoised helpers that read current state via closure; adding them to
@@ -90,8 +96,12 @@ export default function GroupAccessForm({
       const response = await rbacApi.groups.getAccess(orgId, groupId);
       const access = response.data;
       if (access) {
-        const methods = (access.allowed_methods || []).filter((m: string) => m !== '*');
-        setAllowedMethods(methods);
+        // The proxy grants methods by exact name only and the backend rejects
+        // "<prefix>*" globs on save, so wildcard entries are kept out of the
+        // picker and surfaced in a notice instead of silently disappearing.
+        const stored: string[] = access.allowed_methods || [];
+        setStoredWildcards(stored.filter((m: string) => m.includes('*')));
+        setAllowedMethods(stored.filter((m: string) => !m.includes('*')));
         setRpcApiKey(access.rpc_api_key || '');
         setVerboseErrors(access.verbose_errors ?? false);
         setSelectedClaims(access.claims || []);
@@ -110,22 +120,17 @@ export default function GroupAccessForm({
       if (ns && Object.keys(ns).length > 0) {
         setExtraNamespaces(ns);
       }
-      const wc = response.data?.methods?.extra_wildcards;
-      if (wc && Object.keys(wc).length > 0) {
-        setExtraWildcards(wc);
+      const pt = response.data?.methods?.extra_passthrough;
+      if (pt && pt.length > 0) {
+        setExtraPassthrough(pt);
+      }
+      const supported = response.data?.methods?.supported_methods;
+      if (supported && supported.length > 0) {
+        setSupportedMethods(supported);
       }
     } catch {
       // Non-critical — extra namespaces just won't show
     }
-  };
-
-  const toggleWildcard = (prefix: string) => {
-    const glob = `${prefix}*`;
-    setAllowedMethods(prev =>
-      prev.includes(glob)
-        ? prev.filter(m => m !== glob)
-        : [...prev, glob]
-    );
   };
 
   const toggleMethod = (method: string) => {
@@ -139,7 +144,9 @@ export default function GroupAccessForm({
   const applyPreset = (preset: PermissionPreset) => {
     const methods = getPresetMethods(preset);
     setPresetApplied(true);
-    setAllowedMethods(methods);
+    // A preset replaces the picker selection; methods granted outside the
+    // picker (e.g. through the API) are kept, as the notice promises.
+    setAllowedMethods(prev => [...methods, ...prev.filter(m => !pickerMethods.has(m) && !methods.includes(m))]);
     setSelectedPresetId(preset.id);
   };
 
@@ -156,6 +163,21 @@ export default function GroupAccessForm({
     );
   };
 
+  // Stored entries this proxy no longer supports (it refuses them on every
+  // request and rejects them on save): shown, then dropped from the save.
+  const unsupportedStored = supportedMethods
+    ? allowedMethods.filter(m => !supportedMethods.includes(m))
+    : [];
+  // Supported entries granted outside this picker (e.g. set through the API):
+  // kept on save, listed so the admin can see them.
+  const pickerMethods = new Set<string>([
+    ...Object.values(METHOD_SECTIONS).flatMap(section => [...section.methods]),
+    ...Object.values(extraNamespaces).flat(),
+  ]);
+  const grantedOutsidePicker = allowedMethods.filter(
+    m => !pickerMethods.has(m) && !unsupportedStored.includes(m)
+  );
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
@@ -163,7 +185,7 @@ export default function GroupAccessForm({
 
     try {
       const input: SetGroupAccessInput = {
-        allowed_methods: allowedMethods,
+        allowed_methods: allowedMethods.filter(m => !unsupportedStored.includes(m)),
         // Org-admin groups receive all claims automatically; claims are not
         // applicable and the backend rejects a non-empty list (RD-968 Gap 1).
         claims: isOrgAdmin ? [] : ExpandClaims(selectedClaims),
@@ -391,15 +413,9 @@ export default function GroupAccessForm({
         })}
 
         {/* Extra RPC namespaces (chain-specific, from server config) */}
-        {Array.from(new Set([
-          ...Object.keys(extraNamespaces),
-          ...Object.keys(extraWildcards),
-        ])).sort().map((nsName) => {
+        {Object.keys(extraNamespaces).sort().map((nsName) => {
           const nsMethods = extraNamespaces[nsName] ?? [];
-          const wildcard = extraWildcards[nsName];
           const selectedCount = allowedMethods.filter(m => nsMethods.includes(m)).length;
-          const wildcardGlob = wildcard ? `${wildcard.prefix}*` : null;
-          const wildcardOn = wildcardGlob ? allowedMethods.includes(wildcardGlob) : false;
           return (
             <div key={nsName} className="border rounded-lg border-neutral-200">
               <div className="flex items-center justify-between p-3">
@@ -438,68 +454,6 @@ export default function GroupAccessForm({
                 <p className="text-xs text-neutral-400">Chain-specific methods configured by the operator.</p>
               </div>
 
-              {/* Wildcard passthrough toggle — checked = "<prefix>*" stored in allowed_methods */}
-              {wildcard && (
-                <div className="border-t border-neutral-200 p-3 bg-amber-50/30">
-                  <label
-                    className="flex items-start gap-2 p-1.5 rounded hover:bg-amber-50 cursor-pointer border border-transparent hover:border-amber-200 transition-colors"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      toggleWildcard(wildcard.prefix);
-                    }}
-                  >
-                    <div className={cn(
-                      'w-3.5 h-3.5 rounded border flex items-center justify-center flex-shrink-0 mt-0.5 transition-colors',
-                      wildcardOn ? 'bg-amber-500 border-amber-500' : 'border-neutral-300 bg-white'
-                    )}>
-                      {wildcardOn && <Check className="w-2.5 h-2.5 text-white stroke-[3]" />}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-mono text-neutral-800 font-semibold">{wildcard.prefix}*</span>
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium uppercase">
-                          Passthrough
-                        </span>
-                      </div>
-                      <p className="text-[11px] text-neutral-500 mt-0.5">
-                        Allow any method starting with <code>{wildcard.prefix}</code>. The proxy forwards these to the upstream node as-is —
-                        no contract access check, no response redaction. Use only when you trust the upstream chain's namespace.
-                      </p>
-                    </div>
-                  </label>
-
-                  {/* Operator deny list — visually marked as a denied set, distinct from the amber wildcard tone */}
-                  {wildcard.deny && wildcard.deny.length > 0 && (
-                    <div
-                      className="mt-2 p-2 rounded border border-error/30 bg-error-light/40"
-                      onClick={e => e.stopPropagation()}
-                    >
-                      <div className="flex items-center gap-1.5 mb-1.5">
-                        <X className="w-3 h-3 text-error-dark stroke-[3]" />
-                        <span className="text-[11px] font-semibold text-error-dark uppercase tracking-wide">
-                          Always denied · operator block list
-                        </span>
-                      </div>
-                      <div className="flex flex-wrap gap-1">
-                        {wildcard.deny.map((d) => (
-                          <span
-                            key={d}
-                            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-white border border-error/40 text-[10px] font-mono text-error-dark"
-                            title={`Rejected even when ${wildcard.prefix}* is enabled`}
-                          >
-                            <X className="w-2.5 h-2.5" />
-                            {d}
-                          </span>
-                        ))}
-                      </div>
-                      <p className="text-[10px] text-neutral-500 mt-1.5">
-                        Rejected even with the wildcard above enabled. Configured by the operator at startup; not editable from this form.
-                      </p>
-                    </div>
-                  )}
-                </div>
-              )}
-
               {/* Explicit chain-specific methods */}
               {nsMethods.length > 0 && (
                 <div className="border-t border-neutral-200 p-3">
@@ -524,6 +478,14 @@ export default function GroupAccessForm({
                         <span className="text-xs font-mono text-neutral-700 truncate" title={method}>
                           {method}
                         </span>
+                        {extraPassthrough.includes(method) && (
+                          <span
+                            className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium uppercase flex-shrink-0"
+                            title="Forwarded to the node as-is: no contract access check, no response filtering. Configured by the operator."
+                          >
+                            Unfiltered
+                          </span>
+                        )}
                       </label>
                     ))}
                   </div>
@@ -532,6 +494,35 @@ export default function GroupAccessForm({
             </div>
           );
         })}
+
+        {grantedOutsidePicker.length > 0 && (
+          <div className="p-3 rounded-lg border border-neutral-200 bg-neutral-50">
+            <p className="text-xs text-neutral-600">
+              Also granted (not listed above; kept on save):{' '}
+              <span className="font-mono">{grantedOutsidePicker.join(', ')}</span>
+            </p>
+          </div>
+        )}
+
+        {storedWildcards.length > 0 && (
+          <div className="p-3 rounded-lg border border-amber-200 bg-amber-50 flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+            <p className="text-xs text-amber-800">
+              This group holds wildcard entries (<span className="font-mono">{storedWildcards.join(', ')}</span>).
+              Methods are granted by exact name only: saving replaces them with the methods selected here.
+            </p>
+          </div>
+        )}
+
+        {unsupportedStored.length > 0 && (
+          <div className="p-3 rounded-lg border border-amber-200 bg-amber-50 flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+            <p className="text-xs text-amber-800">
+              Not supported by this proxy and removed when you save:{' '}
+              <span className="font-mono">{unsupportedStored.join(', ')}</span>
+            </p>
+          </div>
+        )}
       </div>
 
       {/* RPC API Key */}
