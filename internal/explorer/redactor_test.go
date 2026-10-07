@@ -1611,14 +1611,28 @@ func TestRedactLogs_EventRules_ParamRules_VisibleToFallback(t *testing.T) {
 	logs := []Log{
 		{ID: 1, Address: addr, TxHash: sharedTxHash, Topic0: &transferTopic, Topic1: &otherTopic, Data: "0x"},
 	}
+	// The fallback needs a genuine listing (ListedTxHashes, RD-1307).
 	result, err := engine.RedactLogsWithOpts(context.Background(), logs, "did:test", &RedactOpts{
 		VisibleTxHashes: map[string]bool{sharedTxHash: true},
+		ListedTxHashes:  map[string]bool{sharedTxHash: true},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(result) != 1 {
 		t.Errorf("visibleTo fallback: expected 1 log to pass (param failed but tx shared), got %d", len(result))
+	}
+
+	// A tx that is only in VisibleTxHashes (e.g. the RD-1009 transfer
+	// union) is not a listing: the failed param rule stands.
+	result, err = engine.RedactLogsWithOpts(context.Background(), logs, "did:test", &RedactOpts{
+		VisibleTxHashes: map[string]bool{sharedTxHash: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 0 {
+		t.Errorf("union-only tx must not trigger the param-rule fallback, got %d logs", len(result))
 	}
 }
 
@@ -1640,6 +1654,7 @@ func TestRedactLogs_EventRules_ParamRules_VisibleToOnlyHelpsIfTopic0Matches(t *t
 	logs := []Log{{ID: 1, Address: addr, TxHash: "0xshared", Topic0: &approvalTopic, Data: "0x"}}
 	result, err := engine.RedactLogsWithOpts(context.Background(), logs, "did:test", &RedactOpts{
 		VisibleTxHashes: map[string]bool{"0xshared": true},
+		ListedTxHashes:  map[string]bool{"0xshared": true}, // a genuine listing, so only the rule under test can deny (RD-1307)
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1675,6 +1690,7 @@ func TestRedactLogs_OrdinaryVisibleTo_NoGrantEmitter_RD1208(t *testing.T) {
 		logs := []Log{{ID: 1, Address: addr, TxHash: "0xshared", Topic0: &topic, Data: "0x"}}
 		result, err := engine.RedactLogsWithOpts(context.Background(), logs, "did:test", &RedactOpts{
 			VisibleTxHashes: map[string]bool{"0xshared": true},
+			ListedTxHashes:  map[string]bool{"0xshared": true}, // a genuine listing, so only the rule under test can deny (RD-1307)
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -1693,6 +1709,7 @@ func TestRedactLogs_OrdinaryVisibleTo_NoGrantEmitter_RD1208(t *testing.T) {
 		logs := []Log{{ID: 1, Address: addr, TxHash: "0xshared", Topic0: &topic, Data: "0x"}}
 		result, err := engine.RedactLogsWithOpts(context.Background(), logs, "did:test", &RedactOpts{
 			VisibleTxHashes: map[string]bool{"0xshared": true},
+			ListedTxHashes:  map[string]bool{"0xshared": true}, // a genuine listing, so only the rule under test can deny (RD-1307)
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -3858,7 +3875,7 @@ func TestRedactTransactions_VisibleToGrant_SetsMetadata(t *testing.T) {
 	)
 
 	txs := []Transaction{{Hash: "0xabc", From: alice, To: strPtr(bob), Value: "1000"}}
-	opts := RedactOpts{VisibleTxHashes: map[string]bool{"0xabc": true}}
+	opts := RedactOpts{VisibleTxHashes: map[string]bool{"0xabc": true}, ListedTxHashes: map[string]bool{"0xabc": true}}
 	result, err := engine.RedactTransactions(context.Background(), txs, "did:viewer", opts)
 	if err != nil {
 		t.Fatal(err)
@@ -3896,7 +3913,7 @@ func TestRedactTransactions_VisibleToGrant_ParticipantTakesPrecedence(t *testing
 	)
 
 	txs := []Transaction{{Hash: "0xabc", From: alice, To: strPtr(bob), Value: "1000"}}
-	opts := RedactOpts{VisibleTxHashes: map[string]bool{"0xabc": true}}
+	opts := RedactOpts{VisibleTxHashes: map[string]bool{"0xabc": true}, ListedTxHashes: map[string]bool{"0xabc": true}}
 	result, err := engine.RedactTransactions(context.Background(), txs, "did:alice", opts)
 	if err != nil {
 		t.Fatal(err)
@@ -3981,7 +3998,7 @@ func TestRedactTransactions_G10_VisibleToStillSees(t *testing.T) {
 	)
 
 	txs := []Transaction{{Hash: "0x01", From: sender, To: strPtr(contract), Value: "1000"}}
-	opts := RedactOpts{VisibleTxHashes: map[string]bool{"0x01": true}}
+	opts := RedactOpts{VisibleTxHashes: map[string]bool{"0x01": true}, ListedTxHashes: map[string]bool{"0x01": true}}
 	result, err := engine.RedactTransactions(context.Background(), txs, "did:viewer", opts)
 	if err != nil {
 		t.Fatal(err)
@@ -4420,13 +4437,23 @@ func TestRedactLogs_M15_VisibleToUnlockBypass(t *testing.T) {
 
 	topic := eventTopic0("Bridge(address,bytes)")
 	logs := []Log{{ID: 1, Address: addr, TxHash: txHash, Topic0: &topic, Data: "0x"}}
-	opts := &RedactOpts{VisibleTxHashes: map[string]bool{txHash: true}}
+	// The unlock is keyed on the genuine listing (ListedTxHashes, RD-1307);
+	// VisibleTxHashes alone (row survival) never unlocks.
+	opts := &RedactOpts{VisibleTxHashes: map[string]bool{txHash: true}, ListedTxHashes: map[string]bool{txHash: true}}
 	result, err := engine.RedactLogsWithOpts(context.Background(), logs, "did:test", opts)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(result) != 1 {
 		t.Errorf("M15 visibleTo unlock: expected 1 log, got %d", len(result))
+	}
+	unionOnly := &RedactOpts{VisibleTxHashes: map[string]bool{txHash: true}}
+	result, err = engine.RedactLogsWithOpts(context.Background(), logs, "did:test", unionOnly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 0 {
+		t.Errorf("a tx that is only in VisibleTxHashes (e.g. the RD-1009 union) must not unlock: expected 0 logs, got %d", len(result))
 	}
 }
 

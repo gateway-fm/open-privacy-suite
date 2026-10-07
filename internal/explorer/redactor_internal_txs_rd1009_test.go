@@ -72,15 +72,24 @@ func TestRedactInternalTransactions_VisibleTxHashesOverride_RD1009(t *testing.T)
 			"honour RedactOpts.VisibleTxHashes the same way RedactTransactions does.",
 			len(result))
 	}
-	// Addresses should be revealed (visibleTo override mirrors RedactTransactions
-	// — when the parent tx is shared with the viewer, counterparty addresses
-	// on the internal tx are exposed too; this is privacy-equivalent because
-	// the surviving parent tx row already exposes them).
-	if result[0].From != privFrom {
-		t.Errorf("expected From=privFrom under visibleTo override, got %q", result[0].From)
+	// RD-1316: VisibleTxHashes alone (the transfer-participant union) keeps
+	// the row but reveals nothing — both private sides stay [PRIVATE].
+	if result[0].From != "[PRIVATE]" {
+		t.Errorf("union-kept frame must not reveal From, got %q", result[0].From)
 	}
-	if result[0].To == nil || *result[0].To != privTo {
-		t.Errorf("expected To=privTo under visibleTo override, got %v", result[0].To)
+	if result[0].To == nil || *result[0].To != "[PRIVATE]" {
+		t.Errorf("union-kept frame must not reveal To, got %v", result[0].To)
+	}
+
+	// A genuine share (ListedTxHashes) of the parent does reveal the frame's
+	// addresses, as before.
+	opts.ListedTxHashes = map[string]bool{sharedTxHash: true}
+	result, err = engine.RedactInternalTransactions(ctx, itxs, "did:viewer", opts)
+	if err != nil {
+		t.Fatalf("RedactInternalTransactions (listed): %v", err)
+	}
+	if len(result) != 1 || result[0].From != privFrom || result[0].To == nil || *result[0].To != privTo {
+		t.Errorf("a genuinely shared parent reveals the frame's addresses, got %+v", result)
 	}
 }
 

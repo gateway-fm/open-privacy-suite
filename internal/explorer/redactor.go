@@ -147,8 +147,8 @@ type AdminContractsResolver interface {
 // addresses where the per-contract `allow_visibleto_unlock` flag is set
 // AND the viewer is eligible for the unlock — both gates from RD-874.
 // The map is consumed by Phase 4 of RedactLogs along with the
-// visibleTxHashes opt: when both the contract is unlockable AND the
-// log's tx hash is in the visibleTo set, the log passes unredacted
+// ListedTxHashes opt: when both the contract is unlockable AND the
+// log's tx hash is one the viewer is genuinely listed on, the log passes unredacted
 // (bypasses event_rules, param_rules, and the deny-when-no-ABI gate).
 //
 // Implementations MUST be org-scoped: a viewer who is in another org
@@ -597,20 +597,28 @@ func anyAddressMatches(v any, viewerAddrs map[string]bool) bool {
 
 // RedactOpts provides optional overrides for transaction redaction.
 type RedactOpts struct {
-	// VisibleTxHashes is the set of tx hashes that are always visible to
-	// the viewer (via the visibleTo param). Transactions matching these
-	// hashes are never dropped, and their addresses get full visibility.
+	// VisibleTxHashes is the set of tx hashes whose rows are always kept for
+	// the viewer: genuine visibleTo shares plus the RD-1009
+	// transfer-participant union. Membership alone only keeps the row; the
+	// addresses are revealed only for hashes also in ListedTxHashes (a
+	// genuine share) — the union never reveals an identity (RD-1316).
 	VisibleTxHashes map[string]bool
 
-	// ParticipantTxHashes is a LABEL-ONLY subset of VisibleTxHashes: the tx
-	// hashes visible to the viewer because the viewer is a transfer
-	// participant of them (the RD-1009 union), as opposed to a genuine
-	// visibleTo share. It does NOT affect row survival — VisibleTxHashes
-	// alone drives that. It only lets a redactor tag a revealed counterparty
-	// address as ReasonParticipantOverride ("Counterparty") rather than
-	// ReasonVisibleToGrant ("Shared") when the reveal is due to participation,
-	// not sharing (RD-1155). A nil map reproduces the pre-RD-1155 labels.
+	// ParticipantTxHashes is the subset of VisibleTxHashes added by the
+	// RD-1009 transfer-participant union (as opposed to a genuine visibleTo
+	// share). Informational: it does not affect row survival (VisibleTxHashes
+	// drives that) and, since the union no longer reveals any address
+	// (RD-1316), the redactors no longer label from it — a counterparty
+	// revealed by the disclosure-grant lens keeps its own reason (§3.7.2).
 	ParticipantTxHashes map[string]bool
+
+	// ListedTxHashes is the set of tx hashes whose visibleTo row genuinely
+	// lists the viewer (tx_visible_to only — never the RD-1009
+	// transfer-participant union that also feeds VisibleTxHashes). It is the
+	// only input RedactLogsWithOpts accepts for "the sender listed this viewer
+	// on this tx": the RD-874 visibleTo unlock and the ordinary param-rule
+	// fallback (RD-1307). A nil map lists nothing (fail-closed).
+	ListedTxHashes map[string]bool
 
 	// ParentParticipants are the parent transaction's from/to addresses,
 	// threaded into RedactInternalTransactions by the single-hash handler
@@ -646,9 +654,10 @@ type RedactOpts struct {
 // RedactStats accumulates side-channel counts from a redaction pass so the
 // caller can react (e.g. emit an audit-log entry) without re-deriving them.
 type RedactStats struct {
-	// AdminUserTxsRevealed counts rows that were kept ONLY because the
-	// elevated org-admin audit view (OrgAdminViewUserTxs) was enabled —
-	// i.e. rows that would have been dropped under strict privacy.
+	// AdminUserTxsRevealed counts rows the elevated org-admin audit view
+	// (OrgAdminViewUserTxs) exposed: rows strict privacy would have dropped,
+	// and union-kept rows with both sides (or the deployer) private, whose
+	// value only the audit view reveals (RD-1316).
 	AdminUserTxsRevealed int
 	// GrantFullReveals counts rows where a Full disclosure grant on one
 	// party caused the counterparty's effective level to be promoted above
@@ -855,7 +864,12 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 		// visibleTo override: if this tx was shared with the viewer via the
 		// visibleTo param, upgrade both addresses to full visibility — the
 		// sender explicitly chose to share this transaction with the viewer.
-		txVisibleToViewer := visibleHashes[strings.ToLower(tx.Hash)]
+		// RD-1316: only a genuine tx_visible_to listing (ListedTxHashes)
+		// reveals. A hash that is in VisibleTxHashes without a listing came
+		// from the RD-1009 transfer-participant union: it keeps the row
+		// (txKeptByUnion) but every address renders at the viewer's own level.
+		txVisibleToViewer := ropts.ListedTxHashes[strings.ToLower(tx.Hash)]
+		txKeptByUnion := visibleHashes[strings.ToLower(tx.Hash)] && !txVisibleToViewer
 
 		// Participant override: the counterparty address is revealed (so we don't
 		// replace it with [PRIVATE]), but sensitive metadata like nonce is still
@@ -950,12 +964,18 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 		// viewer (Hidden) and the granted party renders as [PRIVATE] under
 		// the redacted lens — both sides non-identifiable, yet the row
 		// must survive per the matrix ("proof of activity" audit lens).
+		//
+		// Union override (RD-1316): a row kept by the transfer-participant
+		// union survives with both sides [PRIVATE]. Under the audit view its
+		// value is revealed below, so that reveal is counted too.
 		bothHidden := isNonIdentifiable(fromLevel) && isNonIdentifiable(toLevel)
 		if bothHidden && !txVisibleViaGrant {
-			if !adminAuditView {
+			if !adminAuditView && !txKeptByUnion {
 				continue
 			}
-			ropts.recordAdminReveal()
+			if adminAuditView {
+				ropts.recordAdminReveal()
+			}
 		}
 
 		// Contract creation transactions: if the deployer is non-identifiable,
@@ -966,13 +986,16 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 		//
 		// Grant override mirrors the bothHidden block above: the granted
 		// party may have deployed a contract and the viewer is entitled to
-		// see it under the grant's lens — keep the row.
+		// see it under the grant's lens — keep the row. A union-kept deploy
+		// survives the same way as a union-kept bothHidden row above.
 		deployHidden := tx.IsContractCreation() && isNonIdentifiable(fromLevel)
 		if deployHidden && !bothHidden && !txVisibleViaGrant {
-			if !adminAuditView {
+			if !adminAuditView && !txKeptByUnion {
 				continue
 			}
-			ropts.recordAdminReveal()
+			if adminAuditView {
+				ropts.recordAdminReveal()
+			}
 		}
 
 		// G10 fix: Non-participant, non-visibleTo txs where one side is hidden
@@ -984,7 +1007,7 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 		//   the row regardless of the counterparty's own (Hidden/Redacted)
 		//   level. Field-level rendering still applies via applyRedaction —
 		//   the flag only affects row-survival.
-		if !viewerIsParticipant && !txVisibleToViewer && !viewerIsAdmin && !txVisibleViaGrant {
+		if !viewerIsParticipant && !txVisibleToViewer && !viewerIsAdmin && !txVisibleViaGrant && !txKeptByUnion {
 			if isNonIdentifiable(fromLevel) || isNonIdentifiable(toLevel) {
 				continue
 			}
@@ -995,11 +1018,6 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 		setMeta := func(addr string, baseLvl VisibilityLevel) {
 			aLower := strings.ToLower(addr)
 			if viewerIsParticipant && isNonIdentifiable(baseLvl) {
-				redactedTx.AddressMetadata[aLower] = ReasonParticipantOverride
-			} else if ropts.ParticipantTxHashes[strings.ToLower(tx.Hash)] && isNonIdentifiable(baseLvl) {
-				// RD-1155: the parent tx is visible because the viewer is a
-				// transfer participant of it (RD-1009 union), not via a
-				// visibleTo share — label "Counterparty", not "Shared".
 				redactedTx.AddressMetadata[aLower] = ReasonParticipantOverride
 			} else if txVisibleToViewer && isNonIdentifiable(baseLvl) {
 				redactedTx.AddressMetadata[aLower] = ReasonVisibleToGrant
@@ -1200,7 +1218,6 @@ func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []Token
 	if len(opts) > 0 {
 		ropts = opts[0]
 	}
-	visibleHashes := ropts.VisibleTxHashes
 	viewerIsAdminT := ropts.ViewerIsAdmin
 	adminAuditView := ropts.adminAuditView()
 
@@ -1209,7 +1226,13 @@ func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []Token
 		viewerIsFrom := t.From != "" && viewerAddrs[strings.ToLower(t.From)]
 		viewerIsTo := t.To != "" && viewerAddrs[strings.ToLower(t.To)]
 		viewerIsParticipant := viewerIsFrom || viewerIsTo
-		txVisibleToViewer := visibleHashes[strings.ToLower(t.TxHash)]
+		// RD-1316: only a genuine tx_visible_to listing reveals. The RD-1009
+		// transfer-participant union (VisibleTxHashes) plays no part here: the
+		// transfer that drove the union survives on its own (participant
+		// override, grant lens, or the admin G10 exemption), and keying the
+		// union on the parent hash would keep every sibling transfer of that
+		// tx, including third-party rows that strict privacy drops.
+		txVisibleToViewer := ropts.ListedTxHashes[strings.ToLower(t.TxHash)]
 
 		baseFromLevel := visMap[strings.ToLower(t.From)]
 		baseToLevel := visMap[strings.ToLower(t.To)]
@@ -1306,10 +1329,6 @@ func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []Token
 		setMeta := func(addr string, baseLvl VisibilityLevel) {
 			aLower := strings.ToLower(addr)
 			if viewerIsParticipant && isNonIdentifiable(baseLvl) {
-				redacted.AddressMetadata[aLower] = ReasonParticipantOverride
-			} else if ropts.ParticipantTxHashes[strings.ToLower(t.TxHash)] && isNonIdentifiable(baseLvl) {
-				// RD-1155: parent tx visible via the transfer-participant union
-				// (RD-1009), not a visibleTo share — "Counterparty", not "Shared".
 				redacted.AddressMetadata[aLower] = ReasonParticipantOverride
 			} else if txVisibleToViewer && isNonIdentifiable(baseLvl) {
 				redacted.AddressMetadata[aLower] = ReasonVisibleToGrant
@@ -1485,7 +1504,13 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 		// parent /transactions and /transfers feeds just rendered. Same
 		// cross-surface row-survival bug class as RD-1009; same fix shape
 		// (parent-tx allowlist threaded into the drop predicate).
-		txVisibleToViewer := visibleHashes[strings.ToLower(t.TxHash)]
+		//
+		// RD-1316: only the explicit share (ListedTxHashes) also reveals the
+		// frame addresses. A union-only parent keeps its frames but renders
+		// each side at the viewer's own level — a frame's target can be any
+		// org's private contract (the RD-1122 / RD-1223 concern).
+		txVisibleToViewer := ropts.ListedTxHashes[strings.ToLower(t.TxHash)]
+		txKeptByUnion := visibleHashes[strings.ToLower(t.TxHash)] && !txVisibleToViewer
 
 		baseFromLevel := visMap[strings.ToLower(t.From)]
 		baseToLevel := VisibilityFull
@@ -1495,10 +1520,9 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 		fromLevel := baseFromLevel
 		toLevel := baseToLevel
 
-		// Participant or visibleTo override: reveal counterparty. visibleTo
-		// mirrors RedactTransactions/RedactTransfers — the parent tx already
-		// exposes these participants to the viewer via the surviving feed,
-		// so revealing them on the internal tx adds no information.
+		// Participant or visibleTo override: reveal counterparty. A genuine
+		// share mirrors RedactTransactions/RedactTransfers — the sender chose
+		// to show this tx to the viewer, so its frames are revealed too.
 		if viewerIsParticipant || txVisibleToViewer {
 			if isNonIdentifiable(fromLevel) {
 				fromLevel = VisibilityFull
@@ -1565,20 +1589,22 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 		// contradict the surrounding count for the admin under the flag.
 		//
 		// txVisibleToViewer above already upgraded fromLevel/toLevel to Full
-		// when the parent tx is in the allowlist, so the bothHidden branch
-		// here cannot fire for visibleTo parents — closing the RD-1009-class
-		// gap. Kept as an explicit early-out for clarity even though the
-		// override would also have cleared it.
+		// when the parent tx is genuinely shared, so the bothHidden branch
+		// cannot fire for those. A union-only parent (txKeptByUnion) is not
+		// promoted, so it is exempted here explicitly — the frame survives
+		// with both sides [PRIVATE] (RD-1009 coherence, RD-1316).
 		//
 		// Grant override mirrors RedactTransactions: a disclosure grant on
 		// either party keeps the row regardless of bothHidden — required
 		// for the redacted-grant cell of the matrix.
 		bothHidden := isNonIdentifiable(fromLevel) && isNonIdentifiable(toLevel)
 		if bothHidden && !txVisibleViaGrant {
-			if !adminAuditView {
+			if !adminAuditView && !txKeptByUnion {
 				continue
 			}
-			ropts.recordAdminReveal()
+			if adminAuditView {
+				ropts.recordAdminReveal()
+			}
 		}
 
 		redacted := t
@@ -1586,10 +1612,6 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 		setMeta := func(addr string, baseLvl VisibilityLevel) {
 			aLower := strings.ToLower(addr)
 			if viewerIsParticipant && isNonIdentifiable(baseLvl) {
-				redacted.AddressMetadata[aLower] = ReasonParticipantOverride
-			} else if ropts.ParticipantTxHashes[strings.ToLower(t.TxHash)] && isNonIdentifiable(baseLvl) {
-				// RD-1155: parent tx visible via the transfer-participant union
-				// (RD-1009), not a visibleTo share — "Counterparty", not "Shared".
 				redacted.AddressMetadata[aLower] = ReasonParticipantOverride
 			} else if viewerIsParentParticipant && parentParticipantSet[aLower] && isNonIdentifiable(baseLvl) {
 				// RD-1122: revealed because it is a party of the parent tx the
@@ -2051,9 +2073,10 @@ func (r *RedactionEngine) RedactLogs(ctx context.Context, logs []Log, viewerDID 
 
 // RedactLogsWithOpts is RedactLogs with visibleTo support.
 func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, viewerDID string, opts *RedactOpts, participantAddrs ...string) ([]Log, error) {
-	var visibleTxHashes map[string]bool
+	var visibleTxHashes, listedTxHashes map[string]bool
 	if opts != nil {
 		visibleTxHashes = opts.VisibleTxHashes
+		listedTxHashes = opts.ListedTxHashes
 	}
 	if len(logs) == 0 {
 		return logs, nil
@@ -2233,7 +2256,7 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 	// DB AND (b) the viewer holds a contract_grant via an eligible
 	// (non-system) group in the contract's owning org. Both gates must
 	// hold; the resolver returns the conjunction. Combined with a per-tx
-	// visibleTxHashes membership check below, this drives the unlock
+	// ListedTxHashes membership check below, this drives the unlock
 	// branch in Phase 4. Mirrors processor_event_rules.go's
 	// buildVisibleToUnlockableMap so RPC and explorer agree on the
 	// (viewer, contract, tx) triple.
@@ -2291,16 +2314,20 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 		facts := rbac.LogEmitterFacts{
 			// RD-890 admin bypass (per-contract, org-scoped).
 			IsAdmin: adminContracts[contractAddr],
-			// RD-874 visibleTo unlock — the only standalone-grant path.
-			Unlocked: unlockableContracts[contractAddr] && visibleTxHashes[strings.ToLower(l.TxHash)],
+			// RD-874 visibleTo unlock — the only standalone-grant path. Keyed on
+			// the viewer's genuine listing for THIS tx (ListedTxHashes), never on
+			// the RD-1009 transfer-participant union in VisibleTxHashes (RD-1307).
+			Unlocked: unlockableContracts[contractAddr] && listedTxHashes[strings.ToLower(l.TxHash)],
 			// Grant eligibility: a contract grant resolves the emitter to Full
 			// for this viewer (GetBatchVisibilityDetailed). No grant → Redacted
 			// (registered) or Hidden (unregistered/EOA). Load-bearing (RD-1208).
 			HasGrant: level == VisibilityFull,
 			// RD-1162 participant/sender (grant-bounded inside the engine).
 			IsParticipant: isParticipant,
-			// Ordinary visibleTo — additive param-rule fallback only.
-			InVisibleTo: visibleTxHashes[strings.ToLower(l.TxHash)],
+			// Ordinary visibleTo — additive param-rule fallback only. Like the
+			// unlock, keyed on the genuine listing, never the RD-1009 union
+			// (RD-1307) — matching the RPC's tx_visible_to check.
+			InVisibleTo: listedTxHashes[strings.ToLower(l.TxHash)],
 			HasTopic0:   l.Topic0 != nil,
 		}
 

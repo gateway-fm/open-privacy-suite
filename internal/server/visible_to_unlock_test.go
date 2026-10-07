@@ -75,9 +75,9 @@ func TestVisibleToUnlock_Matrix(t *testing.T) {
 	vtCreateGrant(t, database, contractAID, aGroupGID, &rbac.EventRulesField{} /* deny-all */)
 
 	// Users.
-	vtCreateUserInGroup(t, database, "did:vt:alice", aGroupGID)    // eligible (in grantee group)
-	vtCreateUserInGroup(t, database, "did:vt:bob", aGroupGID)      // eligible but not listed
-	vtCreateUserInGroup(t, database, "did:vt:mallory", bGroupGID)  // org B only — cross-org
+	vtCreateUserInGroup(t, database, "did:vt:alice", aGroupGID)   // eligible (in grantee group)
+	vtCreateUserInGroup(t, database, "did:vt:bob", aGroupGID)     // eligible but not listed
+	vtCreateUserInGroup(t, database, "did:vt:mallory", bGroupGID) // org B only — cross-org
 	// did:vt:eve gets a user record but no group memberships.
 	eveUID := uuid.New().String()
 	require.NoError(t, database.CreateUser(ctx, &rbac.User{ID: eveUID, ExternalID: "did:vt:eve", KYC: true, Banned: false, Metadata: map[string]any{}}))
@@ -97,7 +97,8 @@ func TestVisibleToUnlock_Matrix(t *testing.T) {
 			{ID: 1, Address: contractAddr, TxHash: txHash, Topic0: &transferTopic0x, Data: "0x"},
 		}
 	}
-	opts := &explorer.RedactOpts{VisibleTxHashes: map[string]bool{txHash: true}}
+	// Listed = the genuine tx_visible_to listing (ListedTxHashes, RD-1307).
+	opts := &explorer.RedactOpts{VisibleTxHashes: map[string]bool{txHash: true}, ListedTxHashes: map[string]bool{txHash: true}}
 
 	// ----- Case 1: flag OFF — additive behaviour stays. ----------------
 	// Even though alice is in eligible group + listed, deny-all rules

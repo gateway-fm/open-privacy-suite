@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"privacy-proxy/internal/auth"
@@ -327,23 +328,22 @@ func TestExplorerToken_CountsVisibilityFiltered_RD1154(t *testing.T) {
 	})
 }
 
-// TestExplorerInternalTx_ParticipantRevealLabeledCounterparty_RD1155 pins the
-// reason-tag fix: when an internal-tx trace address is revealed because the
-// viewer is a transfer PARTICIPANT of the parent tx (the RD-1009 union), it must
-// be labeled participant_override ("Counterparty"), NOT visible_to_grant
-// ("Shared") — nothing was shared with the viewer.
+// TestExplorerInternalTx_TransferUnionRevealsNothing_RD1316 replaces the RD-1155
+// label pin. The RD-1009 transfer-participant union used to reveal every frame
+// of the parent tx (RD-1155 then only fixed the label). Since RD-1316 the
+// union keeps rows and reveals nothing, and a non-admin is not given union
+// rows through a plain contract grant at all (G10; the RPC returns null):
 //
 // Fixture (RD-1009 coherence shape, non-admin viewer):
 //   - eve's org owns a "vault" contract eve sees at Full (eve is NOT admin and
 //     NOT the internal frame's from/to).
 //   - a foreign private wallet calls a foreign private token contract.
-//   - the token's Transfer credits eve's vault ⇒ the RD-1009 union pulls the
-//     parent tx into eve's visible set (as a participant, not a share).
+//   - the token's Transfer credits eve's vault.
 //   - the internal call is between the two foreign (Hidden) addresses.
 //
-// MUTATION CHECK: revert the ParticipantTxHashes plumbing and the revealed
-// addresses fall through to ReasonVisibleToGrant → the assertion below fails.
-func TestExplorerInternalTx_ParticipantRevealLabeledCounterparty_RD1155(t *testing.T) {
+// Expected: eve gets no frame and no foreign address, in any field or as an
+// addressMetadata key.
+func TestExplorerInternalTx_TransferUnionRevealsNothing_RD1316(t *testing.T) {
 	srv, database, conn := setupTestServerForExplorerTransactions(t)
 	ctx := context.Background()
 
@@ -389,33 +389,14 @@ func TestExplorerInternalTx_ParticipantRevealLabeledCounterparty_RD1155(t *testi
 	addBearerToken(t, req, srv, eveDID)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
-	require.Equal(t, http.StatusOK, w.Code, "internal-tx surface should be 200 for the transfer-participant viewer")
+	require.Equal(t, http.StatusOK, w.Code, "internal-tx surface answers 200 with the viewer's rows")
 
-	// The per-tx internal endpoint returns a bare JSON array.
-	var itxs []struct {
-		From            string            `json:"from"`
-		To              *string           `json:"to"`
-		AddressMetadata map[string]string `json:"addressMetadata"`
+	lower := strings.ToLower(w.Body.String())
+	for _, addr := range []string{foreignEOA, foreignToken} {
+		assert.NotContainsf(t, lower, strings.TrimPrefix(addr, "0x"),
+			"a foreign address reached a non-admin through the transfer union: %s", w.Body.String())
 	}
+	var itxs []json.RawMessage
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &itxs))
-	require.NotEmpty(t, itxs,
-		"PRE-CONDITION: the internal tx must survive for the participant viewer (RD-1009 union). "+
-			"If empty, the union fixture is broken before the label assertion is meaningful.")
-
-	sawParticipantOverride := false
-	for _, itx := range itxs {
-		require.NotEmpty(t, itx.AddressMetadata,
-			"revealed internal tx must carry address metadata reasons")
-		for addr, reason := range itx.AddressMetadata {
-			assert.NotEqual(t, string(explorer.ReasonVisibleToGrant), reason,
-				"address %s revealed via participation must NOT be labeled visible_to_grant (\"Shared\")", addr)
-			assert.Equal(t, string(explorer.ReasonParticipantOverride), reason,
-				"address %s revealed via the transfer-participant union must be labeled participant_override (\"Counterparty\")", addr)
-			if reason == string(explorer.ReasonParticipantOverride) {
-				sawParticipantOverride = true
-			}
-		}
-	}
-	assert.True(t, sawParticipantOverride,
-		"expected at least one participant_override-labeled address in the revealed internal tx")
+	assert.Empty(t, itxs, "a non-admin is not kept another user's frames by a plain contract grant (G10)")
 }

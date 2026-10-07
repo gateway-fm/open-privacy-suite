@@ -98,11 +98,12 @@ func TestRedactTransfers_PseudonymousGrant_CounterpartyNotLeaked_RD1079(t *testi
 }
 
 // TestRedactTransfers_VisibleToOverride_RevealsCounterparty_RD1079Repro is the
-// bug reproduction / mutation check. If the parent tx hash IS treated as a
-// visibleTo override (the pre-fix behaviour, where the transfer-participant
-// union fed RedactOpts.VisibleTxHashes), the counterparty Charlie is
-// force-revealed in full hex — exactly the leak the fix prevents by keeping
-// union hashes out of RedactOpts.VisibleTxHashes.
+// bug reproduction / mutation check. A genuine visibleTo share of the parent tx
+// (ListedTxHashes) does force-reveal the counterparty Charlie in full hex — the
+// sender shared the tx with this viewer. The same hash reaching the redactor
+// only through the transfer-participant union (VisibleTxHashes without a
+// listing) must NOT: since RD-1316 the union only keeps the row, so the
+// pseudonymous counterparty lens still applies.
 func TestRedactTransfers_VisibleToOverride_RevealsCounterparty_RD1079Repro(t *testing.T) {
 	engine := rd1079Engine()
 	transfers := []TokenTransfer{{
@@ -114,7 +115,7 @@ func TestRedactTransfers_VisibleToOverride_RevealsCounterparty_RD1079Repro(t *te
 	}}
 
 	got, err := engine.RedactTransfers(context.Background(), transfers, "did:test:dave",
-		RedactOpts{VisibleTxHashes: map[string]bool{rd1079TxHash: true}})
+		RedactOpts{VisibleTxHashes: map[string]bool{rd1079TxHash: true}, ListedTxHashes: map[string]bool{rd1079TxHash: true}})
 	if err != nil {
 		t.Fatalf("RedactTransfers: %v", err)
 	}
@@ -122,6 +123,21 @@ func TestRedactTransfers_VisibleToOverride_RevealsCounterparty_RD1079Repro(t *te
 		t.Fatalf("expected 1 row, got %d", len(got))
 	}
 	if got[0].From != rd1079Charlie {
-		t.Errorf("repro: with the hash as a visibleTo override the counterparty is revealed in full hex; got %q (if this changed, the union must not be feeding VisibleTxHashes)", got[0].From)
+		t.Errorf("a genuine visibleTo share reveals the counterparty in full hex; got %q", got[0].From)
+	}
+
+	got, err = engine.RedactTransfers(context.Background(), transfers, "did:test:dave",
+		RedactOpts{VisibleTxHashes: map[string]bool{rd1079TxHash: true}, ParticipantTxHashes: map[string]bool{rd1079TxHash: true}})
+	if err != nil {
+		t.Fatalf("RedactTransfers (union): %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("the union keeps the row, got %d", len(got))
+	}
+	if got[0].From != GeneratePseudonym(rd1079Charlie, nil) {
+		t.Errorf("RD-1316: a union-only hash must leave the pseudonymous lens in charge; got From=%q", got[0].From)
+	}
+	if label := got[0].AddressMetadata[rd1079Charlie]; label == ReasonVisibleToGrant || label == ReasonParticipantOverride {
+		t.Errorf("a lens-rendered counterparty keeps its own reason, got %q", label)
 	}
 }

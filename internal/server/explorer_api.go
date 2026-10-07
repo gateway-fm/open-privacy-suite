@@ -258,6 +258,7 @@ func (s *Server) addDisclosureAddressToFilter(filter *explorer.VisibilityFilter,
 		VisibleAddresses:    make([]string, len(filter.VisibleAddresses)+1),
 		VisibleTxHashes:     append([]string(nil), filter.VisibleTxHashes...),
 		ParticipantTxHashes: append([]string(nil), filter.ParticipantTxHashes...),
+		ListedTxHashes:      append([]string(nil), filter.ListedTxHashes...),
 	}
 	copy(newFilter.VisibleAddresses, filter.VisibleAddresses)
 	newFilter.VisibleAddresses[len(filter.VisibleAddresses)] = address
@@ -267,15 +268,24 @@ func (s *Server) addDisclosureAddressToFilter(filter *explorer.VisibilityFilter,
 // redactOptsFromFilter builds RedactOpts from a VisibilityFilter, passing
 // the visibleTo tx hashes so RedactTransactions doesn't drop them.
 func redactOptsFromFilter(filter *explorer.VisibilityFilter) explorer.RedactOpts {
-	if filter == nil || len(filter.VisibleTxHashes) == 0 {
+	if filter == nil || (len(filter.VisibleTxHashes) == 0 && len(filter.ListedTxHashes) == 0) {
 		return explorer.RedactOpts{}
 	}
 	m := make(map[string]bool, len(filter.VisibleTxHashes))
 	for _, h := range filter.VisibleTxHashes {
 		m[strings.ToLower(h)] = true
 	}
-	// RD-1155: carry the label-only participant-union subset through so the
-	// redactor can distinguish participation from a visibleTo share.
+	// RD-1307: the genuine visibleTo listings, the only input to the log
+	// unlock and param-rule fallback. Never derived from VisibleTxHashes.
+	var listed map[string]bool
+	if len(filter.ListedTxHashes) > 0 {
+		listed = make(map[string]bool, len(filter.ListedTxHashes))
+		for _, h := range filter.ListedTxHashes {
+			listed[strings.ToLower(h)] = true
+		}
+	}
+	// The participant-union subset (RD-1155) is carried through for
+	// completeness; since RD-1316 no redactor renders from it.
 	var pm map[string]bool
 	if len(filter.ParticipantTxHashes) > 0 {
 		pm = make(map[string]bool, len(filter.ParticipantTxHashes))
@@ -283,7 +293,7 @@ func redactOptsFromFilter(filter *explorer.VisibilityFilter) explorer.RedactOpts
 			pm[strings.ToLower(h)] = true
 		}
 	}
-	return explorer.RedactOpts{VisibleTxHashes: m, ParticipantTxHashes: pm}
+	return explorer.RedactOpts{VisibleTxHashes: m, ParticipantTxHashes: pm, ListedTxHashes: listed}
 }
 
 // buildRedactOptsForViewer builds RedactOpts for single-item endpoints
@@ -778,6 +788,10 @@ func (s *Server) buildVisibilityFilter(ctx context.Context, viewerDID string) *e
 		visibleTxHashes, err := s.db.GetVisibleTxHashesForDID(ctx, viewerDID)
 		if err == nil && len(visibleTxHashes) > 0 {
 			filter.VisibleTxHashes = visibleTxHashes
+			// The genuine listings, kept apart from the transfer union below:
+			// only these may count as "the sender listed this viewer on this
+			// tx" for the log unlock and param-rule fallback (RD-1307).
+			filter.ListedTxHashes = append([]string(nil), visibleTxHashes...)
 		}
 	}
 
@@ -793,24 +807,35 @@ func (s *Server) buildVisibilityFilter(ctx context.Context, viewerDID string) *e
 	//
 	// RD-1079: drive the union ONLY with addresses the viewer sees at FULL
 	// (`fullVisible`), NOT the pseudonymous/redacted disclosure-grant addresses
-	// that were also added to `visible` for SQL address-survival. VisibleTxHashes
-	// is a full-identity-reveal override in the redactor (it promotes both tx
-	// addresses to Full), so driving it from a *pseudonymous* grant subject would
-	// reveal that subject's counterparty's real address on every tx where the
-	// subject is a transfer participant — defeating the "graph without identity"
-	// guarantee of a pseudonymous disclosure. A Full-level viewer (admin, or a
-	// full disclosure grant) IS entitled to see counterparties, so the RD-1009
-	// coherence fix still applies to them. The cost for a pseudonymous/redacted-
-	// grant viewer: the subject's transfer still shows in /transfers
-	// (pseudonymised by the redactor's counterparty lens), but the parent tx
-	// does not surface in /transactions — a row-coherence gap that is strictly
-	// more private than the leak it replaces.
+	// that were also added to `visible` for SQL address-survival.
 	//
+	// RD-1316: the union keeps rows, it never reveals an identity — the
+	// redactor reveals only for ListedTxHashes (genuine shares) and renders a
+	// union-only row at the viewer's own visibility. Which addresses drive it:
+	//   - a viewer exempt from the G10 drop (isViewerAdmin: org admin or admin
+	//     claim) — every Full address, so their /transactions agrees with the
+	//     /transfers rows they already see;
+	//   - anyone else — only their own addresses and Full disclosure-grant
+	//     subjects, the cases where the transfer row survives on its own merits
+	//     (participant override, the grant lens). A plain contract grant does
+	//     not keep another user's one-side-hidden transaction: G10 drops it,
+	//     and the RPC returns null for it.
+	unionDrivers := fullVisible
+	if len(fullVisible) > 0 && !s.isViewerAdmin(ctx, viewerDID) {
+		unionDrivers = make([]string, 0, len(fullVisible))
+		for addr, meta := range visMapDetailed {
+			if meta.Level == explorer.VisibilityFull &&
+				(meta.Reason == explorer.ReasonOwnAddress || meta.Reason == explorer.ReasonDisclosureGrant) {
+				unionDrivers = append(unionDrivers, addr)
+			}
+		}
+	}
+
 	// Bounded scan: capped at transferParticipantUnionLimit to keep the join
 	// O(window) rather than O(full table).
-	if len(fullVisible) > 0 {
+	if len(unionDrivers) > 0 {
 		transferTxs, err := s.explorerStore.FindTransferParticipantTxs(
-			ctx, fullVisible, nil /* beforeBlock */, transferParticipantUnionLimit)
+			ctx, unionDrivers, nil /* beforeBlock */, transferParticipantUnionLimit)
 		if err == nil && len(transferTxs) > 0 {
 			// Dedup against any hashes the visibleTo lookup already added.
 			existing := make(map[string]bool, len(filter.VisibleTxHashes))
@@ -820,10 +845,9 @@ func (s *Server) buildVisibilityFilter(ctx context.Context, viewerDID string) *e
 			for h := range transferTxs {
 				if !existing[h] {
 					filter.VisibleTxHashes = append(filter.VisibleTxHashes, h)
-					// RD-1155: track the participant-union hashes separately so
-					// the redactor labels these reveals "Counterparty" rather than
-					// "Shared". Label-only — VisibleTxHashes still drives survival
-					// and SQL filtering exactly as before.
+					// RD-1155: the union hashes, tracked apart from the shares.
+					// Informational since RD-1316 (the union reveals nothing to
+					// label); VisibleTxHashes drives survival and SQL filtering.
 					filter.ParticipantTxHashes = append(filter.ParticipantTxHashes, h)
 					existing[h] = true
 				}
