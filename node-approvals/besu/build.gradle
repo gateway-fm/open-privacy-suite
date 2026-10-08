@@ -44,7 +44,7 @@ dependencies {
   compileOnly "org.hyperledger.besu:besu-plugin-api:${besuVersion}"
   compileOnly "org.hyperledger.besu.internal:besu-ethereum-core:${besuVersion}"
   compileOnly 'info.picocli:picocli:4.7.7'
-  compileOnly 'org.slf4j:slf4j-api:2.0.17'
+  compileOnly 'org.slf4j:slf4j-api:2.0.20'
   compileOnly 'com.fasterxml.jackson.core:jackson-annotations:2.19.0'
   compileOnly 'com.google.auto.service:auto-service-annotations:1.1.1'
   compileOnly "org.bouncycastle:bcprov-jdk18on:${bouncycastleVersion}"
@@ -66,7 +66,7 @@ dependencies {
   testImplementation "org.hyperledger.besu.internal:besu-ethereum-core:${besuVersion}"
   testImplementation "org.hyperledger.besu.internal:besu-crypto-algorithms:${besuVersion}"
   testImplementation 'info.picocli:picocli:4.7.7'
-  testImplementation 'org.slf4j:slf4j-api:2.0.17'
+  testImplementation 'org.slf4j:slf4j-api:2.0.20'
   testImplementation 'com.fasterxml.jackson.core:jackson-databind:2.19.0'
   testImplementation "org.bouncycastle:bcprov-jdk18on:${bouncycastleVersion}"
   // The runtime Besu gives the plugin: the same gRPC and Netty, for the in-process round trips.
