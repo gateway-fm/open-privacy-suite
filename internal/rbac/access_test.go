@@ -770,6 +770,47 @@ func TestDetectMulticall(t *testing.T) {
 	}
 }
 
+// TestCheckAccess_AliasMulticallDetected: an operator alias inherits its
+// target's Multicall check, so an alias of eth_call or eth_estimateGas aimed
+// at a Multicall contract is refused like the target method itself. The
+// detector runs before identity resolution, so anonymous and authenticated
+// callers get the same answer.
+func TestCheckAccess_AliasMulticallDetected(t *testing.T) {
+	registerStorageReadAliases(t, map[string]string{"linea_call": MethodCall, "linea_estimateGas": MethodEstimateGas})
+	ac := NewAccessController(NewMockCrossOrgStore(), time.Minute)
+	defer ac.Stop()
+
+	multicall := []any{map[string]any{"to": "0xcA11bde05977b3631167028862bE2a173976CA11", "data": "0x252dba42000000000000000000000000"}, "latest"}
+	transfer := []any{map[string]any{"to": "0xcA11bde05977b3631167028862bE2a173976CA11", "data": "0xa9059cbb"}, "latest"}
+	for _, tc := range []struct {
+		name, method, alias, user string
+		params                    []any
+		detected                  bool
+	}{
+		{"call alias, anonymous", "linea_call", MethodCall, "", multicall, true},
+		{"call alias, authenticated", "linea_call", MethodCall, "did:example:alias-multicall", multicall, true},
+		{"estimateGas alias, anonymous", "linea_estimateGas", MethodEstimateGas, "", multicall, true},
+		{"catalog method, anonymous", MethodCall, "", "", multicall, true},
+		{"call alias, non-multicall selector", "linea_call", MethodCall, "", transfer, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := ac.CheckAccess(context.Background(), &AccessCheckRequest{
+				UserExternalID: tc.user, Method: tc.method, AccessMethod: tc.alias, Params: tc.params,
+			})
+			if err != nil {
+				t.Fatalf("CheckAccess: %v", err)
+			}
+			gotMulticall := strings.HasPrefix(res.Reason, "multicall to ")
+			if gotMulticall != tc.detected {
+				t.Fatalf("multicall detected = %v, want %v (result %+v)", gotMulticall, tc.detected, res)
+			}
+			if tc.detected && res.Allowed {
+				t.Fatalf("a detected multicall must be denied: %+v", res)
+			}
+		})
+	}
+}
+
 func TestHelperFunctions(t *testing.T) {
 	t.Run("unionStrings", func(t *testing.T) {
 		a := []string{"a", "b"}

@@ -563,11 +563,20 @@ func (c *AccessController) checkGlobalBlocks(req *AccessCheckRequest) (*AccessCh
 		}, true
 	}
 
-	// Check for Multicall bypass attempts
-	if isMulticall, reason := DetectMulticall(req.Method, req.Params); isMulticall {
+	// Check for Multicall bypass attempts. Judged on the alias target and the
+	// raw method (methodsToJudge), so an operator alias of eth_call or
+	// eth_estimateGas is held to the same check as its target. The blocklist
+	// above needs no such widening: an alias target must be a catalog method
+	// (ValidateAliasTarget), and the catalog excludes blocked methods.
+	var multicallReason string
+	if req.anyMethodToJudge(func(m string) bool {
+		isMulticall, reason := DetectMulticall(m, req.Params)
+		multicallReason = reason
+		return isMulticall
+	}) {
 		return &AccessCheckResult{
 			Allowed: false,
-			Reason:  reason,
+			Reason:  multicallReason,
 		}, true
 	}
 
