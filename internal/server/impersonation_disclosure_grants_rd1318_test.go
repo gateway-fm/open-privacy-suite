@@ -197,9 +197,8 @@ func TestViewAs_ExplorerVisibilityIgnoresTheGrant_RD1318(t *testing.T) {
 	require.Equal(t, http.StatusOK, own.Code, "control: the grantee sees the subject's tx through the grant: %s", own.Body.String())
 	require.Contains(t, strings.ToLower(own.Body.String()), strings.TrimPrefix(rd1318SubjectEOA, "0x"))
 
-	// The list endpoint records the Full-grant counterparty reveal (the
-	// by-hash audit row does not insert today, a separate issue), so it is the
-	// control for "a reveal is audit-logged against the grantee".
+	// The list endpoint is the positive control for a Full-grant reveal
+	// audit recorded against the grantee.
 	before := countGrantReveals()
 	ownList := f.direct(t, "/transactions?limit=25")
 	require.Equal(t, http.StatusOK, ownList.Code)
