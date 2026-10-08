@@ -8,9 +8,9 @@ import { RBACTestFixture } from '../../helpers/rbac-fixtures';
 //
 // Acceptance "Expect": RBAC → Contracts → Grants → enable the per-contract
 // visibleTo unlock → the enabled-state caption must say the unlock reaches
-// only listed users with an eligible contract grant or org-admin membership in
-// this org (cross-org / anonymous stay denied) — it must NOT claim the sender
-// can reveal to "any DID" they list.
+// only listed users who are eligible in this org (an eligible contract grant
+// or org-admin membership; cross-org / anonymous stay denied) — it must NOT
+// claim the sender can reveal to "any DID" they list.
 //
 // The exact copy asserted here mirrors the vitest guard in
 // frontend/src/components/rbac/__tests__/ContractGrantsManager.test.tsx
@@ -32,7 +32,7 @@ test.describe('visibleTo unlock caption (RD-1069)', () => {
     }
   });
 
-  test('enabled caption gates on existing contract group access, not "any DID"', async ({ page, request }) => {
+  test('enabled caption gates on eligibility in this org, not "any DID"', async ({ page, request }) => {
     const currentDid = `did:privado:test_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     await mockLoginViaAPI(page, currentDid);
 
@@ -68,8 +68,8 @@ test.describe('visibleTo unlock caption (RD-1069)', () => {
     await expect(page.getByText(/Enable visibleTo unlock\?/i)).toBeVisible({ timeout: 5000 });
     await page.getByRole('button', { name: /^enable$/i }).click();
 
-    // Enabled-state caption must gate on an eligible grant or org-admin
-    // membership in this org and must NOT promise reveal-to-any-DID.
+    // Enabled-state caption must gate on eligibility in this org and must NOT
+    // promise reveal-to-any-DID.
     await expect(
       page.getByText(/eligible contract grant or org-admin membership in this org/i),
     ).toBeVisible({ timeout: 10000 });
