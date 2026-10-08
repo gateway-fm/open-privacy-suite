@@ -1,0 +1,7 @@
+--- FAIL: TestValidateTrace_M6_DelegateCallSharedInfraDenied (0.00s)
+    --- FAIL: TestValidateTrace_M6_DelegateCallSharedInfraDenied/CALLCODE_denied (0.00s)
+        trace_validator_test.go:175: Allowed=true, want false (reason="" kind="")
+        trace_validator_test.go:178: DenialKind="", want "delegatecall_shared_infra"
+FAIL
+FAIL	privacy-proxy/internal/rbac	0.605s
+FAIL

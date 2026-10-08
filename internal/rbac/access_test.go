@@ -510,6 +510,9 @@ func TestIsMethodBlocked(t *testing.T) {
 		method   string
 		expected bool
 	}{
+		{"approval preparation", "ops_prepareApproval", true},
+		{"approval namespace case", " OPS_PREPAREAPPROVAL ", true},
+		{"future approval control method", "ops_futureMethod", true},
 		// Should be blocked - debug namespace (except exempted trace methods)
 		{"debug_setHead", "debug_setHead", true},
 		{"debug_unknown", "debug_unknown", true}, // prefix match
@@ -3595,5 +3598,19 @@ func TestFunctionSelectorGateOnlyForCallMethods(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// No policy, cache or database state may allow callers into the producer's
+// private preflight API. The empty controller proves denial precedes all of it.
+func TestApprovalRPCDeniedBeforePolicyLookup(t *testing.T) {
+	for _, method := range []string{"ops_prepareApproval", "OPS_PREPAREAPPROVAL", " ops_futureMethod "} {
+		for _, principal := range []string{"", "did:test:permitted"} {
+			controller := &AccessController{}
+			result, err := controller.CheckAccess(context.Background(), &AccessCheckRequest{Method: method, UserExternalID: principal, BypassCache: true})
+			if err != nil || result == nil || result.Allowed {
+				t.Fatalf("private method %q was not refused before policy lookup: result=%+v err=%v", method, result, err)
+			}
+		}
 	}
 }

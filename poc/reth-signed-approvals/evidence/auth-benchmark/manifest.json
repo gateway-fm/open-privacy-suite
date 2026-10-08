@@ -1,0 +1,19 @@
+{
+  "date_utc": "2026-09-11T14:21:03.793896+00:00",
+  "hardware": {
+    "os": "macOS-26.6.1-arm64-arm-64bit-Mach-O",
+    "architecture": "arm64",
+    "logical_cpus": 12,
+    "cpu": "Apple M2 Max",
+    "memory_bytes": 34359738368
+  },
+  "hardware_source": "same machine as the immediately preceding Reth profiling run",
+  "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+  "build": "release opt-level=3 lto=false codegen-units=16; default crate features; no RUSTFLAGS hardware overrides",
+  "sources": {
+    "auth-bench/Cargo.toml": "468cd5c4153f179003098154d729cdbfd3cb3481aa2b6584f66383a946449a84",
+    "auth-bench/Cargo.lock": "47817de741e0f3e5b3f6efc62b76ff128bad8256e1f1fd616c2d7147321313f8",
+    "auth-bench/src/main.rs": "b657451e80f992abcbc605aa6037784e6bf4367cd055b8d47299cc3c71d6fd05"
+  },
+  "binary_sha256": "19a2e588afced433f624d9aa41031399f621c6c99b15f5c7f0cf869a09f12a6c"
+}

@@ -1,0 +1,8 @@
+**
+!node-approvals/
+!node-approvals/compatibility.json
+!node-approvals/reth/
+!node-approvals/reth/**
+node-approvals/reth/target/
+!proto/
+!proto/**

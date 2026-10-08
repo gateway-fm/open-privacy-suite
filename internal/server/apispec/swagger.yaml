@@ -12992,7 +12992,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
-          description: concurrency limit or upstream rate limit
+          description: concurrency limit, signed-approval simulation budget, or upstream
+            rate limit
         "500":
           content:
             application/json:
@@ -13090,7 +13091,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
-          description: concurrency limit or upstream rate limit
+          description: concurrency limit, signed-approval simulation budget, or upstream
+            rate limit
         "500":
           content:
             application/json:

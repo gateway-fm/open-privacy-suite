@@ -1,0 +1,63 @@
+Building Gasstorm dashboard (cached after the first start)...
+Warning: "selfdestruct" has been deprecated. Note that, starting from the Cancun hard fork, the underlying opcode no longer deletes the code and data associated with an account and only transfers its Ether to the beneficiary, unless executed in the same transaction in which the contract was created (see EIP-6780). Any use in newly deployed contracts is strongly discouraged even if the new behavior is taken into account. Future changes to the EVM might further reduce the functionality of the opcode.
+   --> contracts/Applications.sol:128:57:
+    |
+128 |     function destroy(address payable target) external { selfdestruct(target); }
+    |                                                         ^^^^^^^^^^^^
+
+Warning: "selfdestruct" has been deprecated. Note that, starting from the Cancun hard fork, the underlying opcode no longer deletes the code and data associated with an account and only transfers its Ether to the beneficiary, unless executed in the same transaction in which the contract was created (see EIP-6780). Any use in newly deployed contracts is strongly discouraged even if the new behavior is taken into account. Future changes to the EVM might further reduce the functionality of the opcode.
+   --> contracts/Applications.sol:156:57:
+    |
+156 |     function destroy(address payable target) external { selfdestruct(target); }
+    |                                                         ^^^^^^^^^^^^
+
+READY http://127.0.0.1:18000/load-test/
+Enforcement ON; ten wallets; block gas limit 200,000,000.
+Choose Through Privacy Proxy -> Adaptive -> Start. Leave JWT empty and Gasless off.
+Ctrl+C stops this session. Evidence: <repo>/poc/reth-signed-approvals/evidence/gasstorm-ui/interactive-20260911T194158Z
+Pool sample failed: [Errno 60] Operation timed out
+Traceback (most recent call last):
+  File "<repo>/poc/reth-signed-approvals/gasstorm_ui.py", line 213, in <module>
+    main()
+    ~~~~^^
+  File "<repo>/poc/reth-signed-approvals/gasstorm_ui.py", line 166, in main
+    with contextlib.ExitStack() as resources:
+         ~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/contextlib.py", line 619, in __exit__
+    raise exc
+  File "/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/contextlib.py", line 604, in __exit__
+    if cb(*exc_details):
+       ~~^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/contextlib.py", line 364, in __exit__
+    self.thing.close()
+    ~~~~~~~~~~~~~~~~^^
+  File "<repo>/poc/reth-signed-approvals/gasstorm_compare.py", line 209, in close
+    self.check()
+    ~~~~~~~~~~^^
+  File "<repo>/poc/reth-signed-approvals/gasstorm_compare.py", line 202, in check
+    raise self.error
+  File "<repo>/poc/reth-signed-approvals/gasstorm_ui.py", line 196, in main
+    miner.check()
+    ~~~~~~~~~~~^^
+  File "<repo>/poc/reth-signed-approvals/gasstorm_compare.py", line 202, in check
+    raise self.error
+  File "<repo>/poc/reth-signed-approvals/gasstorm_compare.py", line 183, in run
+    answer = n.engine("engine_forkchoiceUpdatedV2", state, attrs)
+  File "<repo>/poc/reth-signed-approvals/harness.py", line 212, in engine
+    return self.request(method, list(params), engine=True)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<repo>/poc/reth-signed-approvals/harness.py", line 187, in request
+    response = connection.getresponse()
+  File "/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/http/client.py", line 1459, in getresponse
+    response.begin()
+    ~~~~~~~~~~~~~~^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/http/client.py", line 336, in begin
+    version, status, reason = self._read_status()
+                              ~~~~~~~~~~~~~~~~~^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/http/client.py", line 297, in _read_status
+    line = str(self.fp.readline(_MAXLINE + 1), "iso-8859-1")
+               ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/socket.py", line 729, in readinto
+    return self._sock.recv_into(b)
+           ~~~~~~~~~~~~~~~~~~~~^^^
+TimeoutError: [Errno 60] Operation timed out

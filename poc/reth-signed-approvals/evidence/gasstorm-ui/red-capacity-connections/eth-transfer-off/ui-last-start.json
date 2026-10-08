@@ -1,0 +1,10 @@
+{
+  "pattern": "adaptive",
+  "durationSec": 120,
+  "numAccounts": 10,
+  "transactionType": "eth-transfer",
+  "privacyMode": true,
+  "adaptiveInitialRate": 1000,
+  "adaptiveTargetPending": 10000,
+  "adaptiveRateStep": 250
+}

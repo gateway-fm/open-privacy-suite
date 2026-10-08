@@ -1,0 +1,627 @@
+{
+  "date": "2026-09-29",
+  "hardware": "Apple M2 Max, 12 cores, 32 GiB, macOS 26.6.1; shared workstation",
+  "source_base": "61d91e15816603b3c775443abe9174bdab685d64",
+  "runtime": {
+    "besu": "26.8.1",
+    "java": "Temurin 25.0.4.1+1",
+    "go": "1.26.6"
+  },
+  "scope": "Original JDK verifier throughout. Actual OPS binary, normal authorization and preflight, no instrumentation or policy/crypto bypasses.",
+  "production_logging_change_commit": "3e3654533a64f7141650f168b5dba98cd3f73608",
+  "source_comparison": [
+    {
+      "class": "ApprovalVerifier",
+      "unchanged": true,
+      "old_sha256": "347d4bcdd2bbd96456b6916a825e0b251cf48b5dc810fd18b1de5f2b8fd8021c",
+      "new_sha256": "347d4bcdd2bbd96456b6916a825e0b251cf48b5dc810fd18b1de5f2b8fd8021c",
+      "historical_base_sha256": "347d4bcdd2bbd96456b6916a825e0b251cf48b5dc810fd18b1de5f2b8fd8021c"
+    },
+    {
+      "class": "ApprovalStore",
+      "unchanged": true,
+      "old_sha256": "e9fa799efca9dbdf02954232b526a221d79ff7fab01edb6ec2f1ace19aabe77a",
+      "new_sha256": "e9fa799efca9dbdf02954232b526a221d79ff7fab01edb6ec2f1ace19aabe77a",
+      "historical_base_sha256": "e9fa799efca9dbdf02954232b526a221d79ff7fab01edb6ec2f1ace19aabe77a"
+    },
+    {
+      "class": "ApprovalBatch",
+      "unchanged": true,
+      "old_sha256": "9e7ae85ec613a1b54b966ae0b3bb81ca5622ec7f98b46618d25d67b5accbad69",
+      "new_sha256": "9e7ae85ec613a1b54b966ae0b3bb81ca5622ec7f98b46618d25d67b5accbad69",
+      "historical_base_sha256": "9e7ae85ec613a1b54b966ae0b3bb81ca5622ec7f98b46618d25d67b5accbad69"
+    },
+    {
+      "class": "ApprovalTracer",
+      "unchanged": true,
+      "old_sha256": "405b9c8c5d39494c19a925db242323391a915c6f14d9269192304efb73ad9be8",
+      "new_sha256": "405b9c8c5d39494c19a925db242323391a915c6f14d9269192304efb73ad9be8",
+      "historical_base_sha256": "405b9c8c5d39494c19a925db242323391a915c6f14d9269192304efb73ad9be8"
+    },
+    {
+      "class": "PrepareApprovalRpc",
+      "unchanged": true,
+      "old_sha256": "7470535df57caa3211eab107868d392723ddf9a11ba7e5a21a466ba2935f2d21",
+      "new_sha256": "7470535df57caa3211eab107868d392723ddf9a11ba7e5a21a466ba2935f2d21",
+      "historical_base_sha256": "7470535df57caa3211eab107868d392723ddf9a11ba7e5a21a466ba2935f2d21"
+    },
+    {
+      "class": "ApprovalSelector",
+      "unchanged": false,
+      "old_sha256": "e3d3466f4f04c163e2be898852b0540951500244ababeecae909072ee876ffb8",
+      "new_sha256": "09589256ec252aa4c02c562488bf48a62323b6a46088fd2a1cefbd386fcb8bcc",
+      "historical_base_sha256": "e3d3466f4f04c163e2be898852b0540951500244ababeecae909072ee876ffb8"
+    },
+    {
+      "class": "ApprovalServer",
+      "unchanged": false,
+      "old_sha256": "a9d88dfed65f18c00e706e009056414ae4b8bae22863355031e192a76b0e74ad",
+      "new_sha256": "e064115b4a71ce362fffa33c4d3d1fa4c9c7258bcc5cfd21ebddf50496bbf957",
+      "historical_base_sha256": "9269e9eedcaa4dc975d06cdd4f549f1f622bb8ee14c43da88e10e26e23378c94"
+    }
+  ],
+  "historical_results": [
+    {
+      "kind": "full-transaction-stack",
+      "node": "besu",
+      "requested_rate": 5000,
+      "seconds": 60,
+      "gate": true,
+      "retain": 100000,
+      "receipts": {
+        "unique_logged_hashes": 87396,
+        "successful": 86940,
+        "reverted": 0,
+        "missing": 456,
+        "included_during_sending": 77779,
+        "included_during_sending_tps": 1296.3166666666666,
+        "queue_to_commit_ms": {
+          "p50": 6427,
+          "p95": 14652,
+          "p99": 50630,
+          "max": 60736
+        }
+      },
+      "rpc_ms_upper_bounds": {
+        "p50": 500.0,
+        "p95": 1000.0,
+        "p99": 2500.0
+      },
+      "max_concurrent_requests": 5000,
+      "verify_workers": 2,
+      "send_rpc_outcomes": {
+        "error": 2.0,
+        "preflight_unavailable": 47.0,
+        "rbac_denied": 1.0,
+        "success": 104168.0
+      },
+      "all_rpc_http_statuses": {
+        "200": 117197.0,
+        "400": 4.0,
+        "403": 47.0,
+        "404": 43.0,
+        "500": 41.0
+      },
+      "generator": {
+        "txSent": 103860,
+        "txConfirmed": 86755,
+        "txFailed": 16675,
+        "status": "completed"
+      },
+      "missing_by_generator_status": {
+        "discarded": 456
+      },
+      "loadgen_sha256": "852492618d2cb9b1c096e50af7bf87283749f0ed0c189a68fb3715085657022e",
+      "error": null,
+      "case": "besu-on-5000",
+      "source_report_sha256": "19e4175e51dc6d31cadd1fb7b3b0956481266a2326960cf9acec9b37792f044a",
+      "supporting_files_sha256": {
+        "metrics-before.txt": "69fb755b78cdc19c00ae692585679ff195571c30dd10a233f12a5b0624843e91",
+        "metrics-after.txt": "b11d6413021e7c0a33b48d9a480b04bea79604a209de845515a0e5675138fbb2",
+        "transactions.json": "48b838460035341af1ddb99214b10eb4538a60fd40390e0d06f768478f3027a7",
+        "receipts.json": "c9e187f16d4874d76c4473258bc597797eb27332db3569ef8fd63e147af40ce0"
+      },
+      "peak_rss_bytes": {
+        "node_rss_bytes": 2178072576,
+        "ops_rss_bytes": 519553024,
+        "loadgen_rss_bytes": 435732480
+      },
+      "memory_sampling_error": null
+    },
+    {
+      "kind": "full-transaction-stack",
+      "node": "besu",
+      "requested_rate": 5000,
+      "seconds": 60,
+      "gate": false,
+      "retain": 100000,
+      "receipts": {
+        "unique_logged_hashes": 142098,
+        "successful": 139956,
+        "reverted": 0,
+        "missing": 2142,
+        "included_during_sending": 137888,
+        "included_during_sending_tps": 2298.133333333333,
+        "queue_to_commit_ms": {
+          "p50": 1669,
+          "p95": 2298,
+          "p99": 2575,
+          "max": 3182
+        }
+      },
+      "rpc_ms_upper_bounds": {
+        "p50": 500.0,
+        "p95": 1000.0,
+        "p99": 1000.0
+      },
+      "max_concurrent_requests": 5000,
+      "verify_workers": 2,
+      "send_rpc_outcomes": {
+        "error": 521.0,
+        "rbac_denied": 460.0,
+        "send_trace_denied": 12.0,
+        "success": 140680.0
+      },
+      "all_rpc_http_statuses": {
+        "200": 145379.0,
+        "400": 8.0,
+        "403": 12.0,
+        "404": 1021.0,
+        "500": 230.0
+      },
+      "generator": {
+        "txSent": 142100,
+        "txConfirmed": 139956,
+        "txFailed": 2,
+        "status": "completed"
+      },
+      "missing_by_generator_status": {
+        "discarded": 2142
+      },
+      "loadgen_sha256": "852492618d2cb9b1c096e50af7bf87283749f0ed0c189a68fb3715085657022e",
+      "error": null,
+      "case": "besu-off-5000",
+      "source_report_sha256": "990b97a6b011ff1ccdb89c6ff5d565ca2da6f4cacdf0ab0276e2ddb16aa01493",
+      "supporting_files_sha256": {
+        "metrics-before.txt": "2974773f4d77ba3c906141109d9941f0f82ea315ac8a51ebd46db715b0858d32",
+        "metrics-after.txt": "f42df48081521b64c78c0100fa972bb3b8faa230f222a3311fe0b6114a3c06f6",
+        "transactions.json": "695a422dad6c005887eff248d8c78f5e5c56f4573e5454d8cad889940e674e4b",
+        "receipts.json": "31e55c09616f1a2f818afdd7831c645b7756878ca8f7b85500f12616ea831afe"
+      },
+      "peak_rss_bytes": {
+        "node_rss_bytes": 2435809280,
+        "ops_rss_bytes": 303693824,
+        "loadgen_rss_bytes": 515014656
+      },
+      "memory_sampling_error": null
+    }
+  ],
+  "harness_sha256": {
+    "run.py": "d60d7597440ecd1286d50e5ef1aed2eccdcfea0d80ce2a36ab0409e96bf1e7bd",
+    "run_transactions.py": "74512e94fb624480e16461f9d160df78e1115e28d559ca6f463365e48862ce1e"
+  },
+  "cases": [
+    {
+      "case": "logging-on-cap256",
+      "config": {
+        "exit_code": 0,
+        "plugin_sha256": "c41a9ca903606aa5e6a1c0f75c3794085d4060eb40b9451181a9da036379b986",
+        "ops_sha256": "2dd3bbfcb5e818bd77c91b18254f8b0620592062fc8ed46816fc95091fba04fe",
+        "diagnostics": true,
+        "node_http_max_conns_per_host": 256,
+        "requested_tps": 5000,
+        "seconds": 60,
+        "verify_workers": 2,
+        "max_in_flight": 8,
+        "max_batch": 32,
+        "max_concurrent_requests": 5000,
+        "gate": true,
+        "bypasses": false
+      },
+      "receipts": {
+        "unique_logged_hashes": 70676,
+        "successful": 68237,
+        "reverted": 0,
+        "missing": 2439,
+        "included_during_sending": 52021,
+        "included_during_sending_tps": 867.0166666666667,
+        "queue_to_commit_ms": {
+          "p50": 13126,
+          "p95": 45228,
+          "p99": 56655,
+          "max": 60132
+        }
+      },
+      "error": null,
+      "generator": {
+        "txSent": 128180,
+        "txConfirmed": 65284,
+        "txFailed": 58121,
+        "status": "completed",
+        "elapsedMs": 105063
+      },
+      "source_files_sha256": {
+        "receipts.json.gz": "0085c4273388afe6f665860b7fad30e6ed73d12bf68b585086bbd01f0308be0f",
+        "genesis.json": "51b2765f4a4f54bf01501c07478792b4b2a6d8e4ec775f2fc7377a61da4d194f",
+        "besu-metrics-after.txt": "b68eb4190757e4ac2d0ffb8ca14f928d0fc045798a637b8022dcf93cb9001da9",
+        "transactions-besu-rpc.json.gz": "4bdc308f00262734a019eeb8e95efa049b670a860c22c620fc31f4ba5c0fc9e2",
+        "transactions.json.gz": "47e9ed4ff663a2b7b32b28acf2e07942ed02ca33df8a74be3403860637401e02",
+        "transactions-besu.log.gz": "3369ffd6a76040dff13cdff1b148b6cca1b0ac62c084d36420e6a260b1752b1f",
+        "besu-metrics-before.txt": "c80ebe38d25cb8da79cbb94d284afd0ec6204eec270b95fa0ce57dc04cda44f7",
+        "contracts.json": "6871890c65c4e4e0f901384a8dbc6d162898e24625f7891d7436485223c76d54",
+        "status-samples.json": "721752597d08fcb7444b65d9a3a7abfe5499a83918e38fc0f86068ea3333f508",
+        "transactions-besu-ops.log.gz": "6025a51ae0173e8ee27deadbfb0e5740acce61e325fc53d50fa499cd5d2fd075",
+        "metrics-before.txt": "0935877de05b9788f2e5e6e18bebcffbb3fde855e4be2e305a36581c462ba5c5",
+        "transactions-report.json": "214cd8b08ba20a3927547cbbb5bf079f0edbf893f5462cf9d76a7e82587901bf",
+        "metrics-after.txt": "9fe1d788914f9cf9e74689016ba1f6a0a51bd420184363d5066336d47d340b4c",
+        "comparison-config.json": "16c360a82041fae30322e021c4490b1ba5e21905c0fb903190bfd30f6a5be777"
+      },
+      "approval_counter_deltas": [
+        {
+          "name": "privacyproxy_approval_batches_total",
+          "labels": {
+            "code": "OK"
+          },
+          "value": 90510.0
+        },
+        {
+          "name": "privacyproxy_approval_confirmed_total",
+          "labels": {},
+          "value": 126838.0
+        },
+        {
+          "name": "privacyproxy_approval_dropped_total",
+          "labels": {
+            "reason": "evicted"
+          },
+          "value": 0.0
+        },
+        {
+          "name": "privacyproxy_approval_dropped_total",
+          "labels": {
+            "reason": "expired"
+          },
+          "value": 0.0
+        },
+        {
+          "name": "privacyproxy_approval_dropped_total",
+          "labels": {
+            "reason": "permanent"
+          },
+          "value": 0.0
+        },
+        {
+          "name": "privacyproxy_approval_evicted_total",
+          "labels": {},
+          "value": 26838.0
+        },
+        {
+          "name": "privacyproxy_approval_redeliveries_total",
+          "labels": {},
+          "value": 0.0
+        },
+        {
+          "name": "privacyproxy_approval_retries_total",
+          "labels": {},
+          "value": 0.0
+        }
+      ],
+      "approval_signed_to_ack_mean_ms": 36.459151674798456,
+      "producer_counter_deltas": [
+        {
+          "name": "ops_approval_approvals_stored_total",
+          "labels": {},
+          "value": 126838.0
+        },
+        {
+          "name": "ops_approval_batches_total",
+          "labels": {
+            "status": "OK"
+          },
+          "value": 90510.0
+        },
+        {
+          "name": "ops_approval_decisions_total",
+          "labels": {
+            "decision": "allow",
+            "reason": "matched"
+          },
+          "value": 72912.0
+        }
+      ],
+      "node_log_marker_counts": {
+        "OPS_APPROVAL_DECISION allow": 72912,
+        "OPS_APPROVAL_TIMING": 72912
+      },
+      "transaction_log_status_counts": {
+        "confirmed": 68237,
+        "discarded": 2439
+      },
+      "transaction_error_counts": {}
+    },
+    {
+      "case": "logging-off-cap256",
+      "config": {
+        "exit_code": 0,
+        "plugin_sha256": "c41a9ca903606aa5e6a1c0f75c3794085d4060eb40b9451181a9da036379b986",
+        "ops_sha256": "2dd3bbfcb5e818bd77c91b18254f8b0620592062fc8ed46816fc95091fba04fe",
+        "diagnostics": false,
+        "node_http_max_conns_per_host": 256,
+        "requested_tps": 5000,
+        "seconds": 60,
+        "verify_workers": 2,
+        "max_in_flight": 8,
+        "max_batch": 32,
+        "max_concurrent_requests": 5000,
+        "gate": true,
+        "bypasses": false
+      },
+      "receipts": {
+        "unique_logged_hashes": 134099,
+        "successful": 132154,
+        "reverted": 0,
+        "missing": 1945,
+        "included_during_sending": 129835,
+        "included_during_sending_tps": 2163.9166666666665,
+        "queue_to_commit_ms": {
+          "p50": 1815,
+          "p95": 3227,
+          "p99": 3828,
+          "max": 4172
+        }
+      },
+      "error": null,
+      "generator": {
+        "txSent": 134100,
+        "txConfirmed": 132154,
+        "txFailed": 1,
+        "status": "completed",
+        "elapsedMs": 87785
+      },
+      "source_files_sha256": {
+        "receipts.json.gz": "17855468c25b21662174ef49d6c9da2211dbc5e99d696adbb7ce33810d04b008",
+        "genesis.json": "51b2765f4a4f54bf01501c07478792b4b2a6d8e4ec775f2fc7377a61da4d194f",
+        "besu-metrics-after.txt": "18b8185b7fe744d3cfeb41ee212b1349b6aa8b28743523df5f329d9add908c20",
+        "transactions-besu-rpc.json.gz": "bb5420241f581908ffc96579da279136de08d9a514e2a6cf59b356115b8b3dc3",
+        "transactions.json.gz": "e0a4c4b250b9819bc42b719776063d768ae4d5e81117f884d72dbf424c5fb958",
+        "besu-metrics-before.txt": "c80ebe38d25cb8da79cbb94d284afd0ec6204eec270b95fa0ce57dc04cda44f7",
+        "contracts.json": "6871890c65c4e4e0f901384a8dbc6d162898e24625f7891d7436485223c76d54",
+        "status-samples.json": "92ecb35d616750832eb3fa856a7d1e28947e2c894b371039764230f64f359063",
+        "transactions-besu-ops.log.gz": "cf49cb1e06095be370efd951b6ee1c472382f1fc24513028b3340144652d84e2",
+        "metrics-before.txt": "65e56e8d0f4bf193d19c30b067573d0904f464e7ff9d6a5af3101b7da22ebed4",
+        "transactions-report.json": "db30f3b7fe9f0ac3da913a28210c3dfec7739338e128145f139672cf0664f05a",
+        "metrics-after.txt": "bd4fa6e8d4ae8fbf52f20e44f5e98eed24bffa88e210f220f33f91048ed48098",
+        "comparison-config.json": "1e27d92a1cb61227d85565dfef4b9ae1b01de2ec5328e410beb932c24b9efe60"
+      },
+      "approval_counter_deltas": [
+        {
+          "name": "privacyproxy_approval_batches_total",
+          "labels": {
+            "code": "OK"
+          },
+          "value": 101579.0
+        },
+        {
+          "name": "privacyproxy_approval_confirmed_total",
+          "labels": {},
+          "value": 133016.0
+        },
+        {
+          "name": "privacyproxy_approval_dropped_total",
+          "labels": {
+            "reason": "evicted"
+          },
+          "value": 0.0
+        },
+        {
+          "name": "privacyproxy_approval_dropped_total",
+          "labels": {
+            "reason": "expired"
+          },
+          "value": 0.0
+        },
+        {
+          "name": "privacyproxy_approval_dropped_total",
+          "labels": {
+            "reason": "permanent"
+          },
+          "value": 0.0
+        },
+        {
+          "name": "privacyproxy_approval_evicted_total",
+          "labels": {},
+          "value": 33017.0
+        },
+        {
+          "name": "privacyproxy_approval_redeliveries_total",
+          "labels": {},
+          "value": 0.0
+        },
+        {
+          "name": "privacyproxy_approval_retries_total",
+          "labels": {},
+          "value": 0.0
+        }
+      ],
+      "approval_signed_to_ack_mean_ms": 16.007322268431086,
+      "producer_counter_deltas": [
+        {
+          "name": "ops_approval_approvals_stored_total",
+          "labels": {},
+          "value": 133016.0
+        },
+        {
+          "name": "ops_approval_batches_total",
+          "labels": {
+            "status": "OK"
+          },
+          "value": 101579.0
+        },
+        {
+          "name": "ops_approval_decisions_total",
+          "labels": {
+            "decision": "allow",
+            "reason": "matched"
+          },
+          "value": 196383.0
+        },
+        {
+          "name": "ops_approval_decisions_total",
+          "labels": {
+            "decision": "wait",
+            "reason": "pending"
+          },
+          "value": 35.0
+        }
+      ],
+      "node_log_marker_counts": {},
+      "transaction_log_status_counts": {
+        "confirmed": 132154,
+        "discarded": 1945
+      },
+      "transaction_error_counts": {}
+    },
+    {
+      "case": "logging-off-unbounded",
+      "config": {
+        "exit_code": 0,
+        "plugin_sha256": "c41a9ca903606aa5e6a1c0f75c3794085d4060eb40b9451181a9da036379b986",
+        "ops_sha256": "2dd3bbfcb5e818bd77c91b18254f8b0620592062fc8ed46816fc95091fba04fe",
+        "diagnostics": false,
+        "node_http_max_conns_per_host": 0,
+        "requested_tps": 5000,
+        "seconds": 60,
+        "verify_workers": 2,
+        "max_in_flight": 8,
+        "max_batch": 32,
+        "max_concurrent_requests": 5000,
+        "gate": true,
+        "bypasses": false
+      },
+      "receipts": {
+        "unique_logged_hashes": 117940,
+        "successful": 113885,
+        "reverted": 0,
+        "missing": 4055,
+        "included_during_sending": 111895,
+        "included_during_sending_tps": 1864.9166666666667,
+        "queue_to_commit_ms": {
+          "p50": 1882,
+          "p95": 3409,
+          "p99": 3789,
+          "max": 4842
+        }
+      },
+      "error": null,
+      "generator": {
+        "txSent": 128600,
+        "txConfirmed": 113885,
+        "txFailed": 10769,
+        "status": "completed",
+        "elapsedMs": 84263
+      },
+      "source_files_sha256": {
+        "receipts.json.gz": "7e9fe49b524892870b022c6ffde0054a6f73a3ca5d27962d1a61c61391207410",
+        "genesis.json": "51b2765f4a4f54bf01501c07478792b4b2a6d8e4ec775f2fc7377a61da4d194f",
+        "besu-metrics-after.txt": "9027951c59bfffd695a35aacba622e47e7cf5ea8c7269c250dc83a6fc38b9592",
+        "transactions-besu-rpc.json.gz": "d5d0ef09da59499a9088a3096a72f3cf873266dda1d5980978c1d63d6b50fc44",
+        "transactions.json.gz": "84b10505247074be62627454ef785205a9242e259f2dad054382a782a1d4559b",
+        "besu-metrics-before.txt": "c80ebe38d25cb8da79cbb94d284afd0ec6204eec270b95fa0ce57dc04cda44f7",
+        "contracts.json": "6871890c65c4e4e0f901384a8dbc6d162898e24625f7891d7436485223c76d54",
+        "status-samples.json": "1f10af43d5e9309e05b31392eda15b70b5b7185d278a04e57f38117caabca40c",
+        "transactions-besu-ops.log.gz": "c02003ce5f9078a6ae2ec3d6857802ed8f134cd37c9a4bffa0cf77c417f69a2c",
+        "metrics-before.txt": "0c0e04e59f27580e3bb14638790e33733e2b8331c8bb9e3330fbdc8d72b9133c",
+        "transactions-report.json": "fe36c5aab65eff278d8809bf957456e7d0fe82aeffa9909f6a536785986a3dfd",
+        "metrics-after.txt": "0ea6d68f139cd9eb95518afe2ed97177e0ae966dcd53dbd796435db934ca2d28",
+        "comparison-config.json": "294fbc31b75d0c12c0b779033243044ac62f95a51051377afce8bf245771b6f8"
+      },
+      "approval_counter_deltas": [
+        {
+          "name": "privacyproxy_approval_batches_total",
+          "labels": {
+            "code": "OK"
+          },
+          "value": 95020.0
+        },
+        {
+          "name": "privacyproxy_approval_confirmed_total",
+          "labels": {},
+          "value": 127228.0
+        },
+        {
+          "name": "privacyproxy_approval_dropped_total",
+          "labels": {
+            "reason": "evicted"
+          },
+          "value": 0.0
+        },
+        {
+          "name": "privacyproxy_approval_dropped_total",
+          "labels": {
+            "reason": "expired"
+          },
+          "value": 0.0
+        },
+        {
+          "name": "privacyproxy_approval_dropped_total",
+          "labels": {
+            "reason": "permanent"
+          },
+          "value": 0.0
+        },
+        {
+          "name": "privacyproxy_approval_evicted_total",
+          "labels": {},
+          "value": 27228.0
+        },
+        {
+          "name": "privacyproxy_approval_redeliveries_total",
+          "labels": {},
+          "value": 0.0
+        },
+        {
+          "name": "privacyproxy_approval_retries_total",
+          "labels": {},
+          "value": 0.0
+        }
+      ],
+      "approval_signed_to_ack_mean_ms": 17.417681331793045,
+      "producer_counter_deltas": [
+        {
+          "name": "ops_approval_approvals_stored_total",
+          "labels": {},
+          "value": 127228.0
+        },
+        {
+          "name": "ops_approval_batches_total",
+          "labels": {
+            "status": "OK"
+          },
+          "value": 95020.0
+        },
+        {
+          "name": "ops_approval_decisions_total",
+          "labels": {
+            "decision": "allow",
+            "reason": "matched"
+          },
+          "value": 167246.0
+        },
+        {
+          "name": "ops_approval_decisions_total",
+          "labels": {
+            "decision": "wait",
+            "reason": "pending"
+          },
+          "value": 10.0
+        }
+      ],
+      "node_log_marker_counts": {},
+      "transaction_log_status_counts": {
+        "confirmed": 113885,
+        "discarded": 4055
+      },
+      "transaction_error_counts": {}
+    }
+  ]
+}

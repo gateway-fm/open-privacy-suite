@@ -1,0 +1,13 @@
+--- a/internal/sender/sender.go
++++ b/internal/sender/sender.go
+@@ -88,6 +88,10 @@
+ 
+ 	select {
+ 	case s.semaphore <- struct{}{}: // Acquired semaphore
++		// The worker reuses the outer buffers after this call returns.
++		// Keep the encoded transaction bytes immutable until completion.
++		txDataSlice = append([][]byte(nil), txDataSlice...)
++		callbacks = append([]func(error){}, callbacks...)
+ 		go func() {
+ 			defer func() { <-s.semaphore }() // Release semaphore
+ 

@@ -1,0 +1,21 @@
+Warning: "selfdestruct" has been deprecated. Note that, starting from the Cancun hard fork, the underlying opcode no longer deletes the code and data associated with an account and only transfers its Ether to the beneficiary, unless executed in the same transaction in which the contract was created (see EIP-6780). Any use in newly deployed contracts is strongly discouraged even if the new behavior is taken into account. Future changes to the EVM might further reduce the functionality of the opcode.
+   --> contracts/Applications.sol:128:57:
+    |
+128 |     function destroy(address payable target) external { selfdestruct(target); }
+    |                                                         ^^^^^^^^^^^^
+
+Warning: "selfdestruct" has been deprecated. Note that, starting from the Cancun hard fork, the underlying opcode no longer deletes the code and data associated with an account and only transfers its Ether to the beneficiary, unless executed in the same transaction in which the contract was created (see EIP-6780). Any use in newly deployed contracts is strongly discouraged even if the new behavior is taken into account. Future changes to the EVM might further reduce the functionality of the opcode.
+   --> contracts/Applications.sol:156:57:
+    |
+156 |     function destroy(address payable target) external { selfdestruct(target); }
+    |                                                         ^^^^^^^^^^^^
+
+Traceback (most recent call last):
+  File "<stdin>", line 5, in <module>
+  File "<repo>/poc/reth-signed-approvals/lifecycle_tests.py", line 138, in contract_fee_recipient
+    c.approve(tx);n.submit(tx);n.make_block([tx],fee_recipient=h.DESTRUCTIBLE);r=receipt(n,tx)
+                               ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<repo>/poc/reth-signed-approvals/harness.py", line 223, in make_block
+    raise AssertionError({"message": "candidate construction timed out", "payload": payload,
+                          "decisions": self.decisions()})
+AssertionError: {'message': 'candidate construction timed out', 'payload': {'parentHash': '0x5e183d4fce514fdd8e3dcc3fb250a07f4b39855d794584ee2d0aafdbfa1424a3', 'feeRecipient': '0x0000000000000000000000000000000000007200', 'stateRoot': '0xc79634a32e09878bab65e3754ad9cb4acdc9e385217ca2189ffb6ccc080510b7', 'receiptsRoot': '0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421', 'logsBloom': '0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000', 'prevRandao': '0x0000000000000000000000000000000000000000000000000000000000000000', 'blockNumber': '0x1', 'gasLimit': '0x1ca35ef', 'gasUsed': '0x0', 'timestamp': '0xc', 'extraData': '0x726574682f76322e352e322f6d61636f73', 'baseFeePerGas': '0x342770c0', 'blockHash': '0x4c9faed4beee4843b98671754a6daaa578ac61026f95dc7ecffb849d97cf4f64', 'transactions': [], 'withdrawals': []}, 'decisions': [{'actual': 'Ok(0xa25c8bbd4a3291507d5ac6d0bf267639675b6ed3e62741c3074b9d117f2fac84)', 'decision': 'deny', 'expected': '0xcb5fa2c6582d0c2cbf2ad726e44392896fcb5c0690e8f74499767a7a135e748d', 'tx_hash': '0xd20ea7fbc191bcd5496ccaa8a27d005c65e8c2856803b942e3ff5e255a7b8584'}, {'actual': 'Ok(0xa25c8bbd4a3291507d5ac6d0bf267639675b6ed3e62741c3074b9d117f2fac84)', 'decision': 'deny', 'expected': '0xcb5fa2c6582d0c2cbf2ad726e44392896fcb5c0690e8f74499767a7a135e748d', 'tx_hash': '0xd20ea7fbc191bcd5496ccaa8a27d005c65e8c2856803b942e3ff5e255a7b8584'}]}

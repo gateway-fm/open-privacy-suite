@@ -1,0 +1,5 @@
+--- FAIL: TestCancunNoopSelfDestructTrace (0.00s)
+    lifecycle_test.go:119: invalid call address
+FAIL
+FAIL	privacy-proxy/internal/nodeapproval	0.514s
+FAIL

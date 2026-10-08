@@ -1,0 +1,7 @@
+{
+  "loadgeneratorCommit": "d24667e23b010ded9a1d2e80f4d90741c6ab51f2",
+  "originalSenderSHA256": "f3be1fced5aca00fb84de053e939267ec86cae637732fd58340f2318b2994ae0",
+  "red": "Queued nonce-4673 became nonce-4674, with callback also delivered to nonce-4674.",
+  "green": "Original transaction and callback retained; all six sender tests pass.",
+  "scope": "Deterministic isolated test with a blocked fake RPC client. Proves buffer ownership bug, not the exact cause of the archived node timeout. No change to checkout or live UI binary."
+}
