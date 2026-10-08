@@ -29,9 +29,11 @@ const (
 	// tracing (bad block tag, non-hex to/from, etc.).
 	ReasonInvalidRequestShape = "invalid_request_shape"
 	// ReasonStateOverrideNotAllowed: the request carried a state/code or block
-	// override (eth_call/eth_estimateGas params[2]/[3], or debug_traceCall
-	// stateOverrides/blockOverrides). Rejected fail-closed (RD-1305). A fact
-	// about the caller's OWN request (they sent the override) — safe to surface.
+	// override or another unsupported simulation option (eth_call /
+	// eth_estimateGas / eth_createAccessList: a non-block value at params[1],
+	// an override at params[2]/[3] or too many params; debug_traceCall: an
+	// override or txIndex config key). Rejected fail-closed (RD-1305). A fact
+	// about the caller's OWN request (they sent the option) — safe to surface.
 	ReasonStateOverrideNotAllowed = "state_override_not_allowed"
 	// ReasonCrossOrg: a traced call touched a contract owned by another org or
 	// an unregistered (private-by-default) address. ORACLE-SENSITIVE — reveals

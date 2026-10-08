@@ -46,9 +46,10 @@ func keyFoldsTo(key, name string) bool {
 // It checks both raw and operator-aliased methods. Positional state/block
 // overrides must be null or empty objects; debug-trace override and
 // replay-position keys must be absent. The block-reference slot accepts only
-// block-reference keys, and createAccessList retains its boolean optimization
-// option. Unknown or malformed override values are refused. The returned kind
-// is an internal audit label; callers use an opaque denial.
+// null, a string or an EIP-1898 object, and createAccessList retains its
+// boolean optimization option. Unknown or malformed override values are
+// refused. The returned kind is an internal audit label; callers use an
+// opaque denial.
 func DetectStateOverride(method string, params []any) (bool, string) {
 	raw := CanonicalizeMethod(method)
 	if denied, kind := detectStateOverrideForMethod(raw, params); denied {
@@ -69,8 +70,8 @@ func detectStateOverrideForMethod(resolved string, params []any) (bool, string) 
 		if len(params) > maxOverrideAwareParams {
 			return true, overrideKindMalformed
 		}
-		// params[1] must be a block reference (tag/hex string or EIP-1898
-		// object). Other object keys are unsupported in this position.
+		// params[1] must be a block reference: null, a tag/hex string or an
+		// EIP-1898 object. Any other object or type is refused.
 		if denied, kind := classifyBlockRefSlot(params, 1); denied {
 			return true, kind
 		}

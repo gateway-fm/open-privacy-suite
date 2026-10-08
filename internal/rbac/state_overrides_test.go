@@ -89,6 +89,7 @@ func TestDetectStateOverride(t *testing.T) {
 		{"debug BLOCKOVERRIDES upper", "debug_traceCall", []any{tx(), "latest", map[string]any{"BLOCKOVERRIDES": map[string]any{"number": "0x1"}}}, true},
 		{"debug long-s ſtateOverrides", "debug_traceCall", []any{tx(), "latest", map[string]any{"ſtateOverrides": nonEmptyOverride()}}, true},
 		{"debug long-s blockOverrideſ", "debug_traceCall", []any{tx(), "latest", map[string]any{"blockOverrideſ": map[string]any{"number": "0x1"}}}, true},
+		{"debug Kelvin-sign blocKOverride", "debug_traceCall", []any{tx(), "latest", map[string]any{"blocKOverride": map[string]any{"number": "0x1"}}}, true},
 		// Lowercase-equivalent spellings follow the same presence rule.
 		{"debug dotted-I stateOverrİdes", "debug_traceCall", []any{tx(), "latest", map[string]any{"stateOverrİdes": nonEmptyOverride()}}, true},
 		// Replay-position options are unsupported.
@@ -159,8 +160,8 @@ func TestDetectStateOverride_RawMethodPolicy(t *testing.T) {
 	for _, m := range methods {
 		aliases[m] = "eth_getBalance"
 	}
-	if err := RegisterExtraNamespaces(map[string][]string{"Example": methods}, aliases, nil); err == nil {
-		t.Fatal("config loading must refuse a built-in method as an alias key")
+	if err := RegisterExtraNamespaces(map[string][]string{"Example": methods}, aliases, nil); err == nil || !strings.Contains(err.Error(), "shadows a built-in") {
+		t.Fatalf("config loading must refuse a built-in method as an alias key, got %v", err)
 	}
 
 	for _, m := range methods {

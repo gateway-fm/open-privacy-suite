@@ -457,7 +457,7 @@ Enable **Verbose error reasons** on a group's access settings (admin dashboard, 
 ```
 
 - **Default off.** With the flag off, responses are byte-for-byte identical to today (opaque).
-- **Stable codes** for automation to switch on: `sender_not_linked`, `method_not_allowed`, `auth_required`, `invalid_request_shape`, `state_override_not_allowed`, `rate_limited`, `concurrency_limited`, `upstream_error`.
+- **Stable codes** for automation to switch on: `sender_not_linked`, `method_not_allowed`, `auth_required`, `invalid_request_shape`, `state_override_not_allowed`, `rate_limited`, `concurrency_limited`, `upstream_error`. `state_override_not_allowed` is sent only on `/rpc/:org_id`, and its Access Logs entry appears in the fleet-wide view, not in your org's (see [State and block overrides](/docs/security/response-filtering#state-and-block-overrides)).
 - **Cross-org and trace-related causes always collapse to `access_denied`** — verbose mode never reveals another tenant's contracts, ownership, or whether an address exists. Only facts about the caller's own request are exposed.
 - The raw internal error is **never** sent on the wire, flag or not — it stays in server logs.
 - Toggling the flag is recorded in the admin audit log.
