@@ -11,8 +11,8 @@ import (
 // strictTraceAllowed reports whether debug_traceTransaction may return the
 // trace of a mined transaction to this caller (RD-1299). Under the standard
 // profile it always may (the method allowlist and the cross-org trace check
-// decide). Under strict the trace — sender, calldata, value and every internal
-// call — is returned only to a participant of the traced transaction: the
+// decide). Under strict the top frame — sender, calldata and value — is
+// returned only to a participant of the traced transaction: the
 // caller's linked address is the root frame's `from` or `to`
 // (rbac.DecideTxEnvelope). A linked-address lookup failure or a trace without a
 // root frame denies (fail closed).
@@ -56,14 +56,14 @@ func traceRootParticipant(tr *tracer.TraceResult, linked []string) bool {
 const strictTraceUnsupportedConfig = "only the call tracer is available for debug_traceTransaction on this network"
 
 // strictTraceForwardBody vets a debug_traceTransaction request under the strict
-// read profile and returns the body the proxy forwards in place of the
-// caller's: the call tracer limited to the top-level frame, without logs. That
+// read profile and builds a top-frame callTracer body without logs. The trace
+// processor uses this helper to vet options, then builds its canonical plan. That
 // matches the participant transaction and receipt view under strict
 // (RD-1299). Accepted caller options: none,
 // or the call tracer with no setting other than onlyTopCall:true and
 // withLog:false. Anything else (the default opcode logger, the prestate
 // tracer, JS tracers, timeouts) returns ok=false. Under the standard profile it
-// returns (nil, true): the request is forwarded as sent.
+// returns (nil, true), leaving option validation to the common trace gate.
 func (p *JSONRPCProcessor) strictTraceForwardBody(req *ProcessRequest) (body []byte, ok bool) {
 	if !p.readProfile.Strict() {
 		return nil, true

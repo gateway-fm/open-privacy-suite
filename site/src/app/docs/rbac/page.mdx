@@ -164,8 +164,53 @@ group's allowed methods (or the group allows all methods). The `deploy` claim do
 grant tracing — a group that holds `deploy` but does not list `debug_trace*` in its allowed
 methods cannot trace. This includes **org-admin groups**: an org-admin group that should be
 able to trace must include `debug_traceTransaction` / `debug_traceCall` (or `*`) in its
-allowed methods. Cross-organization isolation on trace results is always enforced separately,
-regardless of the allowlist.
+allowed methods.
+
+Being on the allowlist is necessary but not sufficient. Each trace is also checked the same
+way as the method it mirrors:
+
+- **`debug_traceCall`** gets the same checks as `eth_call` for the target contract:
+  - the caller needs access to the contract;
+  - function restrictions apply;
+  - Multicall batches are refused;
+  - a historical block is refused for non-admins;
+  - a banned or unverified user is refused;
+  - a `from` that is not one of the caller's linked addresses is refused.
+- **`debug_traceTransaction`** follows the same access checks as `eth_getTransactionByHash`.
+  A user in more than one organization must use `/rpc/:org_id`, and a banned or unverified user
+  is refused. Under the standard read profile, a transaction is replayed only for its sender or recipient, an admin of the
+  contract it called, or a recipient it was shared with. Anyone else is denied, and a
+  transaction that does not exist is denied in exactly the same way.
+
+For `debug_traceCall` and standard-profile `debug_traceTransaction`, the proxy returns only the **call tree** (the `callTracer` output), and only when the
+caller has access to **every** contract the trace passes through, in the organization the
+request is for. A trace into a contract the caller has no access to is denied, even if the
+entry contract is accessible, because a trace shows every internal call's input and output.
+Function and argument restrictions apply to those internal calls as well. A proxy's delegated
+calls use the caller's permissions on the proxy, and the implementation must still pass the
+organization check. Validated precompiles, shared infrastructure and contract creation retain
+their existing access rules.
+
+Under the strict read profile, `debug_traceTransaction` returns only the top frame, without
+internal calls or logs, to an authenticated linked sender or recipient. Current contract
+grants and deploy/admin claims do not add readers or remove a participant's top frame.
+The returned frame must still pass the organization ownership checks; an unregistered
+call target remains unavailable. The proxy verifies participation against both the transaction
+lookup and the returned root frame. A nonparticipant and a missing transaction both receive
+404 `transaction not found`.
+
+A request with no tracer configured uses the profile's callTracer preset. Strict mined traces
+also accept only `onlyTopCall:true` and `withLog:false` as caller options. Explicit requests for any other output
+are rejected:
+
+- `prestateTracer`;
+- JavaScript tracers;
+- struct-logger options such as `enableMemory`;
+- `callTracer` with `withLog`;
+- state or block overrides.
+
+These would expose contract storage, memory or raw event logs, which the storage and event
+rules withhold from other read methods.
 
 </Callout>
 

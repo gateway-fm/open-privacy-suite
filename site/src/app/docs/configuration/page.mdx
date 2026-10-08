@@ -236,7 +236,7 @@ Set `RUNTIME_TRACING_INTRA_ORG_GRANTS_ENABLED=true` to tighten this: when on, an
 
 - **Default OFF.** Org ownership remains the boundary unless you opt in.
 - **Cross-org isolation is unaffected** by this flag — calls into another org's contracts (and into unregistered addresses) are always denied regardless.
-- Governs both reads (`eth_call`, `debug_traceCall`) and writes (`eth_sendTransaction`, `eth_sendRawTransaction`, and contract-deploy constructor calls).
+- Governs both reads (`eth_call`) and writes (`eth_sendTransaction`, `eth_sendRawTransaction`, and contract-deploy constructor calls). Client `debug_traceCall` and standard-profile `debug_traceTransaction` always apply this check, whatever this flag says. Strict-profile mined traces return only the participant's top frame and retain organization ownership validation.
 - **In-flight deploys are not blocked.** Multi-contract or factory deploys (CREATE2/CREATE3) that reference a precomputed sibling address before it is mined still work — pre-registered deployment addresses are allowed for deploy-claim callers, the same as the direct-call access check.
 - Has no effect when runtime tracing is globally unavailable.
 
@@ -383,7 +383,7 @@ Group with `allowed_methods: ["linea_estimateGas", "linea_*"]`:
 | `linea_getProof` | none (no explicit entry) | true (via `linea_*` → wildcard match) | passthrough, no redaction |
 | `linea_sendTransaction` | none | false (wildcard match blocked by deny) | rejected with "method not allowed" |
 | `linea_signFoo` | none | false (deny `linea_sign*` glob) | rejected |
-| `debug_traceTransaction` | n/a | only if listed in the group's `allowed_methods` (or `*`) | gated by the method allowlist like any other method; cross-org isolation on results always enforced |
+| `debug_traceTransaction` | n/a | only if listed in the group's `allowed_methods` (or `*`) | Standard: sender, recipient, called-contract admin or shared recipient; returns a validated call tree with access required for each contract. Strict: linked sender/recipient only, top frame without internal calls or logs, with organization ownership checks. Other tracers are rejected. |
 
 A ready-to-use example is provided in `rpc-namespaces.example.json` — copy and customize it:
 

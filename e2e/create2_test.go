@@ -190,6 +190,11 @@ type create2TestEnv struct {
 
 func setupCreate2Env(t *testing.T) *create2TestEnv {
 	t.Helper()
+	return setupCreate2EnvWithReadTracing(t, false)
+}
+
+func setupCreate2EnvWithReadTracing(t *testing.T, enabled bool) *create2TestEnv {
+	t.Helper()
 
 	// Start Anvil testcontainer (or use external ANVIL_URL).
 	anvilURL, anvilCleanup := testutil.SetupAnvilContainer(t)
@@ -228,21 +233,22 @@ func setupCreate2Env(t *testing.T) *create2TestEnv {
 		// RD-1147: co-locate the audit schema in this testcontainer DB for e2e
 		// (server.New requires a resolvable audit DB; the lean migration is
 		// idempotent, so it just recreates access_logs here). Prod keeps them separate.
-		AuditDatabaseURL:      dbURL,
-		AuditAdminDatabaseURL: dbURL,
-		PrivadoRPCURL:         "https://rpc-mainnet.privado.id",
-		IPFSGateway:           "https://ipfs-proxy-cache.privado.id",
-		JWTSecret:             "test-secret-create2",
-		JWTRefreshSecret:      "test-refresh-secret-create2",
-		VerifierID:            "did:privado:verifier:test",
-		BaseURL:               serverURL,
-		Environment:           "development",
-		TraceCacheTTL:         5 * time.Second,
-		TraceTimeout:          30 * time.Second,
-		TraceTieredValidation: true,
-		AllowMockLogin:        true,
-		MockSignatures:        true,
-		DisableCoinGecko:      true,
+		AuditDatabaseURL:             dbURL,
+		AuditAdminDatabaseURL:        dbURL,
+		PrivadoRPCURL:                "https://rpc-mainnet.privado.id",
+		IPFSGateway:                  "https://ipfs-proxy-cache.privado.id",
+		JWTSecret:                    "test-secret-create2",
+		JWTRefreshSecret:             "test-refresh-secret-create2",
+		VerifierID:                   "did:privado:verifier:test",
+		BaseURL:                      serverURL,
+		Environment:                  "development",
+		TraceCacheTTL:                5 * time.Second,
+		TraceTimeout:                 30 * time.Second,
+		TraceTieredValidation:        true,
+		RuntimeTracingEthCallEnabled: enabled,
+		AllowMockLogin:               true,
+		MockSignatures:               true,
+		DisableCoinGecko:             true,
 	}
 
 	mockVerifier := &mockPrivadoVerifier{}

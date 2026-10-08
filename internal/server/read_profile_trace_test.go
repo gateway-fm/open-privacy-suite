@@ -52,7 +52,7 @@ func TestTraceRootParticipant(t *testing.T) {
 
 // Under strict, debug_traceTransaction of a mined tx returns the trace only to
 // a participant of that tx; another member of the same org gets an opaque 404.
-// Under standard both receive it (the cross-org trace check still applies).
+// Under standard the destination-contract admin also receives it.
 func TestReadProfile_Strict_DebugTraceTransactionParticipantOnly(t *testing.T) {
 	ts := setupTestServerForRBAC(t)
 	ctx := context.Background()
@@ -60,10 +60,12 @@ func TestReadProfile_Strict_DebugTraceTransactionParticipantOnly(t *testing.T) {
 	require.NoError(t, ts.db.CreateOrganization(ctx, &rbac.Organization{ID: orgID, Slug: "trc-" + orgID[:8], Name: "TRC", Settings: map[string]any{}}))
 	gid := uuid.New().String()
 	insertGroupRawSQL(t, ctx, ts.db, gid, orgID, "trc-"+gid[:8], "TRC", "trc-"+gid[:8])
-	require.NoError(t, ts.db.CreateGroupAccess(ctx, &rbac.GroupAccess{ID: uuid.New().String(), GroupID: gid, AllowedMethods: []string{"debug_traceTransaction"}}))
+	require.NoError(t, ts.db.CreateGroupAccess(ctx, &rbac.GroupAccess{ID: uuid.New().String(), GroupID: gid, Claims: []rbac.Claim{rbac.ClaimAdmin}, AllowedMethods: []string{"debug_traceTransaction"}}))
 	const sender = "0xa11ce00000000000000000000000000000000001"
 	const contract = "0xc0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c001"
-	require.NoError(t, ts.db.CreateContract(ctx, &rbac.Contract{ID: uuid.New().String(), OrgID: orgID, Address: contract, Name: "TRC", Metadata: map[string]any{}}))
+	cid := uuid.New().String()
+	require.NoError(t, ts.db.CreateContract(ctx, &rbac.Contract{ID: cid, OrgID: orgID, Address: contract, Name: "TRC", Metadata: map[string]any{}}))
+	require.NoError(t, ts.db.CreateContractGrant(ctx, &rbac.ContractGrant{ID: uuid.New().String(), ContractID: cid, GroupID: gid}))
 	member := func(did, addr string) {
 		uid := uuid.New().String()
 		require.NoError(t, ts.db.CreateUser(ctx, &rbac.User{ID: uid, ExternalID: did, KYC: true, Metadata: map[string]any{}}))
@@ -72,9 +74,27 @@ func TestReadProfile_Strict_DebugTraceTransactionParticipantOnly(t *testing.T) {
 	}
 	member("did:test:trc:sender", sender)
 	member("did:test:trc:colleague", "0xb0b0000000000000000000000000000000000002")
+	const ordinarySender = "0x7150000000000000000000000000000000000005"
+	ordinary := newTraceUser(t, ctx, ts, orgID, nil, []string{"debug_traceTransaction"}, ordinarySender)
+	const ordinaryRecipientDID = "did:test:trc:recipient"
+	recipientID := uuid.New().String()
+	require.NoError(t, ts.db.CreateUser(ctx, &rbac.User{ID: recipientID, ExternalID: ordinaryRecipientDID, KYC: true}))
+	require.NoError(t, ts.db.CreateMembership(ctx, &rbac.UserMembership{ID: uuid.New().String(), UserID: recipientID, GroupID: ordinary.groupID, Source: rbac.MembershipSourceAdmin}))
+	require.NoError(t, ts.db.SystemLinkEthAddress(ctx, ordinaryRecipientDID, contract))
+	const created = "0xd0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d001"
+	addContract(t, ctx, ts, orgID, created, "")
 
-	trace := map[string]any{"type": "CALL", "from": sender, "to": contract, "input": "0xa9059cbb", "value": "0x0", "calls": []any{}}
-	const unknownHash = "0xdead"
+	trace := map[string]any{"type": "CALL", "from": sender, "to": contract, "input": "0xa9059cbb", "value": "0x0", "calls": []any{map[string]any{"type": "CALL", "from": contract, "to": contract, "input": "0xfeedface"}}}
+	hash := "0x" + strings.Repeat("ab", 32)
+	mismatchHash := "0x" + strings.Repeat("cd", 32)
+	ordinaryHash := "0x" + strings.Repeat("ef", 32)
+	recipientHash := "0x" + strings.Repeat("12", 32)
+	deploymentHash := "0x" + strings.Repeat("34", 32)
+	casingHash := "0x" + strings.Repeat("56", 32)
+	traceErrorHash := "0x" + strings.Repeat("78", 32)
+	nullTraceHash := "0x" + strings.Repeat("9a", 32)
+	failedHTTPHash := "0x" + strings.Repeat("bc", 32)
+	unknownHash := "0x" + strings.Repeat("de", 32)
 	var mu sync.Mutex
 	var nodeBodies [][]byte
 	node := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -84,6 +104,54 @@ func TestReadProfile_Strict_DebugTraceTransactionParticipantOnly(t *testing.T) {
 		mu.Unlock()
 		if strings.Contains(string(b), unknownHash) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "error": map[string]any{"code": -32000, "message": "transaction " + unknownHash + " not found"}})
+			return
+		}
+		var env struct {
+			Method string `json:"method"`
+		}
+		_ = json.Unmarshal(b, &env)
+		from, to, typ := sender, contract, "CALL"
+		switch {
+		case strings.Contains(string(b), ordinaryHash):
+			from = ordinarySender
+		case strings.Contains(string(b), recipientHash):
+			to = ordinarySender
+		case strings.Contains(string(b), deploymentHash):
+			from, to, typ = ordinarySender, "", "CREATE"
+		}
+		if env.Method == "eth_getTransactionByHash" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "result": map[string]any{"hash": hash, "from": from, "to": to, "input": "0xa9059cbb"}})
+			return
+		}
+		if strings.Contains(string(b), failedHTTPHash) {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "error": map[string]any{"code": -32000, "message": "trace unavailable"}})
+			return
+		}
+		if strings.Contains(string(b), traceErrorHash) {
+			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "error": map[string]any{"code": -32000, "message": "trace unavailable"}})
+			return
+		}
+		if strings.Contains(string(b), nullTraceHash) {
+			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "result": nil})
+			return
+		}
+		if strings.Contains(string(b), casingHash) {
+			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "result": map[string]any{
+				"type": "CALL", "from": sender, "to": contract,
+				"calls": trace["calls"], "Calls": trace["calls"], "CALLS": trace["calls"], "callſ": trace["calls"],
+			}})
+			return
+		}
+		if from == ordinarySender || to == ordinarySender {
+			if typ == "CREATE" {
+				to = created
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "result": map[string]any{"type": typ, "from": from, "to": to}})
+			return
+		}
+		if strings.Contains(string(b), mismatchHash) {
+			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "result": map[string]any{"type": "CALL", "from": "0x9990000000000000000000000000000000000008", "to": contract}})
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "result": trace})
@@ -113,9 +181,85 @@ func TestReadProfile_Strict_DebugTraceTransactionParticipantOnly(t *testing.T) {
 			RuntimeTracer:      rt,
 			TraceValidator:     rbac.NewTraceValidator(ts.db),
 		})
+		t.Run(profile.String()+"/ordinary participant", func(t *testing.T) {
+			if !profile.Strict() {
+				return
+			}
+			for _, known := range []string{ordinaryHash, deploymentHash} {
+				res := p.processDebugTrace(ctx, traceReq(ordinary.did, orgID, "debug_traceTransaction", known))
+				require.Nil(t, res.Error, "known participant keeps the top frame without a current grant/deploy/admin claim: %+v", res.Error)
+				assert.Contains(t, string(res.ResponseBody), ordinarySender)
+				assert.NotContains(t, string(res.ResponseBody), `"calls"`)
+			}
+		})
+		t.Run(profile.String()+"/unregistered EOA recipient", func(t *testing.T) {
+			if !profile.Strict() {
+				return
+			}
+			res := p.processDebugTrace(ctx, traceReq(ordinary.did, orgID, "debug_traceTransaction", recipientHash))
+			require.NotNil(t, res.Error)
+			assert.Equal(t, http.StatusForbidden, res.Error.StatusCode, "existing unregistered-target isolation remains in force")
+		})
+		t.Run(profile.String()+"/ordinary recipient", func(t *testing.T) {
+			if !profile.Strict() {
+				return
+			}
+			res := p.processDebugTrace(ctx, traceReq(ordinaryRecipientDID, orgID, "debug_traceTransaction", hash))
+			require.Nil(t, res.Error, "known recipient receives the top frame without a current contract grant: %+v", res.Error)
+			assert.Contains(t, string(res.ResponseBody), contract)
+			assert.NotContains(t, string(res.ResponseBody), `"calls"`)
+		})
+		t.Run(profile.String()+"/returned frame casing", func(t *testing.T) {
+			res := p.processDebugTrace(ctx, traceReq("did:test:trc:sender", orgID, "debug_traceTransaction", casingHash))
+			require.Nil(t, res.Error, "%+v", res.Error)
+			if profile.Strict() {
+				assert.NotContains(t, string(res.ResponseBody), "0xfeedface")
+				assert.NotContains(t, string(res.ResponseBody), `"calls"`)
+			} else {
+				assert.Contains(t, string(res.ResponseBody), "0xfeedface")
+			}
+		})
+		t.Run(profile.String()+"/trace unavailable", func(t *testing.T) {
+			for _, known := range []string{traceErrorHash, nullTraceHash} {
+				res := p.processDebugTrace(ctx, traceReq("did:test:trc:sender", orgID, "debug_traceTransaction", known))
+				require.NotNil(t, res.Error)
+				if profile.Strict() {
+					assert.Equal(t, http.StatusNotFound, res.Error.StatusCode)
+					assert.Equal(t, "transaction not found", res.Error.Message)
+				} else {
+					assert.Equal(t, http.StatusForbidden, res.Error.StatusCode)
+					assert.Equal(t, traceDenyTracerError, res.Error.Message)
+				}
+				assert.Empty(t, res.ResponseBody)
+			}
+		})
+		t.Run(profile.String()+"/unavailable trace wire reason", func(t *testing.T) {
+			res := p.processDebugTrace(ctx, traceReq("did:test:trc:sender", orgID, "debug_traceTransaction", failedHTTPHash))
+			require.NotNil(t, res.Error)
+			assert.Empty(t, res.ResponseBody)
+			if profile.Strict() {
+				assert.Equal(t, http.StatusNotFound, res.Error.StatusCode)
+				assert.Equal(t, "transaction not found", res.Error.Message)
+				assert.Equal(t, ReasonWireGenericDenied, wireReason(res.Error.Reason))
+			} else {
+				assert.Equal(t, http.StatusBadGateway, res.Error.StatusCode)
+				assert.Equal(t, traceDenyTracerError, res.Error.Message)
+				assert.Equal(t, ReasonUpstreamError, wireReason(res.Error.Reason))
+			}
+		})
+
+		t.Run(profile.String()+"/returned participant", func(t *testing.T) {
+			if !profile.Strict() {
+				return
+			}
+			res := p.processDebugTrace(ctx, &ProcessRequest{UserID: "did:test:trc:sender", OrgID: orgID, Method: "debug_traceTransaction", Params: []any{mismatchHash}})
+			require.NotNil(t, res.Error)
+			assert.Equal(t, http.StatusNotFound, res.Error.StatusCode)
+			assert.Equal(t, "transaction not found", res.Error.Message)
+		})
 		for _, did := range []string{"did:test:trc:sender", "did:test:trc:colleague"} {
 			t.Run(profile.String()+"/"+did, func(t *testing.T) {
-				res := p.processDebugTrace(ctx, &ProcessRequest{UserID: did, Method: "debug_traceTransaction", Params: []any{"0x" + "ab"}})
+				res := p.processDebugTrace(ctx, &ProcessRequest{UserID: did, OrgID: orgID, Method: "debug_traceTransaction", Params: []any{hash}})
 				if did == "did:test:trc:colleague" && profile.Strict() {
 					require.NotNil(t, res.Error)
 					assert.Equal(t, http.StatusNotFound, res.Error.StatusCode)
@@ -128,13 +272,12 @@ func TestReadProfile_Strict_DebugTraceTransactionParticipantOnly(t *testing.T) {
 		}
 
 		// Under strict the node is asked for the top-level call frame only,
-		// without logs, whatever the participant sent; under standard the
-		// caller's request is forwarded as sent.
+		// without logs. Standard uses the proxy-built full call tree preset.
 		t.Run(profile.String()+"/forwarded tracer config", func(t *testing.T) {
 			resetNode()
-			body := []byte(`{"jsonrpc":"2.0","id":7,"method":"debug_traceTransaction","params":["0xab",{"tracer":"callTracer"}]}`)
-			res := p.processDebugTrace(ctx, &ProcessRequest{UserID: "did:test:trc:sender", Method: "debug_traceTransaction",
-				Params: []any{"0xab", map[string]any{"tracer": "callTracer"}}, Body: body})
+			body := []byte(`{"jsonrpc":"2.0","id":7,"method":"debug_traceTransaction","params":["` + hash + `",{"tracer":"callTracer"}]}`)
+			res := p.processDebugTrace(ctx, &ProcessRequest{UserID: "did:test:trc:sender", OrgID: orgID, Method: "debug_traceTransaction",
+				Params: []any{hash, map[string]any{"tracer": "callTracer"}}, Body: body})
 			require.Nil(t, res.Error, "%+v", res.Error)
 			var fwd struct {
 				ID     json.RawMessage `json:"id"`
@@ -142,34 +285,39 @@ func TestReadProfile_Strict_DebugTraceTransactionParticipantOnly(t *testing.T) {
 			}
 			require.NoError(t, json.Unmarshal(lastNodeBody(), &fwd))
 			if !profile.Strict() {
-				assert.JSONEq(t, string(body), string(lastNodeBody()))
+				require.Len(t, fwd.Params, 2)
+				assert.Equal(t, map[string]any{"tracer": "callTracer", "tracerConfig": map[string]any{"onlyTopCall": false}}, fwd.Params[1])
+				assert.Contains(t, string(res.ResponseBody), "0xfeedface")
 				return
 			}
-			assert.Equal(t, "7", string(fwd.ID), "the caller's id is kept")
+			assert.Equal(t, "1", string(fwd.ID), "the node request uses the proxy id")
+			assert.Equal(t, "7", string(rpResultID(t, res.ResponseBody)), "the client response keeps its id")
 			require.Len(t, fwd.Params, 2)
-			assert.Equal(t, "0xab", fwd.Params[0])
+			assert.Equal(t, hash, fwd.Params[0])
 			assert.Equal(t, map[string]any{"tracer": "callTracer", "tracerConfig": map[string]any{"onlyTopCall": true, "withLog": false}}, fwd.Params[1])
+			assert.NotContains(t, string(res.ResponseBody), "0xfeedface")
+			assert.NotContains(t, string(res.ResponseBody), `"calls"`)
 		})
 
 		// Under strict any other tracer is refused before the node is traced.
 		t.Run(profile.String()+"/other tracer", func(t *testing.T) {
 			resetNode()
-			res := p.processDebugTrace(ctx, &ProcessRequest{UserID: "did:test:trc:sender", Method: "debug_traceTransaction",
-				Params: []any{"0xab", map[string]any{"tracer": "prestateTracer"}}})
-			if !profile.Strict() {
-				require.Nil(t, res.Error, "%+v", res.Error)
-				return
-			}
+			res := p.processDebugTrace(ctx, &ProcessRequest{UserID: "did:test:trc:sender", OrgID: orgID, Method: "debug_traceTransaction",
+				Params: []any{hash, map[string]any{"tracer": "prestateTracer"}}})
 			require.NotNil(t, res.Error)
 			assert.Equal(t, http.StatusBadRequest, res.Error.StatusCode)
-			assert.Equal(t, strictTraceUnsupportedConfig, res.Error.Message)
+			if profile.Strict() {
+				assert.Equal(t, strictTraceUnsupportedConfig, res.Error.Message)
+			} else {
+				assert.Equal(t, traceDenyUnsafeTracer, res.Error.Message)
+			}
 			assert.Nil(t, lastNodeBody(), "nothing is traced or forwarded")
 		})
 
 		// Under strict an unknown hash answers exactly like a non-participant:
 		// the response does not tell existing transactions from missing ones.
 		t.Run(profile.String()+"/unknown hash", func(t *testing.T) {
-			res := p.processDebugTrace(ctx, &ProcessRequest{UserID: "did:test:trc:colleague", Method: "debug_traceTransaction", Params: []any{unknownHash}})
+			res := p.processDebugTrace(ctx, &ProcessRequest{UserID: "did:test:trc:colleague", OrgID: orgID, Method: "debug_traceTransaction", Params: []any{unknownHash}})
 			require.NotNil(t, res.Error)
 			if !profile.Strict() {
 				assert.Equal(t, http.StatusForbidden, res.Error.StatusCode)
@@ -206,4 +354,13 @@ func TestStrictCallTracerOptions(t *testing.T) {
 			assert.Equal(t, tc.want, strictCallTracerOptions(tc.opts))
 		})
 	}
+}
+
+func rpResultID(t *testing.T, body []byte) json.RawMessage {
+	t.Helper()
+	var env struct {
+		ID json.RawMessage `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal(body, &env))
+	return env.ID
 }

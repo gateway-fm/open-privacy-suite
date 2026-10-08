@@ -1441,12 +1441,12 @@ var ReadOpsMap = map[string]bool{
 	// Node keystore accounts — may expose signer addresses on private PoA networks
 	"eth_accounts": true,
 	// Log filters — functionally equivalent to eth_getLogs, same auth requirement
-	"eth_newfilter":                    true,
-	"eth_newblockfilter":               true,
-	"eth_newpendingtransactionfilter":  true,
-	"eth_getfilterchanges":             true,
-	"eth_getfilterlogs":                true,
-	"eth_uninstallfilter":              true,
+	"eth_newfilter":                   true,
+	"eth_newblockfilter":              true,
+	"eth_newpendingtransactionfilter": true,
+	"eth_getfilterchanges":            true,
+	"eth_getfilterlogs":               true,
+	"eth_uninstallfilter":             true,
 	// Block contents (include transaction lists with from/to/value)
 	"eth_getblockbyhash":                   true,
 	"eth_getblockbynumber":                 true,
@@ -1457,9 +1457,9 @@ var ReadOpsMap = map[string]bool{
 	"eth_getunclecountbyblockhash":         true,
 	"eth_getunclecountbyblocknumber":       true,
 	// Transaction details (sender, receiver, value, input data)
-	"eth_gettransactionbyhash":                 true,
-	"eth_gettransactionbyblockhashandindex":    true,
-	"eth_gettransactionbyblocknumberandindex":  true,
+	"eth_gettransactionbyhash":                true,
+	"eth_gettransactionbyblockhashandindex":   true,
+	"eth_gettransactionbyblocknumberandindex": true,
 	// Receipts (logs, status, contract address)
 	"eth_gettransactionreceipt": true,
 	"eth_getblockreceipts":      true, // Block receipts (same privacy requirements as eth_getLogs)
@@ -1866,6 +1866,13 @@ func extractBlockParam(method string, params []any) string {
 		// eth_getStorageAt: [address, slot, block]
 		// eth_getProof: [address, storageKeys[], block]
 		blockParamIndex = 2
+	case "debug_tracecall":
+		// debug_traceCall: [callObj, block, traceConfig] — block is the 2nd
+		// positional arg, same index as eth_call (RD-1304). The debug-trace
+		// access path builds an eth_call-equivalent AccessCheckRequest with
+		// Method="debug_traceCall" so the historical-state guard fires with
+		// the same admin exemption as eth_call.
+		blockParamIndex = 1
 	default:
 		return "latest"
 	}
@@ -1930,6 +1937,11 @@ func IsHistoricalStateQuery(method string, params []any) (bool, string) {
 		"eth_getcode":             true,
 		"eth_gettransactioncount": true,
 		"eth_getproof":            true,
+		// RD-1304: debug_traceCall runs the EVM like eth_call; a historical
+		// block tag lets a non-admin read since-reassigned cross-org state.
+		// Gated with the same admin exemption as eth_call via the debug-trace
+		// access path's eth_call-equivalent AccessCheckRequest.
+		"debug_tracecall": true,
 	}
 
 	if !historicalCheckMethods[method] {
