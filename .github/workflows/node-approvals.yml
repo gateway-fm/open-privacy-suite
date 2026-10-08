@@ -47,7 +47,7 @@ jobs:
           bash -n scripts/reth-demo.sh
           python3 -m unittest discover -s poc/reth-signed-approvals -p test_docker_demo.py
           docker compose --env-file /dev/null -f docker-compose.reth-demo.yml config --quiet
-      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         if: matrix.node == 'besu'
         with:
           distribution: temurin
