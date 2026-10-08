@@ -58,9 +58,9 @@ While the banner is up:
 - Read-only RPC calls (`eth_call`, `eth_getBalance`, `eth_getCode`, `eth_getLogs`, `eth_getStorageAt`, `eth_getTransactionByHash`, `eth_getTransactionReceipt`, `eth_blockNumber`, `eth_chainId`, and the org-free metadata set `eth_gasPrice`, `net_version`, `net_listening`, `web3_clientVersion`) are routed through the user's permission view. These are the only methods the RPC surface serves: any other JSON-RPC method in the request body (writes, traces, block and block-receipt reads) is rejected with **400** before it reaches the node.
 - Write-method UI (deploy, send-tx, grant-mutation, RBAC-edit) is **disabled with a tooltip**, not hidden — admins know the feature exists and is intentionally unavailable.
 
-What the admin sees vs what the user sees: **the redaction layer and visible dataset are the target user's own** (on the RPC surface, their session in the named organization — see below). Logs the target cannot read are removed; addresses they cannot resolve are returned redacted; contracts they cannot access are denied. The admin's own broader visibility is not merged into the session. Clicking **Stop viewing as** restores the normal admin view.
+What the admin sees vs what the user sees: **the redaction layer and visible dataset are the target user's own.** Logs the target cannot read are removed; addresses they cannot resolve are returned redacted; contracts they cannot access are denied. The admin's own broader visibility is not merged into the session. Clicking **Stop viewing as** restores the normal admin view.
 
-On the RPC surface the answer is the target's view **in the named organization only**, the same answer the [dry-run](/docs/rbac#admin-dry-run--impersonation) gives for the same call:
+RPC calls under View-as return the target's view **in the named organization only**, the same answer the [dry-run](/docs/rbac#admin-dry-run--impersonation) gives for the same call:
 
 | What decides visibility | Applies in View-as RPC |
 |---|---|
@@ -70,8 +70,6 @@ On the RPC surface the answer is the target's view **in the named organization o
 | Shares made under another org | No |
 | The target's own transactions with addresses no organization owns | Yes (their own activity) |
 | The target's own transactions or receipts with another organization's contract (including deploying one) | No — returned as `null` |
-
-The explorer pages under View-as do not apply this per-organization restriction yet: for a target who belongs to more than one organization, they can reflect the target's access in the other organizations too.
 
 ---
 

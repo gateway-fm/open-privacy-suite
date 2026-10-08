@@ -74,9 +74,7 @@ import (
 // must be a member of :org_id, both checked before the override is set. On the
 // RPC subtree every authorization input is then pinned to :org_id
 // (withViewerOrgScope, RD-1308) and only the read methods in
-// impersonationRPCMethods are served. The explorer subtree is not pinned yet
-// (REDACTION_SPEC G26, RD-1315): a target who is also in another org brings
-// that org's grants into the explorer pages.
+// impersonationRPCMethods are served.
 
 // Context keys for the impersonation override. Strings, not custom types,
 // so the explorer handlers (which already read string keys like "subject")

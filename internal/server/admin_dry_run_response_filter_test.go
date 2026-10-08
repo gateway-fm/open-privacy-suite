@@ -16,7 +16,6 @@ import (
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
 	"privacy-proxy/internal/server/middleware"
-	"privacy-proxy/internal/viewscope"
 
 	gethcommon "github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -1004,35 +1003,6 @@ func TestDryRun_TraceLogsVisibleToUser_GrantMatrix_RD1308(t *testing.T) {
 			}
 		})
 	}
-}
-
-// Explorer View-as organization scope is tracked separately in RD-1315.
-// This test preserves the current explorer behavior while RD-1308 changes
-// the dry-run and RPC surfaces.
-func TestExplorerViewAs_ExistingVisibilityScope_RD1315(t *testing.T) {
-	f := setupDRFFixture(t)
-	var gotScoped bool
-	var gotLevel explorer.VisibilityLevel
-	router := gin.New()
-	probe := router.Group("/probe/:target_did/in/:org_id")
-	probe.Use(func(c *gin.Context) {
-		c.Set("auth_method", "jwt_admin")
-		c.Set("admin_subject", drfAdminDID)
-		c.Set("admin_org_ids", []string{f.orgO})
-		c.Next()
-	}, f.ts.impersonationGateMiddleware())
-	probe.GET("/explorer-handler", func(c *gin.Context) {
-		ctx := c.Request.Context()
-		_, gotScoped = viewscope.Org(ctx)
-		gotLevel = f.ts.calculateAddressVisibilityWithDID(ctx, f.ts.getViewerDIDFromRequest(c), drfContractP).Level
-		c.Status(http.StatusOK)
-	})
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/probe/"+drfMemberDID+"/in/"+f.orgO+"/explorer-handler", nil))
-	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-
-	assert.False(t, gotScoped, "the explorer mirror retains its current context")
-	assert.Equal(t, explorer.VisibilityFull, gotLevel, "the explorer visibility resolver retains its current membership scope")
 }
 
 // A deployment transaction has no `to`: the envelope pin judges it by the

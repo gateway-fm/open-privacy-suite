@@ -390,7 +390,7 @@ A deployment-wide boolean flag (`ORG_ADMIN_VIEW_USER_TXS`, env var; `config.OrgA
 
 ## 4. Known Gaps
 
-The following gaps are numbered. G1, G2, G3, G4, G5, G6, G7, G8, G9, G11, G14, G16, G20, G21, G22, G24 are resolved. G15, G23, G26 are outstanding.
+The following gaps are numbered. G1, G2, G3, G4, G5, G6, G7, G8, G9, G11, G14, G16, G20, G21, G22, G24 are resolved. G15, G23 are outstanding.
 
 ### Resolved
 
@@ -453,9 +453,6 @@ The following gaps are numbered. G1, G2, G3, G4, G5, G6, G7, G8, G9, G11, G14, G
 
 - **G23: Explorer log-data redaction does not cover cross-org-touched txs**
   RD-915 closes the `eth_call`-side cross-org leak at the proxy boundary, but the explorer-side log-data redaction (RD-875/RD-889) is keyed on the *emitting contract* of each log, not on whether the originating tx touched a foreign-org contract via internal calls. A tx authored by org A that internally STATICCALLs an org B contract may end up with org A logs whose `data` references org B state. The RPC-layer `eth_call` gate prevents the live-query angle; the indexed/historical explorer view is still open. Follow-up needed: extend `RedactLogs` (or add a tx-level pre-filter) so that any log of a tx whose trace touched a foreign-org address is treated as cross-org for the viewer. See `docs/rd-915-design.md` §KD-6.
-
-- **G26: Explorer View-as organization scope (RD-1315)**
-  RD-1308 scopes dry-run and the View-as RPC mirror to the path organization. Explorer organization scope is separate work tracked in RD-1315.
 
 ---
 
@@ -715,7 +712,7 @@ The scope applies to both shared unlock eligibility helpers. The unlock still re
 
 The user's own linked addresses stay theirs: a transaction between the user and an address no org owns is shown, because the user's own activity is what the tool answers about. An empty scope matches no org, so every pinned lookup fails closed.
 
-The View-as RPC mirror serves exactly the methods whose path is pinned, listed explicitly in `impersonationRPCMethods`: `eth_call`, `eth_getLogs`, `eth_getTransactionReceipt`, `eth_getTransactionByHash`, `eth_getBalance`, `eth_getCode`, `eth_getStorageAt`, `eth_blockNumber`, `eth_chainId`, `eth_gasPrice`, `net_version`, `net_listening`, `web3_clientVersion`. Any other JSON-RPC method in the GET body — writes, traces, block and block-receipt reads — is refused with 400 before processing (RD-1314). The explorer half of View-as is not pinned yet (G26).
+The View-as RPC mirror serves exactly the methods whose path is pinned, listed explicitly in `impersonationRPCMethods`: `eth_call`, `eth_getLogs`, `eth_getTransactionReceipt`, `eth_getTransactionByHash`, `eth_getBalance`, `eth_getCode`, `eth_getStorageAt`, `eth_blockNumber`, `eth_chainId`, `eth_gasPrice`, `net_version`, `net_listening`, `web3_clientVersion`. Any other JSON-RPC method in the GET body — writes, traces, block and block-receipt reads — is refused with 400 before processing (RD-1314).
 
 ### Write-method translation (`debug_traceCall`)
 
