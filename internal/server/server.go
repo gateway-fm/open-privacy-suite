@@ -1322,7 +1322,7 @@ const MaxRequestBodySize = 1 << 20 // 1MB
 // @Description
 // @Description  Ordinary upstream JSON-RPC errors retain their JSON-RPC error member. Transport, access and rate-limit failures use the non-200 statuses below. `POST /` and `POST /rpc` are the same operation.
 // @Description
-// @Description  Client traces return only validated call-tree frames. The viewer's contract, function and argument permissions apply to returned calls, including delegated storage contexts. Trace or upstream failures return opaque non-200 errors.
+// @Description  Client traces return only validated call-tree frames. The viewer's contract, function and argument permissions apply to returned calls, including delegated storage contexts. Internal-call values (a nested call's input, value, output and revert reason) are returned only to a viewer who may read the storage of the contract that produced them; otherwise they are omitted and named in the call's `redacted` array. Trace or upstream failures return opaque non-200 errors.
 // @Tags         JSON-RPC
 // @Accept       json
 // @Produce      json

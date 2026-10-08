@@ -383,7 +383,7 @@ Group with `allowed_methods: ["linea_estimateGas", "linea_*"]`:
 | `linea_getProof` | none (no explicit entry) | true (via `linea_*` → wildcard match) | passthrough, no redaction |
 | `linea_sendTransaction` | none | false (wildcard match blocked by deny) | rejected with "method not allowed" |
 | `linea_signFoo` | none | false (deny `linea_sign*` glob) | rejected |
-| `debug_traceTransaction` | n/a | only if listed in the group's `allowed_methods` (or `*`) | allowlist-gated, then replayed only for the transaction's sender, recipient, an admin of the called contract, or a shared recipient; returns the call tree only (other tracers rejected), and only if the caller can access every contract in it |
+| `debug_traceTransaction` | n/a | only if listed in the group's `allowed_methods` (or `*`) | allowlist-gated, then replayed only for the transaction's sender, recipient, an admin of the called contract, or a shared recipient; returns the call tree only (other tracers rejected), and only if the caller can access every contract in it; internal-call values only to callers who may read the producing contract's storage |
 
 A ready-to-use example is provided in `rpc-namespaces.example.json` — copy and customize it:
 

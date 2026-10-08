@@ -729,6 +729,9 @@ func (p *JSONRPCProcessor) processDebugTrace(ctx context.Context, req *ProcessRe
 	// 5. Forward the proxy-built callTracer request, validate the EXACT payload
 	//    it returns, and return it. Single upstream trace → no TOCTOU.
 	rawResult, perr := p.forwardAndValidateTrace(ctx, req, plan)
+	if perr == nil {
+		rawResult, perr = p.redactClientTraceValues(ctx, req, plan.orgIDs, rawResult)
+	}
 	if perr != nil {
 		req.denialReason = perr.Reason
 		p.recordRPCOutcome(req.Method, "trace_denied", start)
@@ -1076,6 +1079,47 @@ func (p *JSONRPCProcessor) forwardAndValidateTrace(ctx context.Context, req *Pro
 		return nil, perr
 	}
 	return sanitized, nil
+}
+
+// redactClientTraceValues hides each internal-call value the viewer may not
+// see. A nested frame's input and value were produced by its parent's storage
+// context, and its output and revert data by its own; each is shown only if
+// the viewer may read that contract's private storage, decided exactly as a
+// direct eth_getStorageAt would be in the pinned org. The top frame and the
+// tree shape are always shown. Fail-closed: a lookup error refuses the trace.
+func (p *JSONRPCProcessor) redactClientTraceValues(ctx context.Context, req *ProcessRequest, orgIDs map[string]bool, sanitized json.RawMessage) (json.RawMessage, *ProcessError) {
+	unavailable := &ProcessError{StatusCode: http.StatusForbidden, Message: traceDenyTracerError, Reason: ReasonTracingUnavailable}
+	owners, err := tracer.TraceValueOwners(sanitized)
+	if err != nil {
+		slog.Warn("jsonrpc: trace value owners unreadable", "method", req.Method, "err", err)
+		return nil, unavailable
+	}
+	readable := make(map[string]bool, len(owners))
+	if len(owners) > 0 {
+		orgID := ""
+		for id, pinned := range orgIDs {
+			if pinned {
+				orgID = id
+			}
+		}
+		if len(orgIDs) != 1 || orgID == "" {
+			return nil, unavailable
+		}
+		for _, addr := range owners {
+			ok, cErr := p.rbacAccessCtrl.CanReadPrivateStorage(ctx, req.UserID, orgID, addr, req.BypassPermsCache)
+			if cErr != nil {
+				slog.Warn("jsonrpc: trace value visibility check failed", "method", req.Method, "err", cErr)
+				return nil, &ProcessError{StatusCode: http.StatusInternalServerError, Message: traceDenyTracerError, Reason: ReasonInternalError}
+			}
+			readable[addr] = ok
+		}
+	}
+	out, err := tracer.RedactStrictCallTrace(sanitized, readable)
+	if err != nil {
+		slog.Warn("jsonrpc: trace value redaction failed", "method", req.Method, "err", err)
+		return nil, unavailable
+	}
+	return out, nil
 }
 
 // validateClientTraceFrameAccess applies the viewer's existing function and

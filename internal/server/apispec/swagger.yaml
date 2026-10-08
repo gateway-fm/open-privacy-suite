@@ -12908,7 +12908,7 @@ paths:
 
         Ordinary upstream JSON-RPC errors retain their JSON-RPC error member. Transport, access and rate-limit failures use the non-200 statuses below. `POST /` and `POST /rpc` are the same operation.
 
-        Client traces return only validated call-tree frames. The viewer's contract, function and argument permissions apply to returned calls, including delegated storage contexts. Trace or upstream failures return opaque non-200 errors.
+        Client traces return only validated call-tree frames. The viewer's contract, function and argument permissions apply to returned calls, including delegated storage contexts. Internal-call values (a nested call's input, value, output and revert reason) are returned only to a viewer who may read the storage of the contract that produced them; otherwise they are omitted and named in the call's `redacted` array. Trace or upstream failures return opaque non-200 errors.
       parameters:
       - description: Organization the access decision resolves against (only on /rpc/{org_id})
         in: path
@@ -13002,7 +13002,7 @@ paths:
 
         Ordinary upstream JSON-RPC errors retain their JSON-RPC error member. Transport, access and rate-limit failures use the non-200 statuses below. `POST /` and `POST /rpc` are the same operation.
 
-        Client traces return only validated call-tree frames. The viewer's contract, function and argument permissions apply to returned calls, including delegated storage contexts. Trace or upstream failures return opaque non-200 errors.
+        Client traces return only validated call-tree frames. The viewer's contract, function and argument permissions apply to returned calls, including delegated storage contexts. Internal-call values (a nested call's input, value, output and revert reason) are returned only to a viewer who may read the storage of the contract that produced them; otherwise they are omitted and named in the call's `redacted` array. Trace or upstream failures return opaque non-200 errors.
       parameters:
       - description: Organization the access decision resolves against (only on /rpc/{org_id})
         in: path
