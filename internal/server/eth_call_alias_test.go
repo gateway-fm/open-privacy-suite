@@ -80,11 +80,12 @@ func TestEthCallTracing_UnrelatedMethodStillBypasses(t *testing.T) {
 		"only methods that resolve to eth_call go through this gate; other aliases are out of scope")
 }
 
-func TestEthCallTracing_WildcardPassthroughBypasses(t *testing.T) {
-	// Per RD-911, a method that matches ONLY a wildcard (no explicit
-	// alias) passes through verbatim and opts out of RBAC + redaction.
-	// Tracing must also not fire — opting into wildcards is opting
-	// into operator-managed scope.
+func TestEthCallTracing_UnaliasedMethodIsNotTraced(t *testing.T) {
+	// The eth_call trace gates only methods that resolve to eth_call /
+	// eth_estimateGas. An unaliased chain method never gets here on /rpc
+	// unless it is an operator passthrough method (CheckAccess refuses every
+	// other unmodelled method), and passthrough is forwarded unfiltered and
+	// untraced by design — the operator owns its scope.
 	addrA := fixedAddr(0xaa)
 	scripted := newScriptedTracer(t, traceFrame{
 		Type: "CALL", From: fixedAddr(0xee), To: addrA,
@@ -93,7 +94,7 @@ func TestEthCallTracing_WildcardPassthroughBypasses(t *testing.T) {
 	ctx := context.Background()
 	did, _ := callerSameOrg(t, ctx, ts, addrA)
 
-	// No alias registered — name happens to resemble a wildcard match.
+	// No alias registered.
 	req := &ProcessRequest{
 		UserID: did,
 		Method: "linea_someBespokeMethod",

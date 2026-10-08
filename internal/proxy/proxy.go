@@ -168,35 +168,27 @@ func IsBatchRequest(body []byte) bool {
 	return len(trimmed) > 0 && trimmed[0] == '['
 }
 
-// ParseMethod extracts the method name from a JSON-RPC request
+// ParseMethod extracts the method name from a JSON-RPC request. It applies
+// the same unambiguity rules as ParseEnvelope.
 func ParseMethod(body []byte) (string, error) {
-	// Check for batch request first
-	if IsBatchRequest(body) {
-		return "", ErrBatchRequest
+	env, err := ParseEnvelope(body)
+	if err != nil {
+		return "", err
 	}
-
-	var req JSONRPCRequest
-	if err := json.Unmarshal(body, &req); err != nil {
-		return "", fmt.Errorf("failed to parse JSON-RPC request: %w", err)
-	}
-
-	return req.Method, nil
+	return env.Method, nil
 }
 
 // ParseRequest extracts method and params from a JSON-RPC request.
-// Returns ErrBatchRequest if the request is a batch (array) request.
+// Returns ErrBatchRequest if the request is a batch (array) request and
+// ErrAmbiguousRequest if its member names can be read more than one way.
+// A caller that forwards the request must forward ParseEnvelope's Canonical
+// body, not the bytes it parsed.
 func ParseRequest(body []byte) (string, []interface{}, error) {
-	// Check for batch request first
-	if IsBatchRequest(body) {
-		return "", nil, ErrBatchRequest
+	env, err := ParseEnvelope(body)
+	if err != nil {
+		return "", nil, err
 	}
-
-	var req JSONRPCRequest
-	if err := json.Unmarshal(body, &req); err != nil {
-		return "", nil, fmt.Errorf("failed to parse JSON-RPC request: %w", err)
-	}
-
-	return req.Method, req.Params, nil
+	return env.Method, env.Params, nil
 }
 
 // HealthStatus contains the health check result for the target node

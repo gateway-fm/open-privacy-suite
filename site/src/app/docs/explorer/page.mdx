@@ -192,9 +192,10 @@ However, **individual user wallets (EOAs) remain private** even to org admins an
 |---|---|---|
 | Contract calls (user → contract) | Yes, but sender shows as `[PRIVATE]` | Contract is Full, user EOA is Hidden |
 | Contract-to-contract interactions | Fully visible | Both sides are org contracts (Full) |
-| Contract deployments from user EOAs | No (dropped) | Deployer EOA is Hidden, `to` is NULL |
+| Contract deployments from user EOAs | No (dropped), unless one of the deployment's token transfers involves an org contract (last row) | Deployer EOA is Hidden, `to` is NULL |
 | User-to-user ETH transfers | No (dropped) | Both sides are Hidden EOAs |
 | Token mints to user EOAs | Visible, but recipient shows as `[PRIVATE]` | From (zero addr) is public, to (EOA) is Hidden |
+| A user's transaction with a token transfer into or out of an org contract (the transaction and that transfer) | Yes, but the sender's wallet shows as `[PRIVATE]` (so do contracts the admin cannot see, except a transfer row's token address); calldata and nonce are cleared, and value too unless `ORG_ADMIN_VIEW_USER_TXS` is on | The transaction is kept so the transfer and its transaction agree; keeping it never reveals the sender's wallet. Other transfers and internal calls in the same transaction follow the rows above. A member who is not an admin gets such a transaction only when they can see both sides of one of its transfers (for example a mint into, or a burn from, a contract they hold a grant on) and their grant on the token includes event access |
 
 To see user EOA activity, an org admin would need explicit disclosure grants from individual users. This is a deliberate privacy boundary — org admins manage contracts, not user wallets.
 

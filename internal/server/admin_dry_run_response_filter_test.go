@@ -762,14 +762,21 @@ func TestDryRun_OwnTxWithOtherOrgContract_IsNull_RD1308(t *testing.T) {
 
 // The View-as RPC mirror serves only the methods whose read path is pinned:
 // writes, traces and block-level reads are refused before they reach the node.
+// The set is checked on the canonical method spelling (RD-1303), so a case
+// variant of a refused method is refused too.
 func TestImpersonationRPC_RefusesMethodsOutsideTheReadSet_RD1308(t *testing.T) {
 	f := setupDRFFixture(t)
-	for _, method := range []string{
-		"eth_sendTransaction", "eth_sendRawTransaction", "debug_traceTransaction",
-		"eth_getBlockReceipts", "eth_getBlockByNumber", "ETH_GETTRANSACTIONBYHASH",
+	for _, tc := range []struct{ method, canonical string }{
+		{"eth_sendTransaction", "eth_sendTransaction"},
+		{"eth_sendRawTransaction", "eth_sendRawTransaction"},
+		{"debug_traceTransaction", "debug_traceTransaction"},
+		{"eth_getBlockReceipts", "eth_getBlockReceipts"},
+		{"eth_getBlockByNumber", "eth_getBlockByNumber"},
+		{"ETH_SENDTRANSACTION", "eth_sendTransaction"},
+		{"Debug_TraceTransaction", "debug_traceTransaction"},
 	} {
-		t.Run(method, func(t *testing.T) {
-			body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": method, "params": []any{"0x1"}})
+		t.Run(tc.method, func(t *testing.T) {
+			body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": tc.method, "params": []any{"0x1"}})
 			require.NoError(t, err)
 			req := httptest.NewRequest(http.MethodGet, impersonatePath(drfMemberDID, f.orgO, "/rpc"), bytes.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
@@ -777,12 +784,37 @@ func TestImpersonationRPC_RefusesMethodsOutsideTheReadSet_RD1308(t *testing.T) {
 			w := httptest.NewRecorder()
 			f.router.ServeHTTP(w, req)
 			assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
-			assert.False(t, f.reached(method), "%s reached the node through the read-only mirror", method)
+			assert.False(t, f.reached(tc.method), "%s reached the node through the read-only mirror", tc.method)
+			assert.False(t, f.reached(tc.canonical), "%s reached the node through the read-only mirror", tc.canonical)
 		})
 	}
 	// The read set still works.
 	f.serve("eth_chainId", []byte(`{"jsonrpc":"2.0","id":1,"result":"0x1"}`))
 	assert.Equal(t, `"0x1"`, string(drfResult(t, []byte(f.mirror(t, "eth_chainId", []any{})))))
+}
+
+// A case variant of a read-set method is that method (RD-1303 canonical
+// envelope): the mirror forwards the canonical spelling and answers through
+// the same pinned filter, so the member's own transaction with an org-P
+// contract stays out of an org-O view while an org-O one is shown.
+func TestImpersonationRPC_CaseVariantUsesThePinnedReadPath_RD1308(t *testing.T) {
+	f := setupDRFFixture(t)
+	const (
+		hP = "0x1308000000000000000000000000000000000000000000000000000000000031"
+		hO = "0x1308000000000000000000000000000000000000000000000000000000000032"
+	)
+
+	f.serve(rbac.MethodGetTransactionByHash, drfEnvelope(t, drfTx(drfMemberEOA, drfContractP, hP)))
+	f.resetReached()
+	raw := f.mirror(t, "ETH_GETTRANSACTIONBYHASH", []any{hP})
+	assert.Equal(t, "null", string(drfResult(t, []byte(raw))), "the member's org-P tx appeared in an org-O view: %s", raw)
+	assert.True(t, f.reached(rbac.MethodGetTransactionByHash), "the canonical spelling must be forwarded")
+	assert.False(t, f.reached("ETH_GETTRANSACTIONBYHASH"), "the caller's spelling must not be forwarded")
+
+	// Positive control: the member's own tx with an org-O contract.
+	f.serve(rbac.MethodGetTransactionByHash, drfEnvelope(t, drfTx(drfMemberEOA, drfContractO, hO)))
+	raw = f.mirror(t, "ETH_GETTRANSACTIONBYHASH", []any{hO})
+	assert.Contains(t, strings.ToLower(raw), bare(drfCalldata)[:40], "own org-O tx must stay visible: %s", raw)
 }
 
 // visibleTo unlock and the ordinary param-rule fallback both follow the pin:

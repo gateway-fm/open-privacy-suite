@@ -154,7 +154,7 @@ func TestBuildVisibilityFilter_UnionsTransferParticipantTxHashes_RD1009(t *testi
 	require.NoError(t, err)
 
 	// ---- Run the visibility filter as the admin viewer.
-	filter := srv.buildVisibilityFilter(ctx, adminDID)
+	filter := srv.buildVisibilityFilter(ctx, adminDID, srv.isViewerAdmin(ctx, adminDID))
 	require.NotNil(t, filter, "filter should never be nil")
 	require.True(t, filter.AllPrivate, "filter must be in allowlist mode")
 

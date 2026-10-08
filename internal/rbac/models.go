@@ -259,9 +259,9 @@ func (f *EventRulesField) UnmarshalJSON(data []byte) error {
 // EventRules can optionally restrict which event logs are visible.
 // Claims are inherited from the group's GroupAccess.claims - grants just link groups to contracts.
 type ContractGrant struct {
-	ID         string           `json:"id"`
-	ContractID string           `json:"contract_id"`
-	GroupID    string           `json:"group_id"`
+	ID         string `json:"id"`
+	ContractID string `json:"contract_id"`
+	GroupID    string `json:"group_id"`
 	// No omitempty: a non-nil empty slice ([]) means "deny all functions"
 	// (events-only grant) and MUST be distinguishable in the API response from
 	// nil ("all functions"). Mirrors EventRules below, which is likewise always
@@ -386,6 +386,43 @@ func (r *AccessCheckRequest) EffectiveMethod() string {
 	return r.Method
 }
 
+// methodsToJudge returns the distinct method names a semantic floor (the
+// Multicall detector, the historical-state guard, the storage-slot tier, the
+// missing-target deny, the basic-address carve-out's storage-read exclusion,
+// the anonymous deployment and storage-read denies) must hold for: the alias
+// target, which declares what a chain-specific method does, and the raw
+// method, which is the name the node receives. They differ only when
+// an operator alias is configured. Checking the target keeps an alias from
+// skipping its target's checks; checking the raw method is defence in depth
+// for a standard method used as an alias key, which config loading already
+// refuses (config.parseExplicitMethods).
+func (r *AccessCheckRequest) methodsToJudge() []string {
+	if eff := r.EffectiveMethod(); eff != r.Method {
+		return []string{eff, r.Method}
+	}
+	return []string{r.Method}
+}
+
+// anyMethodToJudge reports whether pred holds for any of methodsToJudge.
+func (r *AccessCheckRequest) anyMethodToJudge(pred func(method string) bool) bool {
+	for _, m := range r.methodsToJudge() {
+		if pred(m) {
+			return true
+		}
+	}
+	return false
+}
+
+// historicalStateQuery applies IsHistoricalStateQuery to methodsToJudge.
+func (r *AccessCheckRequest) historicalStateQuery() (bool, string) {
+	for _, m := range r.methodsToJudge() {
+		if isHistorical, reason := IsHistoricalStateQuery(m, r.Params); isHistorical {
+			return true, reason
+		}
+	}
+	return false, ""
+}
+
 // AccessCheckResult represents the result of an access check.
 //
 // SECURITY (RD-934): The Reason field is an OPERATOR-ONLY diagnostic.
@@ -404,13 +441,13 @@ func (r *AccessCheckRequest) EffectiveMethod() string {
 // that consumes this field should slog it for the operator and
 // respond with a generic opaque message to the client.
 type AccessCheckResult struct {
-	Allowed        bool    `json:"allowed"`
-	AuthRequired   bool    `json:"auth_required,omitempty"` // True when denial is due to missing authentication (401 vs 403)
-	Reason         string  `json:"reason,omitempty"`
-	OrgID          string  `json:"org_id,omitempty"`  // Resolved organization ID
-	UserID         string  `json:"user_id,omitempty"` // Internal user ID (UUID)
-	RPCAPIKey      string  `json:"-"`                 // API key for upstream RPC proxy (excluded from JSON — sensitive)
-	Claims         []Claim `json:"claims,omitempty"`
+	Allowed      bool    `json:"allowed"`
+	AuthRequired bool    `json:"auth_required,omitempty"` // True when denial is due to missing authentication (401 vs 403)
+	Reason       string  `json:"reason,omitempty"`
+	OrgID        string  `json:"org_id,omitempty"`  // Resolved organization ID
+	UserID       string  `json:"user_id,omitempty"` // Internal user ID (UUID)
+	RPCAPIKey    string  `json:"-"`                 // API key for upstream RPC proxy (excluded from JSON — sensitive)
+	Claims       []Claim `json:"claims,omitempty"`
 }
 
 // GroupWithAccess combines a Group with its access settings.
@@ -468,54 +505,22 @@ type ContractGrantSummary struct {
 }
 
 // HasMethod checks if the effective permissions allow a specific method.
-// "*" in AllowedMethods means all methods are permitted (used by admin auto-grant).
 //
-// Glob entries of shape "prefix*" are honored only when a global wildcard
-// namespace is registered with the same prefix AND that wildcard would allow
-// the method (deny list checked there). This prevents groups from inventing
-// prefixes the operator hasn't enabled in EXTRA_RPC_NAMESPACES.
-//
-// M8 (security audit): a registered global wildcard's Deny list now
-// blocks the method regardless of whether the group's AllowedMethods
-// has the method enumerated explicitly. Pre-fix, an operator who
-// registered Wildcard{Prefix:"linea_", Deny:["linea_sendTransaction"]}
-// could be defeated by a tier-1/2 admin listing `linea_sendTransaction`
-// explicitly in a group's AllowedMethods — the explicit-match
-// short-circuited before the wildcard Deny consultation. Only
-// GlobalBlockedMethods was a hard floor. Now Wildcards[].Deny is
-// also a hard floor (consulted before the explicit-allow short-circuit).
+// Default-deny: a method the proxy would never forward (IsForwardableMethod —
+// not a catalog method, not an alias to one, not an operator passthrough
+// method) is refused whatever the allowlist says. Otherwise the method must be
+// listed by exact name, or the list must hold a legacy "*" entry and the
+// method must be in the "*" expansion (InWildcardExpansion: built-in methods
+// and catalog aliases, never passthrough). "prefix*" glob entries grant
+// nothing.
 func (e *EffectivePermissions) HasMethod(method string) bool {
-	// Hard-floor check: if any registered global wildcard covers this
-	// method's prefix and the wildcard's Deny list rejects the method,
-	// it is denied — even if the group explicitly enumerates it.
-	if IsDeniedByWildcard(method) {
+	if !IsForwardableMethod(method) {
 		return false
 	}
-
-	if slices.Contains(e.AllowedMethods, "*") || slices.Contains(e.AllowedMethods, method) {
+	if slices.Contains(e.AllowedMethods, method) {
 		return true
 	}
-	for _, entry := range e.AllowedMethods {
-		if entry == "*" || !strings.HasSuffix(entry, "*") {
-			continue
-		}
-		groupPrefix := strings.TrimSuffix(entry, "*")
-		if groupPrefix == "" {
-			continue // bare "*" handled above; an empty prefix would match everything
-		}
-		if !strings.HasPrefix(method, groupPrefix) {
-			continue
-		}
-		// The group glob is honored only if a registered global wildcard
-		// covers this method (so the deny list and operator opt-in apply).
-		if !HasWildcardForPrefix(groupPrefix) {
-			continue
-		}
-		if MatchWildcard(method) != nil {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(e.AllowedMethods, "*") && InWildcardExpansion(method)
 }
 
 // GetContractAccess returns the access for a specific contract address.

@@ -104,16 +104,17 @@ func TestCrossRedactorRowSurvival_RD1009(t *testing.T) {
 	if gotTxs[0].Hash != sharedTxHash {
 		t.Errorf("wrong tx surfaced: got %q, want %q", gotTxs[0].Hash, sharedTxHash)
 	}
-	// Because the tx hash is now in VisibleTxHashes (mimicking the fix), the
-	// existing visibleTo override fires and reveals tx.from / tx.to as their
-	// real addresses. This is *privacy-equivalent*: the surviving transfer
-	// row already exposes the same wallet via TokenTransfer.From and the same
-	// token contract via TokenTransfer.TokenAddress — no new disclosure.
-	if gotTxs[0].From != walletEOA {
-		t.Errorf("expected From=walletEOA under visibleTo override, got %q", gotTxs[0].From)
+	// RD-1316: the union keeps the row but reveals nothing. The transfer row
+	// renders the wallet as [PRIVATE] too, so revealing it here would be new
+	// disclosure (the pre-RD-1316 "privacy-equivalent" argument was wrong).
+	if gotTxs[0].From != "[PRIVATE]" {
+		t.Errorf("union-kept tx must not reveal the wallet, got From=%q", gotTxs[0].From)
 	}
-	if gotTxs[0].To == nil || *gotTxs[0].To != tokenContract {
-		t.Errorf("expected To=tokenContract under visibleTo override, got %v", gotTxs[0].To)
+	if gotTxs[0].To == nil || *gotTxs[0].To != "[PRIVATE]" {
+		t.Errorf("union-kept tx must not reveal the token contract, got To=%v", gotTxs[0].To)
+	}
+	if gotTransfers[0].From != "[PRIVATE]" {
+		t.Errorf("the transfer row keeps the wallet private too, got %q", gotTransfers[0].From)
 	}
 
 	// ---- Invariant: surviving transfer tx-hashes ⊆ surviving tx hashes.

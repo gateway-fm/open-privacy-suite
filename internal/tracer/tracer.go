@@ -42,6 +42,11 @@ type CallTarget struct {
 	From  string
 	To    string
 	Depth int
+	// StorageAddress is derived from the strict call tree for client traces.
+	// Delegated frames retain their parent's storage context.
+	StorageAddress string
+	// Input retains the strict client frame's calldata for permission checks.
+	Input string
 }
 
 // Tracer provides debug_traceCall functionality for an Ethereum node.

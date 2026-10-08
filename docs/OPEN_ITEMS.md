@@ -331,15 +331,15 @@ Nothing prevents an org member with `deploy` claim from deploying a contract tha
 
 **Bottom line:** The proxy is an access control layer, not a data classification layer. It controls who can interact with which contracts, not what data contracts choose to expose.
 
-### 10f. eth_getStorageAt uses tiered access
+### 10f. eth_getStorageAt and eth_getProof use tiered access
 
-`eth_getStorageAt` uses **tiered access** based on the `admin` claim:
+`eth_getStorageAt` and `eth_getProof` (and aliases of them) use **tiered access** based on the `admin` claim. For `eth_getProof` the tier applies to every requested storage key; an empty key list (account-only proof) is allowed. See REDACTION_SPEC.md §9 for the accepted residuals of allowed proofs.
 
 | **User** | **Access** |
 | --- | --- |
 | `admin` claim (tier 2 org admin, tier 3 contract admin on granted contracts) | All storage slots |
-| Any other user with `eth_getStorageAt` in AllowedMethods | EIP-1967 and EIP-2535 well-known proxy infrastructure slots only |
-| User without `eth_getStorageAt` in AllowedMethods | Blocked entirely |
+| Any other user with the method in AllowedMethods | EIP-1967 and EIP-2535 well-known proxy infrastructure slots only |
+| User without the method in AllowedMethods | Blocked entirely |
 
 However, a contract's public view functions can read and return the same storage data. The tiered access only prevents reading storage of contracts without view functions.
 

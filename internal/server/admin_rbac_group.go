@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -94,6 +95,14 @@ const (
 	// An org-admin group with no allowed methods grants all claims but zero callable
 	// methods — silently useless (RD-968 Gap 3). Require an explicit method allowlist.
 	errOrgAdminMethodsRequired = "org-admin groups must have at least one allowed method"
+
+	// allowed_methods may hold only methods the proxy forwards. Opaque on
+	// purpose: the message does not echo the rejected name.
+	errUnsupportedAllowedMethod = "allowed_methods contains an unsupported RPC method"
+
+	// Operator passthrough methods are forwarded unfiltered, across tenants,
+	// so granting one is a platform decision, not tenant management.
+	errPassthroughAdminTierOnly = "passthrough methods can only be granted with an admin-tier token"
 )
 
 // Group handlers
@@ -611,7 +620,7 @@ func (s *Server) getGroupAccess(c *gin.Context) {
 // setGroupAccess replaces a group's RPC access settings.
 //
 // @Summary      Set group access
-// @Description  Creates or replaces the group's access settings. Body: allowed_methods ([]string; "*" expands to the full method list), claims ([]string of operational claims: deploy/upgrade/admin), rpc_api_key (encrypted at rest, never returned in clear), verbose_errors. is_system group access can only be modified by the full admin token (X-Admin-Token; unlike the other gates here, the operator token is rejected for is_system too). Reshaping an is_org_admin group's access is rejected for a tier-2 org-admin JWT (an admin-tier token — full admin or operator — is required); reshaping a regular group's access is rejected for the operator token (tenant management is the org admin's job), which may reshape admin-tier groups (is_org_admin / is_org_readonly_admin) and the global default group. On is_org_admin groups claims must be empty and at least one method is required. The returned rpc_api_key is masked.
+// @Description  Creates or replaces the group's access settings. Body: allowed_methods ([]string of exact method names the proxy supports — built-in methods and operator-declared chain-specific methods; "*" is stored as its explicit expansion merged with the other listed entries, never literally; the anonymous system group accepts built-in methods only, listed by name; operator passthrough methods can be added only with an admin-tier token, a tier-2 org-admin JWT may keep or remove them), claims ([]string of operational claims: deploy/upgrade/admin), rpc_api_key (encrypted at rest, never returned in clear), verbose_errors. is_system group access can only be modified by the full admin token (X-Admin-Token; unlike the other gates here, the operator token is rejected for is_system too). Reshaping an is_org_admin group's access is rejected for a tier-2 org-admin JWT (an admin-tier token — full admin or operator — is required); reshaping a regular group's access is rejected for the operator token (tenant management is the org admin's job), which may reshape admin-tier groups (is_org_admin / is_org_readonly_admin) and the global default group. On is_org_admin groups claims must be empty and at least one method is required. The returned rpc_api_key is masked.
 // @Tags         Admin: RBAC
 // @Accept       json
 // @Produce      json
@@ -619,9 +628,9 @@ func (s *Server) getGroupAccess(c *gin.Context) {
 // @Param        group_id path string true "Group ID (UUID)"
 // @Param        request body apimodels.GroupAccessRequest true "access settings"
 // @Success      200 {object} rbac.GroupAccess
-// @Failure      400 {object} apimodels.APIError "invalid body, method/claim mismatch, or org-admin claim/method invariant violated"
+// @Failure      400 {object} apimodels.APIError "invalid body, unsupported method in allowed_methods, method/claim mismatch, or org-admin claim/method invariant violated"
 // @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
-// @Failure      403 {object} apimodels.APIError "source address not on the private network, group not in the path org, system-group access changed by non-super-admin, tier-2 JWT reshaping an org-admin group, or operator token reshaping a regular group"
+// @Failure      403 {object} apimodels.APIError "source address not on the private network, group not in the path org, system-group access changed by non-super-admin, tier-2 JWT reshaping an org-admin group, operator token reshaping a regular group, or tier-2 JWT adding a passthrough method"
 // @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/groups/{group_id}/access [put]
@@ -677,9 +686,59 @@ func (s *Server) setGroupAccess(c *gin.Context) {
 		return
 	}
 
+	// The anonymous (system) group gets catalog methods only — aliases and
+	// passthrough methods need an authenticated caller — and never "*":
+	// unauthenticated access is spelled out method by method.
+	isAnonymousGroup := group.IsSystem && group.ID == rbac.AnonymousGroupID
+	if isAnonymousGroup && slices.Contains(input.AllowedMethods, "*") {
+		respondBadRequestAndLog(c, errUnsupportedAllowedMethod,
+			"admin_rbac_group: setGroupAccess rejected '*' for the anonymous group", "group_id", groupID)
+		return
+	}
+
 	// Expand wildcard "*" in allowed_methods to the full explicit method list.
 	// The UI should never send "*" but the API accepts it for programmatic use.
 	input.AllowedMethods = rbac.ExpandWildcardMethods(input.AllowedMethods)
+
+	// Default-deny: store only methods the proxy forwards (catalog methods,
+	// operator aliases to them, operator passthrough methods). Unknown names,
+	// "prefix*" globs and aliases to unmodelled targets are rejected rather
+	// than stored.
+	for _, m := range input.AllowedMethods {
+		allowed := rbac.IsAssignableMethod(m)
+		if isAnonymousGroup {
+			allowed = rbac.IsCatalogMethod(m)
+		}
+		if !allowed {
+			respondBadRequestAndLog(c, errUnsupportedAllowedMethod,
+				"admin_rbac_group: setGroupAccess rejected unsupported method",
+				"group_id", groupID, "method", m)
+			return
+		}
+	}
+
+	// Check if access already exists
+	existing, err := s.db.GetGroupAccess(c.Request.Context(), groupID)
+	if err != nil {
+		respondInternalErrorAndLog(c, "failed to set group access",
+			"admin_rbac_group: GetGroupAccess failed", "group_id", groupID, "err", err)
+		return
+	}
+
+	// A passthrough method is answered by the node unfiltered — no per-address
+	// gate, no response filter — so it can expose every tenant's data. A
+	// tier-2 org-admin JWT may keep or drop one an admin-tier token granted,
+	// but not add one.
+	if c.GetString("auth_method") == "jwt_admin" {
+		for _, m := range input.AllowedMethods {
+			if rbac.IsPassthroughMethod(m) && (existing == nil || !slices.Contains(existing.AllowedMethods, m)) {
+				slog.Warn("admin_rbac_group: tier-2 caller tried to grant a passthrough method",
+					"group_id", groupID, "method", m)
+				c.JSON(http.StatusForbidden, gin.H{"error": errPassthroughAdminTierOnly})
+				return
+			}
+		}
+	}
 
 	// Expand claim hierarchy (admin → deploy + upgrade).
 	input.Claims = rbac.ExpandClaims(input.Claims)
@@ -723,14 +782,6 @@ func (s *Server) setGroupAccess(c *gin.Context) {
 			return
 		}
 		input.RPCAPIKey = &encrypted
-	}
-
-	// Check if access already exists
-	existing, err := s.db.GetGroupAccess(c.Request.Context(), groupID)
-	if err != nil {
-		respondInternalErrorAndLog(c, "failed to set group access",
-			"admin_rbac_group: GetGroupAccess failed", "group_id", groupID, "err", err)
-		return
 	}
 
 	access := &rbac.GroupAccess{
