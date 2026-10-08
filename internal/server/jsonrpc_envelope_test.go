@@ -225,8 +225,8 @@ func TestJSONRPCEnvelope_Authenticated_AmbiguousNeverForwarded(t *testing.T) {
 
 // TestJSONRPCEnvelope_SpecialPaths covers the methods with their own
 // processing branch (raw transactions, traces, rewritten block queries) and a
-// case-variant field inside a call object, which a Go-based node reads as the
-// field while the proxy's exact lookup does not see it.
+// case-variant field inside a call object, which is refused because the
+// proxy reads request fields by exact name only.
 func TestJSONRPCEnvelope_SpecialPaths(t *testing.T) {
 	h := setupEnvelopeHarness(t)
 	token, orgID := h.envelopeMember(t, "eth_call", "eth_sendRawTransaction", "debug_traceCall", "eth_getBlockByNumber")

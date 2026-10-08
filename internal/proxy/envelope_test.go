@@ -266,10 +266,9 @@ func TestParseEnvelope_ParamFieldCaseVariants(t *testing.T) {
 	}
 }
 
-// TestParseEnvelope_DataInputConflict: Geth and anvil execute `input` when a
-// call object carries both, while the proxy's selector check and trace read
-// `data` first. Differing values are flagged; equal values (web3.js sends
-// both) are not.
+// TestParseEnvelope_DataInputConflict: a call object that carries both `data`
+// and `input` must hold one calldata value. Differing values are flagged;
+// equal values (web3.js sends both) are not.
 func TestParseEnvelope_DataInputConflict(t *testing.T) {
 	cases := map[string]bool{
 		`[{"to":"0x0a","data":"0xa9059cbb","input":"0x095ea7b3"},"latest"]`:              false,
