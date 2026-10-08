@@ -49,9 +49,11 @@ const (
 	ReasonDeployClaimRequired = "deploy_claim_required"
 	// ReasonTraceAccessDenied: a debug_traceTransaction replay denied because
 	// the viewer is not a participant / admin-on-to / visibleTo recipient of
-	// the tx (RD-1304). Deliberately NOT on the wireReason allowlist — it
-	// collapses to the generic "access_denied" so a non-participant cannot
-	// distinguish a non-existent tx from one they may not see (no oracle).
+	// the tx, or a client trace whose internal frame fails the viewer's
+	// function or argument rules (RD-1304). Deliberately NOT on the
+	// wireReason allowlist — it collapses to the generic "access_denied" so a
+	// non-participant cannot distinguish a non-existent tx from one they may
+	// not see, nor a function-rule denial from a cross-org one (no oracle).
 	ReasonTraceAccessDenied = "trace_access_denied"
 	// ReasonComplianceBlocked: a travel-rule / sanctions check blocked the tx.
 	ReasonComplianceBlocked = "compliance_blocked"

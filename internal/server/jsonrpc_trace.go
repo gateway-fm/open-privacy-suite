@@ -565,7 +565,10 @@ func (p *JSONRPCProcessor) validateEthCallWithTracingInOrg(ctx context.Context, 
 // posture as the eth_call constants above: never interpolate the upstream
 // error, the validator Reason, or a contract address into the response body.
 // A single traceDenyAccess covers a non-participant replay AND a non-existent
-// tx so the wire cannot be used as a tx-existence oracle.
+// tx so the wire cannot be used as a tx-existence oracle. A single
+// traceDenyCrossOrg covers every denial raised by an internal frame of the
+// returned trace (ownership, grant, deploy claim, depth, function and
+// argument rules), because the caller can steer which frames run.
 const (
 	traceDenyAccess       = "trace access denied"
 	traceDenyUnsafeTracer = "trace denied: unsupported tracer or trace option"
@@ -1063,9 +1066,16 @@ func (p *JSONRPCProcessor) forwardAndValidateTrace(ctx context.Context, req *Pro
 		return nil, &ProcessError{StatusCode: http.StatusInternalServerError, Message: traceDenyTracerError, Reason: ReasonInternalError}
 	}
 	if !validationResult.Allowed {
-		// Opaque constant; DenialKind/DeniedTarget to slog only (KD-3).
+		// Opaque constant; DenialKind/DeniedTarget to slog only (KD-3). The
+		// client sees one uniform message, so a trace does not reveal whether
+		// a CREATE ran somewhere inside it; the reason code goes to the
+		// access log only.
 		slog.Info("jsonrpc: trace denied by validator", "method", req.Method, "kind", string(validationResult.DenialKind))
-		return nil, &ProcessError{StatusCode: http.StatusForbidden, Message: traceDenyCrossOrg, Reason: ReasonCrossOrg}
+		reason := ReasonCrossOrg
+		if validationResult.DenialKind == rbac.DenialKindDeployClaim {
+			reason = ReasonDeployClaimRequired
+		}
+		return nil, &ProcessError{StatusCode: http.StatusForbidden, Message: traceDenyCrossOrg, Reason: reason}
 	}
 	if perr := p.validateClientTraceFrameAccess(ctx, req, plan.orgIDs, validationResult.ClientAccessTargets); perr != nil {
 		return nil, perr
@@ -1111,7 +1121,12 @@ func (p *JSONRPCProcessor) validateClientTraceFrameAccess(ctx context.Context, r
 			return &ProcessError{StatusCode: http.StatusInternalServerError, Message: traceDenyTracerError, Reason: ReasonInternalError}
 		}
 		if !result.Allowed || result.OrgID != orgID {
-			return &ProcessError{StatusCode: http.StatusForbidden, Message: traceDenyAccess, Reason: ReasonTraceAccessDenied}
+			// Same message as a validator denial: the caller must not learn
+			// whether an internal call hit an inaccessible contract or a
+			// function/argument rule on an accessible one. The reason code
+			// goes to the access log only.
+			slog.Info("jsonrpc: trace denied by frame function rules", "method", req.Method)
+			return &ProcessError{StatusCode: http.StatusForbidden, Message: traceDenyCrossOrg, Reason: ReasonTraceAccessDenied}
 		}
 	}
 	return nil
@@ -1231,10 +1246,14 @@ func foldKeys(v any) (map[string]any, bool) {
 
 // canonicalTraceCall builds the ONE call object a client debug_traceCall is
 // both access-checked against and executed with: from/to/data/value only,
-// each a string when present. `data` and `input` are aliases — if both are
-// set they must agree. A null, "" or "0x" `to` means contract creation (no
-// `to`). Any other field (gas, fees, access lists, authorizations) is not
-// forwarded. Malformed → opaque 400, before any upstream call.
+// each a string when present. `data`/`input` must be 0x-prefixed hex bytes
+// and `value` a 0x-prefixed hex quantity of at most 256 bits; both are
+// forwarded in canonical form (lowercase, no leading zeros in the value) so
+// every node parses them the same way. `data` and `input` are aliases — if
+// both are set they must agree. A null, "" or "0x" `to` means contract
+// creation (no `to`). Any other field (gas, fees, access lists,
+// authorizations) is not forwarded. Malformed → opaque 400, before any
+// upstream call.
 func canonicalTraceCall(v any) (map[string]any, *ProcessError) {
 	invalid := &ProcessError{StatusCode: http.StatusBadRequest, Message: traceDenyInvalidShape, Reason: ReasonInvalidRequestShape}
 	obj, ok := v.(map[string]any)
@@ -1276,6 +1295,9 @@ func canonicalTraceCall(v any) (map[string]any, *ProcessError) {
 	if !dataTyped || !inputTyped {
 		return nil, invalid
 	}
+	if (data != "" && !isHexData(data)) || (input != "" && !isHexData(input)) {
+		return nil, invalid
+	}
 	if hasData && hasInput && !strings.EqualFold(data, input) {
 		return nil, invalid
 	}
@@ -1283,17 +1305,28 @@ func canonicalTraceCall(v any) (map[string]any, *ProcessError) {
 		data = input
 	}
 	if data != "" {
-		call["data"] = data
+		call["data"] = "0x" + strings.ToLower(data[2:])
 	}
 	if s, present, typed := str("value"); present {
-		if !typed {
+		if !typed || (s != "" && !isHexQuantity(s)) {
 			return nil, invalid
 		}
 		if s != "" {
-			call["value"] = s
+			call["value"] = canonicalHexQuantity(s)
 		}
 	}
 	return call, nil
+}
+
+// canonicalHexQuantity returns a validated hex quantity (see isHexQuantity)
+// as lowercase 0x-prefixed hex without leading zeros, the form every node
+// accepts ("0x0" for zero).
+func canonicalHexQuantity(s string) string {
+	digits := strings.TrimLeft(strings.ToLower(s[2:]), "0")
+	if digits == "" {
+		digits = "0"
+	}
+	return "0x" + digits
 }
 
 // rebuildTraceBlockParam rebuilds a validated block param from its known
@@ -1325,10 +1358,27 @@ func rebuildTraceBlockParam(v any) (any, error) {
 
 // isTxHash reports whether s is a 0x-prefixed 32-byte hex hash.
 func isTxHash(s string) bool {
-	if len(s) != 66 || (!strings.HasPrefix(s, "0x") && !strings.HasPrefix(s, "0X")) {
-		return false
-	}
-	for _, c := range s[2:] {
+	return len(s) == 66 && hasHexPrefix(s) && isHexDigits(s[2:])
+}
+
+// isHexData reports whether s is 0x-prefixed hex bytes: an even number of hex
+// digits, possibly none ("0x").
+func isHexData(s string) bool {
+	return hasHexPrefix(s) && len(s)%2 == 0 && isHexDigits(s[2:])
+}
+
+// isHexQuantity reports whether s is a 0x-prefixed hex number of 1 to 64
+// digits (at most 256 bits).
+func isHexQuantity(s string) bool {
+	return hasHexPrefix(s) && len(s) > 2 && len(s) <= 66 && isHexDigits(s[2:])
+}
+
+func hasHexPrefix(s string) bool {
+	return strings.HasPrefix(s, "0x") || strings.HasPrefix(s, "0X")
+}
+
+func isHexDigits(s string) bool {
+	for _, c := range s {
 		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
 			return false
 		}

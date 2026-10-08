@@ -8802,7 +8802,8 @@ paths:
               schema:
                 $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
           description: invalid request body, invalid JWT, or a trace method (debug_traceCall
-            / debug_traceTransaction are not supported here; use dry-run or view-as-user)
+            / debug_traceTransaction are not supported here; send them to /rpc or
+            /rpc/{org_id})
         "401":
           content:
             application/json:
