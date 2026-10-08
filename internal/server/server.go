@@ -2022,7 +2022,7 @@ func (s *Server) getStatus(c *gin.Context) {
 // @Produce      json
 // @Param        request body apimodels.TestRequestInput true "method, params, and optional jwt_token / org_id"
 // @Success      200 {object} apimodels.TestRequestResponse "forwarded result (or an upstream JSON-RPC error message) plus latency"
-// @Failure      400 {object} apimodels.APIError "invalid request body, invalid JWT, or a trace method (debug_traceCall / debug_traceTransaction are not supported here; use dry-run or view-as-user)"
+// @Failure      400 {object} apimodels.APIError "invalid request body, invalid JWT, or a trace method (debug_traceCall / debug_traceTransaction are not supported here; send them to /rpc or /rpc/{org_id})"
 // @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
 // @Failure      403 {object} apimodels.TestRequestResponse "RBAC or compliance denied (network-gate rejections return the generic error envelope)"
 // @Failure      500 {object} apimodels.TestRequestResponse "access-check error"
@@ -2053,7 +2053,7 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 	// methods. Use the RPC trace endpoint with its access and output checks.
 	if tm := rbac.ResolveMethodAlias(input.Method); tm == "debug_traceCall" || tm == "debug_traceTransaction" ||
 		input.Method == "debug_traceCall" || input.Method == "debug_traceTransaction" {
-		respondBadRequest(c, "trace methods are not supported via test-request; use the dry-run or view-as-user surfaces")
+		respondBadRequest(c, "trace methods are not supported via test-request; send them to /rpc or /rpc/{org_id}")
 		return
 	}
 

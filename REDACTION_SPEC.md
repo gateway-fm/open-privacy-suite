@@ -354,7 +354,7 @@ Notes on these choices:
 - **Pinning to one org.** A trace is pinned to one org: the CheckAccess-resolved org, which is the path org or the org the view-as gate pins. A multi-org trace across a caller's orgs is therefore denied, which is stricter than eth_call's union-of-memberships frame check on the plain path.
 - **Opaque denials.** All deny messages are opaque constants. The validator `Reason`, `DenialKind` and `DeniedTarget` go to slog only (KD-3).
 - **Residual timing difference.** Missing-tx and non-visible-tx denials differ only in timing (the visible-tx path runs the participant lookups). The same residual exists on `eth_getTransactionByHash`.
-- **Other paths.** The admin `POST /api/v1/admin/test-request` diagnostic refuses trace methods. An operator alias whose target is a trace method takes the same path. The internal tracer paths (eth_call RD-915, send-side, deploy, dry-run) call the tracer directly and are unaffected.
+- **Other paths.** The admin `POST /api/v1/admin/test-request` diagnostic refuses trace methods and points to `/rpc`, which serves them (dry-run rejects them). The View-as RPC surface takes the same trace path, pinned to the org named in its URL. An operator alias whose target is a trace method takes the same path. The internal tracer paths (eth_call RD-915, send-side, deploy, dry-run) call the tracer directly and are unaffected.
 
 **Out of scope:** the override policy for `eth_call` / `eth_estimateGas` (RD-1305), and a stricter participant-only profile for `debug_traceTransaction` (RD-1299).
 

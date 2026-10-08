@@ -804,7 +804,17 @@ func TestRD1304_TestRequestRefusesTraceMethods(t *testing.T) {
 			w := httptest.NewRecorder()
 			ts.router.ServeHTTP(w, req)
 
-			assert.GreaterOrEqual(t, w.Code, 400, "trace method must be refused on test-request; body=%s", w.Body.String())
+			assert.Equal(t, http.StatusBadRequest, w.Code, "trace method must be refused on test-request; body=%s", w.Body.String())
+			// The guidance must name the RPC endpoint, which serves trace
+			// methods; dry-run rejects them. It must not suggest the operator
+			// obtain an end user's credentials.
+			var refusal struct {
+				Error string `json:"error"`
+			}
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &refusal))
+			assert.Contains(t, refusal.Error, "/rpc")
+			assert.NotContains(t, refusal.Error, "dry-run")
+			assert.NotContains(t, refusal.Error, "token")
 			assert.Empty(t, c.snapshot(), "a refused test-request trace must never reach the node")
 			assert.NotContains(t, w.Body.String(), secretStorageMarker)
 		})
