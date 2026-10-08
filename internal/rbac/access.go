@@ -1974,6 +1974,13 @@ func extractBlockParam(method string, params []any) string {
 		// eth_getStorageAt: [address, slot, block]
 		// eth_getProof: [address, storageKeys[], block]
 		blockParamIndex = 2
+	case "debug_tracecall":
+		// debug_traceCall: [callObj, block, traceConfig] — block is the 2nd
+		// positional arg, same index as eth_call (RD-1304). The debug-trace
+		// access path builds an eth_call-equivalent AccessCheckRequest with
+		// Method="debug_traceCall" so the historical-state guard fires with
+		// the same admin exemption as eth_call.
+		blockParamIndex = 1
 	default:
 		return "latest"
 	}
@@ -2038,6 +2045,11 @@ func IsHistoricalStateQuery(method string, params []any) (bool, string) {
 		"eth_getcode":             true,
 		"eth_gettransactioncount": true,
 		"eth_getproof":            true,
+		// RD-1304: debug_traceCall runs the EVM like eth_call; a historical
+		// block tag lets a non-admin read since-reassigned cross-org state.
+		// Gated with the same admin exemption as eth_call via the debug-trace
+		// access path's eth_call-equivalent AccessCheckRequest.
+		"debug_tracecall": true,
 	}
 
 	if !historicalCheckMethods[method] {

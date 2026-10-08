@@ -13081,7 +13081,7 @@
                                 }
                             }
                         },
-                        "description": "invalid request body or invalid JWT"
+                        "description": "invalid request body, invalid JWT, or a trace method (debug_traceCall / debug_traceTransaction are not supported here; use dry-run or view-as-user)"
                     },
                     "401": {
                         "content": {
@@ -19155,7 +19155,7 @@
         },
         "/rpc": {
             "post": {
-                "description": "Single Ethereum JSON-RPC 2.0 request, method-allowlisted and RBAC-checked, with per-method response redaction. Batch (array) requests are rejected.\n\nMember names must be exact-case and unique: a request that repeats a member name, holds two names differing only in letter case in one object (at any depth), or uses a case variant of a JSON-RPC member (e.g. `Method`) is rejected with 400 before any access decision and never reaches the node; so is an `id` that is not a string, a number or null. For methods whose params the proxy checks (all but typed-data signing and named passthrough), so are a case variant of a standard request field inside params (e.g. `To`) and an object whose `data` and `input` differ. The node receives a request rebuilt from the members the proxy read (jsonrpc, id, method, params); `visibleTo`/`privateFor` and any other top-level members are never forwarded.\n\n`Authorization: Bearer \u003ctoken\u003e` is OPTIONAL: anonymous callers are restricted to the anonymous method allowlist; authenticated callers get per-method RBAC and response redaction based on their identity.\n\nClient state/block override options on call, gas-estimation, access-list, and trace methods are unsupported for all callers, including admins. Positional null/empty-object placeholders remain allowed; debug_traceCall override and replay-position config keys must be omitted. Ordinary calls remain subject to the normal access and node validation rules.\n\nThe transaction-sending methods (eth_sendTransaction / eth_sendRawTransaction) additionally accept a top-level `visibleTo` array (alias `privateFor`) of DIDs and/or linked ETH addresses, granting those viewers per-transaction visibility of the emitted event logs (RD-1163). It is accepted only for log-emitting contract calls.\n\nA JSON-RPC-level error (bad params, node error, or a masked authorization denial) is returned with HTTP 200 in the JSON-RPC error member. The non-200 statuses below are transport / access / rate-limit failures that never reach the node. `POST /` and `POST /rpc` are the same operation.",
+                "description": "Single Ethereum JSON-RPC 2.0 request, method-allowlisted and RBAC-checked, with per-method response redaction. Batch (array) requests are rejected.\n\nMember names must be exact-case and unique: a request that repeats a member name, holds two names differing only in letter case in one object (at any depth), or uses a case variant of a JSON-RPC member (e.g. `Method`) is rejected with 400 before any access decision and never reaches the node; so is an `id` that is not a string, a number or null. For methods whose params the proxy checks (all but typed-data signing and named passthrough), so are a case variant of a standard request field inside params (e.g. `To`) and an object whose `data` and `input` differ. The node receives a request rebuilt from the members the proxy read (jsonrpc, id, method, params); `visibleTo`/`privateFor` and any other top-level members are never forwarded.\n\n`Authorization: Bearer \u003ctoken\u003e` is OPTIONAL: anonymous callers are restricted to the anonymous method allowlist; authenticated callers get per-method RBAC and response redaction based on their identity.\n\nClient state/block override options on call, gas-estimation, access-list, and trace methods are unsupported for all callers, including admins. Positional null/empty-object placeholders remain allowed; debug_traceCall override and replay-position config keys must be omitted. Ordinary calls remain subject to the normal access and node validation rules.\n\nThe transaction-sending methods (eth_sendTransaction / eth_sendRawTransaction) additionally accept a top-level `visibleTo` array (alias `privateFor`) of DIDs and/or linked ETH addresses, granting those viewers per-transaction visibility of the emitted event logs (RD-1163). It is accepted only for log-emitting contract calls.\n\nOrdinary upstream JSON-RPC errors retain their JSON-RPC error member. Transport, access and rate-limit failures use the non-200 statuses below. `POST /` and `POST /rpc` are the same operation.\n\nClient traces return only validated call-tree frames. The viewer's contract, function and argument permissions apply to returned calls, including delegated storage contexts. Trace or upstream failures return opaque non-200 errors.",
                 "parameters": [
                     {
                         "description": "Organization the access decision resolves against (only on /rpc/{org_id})",
@@ -19205,7 +19205,7 @@
                                 }
                             }
                         },
-                        "description": "unreadable body, malformed, ambiguous (duplicate or case-variant member names) or batch JSON-RPC, or invalid visibleTo"
+                        "description": "unreadable body, malformed, ambiguous (duplicate or case-variant members) or batch JSON-RPC, invalid visibleTo, or an unsupported tracer/config (a tracer other than callTracer, withLog or malformed trace params)"
                     },
                     "401": {
                         "content": {
@@ -19225,7 +19225,7 @@
                                 }
                             }
                         },
-                        "description": "runtime-trace or compliance denial"
+                        "description": "runtime-trace, trace-access (debug_traceTransaction for a non-participant or a missing transaction) or compliance denial"
                     },
                     "404": {
                         "content": {
@@ -19291,7 +19291,7 @@
         },
         "/rpc/{org_id}": {
             "post": {
-                "description": "Single Ethereum JSON-RPC 2.0 request, method-allowlisted and RBAC-checked, with per-method response redaction. Batch (array) requests are rejected.\n\nMember names must be exact-case and unique: a request that repeats a member name, holds two names differing only in letter case in one object (at any depth), or uses a case variant of a JSON-RPC member (e.g. `Method`) is rejected with 400 before any access decision and never reaches the node; so is an `id` that is not a string, a number or null. For methods whose params the proxy checks (all but typed-data signing and named passthrough), so are a case variant of a standard request field inside params (e.g. `To`) and an object whose `data` and `input` differ. The node receives a request rebuilt from the members the proxy read (jsonrpc, id, method, params); `visibleTo`/`privateFor` and any other top-level members are never forwarded.\n\n`Authorization: Bearer \u003ctoken\u003e` is OPTIONAL: anonymous callers are restricted to the anonymous method allowlist; authenticated callers get per-method RBAC and response redaction based on their identity.\n\nClient state/block override options on call, gas-estimation, access-list, and trace methods are unsupported for all callers, including admins. Positional null/empty-object placeholders remain allowed; debug_traceCall override and replay-position config keys must be omitted. Ordinary calls remain subject to the normal access and node validation rules.\n\nThe transaction-sending methods (eth_sendTransaction / eth_sendRawTransaction) additionally accept a top-level `visibleTo` array (alias `privateFor`) of DIDs and/or linked ETH addresses, granting those viewers per-transaction visibility of the emitted event logs (RD-1163). It is accepted only for log-emitting contract calls.\n\nA JSON-RPC-level error (bad params, node error, or a masked authorization denial) is returned with HTTP 200 in the JSON-RPC error member. The non-200 statuses below are transport / access / rate-limit failures that never reach the node. `POST /` and `POST /rpc` are the same operation.",
+                "description": "Single Ethereum JSON-RPC 2.0 request, method-allowlisted and RBAC-checked, with per-method response redaction. Batch (array) requests are rejected.\n\nMember names must be exact-case and unique: a request that repeats a member name, holds two names differing only in letter case in one object (at any depth), or uses a case variant of a JSON-RPC member (e.g. `Method`) is rejected with 400 before any access decision and never reaches the node; so is an `id` that is not a string, a number or null. For methods whose params the proxy checks (all but typed-data signing and named passthrough), so are a case variant of a standard request field inside params (e.g. `To`) and an object whose `data` and `input` differ. The node receives a request rebuilt from the members the proxy read (jsonrpc, id, method, params); `visibleTo`/`privateFor` and any other top-level members are never forwarded.\n\n`Authorization: Bearer \u003ctoken\u003e` is OPTIONAL: anonymous callers are restricted to the anonymous method allowlist; authenticated callers get per-method RBAC and response redaction based on their identity.\n\nClient state/block override options on call, gas-estimation, access-list, and trace methods are unsupported for all callers, including admins. Positional null/empty-object placeholders remain allowed; debug_traceCall override and replay-position config keys must be omitted. Ordinary calls remain subject to the normal access and node validation rules.\n\nThe transaction-sending methods (eth_sendTransaction / eth_sendRawTransaction) additionally accept a top-level `visibleTo` array (alias `privateFor`) of DIDs and/or linked ETH addresses, granting those viewers per-transaction visibility of the emitted event logs (RD-1163). It is accepted only for log-emitting contract calls.\n\nOrdinary upstream JSON-RPC errors retain their JSON-RPC error member. Transport, access and rate-limit failures use the non-200 statuses below. `POST /` and `POST /rpc` are the same operation.\n\nClient traces return only validated call-tree frames. The viewer's contract, function and argument permissions apply to returned calls, including delegated storage contexts. Trace or upstream failures return opaque non-200 errors.",
                 "parameters": [
                     {
                         "description": "Organization the access decision resolves against (only on /rpc/{org_id})",
@@ -19341,7 +19341,7 @@
                                 }
                             }
                         },
-                        "description": "unreadable body, malformed, ambiguous (duplicate or case-variant member names) or batch JSON-RPC, or invalid visibleTo"
+                        "description": "unreadable body, malformed, ambiguous (duplicate or case-variant members) or batch JSON-RPC, invalid visibleTo, or an unsupported tracer/config (a tracer other than callTracer, withLog or malformed trace params)"
                     },
                     "401": {
                         "content": {
@@ -19361,7 +19361,7 @@
                                 }
                             }
                         },
-                        "description": "runtime-trace or compliance denial"
+                        "description": "runtime-trace, trace-access (debug_traceTransaction for a non-participant or a missing transaction) or compliance denial"
                     },
                     "404": {
                         "content": {

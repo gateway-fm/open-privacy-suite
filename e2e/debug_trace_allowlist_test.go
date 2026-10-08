@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+	"time"
 
 	"privacy-proxy/internal/rbac"
 
@@ -25,6 +26,14 @@ func rpcErrorString(t *testing.T, body []byte) string {
 		return e
 	}
 	return ""
+}
+
+// traceRPCCallRaw keeps successive requests outside the trace rate window.
+// Setup and ordinary RPC requests use the same per-user counter.
+func traceRPCCallRaw(t *testing.T, serverURL, orgID, token, method string, params []any) (int, []byte) {
+	t.Helper()
+	time.Sleep(time.Second + 10*time.Millisecond)
+	return jsonRPCCallRaw(t, serverURL, orgID, token, method, params)
 }
 
 // RD-1121: debug_trace* must be gated by the group method allowlist exactly
@@ -84,11 +93,8 @@ func TestDebugTrace_DeployClaimButMethodNotAllowlisted_Denied(t *testing.T) {
 	assert.Equal(t, "method not found", rpcErrorString(t, body))
 }
 
-// TestDebugTrace_AllowlistedWithoutDeployClaim_Reaches confirms the Option B
-// decoupling end-to-end: a group WITHOUT the deploy/admin claim but WITH
-// debug_traceCall in its allowlist passes the gate and the trace actually
-// executes against Anvil (same-org / no cross-org target → allowed by
-// ValidateTrace), returning a result rather than the allowlist deny.
+// TestDebugTrace_AllowlistedWithoutDeployClaim_Reaches traces a granted
+// contract on Anvil and asserts a successful callTracer result.
 func TestDebugTrace_AllowlistedWithoutDeployClaim_Reaches(t *testing.T) {
 	env := setupCreate2Env(t)
 	defer env.cleanup()
@@ -98,34 +104,33 @@ func TestDebugTrace_AllowlistedWithoutDeployClaim_Reaches(t *testing.T) {
 	userDID := "did:test:rd1121_trace_no_deploy"
 
 	// No operational claims, but debug_traceCall IS allowlisted.
-	createOrgWithUser(t, env.srv.DB(), "rd1121-b", "rd1121-b-grp", userDID,
+	orgID := createOrgWithUser(t, env.srv.DB(), "rd1121-b", "rd1121-b-grp", userDID,
 		[]rbac.Claim{},
 		[]string{"debug_traceCall", "eth_call", "eth_blockNumber", "eth_chainId"},
 		anvilAccount0,
 	)
+	// A same-org contract granted to the caller's (only) group.
+	granted := "0xc0ffee00000000000000000000000000000000b1"
+	registerContract(t, env.srv.DB(), orgID, granted, "GrantedTarget")
 
 	token := getJWTTokenForCreate2(t, env.serverURL, userDID)
 
-	// A trace of a simple value transfer between the caller's own linked EOA and
-	// an unregistered EOA target. No registered cross-org contract is touched,
-	// so ValidateTrace allows it and the upstream node returns a trace.
 	status, body := jsonRPCCallRaw(t, env.serverURL, "", token, "debug_traceCall",
-		traceCallParams(anvilAccount0, anvilAccount1))
+		traceCallParams(anvilAccount0, granted))
 
-	// The allowlist gate did NOT block: the response is NOT the uniform 404
-	// "method not found" RBAC deny. The trace reached the node and validation.
-	assert.NotEqual(t, http.StatusNotFound, status,
-		"allowlisted trace must not hit the RBAC allowlist deny; body: %s", string(body))
-	assert.NotEqual(t, "method not found", rpcErrorString(t, body),
-		"allowlisted trace must not hit the RBAC allowlist deny; body: %s", string(body))
+	// Passed the allowlist gate AND the access gate: the trace ran and returned.
+	require.Equal(t, http.StatusOK, status,
+		"allowlisted trace of a granted contract must succeed without the deploy claim; body: %s", string(body))
+	var out struct {
+		Result map[string]any `json:"result"`
+	}
+	require.NoError(t, json.Unmarshal(body, &out))
+	assert.NotEmpty(t, out.Result, "the trace must return a call frame; body: %s", string(body))
 }
 
-// TestDebugTrace_CrossOrgStillDeniedByValidateTrace confirms the cross-org
-// content gate is retained: a user whose group allowlists debug_traceCall is
-// still denied when the trace touches a contract registered to ANOTHER org.
-// This proves ValidateTrace remains in force independent of the allowlist
-// change (Option B does not weaken cross-org isolation).
-func TestDebugTrace_CrossOrgStillDeniedByValidateTrace(t *testing.T) {
+// TestDebugTrace_CrossOrgTargetDenied checks the organization boundary
+// and includes a successful trace in the caller's organization.
+func TestDebugTrace_CrossOrgTargetDenied(t *testing.T) {
 	env := setupCreate2Env(t)
 	defer env.cleanup()
 
@@ -147,28 +152,29 @@ func TestDebugTrace_CrossOrgStillDeniedByValidateTrace(t *testing.T) {
 	registerContract(t, env.srv.DB(), orgAID, orgAContract, "OrgAContract")
 
 	// org-b: trace is allowlisted, but org-b does NOT own org-a's contract.
-	createOrgWithUser(t, env.srv.DB(), "rd1121-xb", "rd1121-xb-grp", tracerDID,
+	orgBID := createOrgWithUser(t, env.srv.DB(), "rd1121-xb", "rd1121-xb-grp", tracerDID,
 		[]rbac.Claim{},
 		[]string{"debug_traceCall", "eth_call", "eth_blockNumber", "eth_chainId"},
 		anvilAccount1,
 	)
+	// A contract in org-b's OWN org, granted to the tracer (positive control).
+	orgBContract := "0xc0ffee00000000000000000000000000000000b2"
+	registerContract(t, env.srv.DB(), orgBID, orgBContract, "OrgBContract")
 
 	tracerToken := getJWTTokenForCreate2(t, env.serverURL, tracerDID)
 
-	// org-b tries to debug_traceCall INTO org-a's registered contract.
-	// Allowlist gate passes (debug_traceCall is allowlisted for org-b), but the
-	// trace touches a cross-org-owned contract → ValidateTrace denies it.
-	status, body := jsonRPCCallRaw(t, env.serverURL, "", tracerToken, "debug_traceCall",
+	// org-b tries to debug_traceCall INTO org-a's registered contract: denied,
+	// and no trace data comes back.
+	status, body := traceRPCCallRaw(t, env.serverURL, "", tracerToken, "debug_traceCall",
 		traceCallParams(anvilAccount1, orgAContract))
-
-	// Denied, and NOT by the allowlist gate (org-b allowlists debug_traceCall):
-	// the denial is the cross-org ValidateTrace content gate, which returns a
-	// 403 "cross-org trace denied", not the 404 "method not found" allowlist
-	// deny. This proves ValidateTrace is retained and independent of the
-	// allowlist change.
 	require.GreaterOrEqual(t, status, 400, "cross-org trace must be denied; body: %s", string(body))
-	assert.NotEqual(t, http.StatusNotFound, status,
-		"cross-org denial must come from ValidateTrace (403), not the allowlist gate (404); body: %s", string(body))
-	assert.NotEqual(t, "method not found", rpcErrorString(t, body),
-		"cross-org denial must come from ValidateTrace, not the allowlist gate; body: %s", string(body))
+	assert.NotContains(t, string(body), `"result"`, "a denied cross-org trace must return no trace; body: %s", string(body))
+
+	// Positive control: the same user, same allowlist, traces its OWN org's
+	// contract successfully — so the denial above is target-specific (cross-
+	// org), not a blanket allowlist deny.
+	status, body = traceRPCCallRaw(t, env.serverURL, "", tracerToken, "debug_traceCall",
+		traceCallParams(anvilAccount1, orgBContract))
+	require.Equal(t, http.StatusOK, status,
+		"the same user must be able to trace its own org's contract; body: %s", string(body))
 }

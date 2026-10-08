@@ -47,6 +47,12 @@ const (
 	// ReasonDeployClaimRequired: a debug_trace* / runtime-create path that
 	// requires the deploy (or admin) claim.
 	ReasonDeployClaimRequired = "deploy_claim_required"
+	// ReasonTraceAccessDenied: a debug_traceTransaction replay denied because
+	// the viewer is not a participant / admin-on-to / visibleTo recipient of
+	// the tx (RD-1304). Deliberately NOT on the wireReason allowlist — it
+	// collapses to the generic "access_denied" so a non-participant cannot
+	// distinguish a non-existent tx from one they may not see (no oracle).
+	ReasonTraceAccessDenied = "trace_access_denied"
 	// ReasonComplianceBlocked: a travel-rule / sanctions check blocked the tx.
 	ReasonComplianceBlocked = "compliance_blocked"
 	// ReasonRateLimited: request- or daily-rate limit hit (429).

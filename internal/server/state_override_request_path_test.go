@@ -25,8 +25,9 @@ import (
 // node-request counts, and the shared access-log reason.
 
 type canaryUpstream struct {
-	srv  *httptest.Server
-	hits atomic.Int64
+	srv    *httptest.Server
+	hits   atomic.Int64
+	result any
 }
 
 func newCanaryUpstream(t *testing.T) *canaryUpstream {
@@ -35,7 +36,11 @@ func newCanaryUpstream(t *testing.T) *canaryUpstream {
 	c.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		c.hits.Add(1)
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "result": "0x"})
+		result := c.result
+		if result == nil {
+			result = "0x"
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "result": result})
 	}))
 	t.Cleanup(c.srv.Close)
 	return c
@@ -160,6 +165,7 @@ func TestProcessDebugTrace_StateOverrideNeverReachesNode(t *testing.T) {
 	contractAddr := "0x" + strings.Repeat("ab", 20)
 	scripted := newScriptedTracer(t, traceFrame{Type: "CALL", From: fixedAddr(0xee), To: contractAddr})
 	canary := newCanaryUpstream(t)
+	canary.result = map[string]any{"type": "CALL", "to": contractAddr}
 
 	ts := setupTestServerForRBAC(t)
 	rt := tracer.NewRuntimeTracer(tracer.RuntimeTracerConfig{NodeURL: scripted.srv.URL, Enabled: true, Timeout: 5 * time.Second})
@@ -189,7 +195,7 @@ func TestProcessDebugTrace_StateOverrideNeverReachesNode(t *testing.T) {
 		canary.hits.Store(0)
 		res := processRaw(t, proc, did, `{"jsonrpc":"2.0","id":1,"method":"debug_traceCall","params":[`+call+`,"latest",{"tracer":"callTracer"}]}`)
 		require.Nil(t, res.Error, "plain debug_traceCall should be allowed")
-		assert.Equal(t, int64(1), scripted.hits.Load(), "validation trace must run once")
+		assert.Equal(t, int64(0), scripted.hits.Load(), "the forwarded result is validated without a separate internal trace")
 		assert.Equal(t, int64(1), canary.hits.Load(), "plain debug_traceCall must reach the node exactly once")
 	})
 
