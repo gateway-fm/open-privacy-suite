@@ -120,8 +120,9 @@ func TestResponseFilters_FailClosedOnUnexpectedShape(t *testing.T) {
 	}
 }
 
-// A null or error upstream result still passes through unchanged: there is
-// nothing to filter and the caller needs the upstream error.
+// A null or error upstream result still passes through, rebuilt from the
+// parsed members: there is nothing to filter and the caller needs the upstream
+// error.
 func TestResponseFilters_PassNullAndErrors(t *testing.T) {
 	for _, body := range []string{
 		`{"jsonrpc":"2.0","id":7,"result":null}`,
@@ -161,5 +162,70 @@ func TestResponseFilters_RejectMixedErrorAndResult(t *testing.T) {
 			assert.NotContains(t, string(out), "aaaaaaaa")
 			assert.NotContains(t, string(out), `"error"`)
 		})
+	}
+}
+
+// A filter answers with the members it parsed and nothing else: jsonrpc, id and
+// either the result it evaluated or the upstream error. A member the node adds
+// beyond those, or a case variant of "result" that the JSON decoder folds onto
+// the same field (the last one wins), must never reach the caller verbatim —
+// whether the result was admitted, null, or an error (RD-1299).
+func TestResponseFilters_RebuildEnvelopeFromParsedMembers(t *testing.T) {
+	const self = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"
+	const other = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb2"
+	otherTx := `{"hash":"0x01","from":"` + other + `","to":"` + other + `"}`
+	ownTx := `{"hash":"0x02","from":"` + self + `","to":"` + self + `"}`
+	const nullOut = `{"jsonrpc":"2.0","id":7,"result":null}`
+	const errOut = `{"jsonrpc":"2.0","id":7,"error":{"code":-32000,"message":"upstream"}}`
+
+	filters := []struct {
+		name string
+		run  func([]byte) []byte
+	}{
+		{"transaction", func(b []byte) []byte {
+			return FilterTransactionByHash(rbac.ReadProfileStandard, b, []string{self}, false, nil)
+		}},
+		{"block", func(b []byte) []byte {
+			return FilterBlockTransactions(rbac.ReadProfileStandard, b, []string{self}, true)
+		}},
+		{"block receipts", func(b []byte) []byte {
+			return FilterBlockReceipts(rbac.ReadProfileStandard, b, []string{self}, nil, nil, nil, nil, nil)
+		}},
+		{"block count", func(b []byte) []byte { return FilterBlockTransactionCount(b, []string{self}) }},
+		{"logs", func(b []byte) []byte {
+			return filterLogsWithEventRules(rbac.ReadProfileStandard, b, []string{self}, nil, nil, nil, nil, nil)
+		}},
+		{"receipt logs", func(b []byte) []byte {
+			return filterReceiptLogsWithEventRules(rbac.ReadProfileStandard, b, []string{self}, nil, nil, nil, nil, nil)
+		}},
+	}
+	bodies := []struct {
+		name string
+		body string
+		want string
+	}{
+		{"null result with an extra member", `{"jsonrpc":"2.0","id":7,"result":null,"extra":` + otherTx + `}`, nullOut},
+		{"null result after a case-variant result", `{"jsonrpc":"2.0","id":7,"Result":` + otherTx + `,"result":null}`, nullOut},
+		{"error with an extra member", `{"jsonrpc":"2.0","id":7,"error":{"code":-32000,"message":"upstream"},"extra":` + otherTx + `}`, errOut},
+		{"error after a case-variant null result", `{"jsonrpc":"2.0","id":7,"error":{"code":-32000,"message":"upstream"},"Result":` + otherTx + `,"result":null}`, errOut},
+	}
+	for _, f := range filters {
+		for _, b := range bodies {
+			t.Run(f.name+"/"+b.name, func(t *testing.T) {
+				out := f.run([]byte(b.body))
+				assert.NotContains(t, string(out), other[2:], "an unparsed upstream member passed through: %s", out)
+				assert.JSONEq(t, b.want, string(out))
+			})
+		}
+	}
+
+	// An admitted transaction is returned as the evaluated result only.
+	for _, body := range []string{
+		`{"jsonrpc":"2.0","id":7,"result":` + ownTx + `,"extra":` + otherTx + `}`,
+		`{"jsonrpc":"2.0","id":7,"Result":` + otherTx + `,"result":` + ownTx + `}`,
+	} {
+		out := FilterTransactionByHash(rbac.ReadProfileStandard, []byte(body), []string{self}, false, nil)
+		assert.NotContains(t, string(out), other[2:], "an unparsed upstream member passed through: %s", out)
+		assert.JSONEq(t, `{"jsonrpc":"2.0","id":7,"result":`+ownTx+`}`, string(out))
 	}
 }

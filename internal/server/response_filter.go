@@ -45,6 +45,44 @@ func nullResult(responseBody []byte) []byte {
 	return []byte(`{"jsonrpc":"2.0","id":` + rpcResponseID(responseBody) + `,"result":null}`)
 }
 
+// rpcResponseFromParsed serializes a JSON-RPC response from the members a
+// filter parsed: jsonrpc, id, and the upstream error or the (possibly null)
+// result. No other envelope member of the upstream body is copied — neither
+// an extra member nor a case variant of "result" or "error" that the decoder
+// folded onto the parsed field — so the envelope a filter returns carries
+// only the result it evaluated or the upstream error (RD-1299). The result
+// object itself is returned as the node sent it.
+func rpcResponseFromParsed(id json.RawMessage, result, rpcErr *json.RawMessage) []byte {
+	if len(id) == 0 {
+		id = json.RawMessage("null")
+	}
+	var (
+		out []byte
+		err error
+	)
+	if rpcErr != nil {
+		out, err = json.Marshal(struct {
+			JSONRPC string          `json:"jsonrpc"`
+			ID      json.RawMessage `json:"id"`
+			Error   json.RawMessage `json:"error"`
+		}{JSONRPC: "2.0", ID: id, Error: *rpcErr})
+	} else {
+		res := json.RawMessage("null")
+		if result != nil {
+			res = *result
+		}
+		out, err = json.Marshal(struct {
+			JSONRPC string          `json:"jsonrpc"`
+			ID      json.RawMessage `json:"id"`
+			Result  json.RawMessage `json:"result"`
+		}{JSONRPC: "2.0", ID: id, Result: res})
+	}
+	if err != nil {
+		return []byte(`{"jsonrpc":"2.0","id":null,"result":null}`)
+	}
+	return out
+}
+
 // addrSetFromLinked builds a lowercase address set for O(1) lookup.
 func addrSetFromLinked(addrs []string) map[string]bool {
 	set := make(map[string]bool, len(addrs))
@@ -67,7 +105,8 @@ func addrSetFromLinked(addrs []string) map[string]bool {
 // → one org). inVisibleTo is consulted lazily, only when the verdict still
 // depends on it (standard profile, non-participant, non-admin).
 //
-// A null or error result passes through unchanged; any shape that cannot be
+// A null or error result passes through, and an admitted transaction is
+// returned, rebuilt from the parsed members only; any shape that cannot be
 // evaluated fails closed to null.
 func FilterTransactionByHash(profile rbac.ReadProfile, responseBody []byte, userAddresses []string, isAdminOnTo bool, inVisibleTo func() bool) []byte {
 	var resp struct {
@@ -82,13 +121,13 @@ func FilterTransactionByHash(profile rbac.ReadProfile, responseBody []byte, user
 	if resp.Error != nil && resp.Result != nil {
 		return nullResult(responseBody)
 	}
-	// Pass through standalone errors and null results unchanged.
+	// Pass through standalone errors and null results.
 	if resp.Error != nil || resp.Result == nil {
-		return responseBody
+		return rpcResponseFromParsed(resp.ID, nil, resp.Error)
 	}
 	raw := []byte(*resp.Result)
 	if string(raw) == "null" {
-		return responseBody
+		return rpcResponseFromParsed(resp.ID, nil, nil)
 	}
 
 	var tx struct {
@@ -108,7 +147,7 @@ func FilterTransactionByHash(profile rbac.ReadProfile, responseBody []byte, user
 		facts.InVisibleTo = inVisibleTo()
 	}
 	if rbac.DecideTxEnvelope(profile, facts) {
-		return responseBody
+		return rpcResponseFromParsed(resp.ID, resp.Result, nil)
 	}
 	return nullResult(responseBody)
 }
@@ -178,11 +217,11 @@ func FilterBlockTransactions(profile rbac.ReadProfile, responseBody []byte, user
 		return nullResult(responseBody)
 	}
 	if resp.Error != nil || resp.Result == nil {
-		return responseBody
+		return rpcResponseFromParsed(resp.ID, nil, resp.Error)
 	}
 	raw := []byte(*resp.Result)
 	if string(raw) == "null" {
-		return responseBody
+		return rpcResponseFromParsed(resp.ID, nil, nil)
 	}
 
 	// Parse the block as a map to preserve all fields
@@ -308,11 +347,11 @@ func FilterBlockReceipts(
 		return nullResult(responseBody)
 	}
 	if resp.Error != nil || resp.Result == nil {
-		return responseBody
+		return rpcResponseFromParsed(resp.ID, nil, resp.Error)
 	}
 	raw := []byte(*resp.Result)
 	if string(raw) == "null" {
-		return responseBody
+		return rpcResponseFromParsed(resp.ID, nil, nil)
 	}
 
 	var rawReceipts []json.RawMessage
@@ -366,11 +405,11 @@ func FilterBlockTransactionCount(responseBody []byte, userAddresses []string) []
 		return nullResult(responseBody)
 	}
 	if resp.Error != nil || resp.Result == nil {
-		return responseBody
+		return rpcResponseFromParsed(resp.ID, nil, resp.Error)
 	}
 	raw := []byte(*resp.Result)
 	if string(raw) == "null" {
-		return responseBody
+		return rpcResponseFromParsed(resp.ID, nil, nil)
 	}
 
 	// The request was rewritten to a full block fetch, so the result must be

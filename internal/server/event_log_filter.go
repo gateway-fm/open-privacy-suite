@@ -145,11 +145,12 @@ func filterLogsWithEventRules(
 		return emptyLogsResponse(responseBody)
 	}
 	if resp.Error != nil || resp.Result == nil {
-		return responseBody // RPC error or null result — pass through as-is
+		// RPC error or null result: pass through, parsed members only.
+		return rpcResponseFromParsed(resp.ID, nil, resp.Error)
 	}
 	raw := []byte(*resp.Result)
 	if string(raw) == "null" {
-		return responseBody
+		return rpcResponseFromParsed(resp.ID, nil, nil)
 	}
 
 	var rawLogs []json.RawMessage
@@ -243,11 +244,12 @@ func filterReceiptLogsWithEventRules(
 		return nullResult(responseBody)
 	}
 	if resp.Error != nil || resp.Result == nil {
-		return responseBody // RPC error or null result — pass through as-is
+		// RPC error or null result: pass through, parsed members only.
+		return rpcResponseFromParsed(resp.ID, nil, resp.Error)
 	}
 	raw := []byte(*resp.Result)
 	if string(raw) == "null" {
-		return responseBody
+		return rpcResponseFromParsed(resp.ID, nil, nil)
 	}
 
 	result, admit := decideReceipt(profile, rbac.TxSurfaceReceipt, raw, userAddresses, perms, abiProvider, visCtx, isAdminByContract, render)
