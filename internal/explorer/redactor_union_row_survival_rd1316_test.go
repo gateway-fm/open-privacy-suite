@@ -69,9 +69,8 @@ func rd1316Engine(extra map[string]AddressVisibility) *RedactionEngine {
 // transfer-participant union only (no tx_visible_to listing).
 func unionOpts(admin bool) RedactOpts {
 	return RedactOpts{
-		VisibleTxHashes:     map[string]bool{rd1316Hash: true},
-		ParticipantTxHashes: map[string]bool{rd1316Hash: true},
-		ViewerIsAdmin:       admin,
+		VisibleTxHashes: map[string]bool{rd1316Hash: true},
+		ViewerIsAdmin:   admin,
 	}
 }
 

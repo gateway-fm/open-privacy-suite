@@ -608,19 +608,17 @@ type VisibilityFilter struct {
 	HiddenAddresses  []string // blocklist mode: addresses with VisibilityHidden or VisibilityRedacted
 	AllPrivate       bool     // when true, use allowlist mode (VisibleAddresses)
 	VisibleAddresses []string // allowlist mode: addresses with VisibilityFull
-	VisibleTxHashes  []string // tx hashes that are always visible (visibleTo override)
-	// ParticipantTxHashes is the subset of VisibleTxHashes added by the
-	// RD-1009 transfer-participant union, NOT genuine visibleTo shares.
-	// Informational only: it does not affect SQL filtering, row survival or
-	// rendering (since RD-1316 the union reveals no address, so there is no
-	// counterparty to label from it).
-	ParticipantTxHashes []string
+	// VisibleTxHashes are tx hashes whose rows are always kept: genuine
+	// visibleTo shares plus the RD-1009 transfer-participant union. Keeping a
+	// row reveals nothing by itself (RD-1316); see ListedTxHashes.
+	VisibleTxHashes []string
 	// ListedTxHashes are ONLY the tx hashes whose tx_visible_to row lists the
 	// viewer — genuine visibleTo shares, never the RD-1009 transfer-participant
 	// union. Not used for SQL filtering (VisibleTxHashes already covers row
-	// survival); it is the sole input to the redactor's "listed on this tx"
-	// log decisions: the RD-874 unlock and the ordinary param-rule fallback
-	// (RD-1307). A subset of VisibleTxHashes.
+	// survival); it is the sole redactor input for "the sender listed this
+	// viewer on this tx": the address reveal on tx, transfer and internal rows
+	// (RD-1316), and the RD-874 log unlock and param-rule fallback (RD-1307).
+	// A subset of VisibleTxHashes.
 	ListedTxHashes []string
 }
 

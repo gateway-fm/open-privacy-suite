@@ -127,7 +127,7 @@ func TestBuildVisibilityFilter_DisclosureGrant_UnionDrivenByFullOnly_RD1079(t *t
 				txHash, token, charlieEOA, eveEOA, blockNum)
 			require.NoError(t, err)
 
-			filter := srv.buildVisibilityFilter(ctx, viewerDID)
+			filter := srv.buildVisibilityFilter(ctx, viewerDID, srv.isViewerAdmin(ctx, viewerDID))
 			require.NotNil(t, filter)
 			require.True(t, filter.AllPrivate)
 

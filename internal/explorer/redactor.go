@@ -604,20 +604,13 @@ type RedactOpts struct {
 	// genuine share) — the union never reveals an identity (RD-1316).
 	VisibleTxHashes map[string]bool
 
-	// ParticipantTxHashes is the subset of VisibleTxHashes added by the
-	// RD-1009 transfer-participant union (as opposed to a genuine visibleTo
-	// share). Informational: it does not affect row survival (VisibleTxHashes
-	// drives that) and, since the union no longer reveals any address
-	// (RD-1316), the redactors no longer label from it — a counterparty
-	// revealed by the disclosure-grant lens keeps its own reason (§3.7.2).
-	ParticipantTxHashes map[string]bool
-
 	// ListedTxHashes is the set of tx hashes whose visibleTo row genuinely
 	// lists the viewer (tx_visible_to only — never the RD-1009
 	// transfer-participant union that also feeds VisibleTxHashes). It is the
-	// only input RedactLogsWithOpts accepts for "the sender listed this viewer
-	// on this tx": the RD-874 visibleTo unlock and the ordinary param-rule
-	// fallback (RD-1307). A nil map lists nothing (fail-closed).
+	// only input the redactors accept for "the sender listed this viewer on
+	// this tx": the address reveal on tx, transfer and internal rows (RD-1316),
+	// and the RD-874 visibleTo log unlock and ordinary param-rule fallback
+	// (RD-1307). A nil map lists nothing (fail-closed).
 	ListedTxHashes map[string]bool
 
 	// ParentParticipants are the parent transaction's from/to addresses,

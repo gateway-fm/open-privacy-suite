@@ -127,7 +127,7 @@ func TestRedactTransfers_VisibleToOverride_RevealsCounterparty_RD1079Repro(t *te
 	}
 
 	got, err = engine.RedactTransfers(context.Background(), transfers, "did:test:dave",
-		RedactOpts{VisibleTxHashes: map[string]bool{rd1079TxHash: true}, ParticipantTxHashes: map[string]bool{rd1079TxHash: true}})
+		RedactOpts{VisibleTxHashes: map[string]bool{rd1079TxHash: true}})
 	if err != nil {
 		t.Fatalf("RedactTransfers (union): %v", err)
 	}

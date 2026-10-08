@@ -185,7 +185,7 @@ func TestBuildVisibilityFilter_ListedTxHashesExcludeUnion_RD1316(t *testing.T) {
 	shared := "0x1316" + strings.Repeat("1", 60)
 	require.NoError(t, f.srv.db.SaveTxVisibility(ctx, shared, []string{rd1316AdminDID}, "did:privado:rd1316_sender", "org-o"))
 
-	filter := f.srv.buildVisibilityFilter(ctx, rd1316AdminDID)
+	filter := f.srv.buildVisibilityFilter(ctx, rd1316AdminDID, f.srv.isViewerAdmin(ctx, rd1316AdminDID))
 	require.Contains(t, filter.VisibleTxHashes, f.hash, "the union keeps the vault transfer's parent for the admin")
 	require.Contains(t, filter.VisibleTxHashes, shared)
 	assert.Equal(t, []string{shared}, filter.ListedTxHashes, "only the genuine share is a listing")
@@ -195,7 +195,7 @@ func TestBuildVisibilityFilter_ListedTxHashesExcludeUnion_RD1316(t *testing.T) {
 	assert.False(t, opts.ListedTxHashes[f.hash], "a union hash must never reach the redactor as a listing")
 	assert.True(t, opts.ListedTxHashes[shared])
 
-	nonAdmin := f.srv.buildVisibilityFilter(ctx, rd1316GrantDID)
+	nonAdmin := f.srv.buildVisibilityFilter(ctx, rd1316GrantDID, f.srv.isViewerAdmin(ctx, rd1316GrantDID))
 	assert.NotContains(t, nonAdmin.VisibleTxHashes, f.hash, "a contract grant alone does not drive the union for a non-admin")
 
 	// A non-admin's own wallet still drives the union: a user who received
@@ -209,7 +209,7 @@ func TestBuildVisibilityFilter_ListedTxHashesExcludeUnion_RD1316(t *testing.T) {
 	_, err = f.conn.ExecContext(ctx, `INSERT INTO token_transfers (tx_hash, log_index, token_address, from_address, to_address, value, block_number)
 		SELECT $1, 1, $2, $3, $4, 7, block_number FROM transactions WHERE hash = $1`, f.hash, rd1316Token, rd1316EOA, receiverWallet)
 	require.NoError(t, err)
-	receiver := f.srv.buildVisibilityFilter(ctx, receiverDID)
+	receiver := f.srv.buildVisibilityFilter(ctx, receiverDID, f.srv.isViewerAdmin(ctx, receiverDID))
 	assert.Contains(t, receiver.VisibleTxHashes, f.hash, "the receiver's own wallet drives the union")
 	assert.NotContains(t, receiver.ListedTxHashes, f.hash, "the union never becomes a listing")
 }

@@ -22,10 +22,9 @@ func TestRedactOptsFromFilter_ListedTxHashesAreOnlyGenuineListings(t *testing.T)
 	listed := "0x" + strings.Repeat("aa", 32)
 	union := "0x" + strings.Repeat("bb", 32)
 	filter := &explorer.VisibilityFilter{
-		AllPrivate:          true,
-		VisibleTxHashes:     []string{listed, union},
-		ParticipantTxHashes: []string{union},
-		ListedTxHashes:      []string{strings.ToUpper(listed[:2]) + listed[2:]},
+		AllPrivate:      true,
+		VisibleTxHashes: []string{listed, union},
+		ListedTxHashes:  []string{strings.ToUpper(listed[:2]) + listed[2:]},
 	}
 	opts := redactOptsFromFilter(filter)
 	require.Equal(t, map[string]bool{listed: true}, opts.ListedTxHashes, "only tx_visible_to hashes, lowercased")
@@ -91,18 +90,17 @@ func TestBuildVisibilityFilter_ListedTxHashesExcludeTransferUnion(t *testing.T) 
 			require.Equal(t, explorer.VisibilityFull, visibility[contract], "both viewers have Full contract visibility")
 			require.Equal(t, !tc.admin, visibility[viewerAddr] == explorer.VisibilityFull, "the linked address is Full only for its owner")
 
-			filter := srv.buildVisibilityFilter(ctx, tc.did)
+			filter := srv.buildVisibilityFilter(ctx, tc.did, tc.admin)
 			visible := append([]string(nil), filter.VisibleTxHashes...)
 			sort.Strings(visible)
 			require.Equal(t, tc.visibleHashes, visible)
 			require.Equal(t, []string{listed}, filter.ListedTxHashes, "only the genuine listing may be treated as listed")
 			if tc.admin {
-				require.Contains(t, filter.ParticipantTxHashes, unionContract, "admin Full contract visibility drives parent-row union")
-				require.NotContains(t, filter.ParticipantTxHashes, unionViewer, "the admin does not own the linked address")
+				require.Contains(t, filter.VisibleTxHashes, unionContract, "admin Full contract visibility drives parent-row union")
+				require.NotContains(t, filter.VisibleTxHashes, unionViewer, "the admin does not own the linked address")
 			} else {
-				require.Contains(t, filter.ParticipantTxHashes, unionViewer)
+				require.Contains(t, filter.VisibleTxHashes, unionViewer)
 				require.NotContains(t, filter.VisibleTxHashes, unionContract, "a plain contract grant does not drive parent-row union")
-				require.NotContains(t, filter.ParticipantTxHashes, unionContract)
 			}
 
 			opts := srv.buildRedactOptsForViewer(ctx, tc.did)

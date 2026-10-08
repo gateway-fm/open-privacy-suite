@@ -254,11 +254,10 @@ func (s *Server) addDisclosureAddressToFilter(filter *explorer.VisibilityFilter,
 	}
 	// Copy to avoid mutating the original — including VisibleTxHashes.
 	newFilter := &explorer.VisibilityFilter{
-		AllPrivate:          filter.AllPrivate,
-		VisibleAddresses:    make([]string, len(filter.VisibleAddresses)+1),
-		VisibleTxHashes:     append([]string(nil), filter.VisibleTxHashes...),
-		ParticipantTxHashes: append([]string(nil), filter.ParticipantTxHashes...),
-		ListedTxHashes:      append([]string(nil), filter.ListedTxHashes...),
+		AllPrivate:       filter.AllPrivate,
+		VisibleAddresses: make([]string, len(filter.VisibleAddresses)+1),
+		VisibleTxHashes:  append([]string(nil), filter.VisibleTxHashes...),
+		ListedTxHashes:   append([]string(nil), filter.ListedTxHashes...),
 	}
 	copy(newFilter.VisibleAddresses, filter.VisibleAddresses)
 	newFilter.VisibleAddresses[len(filter.VisibleAddresses)] = address
@@ -284,16 +283,7 @@ func redactOptsFromFilter(filter *explorer.VisibilityFilter) explorer.RedactOpts
 			listed[strings.ToLower(h)] = true
 		}
 	}
-	// The participant-union subset (RD-1155) is carried through for
-	// completeness; since RD-1316 no redactor renders from it.
-	var pm map[string]bool
-	if len(filter.ParticipantTxHashes) > 0 {
-		pm = make(map[string]bool, len(filter.ParticipantTxHashes))
-		for _, h := range filter.ParticipantTxHashes {
-			pm[strings.ToLower(h)] = true
-		}
-	}
-	return explorer.RedactOpts{VisibleTxHashes: m, ParticipantTxHashes: pm, ListedTxHashes: listed}
+	return explorer.RedactOpts{VisibleTxHashes: m, ListedTxHashes: listed}
 }
 
 // buildRedactOptsForViewer builds RedactOpts for single-item endpoints
@@ -314,9 +304,10 @@ func (s *Server) buildRedactOptsForViewer(ctx context.Context, viewerDID string)
 	if viewerDID == "" {
 		return explorer.RedactOpts{}
 	}
-	filter := s.buildVisibilityFilter(ctx, viewerDID)
+	viewerIsAdmin := s.isViewerAdmin(ctx, viewerDID)
+	filter := s.buildVisibilityFilter(ctx, viewerDID, viewerIsAdmin)
 	opts := redactOptsFromFilter(filter)
-	opts.ViewerIsAdmin = s.isViewerAdmin(ctx, viewerDID)
+	opts.ViewerIsAdmin = viewerIsAdmin
 	s.applyAdminTxView(&opts)
 	return opts
 }
@@ -486,7 +477,7 @@ func (s *Server) getExplorerStats(c *gin.Context) {
 		return
 	}
 	viewerDID := s.getViewerDIDFromRequest(c)
-	filter := s.buildVisibilityFilter(c.Request.Context(), viewerDID)
+	filter := s.buildVisibilityFilter(c.Request.Context(), viewerDID, s.isViewerAdmin(c.Request.Context(), viewerDID))
 	stats, err := s.explorerStore.GetChainStatsFiltered(c.Request.Context(), filter)
 	if err != nil {
 		respondInternalErrorAndLog(c, "failed to get chain stats",
@@ -552,7 +543,7 @@ func (s *Server) getExplorerBlocks(c *gin.Context) {
 	}
 
 	viewerDID := s.getViewerDIDFromRequest(c)
-	filter := s.buildVisibilityFilter(c.Request.Context(), viewerDID)
+	filter := s.buildVisibilityFilter(c.Request.Context(), viewerDID, s.isViewerAdmin(c.Request.Context(), viewerDID))
 
 	blocks, err := s.explorerStore.GetBlocksFiltered(c.Request.Context(), limit, beforeBlock, filter)
 	if err != nil {
@@ -600,7 +591,7 @@ func (s *Server) getExplorerBlock(c *gin.Context) {
 	}
 	// Adjust TransactionCount to reflect only visible transactions
 	viewerDID := s.getViewerDIDFromRequest(c)
-	filter := s.buildVisibilityFilter(c.Request.Context(), viewerDID)
+	filter := s.buildVisibilityFilter(c.Request.Context(), viewerDID, s.isViewerAdmin(c.Request.Context(), viewerDID))
 	if filter != nil {
 		filteredCount, err := s.explorerStore.GetBlockTransactionCountFiltered(c.Request.Context(), num, filter)
 		if err != nil {
@@ -643,7 +634,7 @@ func (s *Server) getExplorerBlockByHash(c *gin.Context) {
 	}
 	// Adjust TransactionCount to reflect only visible transactions
 	viewerDID := s.getViewerDIDFromRequest(c)
-	filter := s.buildVisibilityFilter(c.Request.Context(), viewerDID)
+	filter := s.buildVisibilityFilter(c.Request.Context(), viewerDID, s.isViewerAdmin(c.Request.Context(), viewerDID))
 	if filter != nil {
 		filteredCount, err := s.explorerStore.GetBlockTransactionCountFiltered(c.Request.Context(), block.Number, filter)
 		if err != nil {
@@ -697,9 +688,13 @@ func (s *Server) getViewerDIDFromRequest(c *gin.Context) string {
 }
 
 // buildVisibilityFilter resolves which addresses should be excluded from
-// transaction queries at the SQL level. Only org-registered addresses and
-// user EOAs can be hidden — unregistered addresses default to VisibilityFull (public).
-func (s *Server) buildVisibilityFilter(ctx context.Context, viewerDID string) *explorer.VisibilityFilter {
+// transaction queries at the SQL level. All contracts are private by default
+// (allowlist mode): unregistered addresses resolve Hidden (REDACTION_SPEC §2.1).
+//
+// viewerIsAdmin must be isViewerAdmin(viewerDID) for the same DID. The caller
+// computes it once and reuses it for RedactOpts.ViewerIsAdmin; here it selects
+// which addresses drive the transfer-participant union.
+func (s *Server) buildVisibilityFilter(ctx context.Context, viewerDID string, viewerIsAdmin bool) *explorer.VisibilityFilter {
 	// All contracts are private by default — use allowlist mode.
 	// Only addresses the viewer has VisibilityFull on are shown.
 
@@ -821,7 +816,7 @@ func (s *Server) buildVisibilityFilter(ctx context.Context, viewerDID string) *e
 	//     not keep another user's one-side-hidden transaction: G10 drops it,
 	//     and the RPC returns null for it.
 	unionDrivers := fullVisible
-	if len(fullVisible) > 0 && !s.isViewerAdmin(ctx, viewerDID) {
+	if len(fullVisible) > 0 && !viewerIsAdmin {
 		unionDrivers = make([]string, 0, len(fullVisible))
 		for addr, meta := range visMapDetailed {
 			if meta.Level == explorer.VisibilityFull &&
@@ -845,10 +840,6 @@ func (s *Server) buildVisibilityFilter(ctx context.Context, viewerDID string) *e
 			for h := range transferTxs {
 				if !existing[h] {
 					filter.VisibleTxHashes = append(filter.VisibleTxHashes, h)
-					// RD-1155: the union hashes, tracked apart from the shares.
-					// Informational since RD-1316 (the union reveals nothing to
-					// label); VisibleTxHashes drives survival and SQL filtering.
-					filter.ParticipantTxHashes = append(filter.ParticipantTxHashes, h)
 					existing[h] = true
 				}
 			}
@@ -890,7 +881,8 @@ func (s *Server) getExplorerTransactions(c *gin.Context) {
 	// Build SQL-level visibility filter to exclude transactions where both
 	// participants (or the deployer for contract creations) are hidden.
 	// This replaces the previous fetch-redact loop with a single query.
-	filter := s.buildVisibilityFilter(c.Request.Context(), viewerDID)
+	viewerIsAdmin := s.isViewerAdmin(c.Request.Context(), viewerDID)
+	filter := s.buildVisibilityFilter(c.Request.Context(), viewerDID, viewerIsAdmin)
 
 	var txs []explorer.Transaction
 	var err error
@@ -909,7 +901,7 @@ func (s *Server) getExplorerTransactions(c *gin.Context) {
 	// Field-level redaction still needed (replacing addresses with [PRIVATE],
 	// stripping values, etc.) — the SQL filter only drops entire rows.
 	opts := redactOptsFromFilter(filter)
-	opts.ViewerIsAdmin = s.isViewerAdmin(c.Request.Context(), viewerDID)
+	opts.ViewerIsAdmin = viewerIsAdmin
 	s.applyAdminTxView(&opts)
 	redacted, err := s.explorerRedactor.RedactTransactions(c.Request.Context(), txs, viewerDID, opts)
 	if err != nil {
@@ -1580,7 +1572,8 @@ func (s *Server) getExplorerTransactionsPaginated(c *gin.Context) {
 	viewerDID := s.getViewerDIDFromRequest(c)
 
 	// Build SQL-level visibility filter
-	filter := s.buildVisibilityFilter(c.Request.Context(), viewerDID)
+	viewerIsAdmin := s.isViewerAdmin(c.Request.Context(), viewerDID)
+	filter := s.buildVisibilityFilter(c.Request.Context(), viewerDID, viewerIsAdmin)
 
 	var txs []explorer.Transaction
 	var total int64
@@ -1602,7 +1595,7 @@ func (s *Server) getExplorerTransactionsPaginated(c *gin.Context) {
 
 	// Field-level redaction still needed for address masking and value stripping.
 	pOpts := redactOptsFromFilter(filter)
-	pOpts.ViewerIsAdmin = s.isViewerAdmin(c.Request.Context(), viewerDID)
+	pOpts.ViewerIsAdmin = viewerIsAdmin
 	s.applyAdminTxView(&pOpts)
 	redacted, err := s.explorerRedactor.RedactTransactions(c.Request.Context(), txs, viewerDID, pOpts)
 	if err != nil {
@@ -2969,7 +2962,7 @@ func (s *Server) getExplorerTransactionHistory(c *gin.Context) {
 	}
 
 	viewerDID := s.getViewerDIDFromRequest(c)
-	filter := s.buildVisibilityFilter(c.Request.Context(), viewerDID)
+	filter := s.buildVisibilityFilter(c.Request.Context(), viewerDID, s.isViewerAdmin(c.Request.Context(), viewerDID))
 	history, err := s.explorerStore.GetTransactionHistoryFiltered(c.Request.Context(), interval, limit, filter)
 	if err != nil {
 		respondInternalErrorAndLog(c, "failed to get transaction history",
