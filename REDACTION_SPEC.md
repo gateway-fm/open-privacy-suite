@@ -565,9 +565,9 @@ Required scenarios — any change adding/altering an explorer handler or its vie
 | Org contract; target has a group `contract_grant` (Full); admin is a non-member | admin (Redacted) | target (Full) | Handler serves the **target's Full** view (200) — not 404 |
 | Org contract; admin has the grant (Full); target is a non-member (Redacted) | admin (Full) | target (Redacted) | Handler reflects the **target's** view (404/masked) — admin's Full must **NOT** bleed through |
 
-Pinned in `internal/server/impersonation_viewer_resolution_test.go`.
+Pinned in `internal/server/impersonation_viewer_resolution_test.go`. The per-entity redaction matrices above structurally cannot catch this class because they set viewer == `subject` (no override), so the override-blind path looks correct. Reviewers: a new explorer handler that gates on viewer visibility MUST resolve via `getViewerDIDFromRequest` and add a row to that test.
 
-**Disclosure grants under impersonation (RD-1318).** The View-as gate and the dry-run mark the request context with `disclosure.WithoutViewerGrants` (§3.7.2). Any new code that reads the resolved viewer's disclosure grants on a path reachable from those surfaces MUST check `disclosure.ViewerGrantsSuppressed(ctx)` and return nothing under it; reviewers reject a viewer-keyed grant read without it. Pinned by `impersonation_disclosure_grants_rd1318_test.go`. The per-entity redaction matrices above structurally cannot catch this class because they set viewer == `subject` (no override), so the override-blind path looks correct. Reviewers: a new explorer handler that gates on viewer visibility MUST resolve via `getViewerDIDFromRequest` and add a row to that test.
+**Disclosure grants under impersonation (RD-1318).** The View-as gate and the dry-run mark the request context with `disclosure.WithoutViewerGrants` (§3.7.2). A new impersonation surface MUST set the mark (through `setImpersonationContext` or `disclosure.WithoutViewerGrants`). Any new code that reads the resolved viewer's disclosure grants on a path reachable from those surfaces MUST check `disclosure.ViewerGrantsSuppressed(ctx)` and return nothing under it; reviewers reject a viewer-keyed grant read without it. Pinned in `internal/server/impersonation_disclosure_grants_rd1318_test.go`.
 
 
 ### Test structure
