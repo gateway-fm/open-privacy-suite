@@ -185,8 +185,8 @@ way as the method it mirrors:
 The proxy returns only the **call tree** (the `callTracer` output), and only when the
 caller has access to **every** contract the trace passes through, in the organization the
 request is for. A trace into a contract the caller has no access to is denied, even if the
-entry contract is accessible, because a trace shows every internal call's input and output.
-Function and argument restrictions apply to those internal calls as well. A proxy's delegated
+entry contract is accessible. Function and argument restrictions apply to internal calls as
+well. A proxy's delegated
 calls use the caller's permissions on the proxy, and the implementation must still pass the
 organization check. Validated precompiles, shared infrastructure and contract creation retain
 their existing access rules.
@@ -203,6 +203,23 @@ are rejected:
 These would expose contract storage, memory or raw event logs, which the storage and event
 rules withhold from other read methods.
 
+**Internal-call values.** The top-level call's input and output are always returned. The
+values carried by internal calls are returned only to a caller who could read the storage of
+the contract that produced them, by the same rule as `eth_getStorageAt` for private slots:
+
+- an internal call's input and value come from the calling contract (for a call made inside a
+  proxy's delegated code, the proxy);
+- its output and revert data come from the called contract (for a delegated call, the proxy).
+
+A caller who may not read that contract's storage gets the call tree (call type, addresses,
+gas and error) with those fields removed and named in the call's `redacted` field, for
+example `"redacted": ["input", "value"]`. In practice, an org admin, or a member of a group
+with the `admin` claim on that contract, sees the values if `eth_getStorageAt` is in their
+allowed methods. A contract grant without the `admin` claim lets a caller call a contract, not
+read the private data it passes to other contracts.
+
+The decision uses the caller's current access, also when replaying an older transaction. The
+output of a precompiled contract inside a trace is never returned.
 
 </Callout>
 

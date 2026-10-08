@@ -238,3 +238,90 @@ func TestRD1304_E2E_CrossOrgInternalFrameDenied(t *testing.T) {
 	require.Equal(t, http.StatusOK, status, "a same-org internal frame is served; body=%s", string(body))
 	assert.Contains(t, strings.ToLower(string(body)), "staticcall")
 }
+
+// Payroll passes a value from its private storage to Token, and Token answers
+// with a value from its own private storage:
+//
+//	interface IToken { function transfer(address to, uint256 amount) external returns (uint256); }
+//	contract Payroll {
+//	    uint256 private salary = 0x5a1a12;
+//	    function pay(address token, address employee) external returns (bool) {
+//	        IToken(token).transfer(employee, salary);
+//	        return true;
+//	    }
+//	}
+//	contract Token {
+//	    uint256 private receipt = 0x7e3c1d;
+//	    function transfer(address, uint256) external view returns (uint256) { return receipt; }
+//	}
+const (
+	rd1304PayrollBytecode = "0x6080604052625a1a125f553480156014575f5ffd5b5061016c806100225f395ff3fe608060405234801561000f575f5ffd5b5060043610610029575f3560e01c8063bd0af85d1461002d575b5f5ffd5b61004061003b3660046100ee565b610054565b604051901515815260200160405180910390f35b5f805460405163a9059cbb60e01b81526001600160a01b03848116600483015260248201929092529084169063a9059cbb906044016020604051808303815f875af11580156100a5573d5f5f3e3d5ffd5b505050506040513d601f19601f820116820180604052508101906100c9919061011f565b5060019392505050565b80356001600160a01b03811681146100e9575f5ffd5b919050565b5f5f604083850312156100ff575f5ffd5b610108836100d3565b9150610116602084016100d3565b90509250929050565b5f6020828403121561012f575f5ffd5b505191905056fea26469706673582212201a322ef9c4f8a2d783de224f343208be995358e72b2b1768a76b0e7518f25a9964736f6c63430008230033"
+	rd1304TokenBytecode   = "0x6080604052627e3c1d5f553480156014575f5ffd5b5060b78060205f395ff3fe6080604052348015600e575f5ffd5b50600436106026575f3560e01c8063a9059cbb14602a575b5f5ffd5b603c6035366004604e565b50505f5490565b60405190815260200160405180910390f35b5f5f60408385031215605e575f5ffd5b82356001600160a01b03811681146073575f5ffd5b94602093909301359350505056fea2646970667358221220c97a7508502efe86b3c69737a71f09347ea00dc02793ecfa6065f320c9b1a6c064736f6c63430008230033"
+	rd1304SalaryMarker    = "5a1a12"
+	rd1304ReceiptMarker   = "7e3c1d"
+	rd1304Employee        = "0x00000000000000000000000000000000000000e1"
+)
+
+func rd1304PayCall(token string) string {
+	return "0xbd0af85d" + strings.Repeat("0", 24) + strings.TrimPrefix(strings.ToLower(token), "0x") +
+		strings.Repeat("0", 24) + strings.TrimPrefix(rd1304Employee, "0x")
+}
+
+// Each internal-call value in a client trace is shown only to a viewer who may
+// read the storage of the contract that produced it. The deployer (contract
+// access, no admin claim) gets the call tree without the values, on a call
+// trace and on a replay of their own transaction; an org admin gets them.
+func TestRD1304_E2E_InternalValuesNeedStorageAccess(t *testing.T) {
+	env := setupCreate2Env(t)
+	defer env.cleanup()
+
+	did := "did:test:rd1304_values"
+	orgID := createOrgWithUser(t, env.srv.DB(), "rd1304-v", "rd1304-v-grp", did,
+		[]rbac.Claim{rbac.ClaimDeploy}, rd1304Methods, anvilAccount0)
+	token := getJWTTokenForCreate2(t, env.serverURL, did)
+	payroll := deployFrom(t, env.serverURL, orgID, token, anvilAccount0, rd1304PayrollBytecode)
+	tok := deployFrom(t, env.serverURL, orgID, token, anvilAccount0, rd1304TokenBytecode)
+
+	// Control: this viewer cannot read Payroll's private slot directly.
+	st, _ := jsonRPCCallRaw(t, env.serverURL, orgID, token, "eth_getStorageAt", []any{payroll, "0x0", "latest"})
+	require.GreaterOrEqual(t, st, 400, "control: the storage-slot tier must deny the private slot to a non-admin")
+
+	assertHidden := func(what string, status int, body []byte) {
+		t.Helper()
+		require.Equal(t, http.StatusOK, status, "%s is served; body=%s", what, string(body))
+		raw := strings.ToLower(string(body))
+		assert.Contains(t, raw, strings.TrimPrefix(tok, "0x"), "%s: the call tree still names the token", what)
+		assert.Contains(t, raw, `"redacted"`, "%s: hidden fields are marked", what)
+		assert.NotContains(t, raw, rd1304SalaryMarker, "%s: Payroll's private value must be absent from the raw body", what)
+		assert.NotContains(t, raw, rd1304ReceiptMarker, "%s: Token's private value must be absent from the raw body", what)
+	}
+
+	call := map[string]any{"from": anvilAccount0, "to": payroll, "data": rd1304PayCall(tok)}
+	status, body := traceRPCCallRaw(t, env.serverURL, orgID, token, "debug_traceCall", []any{call, "latest"})
+	assertHidden("call trace", status, body)
+
+	resp := jsonRPCCall(t, env.serverURL, orgID, token, "eth_sendTransaction", []any{map[string]any{
+		"from": anvilAccount0, "to": payroll, "data": rd1304PayCall(tok), "gas": "0x100000",
+	}})
+	require.Nil(t, resp["error"], "pay() failed: %v", resp["error"])
+	txHash, _ := resp["result"].(string)
+	waitForReceipt(t, env.serverURL, orgID, token, txHash)
+	status, body = traceRPCCallRaw(t, env.serverURL, orgID, token, "debug_traceTransaction", []any{txHash})
+	assertHidden("replay by the sender", status, body)
+
+	// Positive control: an org admin may read both contracts' storage, so the
+	// same trace carries both values.
+	adminDID := "did:test:rd1304_values_admin"
+	addUserToOrg(t, env.srv.DB(), orgID, "rd1304-v-admin", adminDID, nil, rd1304Methods, anvilAccount1)
+	_, err := env.srv.DB().Conn().ExecContext(context.Background(),
+		`UPDATE groups SET is_org_admin = true WHERE org_id = $1 AND slug = $2`, orgID, "rd1304-v-admin")
+	require.NoError(t, err)
+	adminToken := getJWTTokenForCreate2(t, env.serverURL, adminDID)
+	adminCall := map[string]any{"from": anvilAccount1, "to": payroll, "data": rd1304PayCall(tok)}
+	status, body = traceRPCCallRaw(t, env.serverURL, orgID, adminToken, "debug_traceCall", []any{adminCall, "latest"})
+	require.Equal(t, http.StatusOK, status, "the org admin's trace is served; body=%s", string(body))
+	raw := strings.ToLower(string(body))
+	assert.Contains(t, raw, rd1304SalaryMarker, "the org admin sees Payroll's value")
+	assert.Contains(t, raw, rd1304ReceiptMarker, "the org admin sees Token's value")
+	assert.NotContains(t, raw, `"redacted"`)
+}

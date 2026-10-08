@@ -576,7 +576,10 @@ func TestRD1304_TraceCall_NestedFunctionRules(t *testing.T) {
 						res := proc.Process(ctx, traceReq(u.did, u.orgID, method, params...))
 						if input == tc.allowedInput {
 							require.Nil(t, res.Error, "a frame permitted by the storage contract's rules must be returned: %+v", res.Error)
-							assert.Contains(t, string(res.ResponseBody), "0x1234")
+							assert.Contains(t, string(res.ResponseBody), child, "the permitted frame is in the returned tree")
+							// The viewer holds no admin claim, so the frame's
+							// output stays hidden (value visibility rule).
+							assert.NotContains(t, string(res.ResponseBody), "0x1234")
 						} else {
 							require.NotNil(t, res.Error, "a frame must satisfy the storage contract's function and argument rules")
 							assert.Empty(t, res.ResponseBody)

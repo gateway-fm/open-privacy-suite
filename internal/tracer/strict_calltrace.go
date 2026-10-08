@@ -83,10 +83,7 @@ func collectStrictTargets(f *strictFrame, result *TraceResult, depth int, parent
 			return ErrUntrustedTrace
 		}
 	}
-	storageAddress := f.To
-	if f.Type == "DELEGATECALL" || f.Type == "CALLCODE" {
-		storageAddress = parentStorage
-	}
+	storageAddress := frameStorageContext(f.Type, f.To, parentStorage)
 	switch f.Type {
 	case "CALL", "STATICCALL", "DELEGATECALL":
 		if !isStrictAddress(f.To) {
