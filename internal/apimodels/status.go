@@ -14,16 +14,17 @@ type StatusResponse struct {
 
 // MethodsStatus exposes available RPC methods to the admin frontend.
 type MethodsStatus struct {
-	ExtraNamespaces map[string][]string          `json:"extra_namespaces,omitempty"`
-	ExtraWildcards  map[string]ExtraWildcardInfo `json:"extra_wildcards,omitempty"`
-}
-
-// ExtraWildcardInfo describes a chain namespace running in prefix-wildcard mode.
-// The frontend uses this to render a single togglable picker entry per
-// wildcard-enabled namespace, plus a read-only view of the deny list.
-type ExtraWildcardInfo struct {
-	Prefix string   `json:"prefix"`
-	Deny   []string `json:"deny,omitempty"`
+	// ExtraNamespaces maps each operator-configured namespace label to its
+	// method names (aliased and passthrough entries).
+	ExtraNamespaces map[string][]string `json:"extra_namespaces,omitempty"`
+	// ExtraPassthrough lists the operator methods forwarded unfiltered (no
+	// per-address access check, no response filtering, no tracing). A group
+	// reaches them only by listing them by name.
+	ExtraPassthrough []string `json:"extra_passthrough,omitempty"`
+	// SupportedMethods lists every method a group's allowed_methods may hold
+	// (built-in methods plus the operator methods above), sorted. Any other
+	// stored entry is refused at request time and rejected on save.
+	SupportedMethods []string `json:"supported_methods"`
 }
 
 // ProxyStatus represents the proxy status

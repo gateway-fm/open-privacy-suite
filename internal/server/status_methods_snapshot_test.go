@@ -10,30 +10,24 @@ import (
 
 // RD-1262 — the /status methods block must not alias the live rbac method
 // registries. Pre-fix, apimodels.StatusResponse carried rbac.ExtraNamespaces (the
-// package-global map) by reference and apimodels.ExtraWildcardInfo.Deny aliased the
-// registry's deny slice, so a consumer mutating the response (or the JSON
-// encoder iterating concurrently with a hypothetical writer) touched global
+// package-global map) by reference, so a consumer mutating the response (or the
+// JSON encoder iterating concurrently with a hypothetical writer) touched global
 // RBAC state.
 
-func TestBuildExtraWildcardsResponse_DoesNotAliasDenyList(t *testing.T) {
+func TestBuildExtraPassthroughResponse_SortedAndDoesNotAliasRegistry(t *testing.T) {
 	defer rbac.SnapshotMethodRegistriesForTest()()
 
-	rbac.Wildcards = []*rbac.WildcardNamespace{{
-		Namespace: "Linea",
-		Prefix:    "linea_",
-		Deny:      []string{"linea_sendTransaction"},
-	}}
+	rbac.PassthroughMethods = map[string]bool{"trace_block": true, "linea_getTransactionExclusionStatusV1": true}
 
-	out := buildExtraWildcardsResponse()
-	if assert.Contains(t, out, "Linea") {
-		info := out["Linea"]
-		if assert.Len(t, info.Deny, 1) {
-			info.Deny[0] = "mutated_by_consumer"
-		}
-	}
+	out := buildExtraPassthroughResponse()
+	assert.Equal(t, []string{"linea_getTransactionExclusionStatusV1", "trace_block"}, out, "sorted for a stable UI")
+	out[0] = "mutated_by_consumer"
+	assert.True(t, rbac.PassthroughMethods["linea_getTransactionExclusionStatusV1"],
+		"mutating the status response must not touch rbac.PassthroughMethods")
+	assert.False(t, rbac.PassthroughMethods["mutated_by_consumer"])
 
-	assert.Equal(t, "linea_sendTransaction", rbac.Wildcards[0].Deny[0],
-		"mutating the status response must not touch the rbac.Wildcards registry")
+	rbac.PassthroughMethods = map[string]bool{}
+	assert.Nil(t, buildExtraPassthroughResponse(), "no passthrough methods → field omitted")
 }
 
 func TestSnapshotExtraNamespaces_DoesNotAliasRegistry(t *testing.T) {

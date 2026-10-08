@@ -1427,21 +1427,6 @@
                 },
                 "type": "object"
             },
-            "privacy-proxy_internal_apimodels.ExtraWildcardInfo": {
-                "properties": {
-                    "deny": {
-                        "items": {
-                            "type": "string"
-                        },
-                        "type": "array",
-                        "uniqueItems": false
-                    },
-                    "prefix": {
-                        "type": "string"
-                    }
-                },
-                "type": "object"
-            },
             "privacy-proxy_internal_apimodels.GrantActivityLogEntry": {
                 "properties": {
                     "method": {
@@ -1944,13 +1929,24 @@
                             },
                             "type": "array"
                         },
+                        "description": "ExtraNamespaces maps each operator-configured namespace label to its\nmethod names (aliased and passthrough entries).",
                         "type": "object"
                     },
-                    "extra_wildcards": {
-                        "additionalProperties": {
-                            "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.ExtraWildcardInfo"
+                    "extra_passthrough": {
+                        "description": "ExtraPassthrough lists the operator methods forwarded unfiltered (no\nper-address access check, no response filtering, no tracing). A group\nreaches them only by listing them by name.",
+                        "items": {
+                            "type": "string"
                         },
-                        "type": "object"
+                        "type": "array",
+                        "uniqueItems": false
+                    },
+                    "supported_methods": {
+                        "description": "SupportedMethods lists every method a group's allowed_methods may hold\n(built-in methods plus the operator methods above), sorted. Any other\nstored entry is refused at request time and rejected on save.",
+                        "items": {
+                            "type": "string"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
                     }
                 },
                 "type": "object"
@@ -11718,7 +11714,7 @@
                 ]
             },
             "put": {
-                "description": "Creates or replaces the group's access settings. Body: allowed_methods ([]string; \"*\" expands to the full method list), claims ([]string of operational claims: deploy/upgrade/admin), rpc_api_key (encrypted at rest, never returned in clear), verbose_errors. is_system group access can only be modified by the full admin token (X-Admin-Token; unlike the other gates here, the operator token is rejected for is_system too). Reshaping an is_org_admin group's access is rejected for a tier-2 org-admin JWT (an admin-tier token — full admin or operator — is required); reshaping a regular group's access is rejected for the operator token (tenant management is the org admin's job), which may reshape admin-tier groups (is_org_admin / is_org_readonly_admin) and the global default group. On is_org_admin groups claims must be empty and at least one method is required. The returned rpc_api_key is masked.",
+                "description": "Creates or replaces the group's access settings. Body: allowed_methods ([]string of exact method names the proxy supports — built-in methods and operator-declared chain-specific methods; \"*\" is stored as its explicit expansion merged with the other listed entries, never literally; the anonymous system group accepts built-in methods only, listed by name; operator passthrough methods can be added only with an admin-tier token, a tier-2 org-admin JWT may keep or remove them), claims ([]string of operational claims: deploy/upgrade/admin), rpc_api_key (encrypted at rest, never returned in clear), verbose_errors. is_system group access can only be modified by the full admin token (X-Admin-Token; unlike the other gates here, the operator token is rejected for is_system too). Reshaping an is_org_admin group's access is rejected for a tier-2 org-admin JWT (an admin-tier token — full admin or operator — is required); reshaping a regular group's access is rejected for the operator token (tenant management is the org admin's job), which may reshape admin-tier groups (is_org_admin / is_org_readonly_admin) and the global default group. On is_org_admin groups claims must be empty and at least one method is required. The returned rpc_api_key is masked.",
                 "parameters": [
                     {
                         "description": "Organization ID (UUID)",
@@ -11778,7 +11774,7 @@
                                 }
                             }
                         },
-                        "description": "invalid body, method/claim mismatch, or org-admin claim/method invariant violated"
+                        "description": "invalid body, unsupported method in allowed_methods, method/claim mismatch, or org-admin claim/method invariant violated"
                     },
                     "401": {
                         "content": {
@@ -11798,7 +11794,7 @@
                                 }
                             }
                         },
-                        "description": "source address not on the private network, group not in the path org, system-group access changed by non-super-admin, tier-2 JWT reshaping an org-admin group, or operator token reshaping a regular group"
+                        "description": "source address not on the private network, group not in the path org, system-group access changed by non-super-admin, tier-2 JWT reshaping an org-admin group, operator token reshaping a regular group, or tier-2 JWT adding a passthrough method"
                     },
                     "500": {
                         "content": {
@@ -12673,7 +12669,7 @@
         },
         "/api/v1/admin/status": {
             "get": {
-                "description": "Operational status: proxy liveness and port, upstream node health/latency, compliance/travel-rule configuration, and the extra RPC namespaces/wildcards available to the frontend.",
+                "description": "Operational status: proxy liveness and port, upstream node health/latency, compliance/travel-rule configuration, and the RPC methods a group may be granted (supported methods, operator namespaces, and the operator passthrough methods forwarded unfiltered).",
                 "responses": {
                     "200": {
                         "content": {
@@ -19159,7 +19155,7 @@
         },
         "/rpc": {
             "post": {
-                "description": "Single Ethereum JSON-RPC 2.0 request, method-allowlisted and RBAC-checked, with per-method response redaction. Batch (array) requests are rejected.\n\n`Authorization: Bearer \u003ctoken\u003e` is OPTIONAL: anonymous callers are restricted to the anonymous method allowlist; authenticated callers get per-method RBAC and response redaction based on their identity.\n\nClient state/block override options on call, gas-estimation, access-list, and trace methods are unsupported for all callers, including admins. Positional null/empty-object placeholders remain allowed; debug_traceCall override and replay-position config keys must be omitted. Ordinary calls remain subject to the normal access and node validation rules.\n\nThe transaction-sending methods (eth_sendTransaction / eth_sendRawTransaction) additionally accept a top-level `visibleTo` array (alias `privateFor`) of DIDs and/or linked ETH addresses, granting those viewers per-transaction visibility of the emitted event logs (RD-1163). It is accepted only for log-emitting contract calls.\n\nA JSON-RPC-level error (bad params, node error, or a masked authorization denial) is returned with HTTP 200 in the JSON-RPC error member. The non-200 statuses below are transport / access / rate-limit failures that never reach the node. `POST /` and `POST /rpc` are the same operation.",
+                "description": "Single Ethereum JSON-RPC 2.0 request, method-allowlisted and RBAC-checked, with per-method response redaction. Batch (array) requests are rejected.\n\nMember names must be exact-case and unique: a request that repeats a member name, holds two names differing only in letter case in one object (at any depth), or uses a case variant of a JSON-RPC member (e.g. `Method`) is rejected with 400 before any access decision and never reaches the node; so is an `id` that is not a string, a number or null. For methods whose params the proxy checks (all but typed-data signing and named passthrough), so are a case variant of a standard request field inside params (e.g. `To`) and an object whose `data` and `input` differ. The node receives a request rebuilt from the members the proxy read (jsonrpc, id, method, params); `visibleTo`/`privateFor` and any other top-level members are never forwarded.\n\n`Authorization: Bearer \u003ctoken\u003e` is OPTIONAL: anonymous callers are restricted to the anonymous method allowlist; authenticated callers get per-method RBAC and response redaction based on their identity.\n\nClient state/block override options on call, gas-estimation, access-list, and trace methods are unsupported for all callers, including admins. Positional null/empty-object placeholders remain allowed; debug_traceCall override and replay-position config keys must be omitted. Ordinary calls remain subject to the normal access and node validation rules.\n\nThe transaction-sending methods (eth_sendTransaction / eth_sendRawTransaction) additionally accept a top-level `visibleTo` array (alias `privateFor`) of DIDs and/or linked ETH addresses, granting those viewers per-transaction visibility of the emitted event logs (RD-1163). It is accepted only for log-emitting contract calls.\n\nA JSON-RPC-level error (bad params, node error, or a masked authorization denial) is returned with HTTP 200 in the JSON-RPC error member. The non-200 statuses below are transport / access / rate-limit failures that never reach the node. `POST /` and `POST /rpc` are the same operation.",
                 "parameters": [
                     {
                         "description": "Organization the access decision resolves against (only on /rpc/{org_id})",
@@ -19209,7 +19205,7 @@
                                 }
                             }
                         },
-                        "description": "unreadable body, malformed/batch JSON-RPC, or invalid visibleTo"
+                        "description": "unreadable body, malformed, ambiguous (duplicate or case-variant member names) or batch JSON-RPC, or invalid visibleTo"
                     },
                     "401": {
                         "content": {
@@ -19295,7 +19291,7 @@
         },
         "/rpc/{org_id}": {
             "post": {
-                "description": "Single Ethereum JSON-RPC 2.0 request, method-allowlisted and RBAC-checked, with per-method response redaction. Batch (array) requests are rejected.\n\n`Authorization: Bearer \u003ctoken\u003e` is OPTIONAL: anonymous callers are restricted to the anonymous method allowlist; authenticated callers get per-method RBAC and response redaction based on their identity.\n\nClient state/block override options on call, gas-estimation, access-list, and trace methods are unsupported for all callers, including admins. Positional null/empty-object placeholders remain allowed; debug_traceCall override and replay-position config keys must be omitted. Ordinary calls remain subject to the normal access and node validation rules.\n\nThe transaction-sending methods (eth_sendTransaction / eth_sendRawTransaction) additionally accept a top-level `visibleTo` array (alias `privateFor`) of DIDs and/or linked ETH addresses, granting those viewers per-transaction visibility of the emitted event logs (RD-1163). It is accepted only for log-emitting contract calls.\n\nA JSON-RPC-level error (bad params, node error, or a masked authorization denial) is returned with HTTP 200 in the JSON-RPC error member. The non-200 statuses below are transport / access / rate-limit failures that never reach the node. `POST /` and `POST /rpc` are the same operation.",
+                "description": "Single Ethereum JSON-RPC 2.0 request, method-allowlisted and RBAC-checked, with per-method response redaction. Batch (array) requests are rejected.\n\nMember names must be exact-case and unique: a request that repeats a member name, holds two names differing only in letter case in one object (at any depth), or uses a case variant of a JSON-RPC member (e.g. `Method`) is rejected with 400 before any access decision and never reaches the node; so is an `id` that is not a string, a number or null. For methods whose params the proxy checks (all but typed-data signing and named passthrough), so are a case variant of a standard request field inside params (e.g. `To`) and an object whose `data` and `input` differ. The node receives a request rebuilt from the members the proxy read (jsonrpc, id, method, params); `visibleTo`/`privateFor` and any other top-level members are never forwarded.\n\n`Authorization: Bearer \u003ctoken\u003e` is OPTIONAL: anonymous callers are restricted to the anonymous method allowlist; authenticated callers get per-method RBAC and response redaction based on their identity.\n\nClient state/block override options on call, gas-estimation, access-list, and trace methods are unsupported for all callers, including admins. Positional null/empty-object placeholders remain allowed; debug_traceCall override and replay-position config keys must be omitted. Ordinary calls remain subject to the normal access and node validation rules.\n\nThe transaction-sending methods (eth_sendTransaction / eth_sendRawTransaction) additionally accept a top-level `visibleTo` array (alias `privateFor`) of DIDs and/or linked ETH addresses, granting those viewers per-transaction visibility of the emitted event logs (RD-1163). It is accepted only for log-emitting contract calls.\n\nA JSON-RPC-level error (bad params, node error, or a masked authorization denial) is returned with HTTP 200 in the JSON-RPC error member. The non-200 statuses below are transport / access / rate-limit failures that never reach the node. `POST /` and `POST /rpc` are the same operation.",
                 "parameters": [
                     {
                         "description": "Organization the access decision resolves against (only on /rpc/{org_id})",
@@ -19345,7 +19341,7 @@
                                 }
                             }
                         },
-                        "description": "unreadable body, malformed/batch JSON-RPC, or invalid visibleTo"
+                        "description": "unreadable body, malformed, ambiguous (duplicate or case-variant member names) or batch JSON-RPC, or invalid visibleTo"
                     },
                     "401": {
                         "content": {

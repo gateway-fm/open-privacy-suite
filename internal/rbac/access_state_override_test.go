@@ -91,6 +91,14 @@ func TestCheckAccess_StateOverrideDenied(t *testing.T) {
 }
 
 func TestCheckAccess_StateOverrideRequestMethods(t *testing.T) {
+	defer SnapshotMethodRegistriesForTest()()
+	if err := RegisterExtraNamespaces(
+		map[string][]string{"Example": {"example_call", "example_estimateGas", "example_createAccessList"}},
+		map[string]string{"example_call": "eth_call", "example_estimateGas": "eth_estimateGas", "example_createAccessList": "eth_createAccessList"},
+		nil,
+	); err != nil {
+		t.Fatalf("register operator methods: %v", err)
+	}
 	ctrl := NewAccessController(NewMockCrossOrgStore(), time.Minute)
 	defer ctrl.Stop()
 	for _, tc := range []struct {

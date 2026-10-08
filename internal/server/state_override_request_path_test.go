@@ -87,14 +87,14 @@ func seedOverrideTestUser(t *testing.T, ctx context.Context, ts *testServerRBAC,
 }
 
 // processRaw parses a raw JSON-RPC body exactly as the /rpc handler does, so
-// duplicate-key and Unicode-key payloads reach the processor with the same
-// params the production path would see, and forwards the raw body verbatim.
+// valid Unicode-key payloads reach the processor with the canonical params
+// and body used by the production request path.
 func processRaw(t *testing.T, proc *JSONRPCProcessor, did, body string) *ProcessResult {
 	t.Helper()
-	method, params, perr := ParseAndValidateBody([]byte(body))
+	method, params, canonicalBody, perr := ParseAndValidateBody([]byte(body))
 	require.Nil(t, perr, "test body must parse")
 	return proc.Process(context.Background(), &ProcessRequest{
-		UserID: did, Method: method, Params: params, Body: []byte(body), ClientIP: "203.0.113.5",
+		UserID: did, Method: method, Params: params, Body: canonicalBody, ClientIP: "203.0.113.5",
 	})
 }
 
@@ -193,19 +193,31 @@ func TestProcessDebugTrace_StateOverrideNeverReachesNode(t *testing.T) {
 		assert.Equal(t, int64(1), canary.hits.Load(), "plain debug_traceCall must reach the node exactly once")
 	})
 
-	denied := []struct{ name, body string }{
-		{"stateOverrides", `{"jsonrpc":"2.0","id":1,"method":"debug_traceCall","params":[` + call + `,"latest",{"tracer":"callTracer","stateOverrides":` + override + `}]}`},
-		{"blockOverrides", `{"jsonrpc":"2.0","id":1,"method":"debug_traceCall","params":[` + call + `,"latest",{"blockOverrides":{"number":"0x1"}}]}`},
+	denied := []struct {
+		name, body    string
+		parseRejected bool
+	}{
+		{"stateOverrides", `{"jsonrpc":"2.0","id":1,"method":"debug_traceCall","params":[` + call + `,"latest",{"tracer":"callTracer","stateOverrides":` + override + `}]}`, false},
+		{"blockOverrides", `{"jsonrpc":"2.0","id":1,"method":"debug_traceCall","params":[` + call + `,"latest",{"blockOverrides":{"number":"0x1"}}]}`, false},
 		// Repeated option keys follow the same presence rule.
-		{"duplicate stateOverrides key", `{"jsonrpc":"2.0","id":1,"method":"debug_traceCall","params":[` + call + `,"latest",{"stateOverrides":` + override + `,"stateOverrides":{}}]}`},
+		{"duplicate stateOverrides key", `{"jsonrpc":"2.0","id":1,"method":"debug_traceCall","params":[` + call + `,"latest",{"stateOverrides":` + override + `,"stateOverrides":{}}]}`, true},
 		// Equivalent case-folded spellings follow the same presence rule.
-		{"long-s stateOverrides key", `{"jsonrpc":"2.0","id":1,"method":"debug_traceCall","params":[` + call + `,"latest",{"ſtateOverrides":` + override + `}]}`},
+		{"long-s stateOverrides key", `{"jsonrpc":"2.0","id":1,"method":"debug_traceCall","params":[` + call + `,"latest",{"ſtateOverrides":` + override + `}]}`, true},
 	}
 	for _, tc := range denied {
 		t.Run(tc.name, func(t *testing.T) {
 			scripted.hits.Store(0)
 			canary.hits.Store(0)
 			cl.gotDenialReason = ""
+			if tc.parseRejected {
+				_, _, _, perr := ParseAndValidateBody([]byte(tc.body))
+				require.NotNil(t, perr)
+				assert.Equal(t, http.StatusBadRequest, perr.StatusCode)
+				assert.Equal(t, int64(0), scripted.hits.Load())
+				assert.Equal(t, int64(0), canary.hits.Load())
+				assert.Empty(t, cl.gotDenialReason, "the request does not enter the processor")
+				return
+			}
 			res := processRaw(t, proc, did, tc.body)
 			require.NotNil(t, res.Error, "%s must be denied", tc.name)
 			assert.Equal(t, http.StatusNotFound, res.Error.StatusCode, "opaque 404 on the wire")

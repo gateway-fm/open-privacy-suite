@@ -390,22 +390,9 @@ func (p *JSONRPCProcessor) validateEthCallWithTracingInOrg(ctx context.Context, 
 	if p.runtimeTracer == nil || p.traceValidator == nil || !p.runtimeTracer.IsEnabled() {
 		return nil
 	}
-	// Match via ResolveMethodAlias so chain-specific equivalents that the
-	// operator has explicitly aliased to eth_call (e.g. linea_call) also go
-	// through tracing. The send-side equivalent gate is method-literal because
-	// eth_sendTransaction has no aliases today; the read side does (RD-915
-	// design doc, "Open questions" — "Allowlist of methods that go through
-	// eth_call tracing"). Wildcard-passthrough methods without an explicit
-	// alias stay at the operator's discretion per RD-911 — opting into
-	// wildcards opts out of RBAC, and re-tracing on top of that would defeat
-	// the wildcard semantic.
-	//
-	// H10 (security audit follow-up to RD-915): eth_estimateGas runs the
-	// EVM exactly like eth_call — revert reasons, SLOAD-derived branches,
-	// and STATICCALL return values flow through the same way. The
-	// cross-org composability leak the entry-point check used to allow is
-	// identical. Both methods (and their operator-aliased equivalents)
-	// share this gate.
+	// Resolve operator aliases before selecting the read-tracing policy.
+	// eth_call and eth_estimateGas share this validation. Named passthrough
+	// methods retain their configured behavior; send aliases are unsupported.
 	resolved := rbac.ResolveMethodAlias(req.Method)
 	if resolved != "eth_call" && resolved != "eth_estimateGas" {
 		return nil
@@ -910,7 +897,7 @@ func effectivePermissionsHasDeployClaim(perms *rbac.EffectivePermissions) bool {
 //
 // It mirrors userHasDeployClaim's "any org grants" multi-org semantics, but
 // checks EffectivePermissions.HasMethod — the exact same allowlist matcher
-// (glob expansion + global-wildcard deny floor) every other RPC method is
+// (default-deny catalog gate + exact-name / "*" expansion) every other RPC method is
 // gated by in CheckAccess. The cross-org ValidateTrace content gate runs after
 // this and is independent of it.
 //

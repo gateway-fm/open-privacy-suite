@@ -715,3 +715,29 @@ The hash means private addresses or signed-tx blobs in params never persist; rev
 - Dashboard "View as user" / browse-as flow — Phase 2, deferred (see RD-872).
 - Tier-3 admin / Read-Only Admin / super-admin dry-run — explicit NO. Each adds real attack surface that the tier-2-only argument doesn't cover.
 - JWT minting / impersonation tokens — never. The synthetic principal is a per-request struct; if it leaked, it would be a bug.
+
+---
+
+## 9. Raw storage reads — `eth_getStorageAt`, `eth_getProof` (RD-805, RD-1301)
+
+Raw storage methods use contract access and storage-slot permissions at the **request** boundary (`rbac.validateStorageReadAccess`, called from `validateContractAccess`). Admitted responses are forwarded unchanged; denied requests receive the opaque `method not found` before they reach the node.
+
+| Method | What the response carries | Non-admin on the contract | `admin` claim on the contract |
+|---|---|---|---|
+| `eth_getStorageAt(addr, slot, block)` | the slot's value | slot must be a well-known infrastructure slot | any slot |
+| `eth_getProof(addr, keys[], block)` | balance, nonce, `codeHash`, `storageHash`, `accountProof`, and for **every** key its `storageProof[].value` + trie path | every key must be a well-known slot; an empty `keys` list (account-only proof) is allowed; a missing, `null` or non-array `keys`, or any non-string key, is denied | any keys (not inspected) |
+
+- **Well-known slots** are hardcoded in `internal/rbac/storage_slots.go`: EIP-1967 implementation / admin / beacon and the EIP-2535 Diamond slot. They hold infrastructure addresses only. A key matches only in its full 32-byte form (case-insensitive, `0x` optional); short-form spellings never match, so they are denied.
+- **Admin** means `admin` in the per-contract `ContractAccess` claims resolved for the request: tier 2 (`is_org_admin`, all claims on every org contract) or tier 3 (a group holding the `admin` claim *and* a grant on this contract). Deployer auto-grant, pre-registration (`deploy` claim), precompiles and plain grants are non-admin.
+- **Order of gates (authenticated):** global blocklist + multicall detection → user gates (existence, ban, KYC) → historical-state guard (only `is_org_admin` is exempt) → org resolution → method allowlist → value-transfer / basic-address-query carve-outs (neither covers a storage read) → contract access + cross-org isolation → storage-slot tier. A storage read whose target address is missing or not a string is denied instead of being forwarded without the contract and slot checks.
+- **Anonymous callers** get no contract-level check at all, so the tier cannot apply to them: a storage read is denied (`AuthRequired`) on the anonymous path even if a super admin adds the method, or an alias of it, to the anonymous group's allowlist.
+- **Aliases** are judged on their access-control target (`AccessCheckRequest.EffectiveMethod`; targets are trimmed, validated against standard methods and stored in canonical spelling at startup): an operator alias such as `linea_getProof → eth_getProof` gets the same slot tier **and** the same historical-state guard as its target. No built-in standard method (`rbac.IsStandardMethod`, which covers every method a check or response filter keys on through the alias target) can be an alias key — config loading rejects it (`config.parseExplicitMethods`), because the node executes the raw method while many access decisions key on the alias target. As defence in depth, the slot tier, the historical guards, the missing-target deny, the basic-address carve-out's storage-read exclusion and the anonymous floors also judge the raw method (`methodsToJudge`). A method matched only by a namespace **wildcard** has no alias and is forwarded without these checks; operators must map proof methods explicitly (see the configuration docs).
+- The same `CheckAccess` pipeline serves `/rpc`, the impersonation surface (view-as-user) and the admin `test-request` diagnostic, which resolves aliases the same way.
+
+### Proof response metadata
+
+The per-key allowlist controls which slot **values** a non-admin may request. An allowed Merkle-Patricia proof also includes account metadata, the storage root (`storageHash`), and account/storage trie proof nodes. This metadata is forwarded unchanged; the slot allowlist does not filter it. Empty-key account proofs remain supported under the same contract and method permissions.
+
+Grant `eth_getProof` only to groups that need state proofs. Details: RD-1301. Broader account-metadata policy is tracked separately in RD-1270.
+
+Tests: `internal/server/getproof_slot_access_rd1301_test.go` (full `Process()` path against a counting upstream — every denial asserts the node was never called; aliases, historical blocks, cross-org, every non-admin access path, malformed params, `test-request`), `internal/rbac/storage_read_access_test.go`, `e2e/storage_access_test.go`.

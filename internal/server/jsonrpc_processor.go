@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -163,7 +164,7 @@ type ProcessRequest struct {
 	OrgID         string // Optional: specify which org to use (for users with multiple memberships)
 	Method        string
 	Params        []any
-	Body          []byte
+	Body          []byte // canonical envelope from ParseAndValidateBody, forwarded upstream
 	ClientIP      string
 	CorrelationID string // Request correlation ID for audit trail
 	// BypassPermsCache, when true, forces AccessController.CheckAccess to
@@ -568,11 +569,10 @@ func (p *JSONRPCProcessor) logAccess(ctx context.Context, req *ProcessRequest, s
 				SourceIP:      req.ClientIP,
 				EntryHash:     hash,
 			}
-			// Tag wildcard-resolved methods so SIEM consumers can filter on the
-			// passthrough surface independently from explicitly-listed methods.
-			if w := rbac.MatchWildcard(req.Method); w != nil {
-				event.MatchedVia = "wildcard"
-				event.MatchedPrefix = w.Prefix
+			// Tag operator passthrough methods so SIEM consumers can filter on
+			// the unfiltered surface independently from modelled methods.
+			if rbac.IsPassthroughMethod(req.Method) {
+				event.MatchedVia = "passthrough"
 			}
 			p.siemForwarder.Send(event)
 		}
@@ -584,33 +584,78 @@ func (p *JSONRPCProcessor) logAccess(ctx context.Context, req *ProcessRequest, s
 }
 
 // ParseAndValidateBody parses and validates the JSON-RPC request body.
-// Returns the method, params, and any validation error.
-func ParseAndValidateBody(body []byte) (string, []any, *ProcessError) {
+// Returns the method, params, the canonical body to forward upstream, and any
+// validation error.
+//
+// The canonical body (proxy.Envelope.Canonical) holds exactly the members the
+// access decision is made on; it is what ProcessRequest.Body must carry, never
+// the client's bytes. An envelope whose member names can be read more than one
+// way (duplicate or case-variant names, RD-1303) is refused here, before any
+// access decision, with the same opaque message as malformed JSON.
+func ParseAndValidateBody(body []byte) (string, []any, []byte, *ProcessError) {
 	if len(body) > MaxRequestBodySize {
-		return "", nil, &ProcessError{
+		return "", nil, nil, &ProcessError{
 			StatusCode: http.StatusRequestEntityTooLarge,
 			Message:    "request body too large",
 		}
 	}
 
-	method, params, err := proxy.ParseRequest(body)
+	env, err := proxy.ParseEnvelope(body)
 	if err != nil {
-		if err == proxy.ErrBatchRequest {
-			return "", nil, &ProcessError{
+		if errors.Is(err, proxy.ErrBatchRequest) {
+			return "", nil, nil, &ProcessError{
 				StatusCode: http.StatusBadRequest,
 				Message:    "batch JSON-RPC requests are not supported for security reasons",
 			}
 		}
 		// Opaque client message; raw parse error (echoes offsets / body shape)
 		// stays in slog. (RD-1178 / RD-934)
-		slog.Warn("invalid JSON-RPC request", slog.Any("err", err))
-		return "", nil, &ProcessError{
+		if errors.Is(err, proxy.ErrAmbiguousRequest) {
+			slog.Warn("ambiguous JSON-RPC request refused", slog.Any("err", err))
+		} else {
+			slog.Warn("invalid JSON-RPC request", slog.Any("err", err))
+		}
+		return "", nil, nil, &ProcessError{
+			StatusCode: http.StatusBadRequest,
+			Message:    "invalid JSON-RPC request",
+		}
+	}
+	if reason := ambiguousParams(env); reason != "" {
+		slog.Warn("ambiguous JSON-RPC request refused", slog.String("reason", reason), slog.String("method", env.Method))
+		return "", nil, nil, &ProcessError{
 			StatusCode: http.StatusBadRequest,
 			Message:    "invalid JSON-RPC request",
 		}
 	}
 
-	return method, params, nil
+	// visibleTo/privateFor are the proxy's own metadata. The two send paths
+	// read them from the body and strip them before forwarding (RD-1163);
+	// for every other method they are dropped here, so they never reach the
+	// node. The method is canonicalised the same way Process dispatches.
+	forward := env.Canonical
+	switch rbac.CanonicalizeMethod(env.Method) {
+	case "eth_sendTransaction", "eth_sendRawTransaction":
+	default:
+		forward = env.CanonicalWithoutMetadata()
+	}
+	return env.Method, env.Params, forward, nil
+}
+
+// ambiguousParams returns env.ParamsAmbiguity() for methods whose params the
+// proxy's checks read, and "" for the payloads it never inspects: typed-data
+// signing (EIP-712 type and field names are the dApp's own) and
+// named passthrough methods. Aliased chain methods resolve to the standard method they inherit
+// checks from, so they stay covered. RD-1303.
+func ambiguousParams(env *proxy.Envelope) string {
+	method := rbac.CanonicalizeMethod(env.Method)
+	switch method {
+	case "eth_signTypedData", "eth_signTypedData_v3", "eth_signTypedData_v4":
+		return ""
+	}
+	if rbac.IsPassthroughMethod(method) {
+		return ""
+	}
+	return env.ParamsAmbiguity()
 }
 
 // Process handles the core business logic for a JSON-RPC request:
@@ -621,11 +666,9 @@ func ParseAndValidateBody(body []byte) (string, []any, *ProcessError) {
 func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *ProcessResult {
 	start := time.Now()
 
-	// RD-1180: canonicalize the method name ONCE at ingress so the special
-	// validation dispatch below (and target/selector extraction + RBAC gates
-	// downstream) can't be skipped by mixed-case method names. The upstream
-	// node still receives req.Body verbatim; only the internal method string is
-	// normalized. Unknown methods (linea_*, wildcard passthrough) pass through.
+	// Normalize built-in method names for internal dispatch and access checks.
+	// The canonical envelope preserves the caller's method spelling.
+	// Operator methods require an explicit registered alias or passthrough entry.
 	req.Method = rbac.CanonicalizeMethod(req.Method)
 
 	// Handle eth_sendRawTransaction specially - requires runtime tracing
