@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"privacy-proxy/internal/explorer"
 
@@ -129,7 +130,14 @@ func TestExplorer_TransferUnion_KeepsRowsWithoutRevealing_RD1316(t *testing.T) {
 
 	rr = f.get(t, rd1316AdminDID, "/transactions?limit=25")
 	require.Equal(t, http.StatusOK, rr.Code)
-	assert.Contains(t, rr.Body.String(), f.hash, "the list keeps the row")
+	var list []explorer.Transaction
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &list))
+	row := findTx(list, f.hash)
+	require.NotNil(t, row, "the list keeps the row: %s", rr.Body.String())
+	assert.Equal(t, "[PRIVATE]", row.From)
+	assert.Nil(t, row.Nonce, "list: nonce revealed")
+	assert.Empty(t, row.InputData, "list: calldata revealed")
+	assert.Empty(t, string(row.Value), "list: value revealed")
 	requireNoForeignIdentity(t, rr.Body.String(), "GET /transactions")
 
 	rr = f.get(t, rd1316AdminDID, "/transactions/"+f.hash+"/transfers")
@@ -155,6 +163,143 @@ func TestExplorer_TransferUnion_KeepsRowsWithoutRevealing_RD1316(t *testing.T) {
 		assert.NotContains(t, rr.Body.String(), f.hash[:20], "%s kept a row for a non-admin: %s", path, rr.Body.String())
 		requireNoForeignIdentity(t, rr.Body.String(), path)
 	}
+}
+
+func findTx(txs []explorer.Transaction, hash string) *explorer.Transaction {
+	for i := range txs {
+		if strings.EqualFold(txs[i].Hash, hash) {
+			return &txs[i]
+		}
+	}
+	return nil
+}
+
+// addWalletUser creates a user whose linked wallet is addr.
+func (f *rd1316Fixture) addWalletUser(t *testing.T, did, addr string) string {
+	t.Helper()
+	uid := uuid.New().String()
+	_, err := f.conn.Exec("INSERT INTO users (id, external_id, kyc, banned, metadata) VALUES ($1, $2, false, false, '{}')", uid, did)
+	require.NoError(t, err)
+	_, err = f.conn.Exec("INSERT INTO eth_address_links (did, eth_address, link_type) VALUES ($1, $2, 'user')", did, addr)
+	require.NoError(t, err)
+	return uid
+}
+
+// addTransfer adds a token transfer to the fixture's parent tx.
+func (f *rd1316Fixture) addTransfer(t *testing.T, logIndex int, token, from, to string, value int) {
+	t.Helper()
+	_, err := f.conn.Exec(`INSERT INTO token_transfers (tx_hash, log_index, token_address, from_address, to_address, value, block_number)
+		SELECT $1, $2, $3, $4, $5, $6, block_number FROM transactions WHERE hash = $1`, f.hash, logIndex, token, from, to, value)
+	require.NoError(t, err)
+}
+
+const rd1316TransferTopic = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+
+func rd1316Topic(addr string) string {
+	return "0x000000000000000000000000" + strings.TrimPrefix(strings.ToLower(addr), "0x")
+}
+
+// A token receiver learns the sender as a participant of the parent tx, through
+// the Transfer log (RD-939 log-participant detection), not through the union.
+// Without that log signal the union still keeps the row for the receiver, but
+// the sender stays [PRIVATE].
+func TestExplorer_TransferReceiverSeesSenderAsParticipant_RD1316(t *testing.T) {
+	f := setupRD1316Fixture(t)
+	f.srv.explorerRedactor.SetLogParticipantStore(f.srv.explorerStore)
+	const receiverDID = "did:privado:rd1316_receiver"
+	const receiverWallet = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee1316"
+	f.addWalletUser(t, receiverDID, receiverWallet)
+	f.addTransfer(t, 1, rd1316Token, rd1316EOA, receiverWallet, 7)
+
+	// No Transfer log indexed yet: the row is kept for the receiver by the
+	// union (their own wallet is a transfer party), with nothing revealed.
+	rr := f.get(t, receiverDID, "/transactions/"+f.hash)
+	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+	var tx explorer.Transaction
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &tx))
+	assert.Equal(t, "[PRIVATE]", tx.From, "without a participant signal the union reveals nothing")
+	requireNoForeignIdentity(t, rr.Body.String(), "receiver, no log")
+
+	// With the Transfer log, the receiver is a participant of the tx and sees
+	// the sender, labelled as their counterparty.
+	_, err := f.conn.Exec(`INSERT INTO logs (tx_hash, log_index, address, topic0, topic1, topic2, data, block_number)
+		SELECT $1, 1, $2, $3, $4, $5, '0x07', block_number FROM transactions WHERE hash = $1`,
+		f.hash, rd1316Token, rd1316TransferTopic, rd1316Topic(rd1316EOA), rd1316Topic(receiverWallet))
+	require.NoError(t, err)
+	for _, path := range []string{"/transactions/" + f.hash, "/transactions?limit=25"} {
+		rr = f.get(t, receiverDID, path)
+		require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+		var got *explorer.Transaction
+		if strings.Contains(path, "?") {
+			var list []explorer.Transaction
+			require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &list))
+			got = findTx(list, f.hash)
+		} else {
+			got = &explorer.Transaction{}
+			require.NoError(t, json.Unmarshal(rr.Body.Bytes(), got))
+		}
+		require.NotNil(t, got, "%s: the receiver keeps the row: %s", path, rr.Body.String())
+		assert.Equal(t, rd1316EOA, strings.ToLower(got.From), "%s: a participant sees the sender", path)
+		assert.Equal(t, explorer.ReasonParticipantOverride, got.AddressMetadata[rd1316EOA], "%s: labelled as the counterparty", path)
+		assert.Nil(t, got.Nonce, "%s: the private sender's nonce stays stripped for a participant", path)
+	}
+}
+
+// A Full disclosure grant on a transfer recipient keeps the parent tx (the
+// grant subject drives the union), with the tx-level parties at the viewer's
+// own level. The counterparty is revealed on the transfer row by the Full-grant
+// lens (its GrantFullReveals count is pinned by the redactor tests).
+func TestExplorer_FullDisclosureGrantOnRecipient_RD1316(t *testing.T) {
+	f := setupRD1316Fixture(t)
+	ctx := context.Background()
+	const eveDID = "did:privado:rd1316_eve"
+	const eveWallet = "0x9999999999999999999999999999999999991316"
+	const auditorDID = "did:privado:rd1316_auditor"
+	eveUserID := f.addWalletUser(t, eveDID, eveWallet)
+	f.addTransfer(t, 1, rd1316Token, rd1316EOA, eveWallet, 7)
+
+	// The auditor: a member of the token's org with event access on the token
+	// (so the transfer row is not stripped), and a Full disclosure grant on Eve.
+	var orgO, tokenID string
+	require.NoError(t, f.conn.QueryRow("SELECT org_id, id FROM contracts WHERE address = $1", rd1316Token).Scan(&orgO, &tokenID))
+	gid := uuid.New().String()
+	_, err := f.conn.Exec("INSERT INTO groups (id, org_id, slug, name, depth, path) VALUES ($1, $2, 'auditors', 'Auditors', 0, 'auditors')", gid, orgO)
+	require.NoError(t, err)
+	_, err = f.conn.Exec(`INSERT INTO contract_grants (id, contract_id, group_id, event_rules) VALUES ($1, $2, $3, '"*"'::jsonb)`, uuid.New().String(), tokenID, gid)
+	require.NoError(t, err)
+	auditorID := uuid.New().String()
+	_, err = f.conn.Exec("INSERT INTO users (id, external_id, kyc, banned, metadata) VALUES ($1, $2, false, false, '{}')", auditorID, auditorDID)
+	require.NoError(t, err)
+	_, err = f.conn.Exec("INSERT INTO user_memberships (id, user_id, group_id, source) VALUES ($1, $2, $3, 'admin')", uuid.New().String(), auditorID, gid)
+	require.NoError(t, err)
+	const scope = `{"disclosure_level":"full"}`
+	requestID := uuid.New().String()
+	_, err = f.conn.Exec(`INSERT INTO disclosure_requests (id, requester_did, target_user_id, org_id, scope, reason, status, requested_at)
+		VALUES ($1, $2, $3, $4, $5::jsonb, 'rd1316 test', 'approved', NOW())`, requestID, auditorDID, eveUserID, orgO, scope)
+	require.NoError(t, err)
+	_, err = f.conn.Exec(`INSERT INTO disclosure_grants (id, request_id, grant_token_hash, scope, granted_at, expires_at)
+		VALUES ($1, $2, 'rd1316hash_full', $3::jsonb, NOW(), $4)`, uuid.New().String(), requestID, scope, time.Now().Add(24*time.Hour))
+	require.NoError(t, err)
+	require.False(t, f.srv.isViewerAdmin(ctx, auditorDID), "precondition: the auditor is not an admin")
+
+	rr := f.get(t, auditorDID, "/transactions/"+f.hash)
+	require.Equal(t, http.StatusOK, rr.Code, "the grant subject's transfer keeps its parent tx: %s", rr.Body.String())
+	var tx explorer.Transaction
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &tx))
+	assert.Equal(t, "[PRIVATE]", tx.From, "the tx sender is not the grant subject: it stays at the viewer's own level")
+	assert.Nil(t, tx.Nonce)
+	assert.Empty(t, tx.InputData)
+	assert.Empty(t, string(tx.Value))
+	requireNoForeignIdentity(t, rr.Body.String(), "auditor tx", rd1316EOA, rd1316Callee)
+
+	rr = f.get(t, auditorDID, "/transactions/"+f.hash+"/transfers")
+	require.Equal(t, http.StatusOK, rr.Code)
+	var transfers []explorer.TokenTransfer
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &transfers))
+	require.Len(t, transfers, 1, "only the grant subject's transfer: %s", rr.Body.String())
+	assert.Equal(t, eveWallet, strings.ToLower(transfers[0].To))
+	assert.Equal(t, rd1316EOA, strings.ToLower(transfers[0].From), "the Full lens reveals the counterparty on the transfer row")
+	assert.Equal(t, explorer.ReasonNoAccess, transfers[0].AddressMetadata[rd1316EOA], "the lens reveal keeps the counterparty's own reason")
 }
 
 // Positive control: a genuine visibleTo share of the same tx still reveals the
