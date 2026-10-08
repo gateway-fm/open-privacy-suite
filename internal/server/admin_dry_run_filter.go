@@ -5,17 +5,18 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
-	"log/slog"
+	"errors"
+	"fmt"
 	"strings"
 
 	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/rbac"
 )
 
-// dryRunFilterUnavailable replaces an upstream read response when the
-// production response filter is not wired. The upstream body is withheld
-// rather than returned unfiltered (fail closed).
-var dryRunFilterUnavailable = json.RawMessage(`{"jsonrpc":"2.0","id":1,"error":{"code":-32603,"message":"response filter unavailable"}}`)
+// errDryRunFilterUnavailable means the production response filter is not
+// wired, so the user's view cannot be produced. The handler withholds the
+// node's answer and audits the evaluation as an error (fail closed).
+var errDryRunFilterUnavailable = errors.New("dry-run: response filter not configured")
 
 // dryRunTraceReceiptHash returns a fresh random transaction hash for the
 // receipt synthesized for a traced (never sent) write. It only lets the
@@ -35,21 +36,26 @@ func dryRunTraceReceiptHash() (string, error) {
 // dry-run — with every authorization input pinned to the path org (RD-1308).
 // Transaction admission, event rules, admin exemptions, visibleTo shares and
 // embedded-address rendering all use the named organization's view.
+//
+// It returns errDryRunFilterUnavailable when no filter is wired; the caller
+// must then withhold the body.
 func (s *Server) filterDryRunReadResponse(
 	ctx context.Context,
 	rpc apimodels.DryRunRPCBlock,
 	userDID, orgID string,
 	access *rbac.AccessCheckResult,
 	body json.RawMessage,
-) json.RawMessage {
+) (json.RawMessage, error) {
 	if s.jsonrpcProcessor == nil {
-		slog.Error("dry-run: response filter not configured; withholding the upstream response", "method", rpc.Method)
-		return dryRunFilterUnavailable
+		return nil, errDryRunFilterUnavailable
+	}
+	if len(body) == 0 {
+		return body, nil
 	}
 	scoped := withViewerOrgScope(ctx, orgID)
 	req := &ProcessRequest{UserID: userDID, OrgID: orgID, Method: rpc.Method, Params: rpc.Params}
 	filtered := s.jsonrpcProcessor.applyResponseFilter(scoped, req, access, body)
-	return json.RawMessage(s.jsonrpcProcessor.applyViewerOrgScopeEnvelope(scoped, rpc.Method, filtered))
+	return json.RawMessage(s.jsonrpcProcessor.applyViewerOrgScopeEnvelope(scoped, rpc.Method, filtered)), nil
 }
 
 // dryRunTraceLogsVisibleToUser returns the subset of a traced write's logs the
@@ -59,18 +65,21 @@ func (s *Server) filterDryRunReadResponse(
 // to the path org — the same admission (participation, event rules, admin
 // exemption) and the same embedded-address field redaction as a real
 // eth_getTransactionReceipt. A receipt the user may not read yields no logs.
+//
+// An error means the visible subset could not be computed (no filter wired,
+// or the receipt could not be built); the caller must not report "none
+// visible" in that case.
 func (s *Server) dryRunTraceLogsVisibleToUser(
 	ctx context.Context,
 	trace *dryRunTraceResult,
 	userDID, orgID string,
 	access *rbac.AccessCheckResult,
-) []json.RawMessage {
+) ([]json.RawMessage, error) {
 	if trace == nil || len(trace.Logs) == 0 {
-		return nil
+		return nil, nil
 	}
 	if s.jsonrpcProcessor == nil {
-		slog.Error("dry-run: response filter not configured; no trace logs reported as visible")
-		return nil
+		return nil, errDryRunFilterUnavailable
 	}
 
 	var top struct {
@@ -83,12 +92,11 @@ func (s *Server) dryRunTraceLogsVisibleToUser(
 	if top.Error != "" {
 		// The tx would revert: its receipt carries no logs, whatever the
 		// tracer reported for the failed frames.
-		return nil
+		return nil, nil
 	}
 	txHash, err := dryRunTraceReceiptHash()
 	if err != nil {
-		slog.Error("dry-run: could not build the trace receipt; no trace logs reported as visible", "err", err)
-		return nil
+		return nil, fmt.Errorf("dry-run: trace receipt hash: %w", err)
 	}
 	quotedHash := json.RawMessage(`"` + txHash + `"`)
 
@@ -117,7 +125,7 @@ func (s *Server) dryRunTraceLogsVisibleToUser(
 	}
 	body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "result": receipt})
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("dry-run: trace receipt: %w", err)
 	}
 
 	scoped := withViewerOrgScope(ctx, orgID)
@@ -131,7 +139,7 @@ func (s *Server) dryRunTraceLogsVisibleToUser(
 		} `json:"result"`
 	}
 	if err := json.Unmarshal(filtered, &env); err != nil || env.Result == nil {
-		return nil
+		return nil, nil // the user may not read this receipt: no visible logs
 	}
 	out := make([]json.RawMessage, 0, len(env.Result.Logs))
 	for _, entry := range env.Result.Logs {
@@ -142,5 +150,5 @@ func (s *Server) dryRunTraceLogsVisibleToUser(
 		}
 		out = append(out, b)
 	}
-	return out
+	return out, nil
 }

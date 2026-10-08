@@ -223,8 +223,8 @@ func drfTransferLog(contract, from, to, txHash, logIndex string) map[string]any 
 	}
 }
 
-// dryRun posts a dry-run as the member in org O and returns the decoded reply.
-func (f *drfFixture) dryRun(t *testing.T, method string, params []any) (dryRunResponse, string) {
+// dryRunRaw posts a dry-run as the member in org O and returns the recorder.
+func (f *drfFixture) dryRunRaw(t *testing.T, method string, params []any) *httptest.ResponseRecorder {
 	t.Helper()
 	body, err := json.Marshal(map[string]any{
 		"user_did": drfMemberDID,
@@ -236,14 +236,22 @@ func (f *drfFixture) dryRun(t *testing.T, method string, params []any) (dryRunRe
 	req.Header.Set("X-Test-Auth-Method", "jwt_admin")
 	w := httptest.NewRecorder()
 	f.router.ServeHTTP(w, req)
+	return w
+}
+
+// dryRun posts a dry-run as the member in org O and returns the decoded reply.
+func (f *drfFixture) dryRun(t *testing.T, method string, params []any) (dryRunResponse, string) {
+	t.Helper()
+	w := f.dryRunRaw(t, method, params)
 	require.Equal(t, http.StatusOK, w.Code, "dry-run body: %s", w.Body.String())
 	var resp dryRunResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	return resp, w.Body.String()
 }
 
-// mirror calls the View-as RPC mirror as the member in org O.
-func (f *drfFixture) mirror(t *testing.T, method string, params []any) string {
+// mirrorRaw calls the View-as RPC mirror as the member in org O and returns
+// the recorder.
+func (f *drfFixture) mirrorRaw(t *testing.T, method string, params []any) *httptest.ResponseRecorder {
 	t.Helper()
 	body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
 	require.NoError(t, err)
@@ -252,8 +260,44 @@ func (f *drfFixture) mirror(t *testing.T, method string, params []any) string {
 	req.Header.Set("X-Test-Auth-Method", "jwt_admin")
 	w := httptest.NewRecorder()
 	f.router.ServeHTTP(w, req)
+	return w
+}
+
+// mirror calls the View-as RPC mirror as the member in org O.
+func (f *drfFixture) mirror(t *testing.T, method string, params []any) string {
+	t.Helper()
+	w := f.mirrorRaw(t, method, params)
 	require.Equal(t, http.StatusOK, w.Code, "mirror body: %s", w.Body.String())
 	return w.Body.String()
+}
+
+// resetReached forgets which methods have reached the node so far.
+func (f *drfFixture) resetReached() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.seen = nil
+}
+
+// dryRunAuditRows returns the decision and reason of every impersonation_log
+// row the dry-run wrote for this fixture's org.
+func (f *drfFixture) dryRunAuditRows(t *testing.T) [][2]string {
+	t.Helper()
+	rows, err := f.ts.db.Conn().QueryContext(context.Background(), `
+		SELECT decision, COALESCE(reason, '')
+		  FROM impersonation_log
+		 WHERE actor_did = $1 AND impersonated_did = $2 AND org_id = $3
+		 ORDER BY created_at`,
+		drfAdminDID, drfMemberDID, f.orgO)
+	require.NoError(t, err)
+	defer func() { _ = rows.Close() }()
+	var out [][2]string
+	for rows.Next() {
+		var r [2]string
+		require.NoError(t, rows.Scan(&r[0], &r[1]))
+		out = append(out, r)
+	}
+	require.NoError(t, rows.Err())
+	return out
 }
 
 // production runs the response filter exactly as the member's OWN RPC call
@@ -343,6 +387,34 @@ func TestDryRunAndViewAsRPC_DeployerAccessUsesNamedOrg_RD1308(t *testing.T) {
 			assert.False(t, f.reached(method), "a read outside the named org is decided before upstream forwarding")
 		})
 	}
+}
+
+// Dry-run resolves the user's permissions fresh, as the View-as RPC mirror
+// does: a grant revoked after the user's own last call no longer allows the
+// read, although the user's cached permissions still hold it.
+func TestDryRunAndViewAsRPC_ResolvePermissionsFresh_RD1308(t *testing.T) {
+	f := setupDRFFixture(t)
+	ctx := context.Background()
+	const target = "0x13080000000000000000000000000000000000c3"
+	contractID := wiringCreateContractWithABI(t, f.ts.db, f.orgO, target, "DRF-O-revoked", erc20ABI)
+	grantID := uuid.New().String()
+	require.NoError(t, f.ts.db.CreateContractGrant(ctx, &rbac.ContractGrant{ID: grantID, ContractID: contractID, GroupID: f.memberGroup}))
+	params := []any{target, "latest"}
+
+	own, err := f.ts.rbacAccessCtrl.CheckAccess(ctx, &rbac.AccessCheckRequest{
+		UserExternalID: drfMemberDID, OrgID: f.orgO, Method: rbac.MethodGetBalance, Params: params, TargetAddress: target,
+	})
+	require.NoError(t, err)
+	require.True(t, own.Allowed, "the user's own call is allowed and caches their permissions: %s", own.Reason)
+
+	require.NoError(t, f.ts.db.DeleteContractGrantAndInvalidate(ctx, grantID, f.memberGroup))
+
+	f.serve(rbac.MethodGetBalance, drfEnvelope(t, "0x1234"))
+	resp, raw := f.dryRun(t, rbac.MethodGetBalance, params)
+	assert.Equal(t, "deny", resp.Decision, "dry-run must not answer from permissions cached before the revocation: %s", raw)
+	w := f.mirrorRaw(t, rbac.MethodGetBalance, params)
+	assert.Equal(t, http.StatusNotFound, w.Code, "the View-as mirror gives the same answer: %s", w.Body.String())
+	assert.False(t, f.reached(rbac.MethodGetBalance), "a revoked read is decided before upstream forwarding")
 }
 
 func TestDryRun_TxByHash_AdminExemptionPinnedToPathOrg_RD1308(t *testing.T) {
@@ -492,21 +564,54 @@ func TestDryRun_TraceLogsVisibleToUser_UseReceiptPipeline_RD1308(t *testing.T) {
 	assert.Contains(t, visible[drfContractO], bare(drfMemberEOA), "the member's own address stays")
 }
 
-func TestDryRun_ReadWithoutProcessor_WithholdsUpstreamBody_RD1308(t *testing.T) {
-	f := setupDRFFixture(t)
-	f.ts.jsonrpcProcessor = nil
+// Without the production response filter the dry-run cannot produce the
+// user's view. Nothing from the node is returned, and the audit row records
+// the real outcome (an error), not an "allow" for an answer never served.
+func TestDryRun_WithoutResponseFilter_FailsClosedAndAuditsError_RD1308(t *testing.T) {
 	const h = "0x1308000000000000000000000000000000000000000000000000000000000008"
-	f.serve(rbac.MethodGetTransactionByHash, drfEnvelope(t, drfTx(drfForeignEOA, drfOtherEOA, h)))
-
-	resp, raw := f.dryRun(t, rbac.MethodGetTransactionByHash, []any{h})
-	assert.NotContains(t, strings.ToLower(raw), bare(drfForeignEOA), "an unfiltered upstream body must never be returned")
-	var env struct {
-		Error *struct {
-			Message string `json:"message"`
-		} `json:"error"`
+	cases := []struct {
+		name   string
+		method string
+		params []any
+		node   func(t *testing.T, f *drfFixture)
+	}{
+		{
+			name:   "read",
+			method: rbac.MethodGetTransactionByHash,
+			params: []any{h},
+			node: func(t *testing.T, f *drfFixture) {
+				f.serve(rbac.MethodGetTransactionByHash, drfEnvelope(t, drfTx(drfForeignEOA, drfOtherEOA, h)))
+			},
+		},
+		{
+			name:   "trace",
+			method: "eth_sendTransaction",
+			params: []any{map[string]any{"from": drfMemberEOA, "to": drfContractO, "data": "0x"}},
+			node: func(t *testing.T, f *drfFixture) {
+				f.serve("debug_traceCall", drfEnvelope(t, map[string]any{
+					"type": "CALL", "from": drfMemberEOA, "to": drfContractO, "input": "0x", "value": "0x0",
+					"logs": []any{map[string]any{
+						"address": drfContractO,
+						"topics":  []string{drfTransferT0, zeroPadAddrToTopic(drfMemberEOA), zeroPadAddrToTopic(drfForeignEOA)},
+						"data":    "0x00000000000000000000000000000000000000000000000000000000000003e8",
+					}},
+				}))
+			},
+		},
 	}
-	require.NoError(t, json.Unmarshal(resp.Response, &env), raw)
-	require.NotNil(t, env.Error, "the withheld response must say so: %s", raw)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := setupDRFFixture(t)
+			tc.node(t, f)
+			f.ts.jsonrpcProcessor = nil
+
+			w := f.dryRunRaw(t, tc.method, tc.params)
+			require.Equal(t, http.StatusInternalServerError, w.Code, w.Body.String())
+			assert.JSONEq(t, `{"error":"internal error"}`, w.Body.String())
+			assert.NotContains(t, strings.ToLower(w.Body.String()), bare(drfForeignEOA), "no node data may be returned")
+			assert.Equal(t, [][2]string{{"error", "response_filter_unavailable"}}, f.dryRunAuditRows(t))
+		})
+	}
 }
 
 // The View-as RPC mirror pins the RD-915 nested-call gate to the scope org, as

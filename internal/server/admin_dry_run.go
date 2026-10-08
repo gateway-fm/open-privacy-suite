@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -308,6 +309,11 @@ func (s *Server) handleDryRun(c *gin.Context) {
 			c.JSON(http.StatusOK, dryRunResponse{Decision: "deny", Reason: validationErr.Message})
 			return
 		}
+		visibleLogs, viewErr := s.dryRunTraceLogsVisibleToUser(ctx, traceResp, req.UserDID, orgID, accessResult)
+		if viewErr != nil {
+			s.refuseDryRunWithoutUserView(ctx, c, adminDID, req, orgID, viewErr)
+			return
+		}
 		if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "allow", "", c.GetString("correlation_id")); logErr != nil {
 			slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
@@ -317,7 +323,7 @@ func (s *Server) handleDryRun(c *gin.Context) {
 			Decision:          "allow",
 			Trace:             traceResp.Trace,
 			LogsEmitted:       traceResp.Logs,
-			LogsVisibleToUser: s.dryRunTraceLogsVisibleToUser(ctx, traceResp, req.UserDID, orgID, accessResult),
+			LogsVisibleToUser: visibleLogs,
 		})
 		return
 	}
@@ -337,8 +343,10 @@ func (s *Server) handleDryRun(c *gin.Context) {
 
 	// RD-1308: use the production response filter as the impersonated user,
 	// with permissions and visibility inputs scoped to the path organization.
-	if rawResp != nil {
-		rawResp = s.filterDryRunReadResponse(ctx, req.RPC, req.UserDID, orgID, accessResult, rawResp)
+	rawResp, err = s.filterDryRunReadResponse(ctx, req.RPC, req.UserDID, orgID, accessResult, rawResp)
+	if err != nil {
+		s.refuseDryRunWithoutUserView(ctx, c, adminDID, req, orgID, err)
+		return
 	}
 
 	if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "allow", "", c.GetString("correlation_id")); logErr != nil {
@@ -350,6 +358,22 @@ func (s *Server) handleDryRun(c *gin.Context) {
 		Decision: "allow",
 		Response: rawResp,
 	})
+}
+
+// refuseDryRunWithoutUserView answers a dry-run whose user view could not be
+// produced (RD-1308). The node's answer is never returned without the user's
+// response filter, so the evaluation is audited as an error and the admin gets
+// an opaque 500 — not an "allow" for a response that was never served.
+func (s *Server) refuseDryRunWithoutUserView(ctx context.Context, c *gin.Context, adminDID string, req apimodels.DryRunRequest, orgID string, viewErr error) {
+	reason := "internal_error"
+	if errors.Is(viewErr, errDryRunFilterUnavailable) {
+		reason = "response_filter_unavailable"
+	}
+	slog.Error("dry-run: user view unavailable; response withheld", "method", req.RPC.Method, "err", viewErr)
+	if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "error", reason, c.GetString("correlation_id")); logErr != nil {
+		slog.Error("dry-run: audit log write failed", "err", logErr)
+	}
+	c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 }
 
 // sanitizeDryRunReason maps an error or reason string into a finite
@@ -738,5 +762,9 @@ func dryRunAccessRequest(userDID, orgID string, rpc apimodels.DryRunRPCBlock) (*
 		TargetAddress:    rbac.GetTargetAddress(accessMethod, params),
 		FunctionSelector: rbac.GetFunctionSelector(accessMethod, params),
 		RequiredClaims:   requiredClaims,
+		// Resolve the user's current permissions, as the View-as RPC mirror
+		// does (ProcessRequest.BypassPermsCache), so both give the same answer
+		// right after a grant or membership change.
+		BypassCache: true,
 	}, nil
 }

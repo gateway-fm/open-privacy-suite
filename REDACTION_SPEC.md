@@ -693,8 +693,8 @@ A tier-2 org admin can ask the proxy "what would user X see if they made this RP
 | Self-dry-run rejected | `req.UserDID == adminDID` check | 400 — would skew audit reasoning. |
 | Method allowlist | `dryRunReadMethods` ∪ `dryRunTraceMethods` | 400 with the supported set listed. |
 | Cross-org user invisible | `GetUserOrgIDs(user.ID)` must include `:org_id` | generic 404 "user not found" — identical to "user does not exist." |
-| Same RBAC pipeline | `CheckAccess` runs as the impersonated user with their own `EffectivePermissions` | no parallel implementation that could diverge from real-request behaviour. |
-| Same response filter (RD-1308) | every read response goes through `JSONRPCProcessor.applyResponseFilter` as the impersonated user, pinned to `:org_id` (`filterDryRunReadResponse`) | a transaction the user may not read is `null`; logs and receipts are filtered and field-redacted as on the live RPC. No processor wired → the upstream body is withheld. |
+| Same RBAC pipeline | `CheckAccess` runs as the impersonated user with their own `EffectivePermissions`, resolved fresh (`BypassCache`, as on the View-as RPC mirror) | no parallel implementation that could diverge from real-request behaviour, and no answer from permissions cached before a grant or membership change. |
+| Same response filter (RD-1308) | every read response, and the `logs_visible_to_user` receipt of a traced write, goes through `JSONRPCProcessor.applyResponseFilter` as the impersonated user, pinned to `:org_id` (`filterDryRunReadResponse`, `dryRunTraceLogsVisibleToUser`) | a transaction the user may not read is `null`; logs and receipts are filtered and field-redacted as on the live RPC. If the user's view cannot be produced (no processor wired), nothing from the node is returned: 500, audited as `error` (`response_filter_unavailable`). |
 
 ### Org pinning (RD-1308)
 
