@@ -93,8 +93,8 @@ type Envelope struct {
 //     `data` first. Equal values (web3.js sends both) are fine.
 //
 // The caller refuses the request when the proxy reads the method's params;
-// for payloads it never inspects (typed-data signing, named passthrough)
-// the names are just data.
+// for payloads it never inspects (named passthrough methods) the names are
+// just data.
 func (e *Envelope) ParamsAmbiguity() string {
 	if e.fieldVariant != "" {
 		return "case variant of a request field in params"

@@ -534,7 +534,8 @@ func TestTestRequest_RefusesCaseVariantRequestField(t *testing.T) {
 
 // TestParseAndValidateBody_ParamsRulesScopedToReadMethods: the request-field
 // and data/input rules refuse params the proxy's checks read, and leave alone
-// payloads it never inspects (typed-data signing, named passthrough).
+// only the payloads of named passthrough methods, which it never inspects.
+// Typed-data signing is globally blocked and gets no exemption.
 func TestParseAndValidateBody_ParamsRulesScopedToReadMethods(t *testing.T) {
 	t.Cleanup(rbac.SnapshotMethodRegistriesForTest())
 	rbac.MethodAliases["linea_call"] = "eth_call"
@@ -547,6 +548,7 @@ func TestParseAndValidateBody_ParamsRulesScopedToReadMethods(t *testing.T) {
 		"data and input differ":  `{"jsonrpc":"2.0","id":1,"method":"eth_call","params":[{"to":"` + envAddrA + `","data":"0xa9059cbb","input":"0x095ea7b3"},"latest"]}`,
 		"estimateGas BlockHash":  `{"jsonrpc":"2.0","id":1,"method":"eth_estimateGas","params":[{"to":"` + envAddrA + `"},{"BlockHash":"0x01"}]}`,
 		"sendRawTransaction opt": `{"jsonrpc":"2.0","id":1,"method":"eth_sendRawTransaction","params":["0x01",{"VisibleTo":["did:a:b"]}]}`,
+		"typed data To":          `{"jsonrpc":"2.0","id":1,"method":"eth_signTypedData_v4","params":["` + envAddrA + `",{"types":{"EIP712Domain":[],"Data":[{"name":"To","type":"address"}]},"primaryType":"Data","message":{"To":"` + envAddrB + `","Value":1}}]}`,
 	}
 	for name, body := range refused {
 		t.Run("refuses "+name, func(t *testing.T) {
@@ -557,9 +559,8 @@ func TestParseAndValidateBody_ParamsRulesScopedToReadMethods(t *testing.T) {
 		})
 	}
 	accepted := map[string]string{
-		"typed data with PascalCase type and field names": `{"jsonrpc":"2.0","id":1,"method":"eth_signTypedData_v4","params":["` + envAddrA + `",{"types":{"EIP712Domain":[],"Data":[{"name":"To","type":"address"}]},"primaryType":"Data","message":{"To":"` + envAddrB + `","Value":1}}]}`,
-		"named passthrough PascalCase schema":             `{"jsonrpc":"2.0","id":1,"method":"lotus_send","params":[{"To":"f01","From":"f02","Value":"1","Nonce":1}]}`,
-		"data and input equal ignoring hex case":          `{"jsonrpc":"2.0","id":1,"method":"eth_call","params":[{"to":"` + envAddrA + `","data":"0xA9059CBB","input":"0xa9059cbb"},"latest"]}`,
+		"named passthrough PascalCase schema":    `{"jsonrpc":"2.0","id":1,"method":"lotus_send","params":[{"To":"f01","From":"f02","Value":"1","Nonce":1}]}`,
+		"data and input equal ignoring hex case": `{"jsonrpc":"2.0","id":1,"method":"eth_call","params":[{"to":"` + envAddrA + `","data":"0xA9059CBB","input":"0xa9059cbb"},"latest"]}`,
 	}
 	for name, body := range accepted {
 		t.Run("accepts "+name, func(t *testing.T) {

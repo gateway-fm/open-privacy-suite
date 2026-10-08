@@ -647,17 +647,11 @@ func ParseAndValidateBody(body []byte) (string, []any, []byte, *ProcessError) {
 }
 
 // ambiguousParams returns env.ParamsAmbiguity() for methods whose params the
-// proxy's checks read, and "" for the payloads it never inspects: typed-data
-// signing (EIP-712 type and field names are the dApp's own) and
-// named passthrough methods. Aliased chain methods resolve to the standard method they inherit
-// checks from, so they stay covered. RD-1303.
+// proxy's checks read, and "" for named passthrough methods, whose payloads it
+// never inspects. Aliased chain methods resolve to the standard method they
+// inherit checks from, so they stay covered. RD-1303.
 func ambiguousParams(env *proxy.Envelope) string {
-	method := rbac.CanonicalizeMethod(env.Method)
-	switch method {
-	case "eth_signTypedData", "eth_signTypedData_v3", "eth_signTypedData_v4":
-		return ""
-	}
-	if rbac.IsPassthroughMethod(method) {
+	if rbac.IsPassthroughMethod(rbac.CanonicalizeMethod(env.Method)) {
 		return ""
 	}
 	return env.ParamsAmbiguity()
