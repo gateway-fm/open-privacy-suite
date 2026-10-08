@@ -63,6 +63,17 @@ func staticcallReaderInitcode(target string) string {
 		"6020" + "6000" + "f3" // RETURN(0, 32)
 }
 
+// This constructor reads an own-org contract with a large gas allowance and a
+// foreign contract with a small one. Tracing a reduced four-field call object
+// would select the harmless branch even though the forwarded call reads foreign
+// state. The threshold leaves enough gas for the STATICCALL on either branch.
+func gasSensitiveReaderInitcode(own, foreign string) string {
+	ownCode := strings.TrimPrefix(staticcallReaderInitcode(own), "0x")
+	foreignCode := strings.TrimPrefix(staticcallReaderInitcode(foreign), "0x")
+	foreignPC := 9 + len(ownCode)/2
+	return fmt.Sprintf("0x620200005a1060%02x57", foreignPC) + ownCode + "5b" + foreignCode
+}
+
 // constantRuntime returns 42 for any call.
 const constantRuntime = "602a60005260206000f3"
 
@@ -272,6 +283,31 @@ func TestE2E_CreationShapedCallIsDeployGatedAndTraced(t *testing.T) {
 			[]any{map[string]any{"data": readOwn}, "latest"})
 		require.Equal(t, http.StatusOK, status, body)
 		require.Contains(t, body, creationSecretOwn)
+	})
+
+	t.Run("the checked constructor receives the forwarded gas allowance", func(t *testing.T) {
+		code := gasSensitiveReaderInitcode(ownAddr, foreignAddr)
+		for _, tc := range []struct {
+			gas    string
+			secret string
+			status int
+		}{
+			{"0x100000", creationSecretOwn, http.StatusOK},
+			{"0x20000", creationSecretForeign, http.StatusForbidden},
+		} {
+			obj := map[string]any{"data": code, "gas": tc.gas}
+			// Prove which branch the real node executes independently of OPS.
+			raw, err := nodeRPC(t, nodeURL, "eth_call", []any{obj, "latest"})
+			require.NoError(t, err)
+			require.Contains(t, string(raw), tc.secret)
+			status, body := proxyRPC(t, serverURL, orgA, deployerToken, "eth_call", []any{obj, "latest"})
+			require.Equal(t, tc.status, status, body)
+			if status == http.StatusOK {
+				require.Contains(t, body, creationSecretOwn)
+			} else {
+				require.NotContains(t, body, creationSecretForeign)
+			}
+		}
 	})
 
 	t.Run("deploy holder whose creation code deploys and calls a child is answered", func(t *testing.T) {

@@ -35,12 +35,13 @@ import (
 const creationCode = "0x6080604052348015600f57600080fd5b50"
 
 type creationCanary struct {
-	srv      *httptest.Server
-	mu       sync.Mutex
-	frame    traceFrame
-	traceErr bool
-	traced   []map[string]any // call objects received by debug_traceCall
-	forwards atomic.Int64
+	srv          *httptest.Server
+	mu           sync.Mutex
+	frame        traceFrame
+	traceErr     bool
+	frameForCall func(map[string]any) traceFrame
+	traced       []map[string]any // call objects received by debug_traceCall
+	forwards     atomic.Int64
 }
 
 func newCreationCanary(t *testing.T) *creationCanary {
@@ -62,6 +63,11 @@ func newCreationCanary(t *testing.T) *creationCanary {
 				}
 			}
 			frame, fail := c.frame, c.traceErr
+			if c.frameForCall != nil && len(req.Params) > 0 {
+				if obj, ok := req.Params[0].(map[string]any); ok {
+					frame = c.frameForCall(obj)
+				}
+			}
 			c.mu.Unlock()
 			if fail {
 				_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"the method debug_traceCall does not exist"}}`))
@@ -81,6 +87,12 @@ func (c *creationCanary) setFrame(f traceFrame) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.frame = f
+}
+
+func (c *creationCanary) setFrameForCall(fn func(map[string]any) traceFrame) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.frameForCall = fn
 }
 
 func (c *creationCanary) tracedCalls() []map[string]any {
@@ -163,6 +175,55 @@ func (f *creationFixture) process(t *testing.T, did, method string, params []any
 
 func creationParams(data string) []any {
 	return []any{map[string]any{"data": data}, "latest"}
+}
+
+func TestCreationShapedCall_ExecutionInputsAffectTraceDecision(t *testing.T) {
+	for _, field := range []string{"gas", "gasPrice", "nonce"} {
+		t.Run(field, func(t *testing.T) {
+			f := setupCreationFixture(t)
+			f.canary.setFrameForCall(func(obj map[string]any) traceFrame {
+				target := f.ownAddr
+				if obj[field] == "0x40000" {
+					target = f.foreignAddr
+				}
+				return f.creationFrame(traceFrame{Type: "STATICCALL", From: f.created, To: target})
+			})
+			obj := map[string]any{"data": creationCode, field: "0x40000"}
+			res := f.process(t, f.deployerDID, "eth_call", []any{obj, "latest"})
+			require.NotNil(t, res.Error, "the trace must see the input that selects the foreign contract")
+			assert.Equal(t, ReasonCrossOrg, res.Error.Reason)
+			assert.Zero(t, f.canary.forwards.Load())
+
+			obj[field] = "0x80000"
+			res = f.process(t, f.deployerDID, "eth_call", []any{obj, "latest"})
+			require.Nil(t, res.Error, "the same-org branch must remain usable")
+			assert.EqualValues(t, 1, f.canary.forwards.Load())
+		})
+	}
+}
+
+func TestCreationShapedCall_UnavailableTracerNeverForwards(t *testing.T) {
+	for _, missing := range []string{"tracer", "validator", "disabled"} {
+		t.Run(missing, func(t *testing.T) {
+			f := setupCreationFixture(t)
+			switch missing {
+			case "tracer":
+				f.proc.runtimeTracer = nil
+			case "validator":
+				f.proc.traceValidator = nil
+			case "disabled":
+				rt := tracer.NewRuntimeTracer(tracer.RuntimeTracerConfig{NodeURL: f.canary.srv.URL})
+				t.Cleanup(rt.Stop)
+				f.proc.runtimeTracer = rt
+			}
+			for _, method := range []string{"eth_call", "eth_estimateGas", "eth_createAccessList"} {
+				res := f.process(t, f.deployerDID, method, creationParams(creationCode))
+				require.NotNil(t, res.Error, "creation must fail closed without tracing: %s", method)
+				assert.Equal(t, ReasonTracingUnavailable, res.Error.Reason)
+			}
+			assert.Zero(t, f.canary.forwards.Load())
+		})
+	}
 }
 
 func TestCreationShapedCall_CallerWithoutDeployClaimNeverReachesNode(t *testing.T) {

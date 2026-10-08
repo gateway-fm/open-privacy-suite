@@ -266,25 +266,24 @@ func (v *TraceValidator) ValidateTrace(
 		}
 	}
 
-	// Contracts created by successful CREATE/CREATE2 frames of this trace
-	// (WithCreatedContractsAsOwn). Collected after Rule 1, which already
-	// required the deploy claim and refused collisions with another org.
+	// Rule 1 has required the deploy claim and checked organization ownership.
+	// Track successful creations in traversal order so a later CREATE cannot
+	// retrospectively authorize a call to an unregistered address.
 	var createdInTrace map[string]bool
 	if o.createdAsOwn {
 		createdInTrace = make(map[string]bool)
-		for _, target := range trace.CallTargets {
-			if (target.Type == "CREATE" || target.Type == "CREATE2") && target.Error == "" {
-				if addr := normalizeTraceAddr(target.To); addr != "" && addr != "0x" {
-					createdInTrace[addr] = true
-				}
-			}
-		}
 	}
 
 	// Rule 2: Validate each call target
 	for _, target := range trace.CallTargets {
 		// Skip CREATE/CREATE2 targets — handled above
 		if target.Type == "CREATE" || target.Type == "CREATE2" {
+			if o.createdAsOwn && target.Error == "" {
+				addr := normalizeTraceAddr(target.To)
+				if addr != "" && addr != "0x" && addr != "0x0000000000000000000000000000000000000000" {
+					createdInTrace[addr] = true
+				}
+			}
 			continue
 		}
 

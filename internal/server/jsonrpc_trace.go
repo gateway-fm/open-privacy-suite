@@ -379,9 +379,6 @@ func (p *JSONRPCProcessor) validateEthCallWithTracing(ctx context.Context, req *
 // impersonated user belongs to. This prevents an Org A administrator from
 // receiving an Org B trace merely because the target user is a member of both.
 func (p *JSONRPCProcessor) validateEthCallWithTracingInOrg(ctx context.Context, req *ProcessRequest, targetAddr, orgID string) *ProcessError {
-	if p.runtimeTracer == nil || p.traceValidator == nil || !p.runtimeTracer.IsEnabled() {
-		return nil
-	}
 	// Match via ResolveMethodAlias so chain-specific equivalents that the
 	// operator has explicitly aliased to eth_call (e.g. linea_call) also go
 	// through tracing. The send-side equivalent gate is method-literal because
@@ -432,6 +429,12 @@ func (p *JSONRPCProcessor) validateEthCallWithTracingInOrg(ctx context.Context, 
 		}
 	} else if rbac.ClassifyCallShape(req.Params) != rbac.CallShapeCreation {
 		return &ProcessError{StatusCode: http.StatusBadRequest, Message: ethCallDenyInvalidRequest, Reason: ReasonInvalidRequestShape}
+	}
+	if p.runtimeTracer == nil || p.traceValidator == nil || !p.runtimeTracer.IsEnabled() {
+		if creation {
+			return &ProcessError{StatusCode: http.StatusForbidden, Message: ethCallDenyTracerError, Reason: ReasonTracingUnavailable}
+		}
+		return nil
 	}
 
 	from, to, data, value := extractTxParams(req.Params)
@@ -560,7 +563,21 @@ func (p *JSONRPCProcessor) validateEthCallWithTracingInOrg(ctx context.Context, 
 	// Uncached trace — see function-level docstring. blockParam mirrors
 	// the param the forwarded eth_call will use so trace and actual call
 	// run against the same chain state.
-	traceResult, err := p.runtimeTracer.TraceTransactionUncached(traceCtx, from, to, data, value, blockParam)
+	var traceResult *tracer.TraceResult
+	if creation {
+		// The forwarded simulation receives the complete object. Preserve its
+		// execution inputs (including gas, fees, access lists and nonce) so
+		// the trace cannot authorize a different constructor branch. Only the
+		// recognized empty recipient spellings are represented as absent.
+		callObj := make(map[string]any, len(req.Params[0].(map[string]any)))
+		for key, val := range req.Params[0].(map[string]any) {
+			callObj[key] = val
+		}
+		delete(callObj, "to")
+		traceResult, err = p.runtimeTracer.TraceCallObjectUncached(traceCtx, callObj, blockParam)
+	} else {
+		traceResult, err = p.runtimeTracer.TraceTransactionUncached(traceCtx, from, to, data, value, blockParam)
+	}
 	if err != nil {
 		// Distinguish depth-exceeded from upstream-node errors. Both
 		// are 403 from the user's POV (tracing-incomplete = deny), but

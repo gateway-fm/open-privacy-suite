@@ -121,7 +121,7 @@ type callFrame struct {
 // Callers that need a literal "latest" should pass the string.
 func (t *Tracer) TraceCall(ctx context.Context, from, to, data, value string, blockParam any) (*TraceResult, error) {
 	// Build the call object
-	callObj := map[string]string{}
+	callObj := map[string]any{}
 	if from != "" {
 		callObj["from"] = from
 	}
@@ -134,6 +134,14 @@ func (t *Tracer) TraceCall(ctx context.Context, from, to, data, value string, bl
 	if value != "" {
 		callObj["value"] = value
 	}
+	return t.TraceCallObject(ctx, callObj, blockParam)
+}
+
+// TraceCallObject traces the complete call object. Creation simulations must
+// retain execution inputs such as gas, fees, access lists and nonce: reducing
+// them to from/to/data/value can select a different constructor branch.
+// It does not mutate callObj or add client-supplied state/block overrides.
+func (t *Tracer) TraceCallObject(ctx context.Context, callObj map[string]any, blockParam any) (*TraceResult, error) {
 
 	// Use the callTracer preset with onlyTopCall: false to get all nested calls
 	tracerConfig := map[string]any{

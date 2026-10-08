@@ -291,4 +291,15 @@ func TestValidateTrace_CreatedContractsAsOwn(t *testing.T) {
 	res, err = validator.ValidateTrace(ctx, orgs, createAndCall("", callChild), false, WithCreatedContractsAsOwn())
 	require.NoError(t, err)
 	assert.False(t, res.Allowed, "creation still needs the deploy claim")
+
+	// A later creation cannot retrospectively authorize an earlier call.
+	beforeCreate := &tracer.TraceResult{HasCreate: true, CallTargets: []tracer.CallTarget{
+		{Type: "CREATE", To: created},
+		callChild,
+		{Type: "CREATE", From: created, To: child, Depth: 1},
+	}}
+	res, err = validator.ValidateTrace(ctx, orgs, beforeCreate, true, WithCreatedContractsAsOwn())
+	require.NoError(t, err)
+	assert.False(t, res.Allowed, "only contracts already created in execution order count as own")
+	assert.Equal(t, DenialKindUnregistered, res.DenialKind)
 }
