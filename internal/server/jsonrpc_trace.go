@@ -1058,9 +1058,16 @@ func (p *JSONRPCProcessor) forwardAndValidateTrace(ctx context.Context, req *Pro
 		return nil, &ProcessError{StatusCode: http.StatusInternalServerError, Message: traceDenyTracerError, Reason: ReasonInternalError}
 	}
 	if !validationResult.Allowed {
-		// Opaque constant; DenialKind/DeniedTarget to slog only (KD-3).
+		// Opaque constant; DenialKind/DeniedTarget to slog only (KD-3). The
+		// client sees one uniform message, so a trace does not reveal whether
+		// a CREATE ran somewhere inside it; the precise reason goes to the
+		// access log only.
 		slog.Info("jsonrpc: trace denied by validator", "method", req.Method, "kind", string(validationResult.DenialKind))
-		return nil, &ProcessError{StatusCode: http.StatusForbidden, Message: traceDenyCrossOrg, Reason: ReasonCrossOrg}
+		reason := ReasonCrossOrg
+		if validationResult.DenialKind == rbac.DenialKindDeployClaim {
+			reason = ReasonDeployClaimRequired
+		}
+		return nil, &ProcessError{StatusCode: http.StatusForbidden, Message: traceDenyCrossOrg, Reason: reason}
 	}
 	if perr := p.validateClientTraceFrameAccess(ctx, req, plan.orgIDs, validationResult.ClientAccessTargets); perr != nil {
 		return nil, perr

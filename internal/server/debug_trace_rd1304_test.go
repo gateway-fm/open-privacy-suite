@@ -1148,6 +1148,40 @@ func TestRD1304_TraceTransaction_UngrantedCreatedChildRefused(t *testing.T) {
 	require.Nil(t, served.Error, "with a grant on the child the replay is served: %+v", served.Error)
 }
 
+// A trace that creates a contract needs the deploy claim. Without it the
+// caller sees the same message as any other internal-frame denial (a caller
+// can steer which code paths run), while the access log records the precise
+// reason rather than a cross-org one.
+func TestRD1304_DeployClaimDenialLoggedPrecisely(t *testing.T) {
+	for _, method := range []string{"debug_traceCall", "debug_traceTransaction"} {
+		t.Run(method, func(t *testing.T) {
+			c := newTraceCanary(t)
+			proc, ts := setupTraceProcessor(t, c)
+			ctx := context.Background()
+			me := fixedAddr(0x37)
+			factory, child := fixedAddr(0xa6), fixedAddr(0xa7)
+			c.txFrom, c.txTo, c.topTo = me, factory, factory
+			c.calls = []traceFrame{{Type: "CREATE2", From: factory, To: child}}
+			u := newTraceUser(t, ctx, ts, "", nil, traceMethods, me) // no deploy claim
+			addContract(t, ctx, ts, u.orgID, factory, u.groupID)
+
+			params := []any{map[string]any{"from": me, "to": factory}, "latest"}
+			if method == "debug_traceTransaction" {
+				params = []any{traceHash}
+			}
+			req := traceReq(u.did, u.orgID, method, params...)
+			res := proc.Process(ctx, req)
+			require.True(t, denied(res), "a contract creation without the deploy claim must be refused")
+			assert.Equal(t, 1, c.traceRequests(), "the refusal comes from the returned trace")
+			assert.Equal(t, http.StatusForbidden, res.Error.StatusCode)
+			assert.Equal(t, traceDenyCrossOrg, res.Error.Message, "the wire message stays uniform")
+			assert.Equal(t, ReasonDeployClaimRequired, res.Error.Reason)
+			assert.Equal(t, ReasonDeployClaimRequired, req.denialReason, "the access log records the precise reason")
+			assert.Equal(t, ReasonWireGenericDenied, wireReason(req.denialReason), "verbose callers still get the generic reason")
+		})
+	}
+}
+
 // An EIP-1898 block object is rebuilt from its known keys before forwarding.
 func TestRD1304_TraceCall_BlockObjectRebuilt(t *testing.T) {
 	c := newTraceCanary(t)
