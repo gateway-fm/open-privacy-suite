@@ -83,6 +83,11 @@ type ExplorerBackend interface {
 	// hashes only keep rows — the redactor never reveals an identity for them,
 	// RD-1316).
 	FindTransferParticipantTxs(ctx context.Context, visibleAddrs []string, beforeBlock *uint64, limit int) (map[string]bool, error)
+	// FindTransferTxsBetween returns tx hashes with a token transfer whose from
+	// and to are both in sideAddrs, on a token in tokenAddrs — the non-admin
+	// parent-row union for mints, burns and transfers between visible
+	// contracts (RD-1316). Row survival only. See Store.FindTransferTxsBetween.
+	FindTransferTxsBetween(ctx context.Context, sideAddrs, tokenAddrs []string, beforeBlock *uint64, limit int) (map[string]bool, error)
 
 	// Logs
 	GetLogsByTransaction(ctx context.Context, txHash string) ([]Log, error)

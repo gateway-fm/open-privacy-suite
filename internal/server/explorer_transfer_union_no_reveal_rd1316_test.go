@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -300,6 +301,135 @@ func TestExplorer_FullDisclosureGrantOnRecipient_RD1316(t *testing.T) {
 	assert.Equal(t, eveWallet, strings.ToLower(transfers[0].To))
 	assert.Equal(t, rd1316EOA, strings.ToLower(transfers[0].From), "the Full lens reveals the counterparty on the transfer row")
 	assert.Equal(t, explorer.ReasonNoAccess, transfers[0].AddressMetadata[rd1316EOA], "the lens reveal keeps the counterparty's own reason")
+}
+
+// addMember creates a non-admin user holding a grant on each contract (via a
+// new group in the contract's org). grants maps contract -> wildcard event
+// rules; event access keeps a token's transfer rows from being stripped.
+func (f *rd1316Fixture) addMember(t *testing.T, did string, grants map[string]bool) {
+	t.Helper()
+	uid := uuid.New().String()
+	_, err := f.conn.Exec("INSERT INTO users (id, external_id, kyc, banned, metadata) VALUES ($1, $2, false, false, '{}')", uid, did)
+	require.NoError(t, err)
+	for c, withEvents := range grants {
+		var orgID, cid string
+		require.NoError(t, f.conn.QueryRow("SELECT org_id, id FROM contracts WHERE address = $1", c).Scan(&orgID, &cid))
+		gid := uuid.New().String()
+		slug := "m-" + uuid.New().String()[:8]
+		_, err = f.conn.Exec("INSERT INTO groups (id, org_id, slug, name, depth, path) VALUES ($1, $2, $3, $4, 0, $5)", gid, orgID, slug, slug, slug)
+		require.NoError(t, err)
+		rules := "NULL"
+		if withEvents {
+			rules = `'"*"'::jsonb`
+		}
+		_, err = f.conn.Exec("INSERT INTO contract_grants (id, contract_id, group_id, event_rules) VALUES ($1, $2, $3, "+rules+")", uuid.New().String(), cid, gid)
+		require.NoError(t, err)
+		_, err = f.conn.Exec("INSERT INTO user_memberships (id, user_id, group_id, source) VALUES ($1, $2, $3, 'admin')", uuid.New().String(), uid, gid)
+		require.NoError(t, err)
+	}
+}
+
+const rd1316Zero = "0x0000000000000000000000000000000000000000"
+
+// F1: a non-admin who sees both sides of a transfer (a Full contract, or the
+// zero address of a mint/burn) and has event access on the token sees that
+// transfer row. Its parent tx — another user's wallet calling the token — must
+// survive too, rendered at the viewer's own level: kept as [PRIVATE], not 404.
+func TestExplorer_BothSidesVisibleTransferKeepsParent_RD1316(t *testing.T) {
+	f := setupRD1316Fixture(t)
+	ctx := context.Background()
+	f.addTransfer(t, 1, rd1316Token, rd1316Zero, rd1316Vault, 500) // mint into the vault
+	const member = "did:privado:rd1316_token_member"
+	f.addMember(t, member, map[string]bool{rd1316Token: true, rd1316Vault: true})
+	require.False(t, f.srv.isViewerAdmin(ctx, member), "precondition: not an admin")
+
+	rr := f.get(t, member, "/transactions/"+f.hash+"/transfers")
+	require.Equal(t, http.StatusOK, rr.Code)
+	var transfers []explorer.TokenTransfer
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &transfers))
+	require.Len(t, transfers, 1, "only the mint survives; the wallet's transfer is G10-dropped: %s", rr.Body.String())
+	assert.Equal(t, rd1316Zero, transfers[0].From)
+	assert.Equal(t, rd1316Vault, strings.ToLower(transfers[0].To))
+	assert.Equal(t, "500", string(transfers[0].Value))
+
+	rr = f.get(t, member, "/transactions/"+f.hash)
+	require.Equal(t, http.StatusOK, rr.Code, "the parent of a visible transfer must not 404 (§6): %s", rr.Body.String())
+	var tx explorer.Transaction
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &tx))
+	assert.Equal(t, "[PRIVATE]", tx.From, "the other user's wallet stays private")
+	require.NotNil(t, tx.To)
+	assert.Equal(t, rd1316Token, strings.ToLower(*tx.To), "the token renders at the viewer's own (Full) level")
+	assert.Nil(t, tx.Nonce, "nonce revealed")
+	assert.Empty(t, tx.InputData, "calldata revealed")
+	assert.Empty(t, string(tx.Value), "value revealed")
+	requireNoForeignIdentity(t, rr.Body.String(), "member by-hash", rd1316EOA, rd1316Callee)
+
+	rr = f.get(t, member, "/transactions?limit=25")
+	require.Equal(t, http.StatusOK, rr.Code)
+	var list []explorer.Transaction
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &list))
+	row := findTx(list, f.hash)
+	require.NotNil(t, row, "the list keeps the row: %s", rr.Body.String())
+	assert.Equal(t, "[PRIVATE]", row.From)
+	assert.Empty(t, string(row.Value))
+	requireNoForeignIdentity(t, rr.Body.String(), "member list", rd1316EOA, rd1316Callee)
+
+	// Without event access on the token the member sees no transfer row, so
+	// nothing keeps the parent: G10 drops it as before.
+	const noEvents = "did:privado:rd1316_token_member_no_events"
+	f.addMember(t, noEvents, map[string]bool{rd1316Token: false, rd1316Vault: false})
+	rr = f.get(t, noEvents, "/transactions/"+f.hash+"/transfers")
+	require.Equal(t, http.StatusOK, rr.Code)
+	assert.NotContains(t, rr.Body.String(), f.hash[:20], "no event access, no transfer row")
+	rr = f.get(t, noEvents, "/transactions/"+f.hash)
+	assert.Equal(t, http.StatusNotFound, rr.Code, rr.Body.String())
+}
+
+// The third driver class at the filter level: a transfer whose two sides are
+// both Full or public (the zero address, a precompile) on a token with event
+// access drives it; a transfer with a hidden side, or on a token without event
+// access, does not.
+func TestBuildVisibilityFilter_BothSidesVisibleTransfers_RD1316(t *testing.T) {
+	f := setupRD1316Fixture(t)
+	ctx := context.Background()
+	const vault2 = "0xcccccccccccccccccccccccccccccccccccc2316"
+	const otherToken = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb2316"
+	const ecrecover = "0x0000000000000000000000000000000000000001"
+	var orgU string
+	require.NoError(t, f.conn.QueryRow("SELECT org_id FROM contracts WHERE address = $1", rd1316Vault).Scan(&orgU))
+	for _, c := range []string{vault2, otherToken} {
+		_, err := f.conn.Exec("INSERT INTO contracts (id, org_id, address, name) VALUES ($1, $2, $3, 'C')", uuid.New().String(), orgU, c)
+		require.NoError(t, err)
+	}
+	block := seedExplorerBlock(t, f.conn)
+	tx := func(n int, token, from, to string) string {
+		h := fmt.Sprintf("0x2316%060d", n)
+		seedExplorerTransaction(t, f.conn, block, h, rd1316EOA, token)
+		_, err := f.conn.Exec(`INSERT INTO token_transfers (tx_hash, log_index, token_address, from_address, to_address, value, block_number)
+			VALUES ($1, 0, $2, $3, $4, 1, $5)`, h, token, from, to, block)
+		require.NoError(t, err)
+		return h
+	}
+	mint := tx(1, rd1316Token, rd1316Zero, rd1316Vault)
+	burn := tx(2, rd1316Token, rd1316Vault, rd1316Zero)
+	between := tx(3, rd1316Token, rd1316Vault, vault2)
+	toPrecompile := tx(4, rd1316Token, rd1316Vault, ecrecover)
+	zeroToZero := tx(5, rd1316Token, rd1316Zero, rd1316Zero)
+	hiddenSide := tx(6, rd1316Token, rd1316Vault, rd1316EOA)
+	noAccess := tx(7, otherToken, rd1316Zero, rd1316Vault)
+
+	const member = "did:privado:rd1316_filter_member"
+	// otherToken: a grant without event rules (Full, but no event access).
+	f.addMember(t, member, map[string]bool{rd1316Token: true, rd1316Vault: true, vault2: true, otherToken: false})
+
+	filter := f.srv.buildVisibilityFilter(ctx, member, f.srv.isViewerAdmin(ctx, member))
+	for _, h := range []string{mint, burn, between, toPrecompile, zeroToZero} {
+		assert.Contains(t, filter.VisibleTxHashes, h, "both transfer sides Full or public: the parent row is kept")
+	}
+	for _, h := range []string{hiddenSide, noAccess, f.hash} {
+		assert.NotContains(t, filter.VisibleTxHashes, h, "a hidden side or no event access: not kept")
+	}
+	assert.Empty(t, filter.ListedTxHashes, "the union never becomes a listing")
 }
 
 // Positive control: a genuine visibleTo share of the same tx still reveals the

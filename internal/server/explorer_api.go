@@ -11,6 +11,7 @@ import (
 
 	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/auth"
+	"privacy-proxy/internal/evm/precompile"
 	"privacy-proxy/internal/explorer"
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
@@ -45,11 +46,16 @@ const (
 )
 
 // transferParticipantUnionLimit caps the number of tx hashes that
-// buildVisibilityFilter unions in from FindTransferParticipantTxs (RD-1009).
+// buildVisibilityFilter unions in from FindTransferParticipantTxs (RD-1009)
+// and FindTransferTxsBetween (RD-1316), both scans together.
 // Generous enough to cover the most-recent matches a tx feed would render,
 // bounded enough to keep the join scan-safe on chains with millions of
 // historical transfers. Tune via empirical query plans rather than guesswork.
 const transferParticipantUnionLimit = 10000
+
+// zeroAddress is the EVM zero address, the public side of ERC-20 mints and
+// burns (RedactTransfers renders it as-is for every viewer).
+const zeroAddress = "0x0000000000000000000000000000000000000000"
 
 // registerExplorerRoutes registers the explorer API endpoints
 // These endpoints are designed to be called by the explorer backend (internal).
@@ -806,15 +812,22 @@ func (s *Server) buildVisibilityFilter(ctx context.Context, viewerDID string, vi
 	//
 	// RD-1316: the union keeps rows, it never reveals an identity — the
 	// redactor reveals only for ListedTxHashes (genuine shares) and renders a
-	// union-only row at the viewer's own visibility. Which addresses drive it:
+	// union-only row at the viewer's own visibility. So the union follows the
+	// transfer rows the viewer actually sees, and no further. Drivers:
 	//   - a viewer exempt from the G10 drop (isViewerAdmin: org admin or admin
-	//     claim) — every Full address, so their /transactions agrees with the
-	//     /transfers rows they already see;
-	//   - anyone else — only their own addresses and Full disclosure-grant
-	//     subjects, the cases where the transfer row survives on its own merits
-	//     (participant override, the grant lens). A plain contract grant does
-	//     not keep another user's one-side-hidden transaction: G10 drops it,
-	//     and the RPC returns null for it.
+	//     claim): every Full address. Their /transfers keeps any transfer with
+	//     one identifiable side, so /transactions must keep its parent.
+	//   - anyone else, whose /transfers applies G10 (both sides identifiable,
+	//     unless a participant or grant lens applies) and the event-access strip:
+	//     (1) their own addresses — the participant override keeps the transfer;
+	//     (2) Full disclosure-grant subjects — the grant lens keeps it;
+	//     (3) transfers whose two sides are both Full or public (the zero
+	//         address, a precompile), on a token the viewer has event access
+	//         to: mints and burns of a visible contract's tokens, and transfers
+	//         between two visible contracts.
+	//     A transfer with a hidden side does not survive G10 for them, so its
+	//     parent (another user's one-side-hidden tx) is not kept either; the
+	//     RPC returns null for it.
 	unionDrivers := fullVisible
 	if len(fullVisible) > 0 && !viewerIsAdmin {
 		unionDrivers = make([]string, 0, len(fullVisible))
@@ -826,21 +839,50 @@ func (s *Server) buildVisibilityFilter(ctx context.Context, viewerDID string, vi
 		}
 	}
 
-	// Bounded scan: capped at transferParticipantUnionLimit to keep the join
-	// O(window) rather than O(full table).
-	if len(unionDrivers) > 0 {
-		transferTxs, err := s.explorerStore.FindTransferParticipantTxs(
-			ctx, unionDrivers, nil /* beforeBlock */, transferParticipantUnionLimit)
-		if err == nil && len(transferTxs) > 0 {
-			// Dedup against any hashes the visibleTo lookup already added.
-			existing := make(map[string]bool, len(filter.VisibleTxHashes))
-			for _, h := range filter.VisibleTxHashes {
-				existing[strings.ToLower(h)] = true
+	existing := make(map[string]bool, len(filter.VisibleTxHashes))
+	for _, h := range filter.VisibleTxHashes {
+		existing[strings.ToLower(h)] = true
+	}
+	unionAdded := 0
+	addUnion := func(txs map[string]bool) {
+		for h := range txs {
+			if !existing[h] {
+				filter.VisibleTxHashes = append(filter.VisibleTxHashes, h)
+				existing[h] = true
+				unionAdded++
 			}
-			for h := range transferTxs {
-				if !existing[h] {
-					filter.VisibleTxHashes = append(filter.VisibleTxHashes, h)
-					existing[h] = true
+		}
+	}
+
+	// Bounded scans: together capped at transferParticipantUnionLimit to keep
+	// the joins O(window) rather than O(full table). A lookup error adds no
+	// hashes, so the viewer gets fewer rows, never more.
+	if len(unionDrivers) > 0 {
+		if transferTxs, err := s.explorerStore.FindTransferParticipantTxs(
+			ctx, unionDrivers, nil /* beforeBlock */, transferParticipantUnionLimit); err == nil {
+			addUnion(transferTxs)
+		}
+	}
+	if remaining := transferParticipantUnionLimit - unionAdded; remaining > 0 && len(fullVisible) > 0 && !viewerIsAdmin {
+		// Event access needs a contract grant, and a grant makes the contract
+		// Full, so the viewer's event-access tokens are among fullVisible.
+		if access, err := s.db.GetBatchEventAccess(ctx, viewerDID, fullVisible); err == nil {
+			tokens := make([]string, 0, len(access))
+			for addr, ok := range access {
+				if ok {
+					tokens = append(tokens, addr)
+				}
+			}
+			if len(tokens) > 0 {
+				sides := make([]string, 0, len(fullVisible)+1+len(precompile.PrecompileAddresses))
+				sides = append(sides, fullVisible...)
+				sides = append(sides, zeroAddress)
+				for addr := range precompile.PrecompileAddresses {
+					sides = append(sides, addr)
+				}
+				if between, err := s.explorerStore.FindTransferTxsBetween(
+					ctx, sides, tokens, nil /* beforeBlock */, remaining); err == nil {
+					addUnion(between)
 				}
 			}
 		}
@@ -852,7 +894,7 @@ func (s *Server) buildVisibilityFilter(ctx context.Context, viewerDID string, vi
 // getExplorerTransactions returns a page of recent transactions, newest first.
 //
 // @Summary      List recent transactions
-// @Description  Returns a page of transactions, newest first. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: transactions the viewer cannot see are dropped, and surviving rows have addresses and values redacted per the viewer's visibility. A transaction is also kept when one of its token transfers is visible to the viewer, so this list agrees with the transfer views; such a row shows no address the viewer could not already see.
+// @Description  Returns a page of transactions, newest first. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: transactions the viewer cannot see are dropped, and surviving rows have addresses and values redacted per the viewer's visibility. A transaction is also kept when one of its token transfers involves addresses the viewer sees in full; such a row shows no address the viewer could not already see.
 // @Tags         Explorer
 // @Produce      json
 // @Param        limit query int false "Max rows to return (1-100)" default(25)
@@ -1417,7 +1459,7 @@ func (s *Server) indexExplorerBlock(c *gin.Context) {
 // getExplorerBlockTransactions returns the transactions in a block.
 //
 // @Summary      Transactions in a block
-// @Description  Returns the transactions contained in a block. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: transactions the viewer cannot see are dropped and surviving rows are redacted per the viewer's visibility. A transaction is also kept when one of its token transfers is visible to the viewer; such a row shows no address the viewer could not already see.
+// @Description  Returns the transactions contained in a block. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: transactions the viewer cannot see are dropped and surviving rows are redacted per the viewer's visibility. A transaction is also kept when one of its token transfers involves addresses the viewer sees in full; such a row shows no address the viewer could not already see.
 // @Tags         Explorer
 // @Produce      json
 // @Param        number path int true "Block number"
@@ -1540,7 +1582,7 @@ func (s *Server) getExplorerLatestBlockNumber(c *gin.Context) {
 // getExplorerTransactionsPaginated returns a page of transactions with a total.
 //
 // @Summary      List transactions (page/pageSize)
-// @Description  Returns a page of transactions plus a total count, using page/pageSize pagination. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: rows the viewer cannot see are dropped and surviving rows are redacted. A transaction is also kept when one of its token transfers is visible to the viewer; such a row shows no address the viewer could not already see. Note the total is a SQL-level count that may slightly overcount relative to the redacted rows in data.
+// @Description  Returns a page of transactions plus a total count, using page/pageSize pagination. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: rows the viewer cannot see are dropped and surviving rows are redacted. A transaction is also kept when one of its token transfers involves addresses the viewer sees in full; such a row shows no address the viewer could not already see. Note the total is a SQL-level count that may slightly overcount relative to the redacted rows in data.
 // @Tags         Explorer
 // @Produce      json
 // @Param        page query int false "1-based page number" default(1)

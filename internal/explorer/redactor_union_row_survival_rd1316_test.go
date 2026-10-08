@@ -170,6 +170,56 @@ func TestRedactTransactions_VisibleHashWithoutListing_FailsClosed_RD1316(t *test
 	assertNoIdentity(t, got[0], "tx")
 }
 
+// A non-admin with event access on the token sees a mint into their vault: the
+// zero address is public and the vault is Full, so the transfer row survives
+// with its amount. Its parent tx (another user's wallet calling the token) is
+// one-side-hidden and G10 drops it for a non-admin — unless the union keeps it
+// (the third driver class, both transfer sides Full or zero). Kept, it renders
+// at the viewer's own level, and the RD-1009 invariant holds: every surviving
+// transfer's tx hash is a surviving tx.
+func TestRedactTransactions_BothSidesVisibleTransferKeepsParent_RD1316(t *testing.T) {
+	const zero = "0x0000000000000000000000000000000000000000"
+	engine := rd1316Engine(map[string]AddressVisibility{
+		rd1316Token: {Level: VisibilityFull, Reason: ReasonRBACGroupMember, Visible: true},
+	})
+	ctx := context.Background()
+	mint := TokenTransfer{TxHash: rd1316Hash, TokenAddress: rd1316Token, From: zero, To: rd1316Vault, Value: "1000"}
+	transfers, err := engine.RedactTransfers(ctx, []TokenTransfer{mint}, "did:member", unionOpts(false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(transfers) != 1 || transfers[0].Value != "1000" || transfers[0].To != rd1316Vault {
+		t.Fatalf("the mint into the member's vault survives with its amount, got %+v", transfers)
+	}
+
+	got, err := engine.RedactTransactions(ctx, []Transaction{rd1316Tx()}, "did:member", RedactOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("baseline: without the union G10 drops the one-side-hidden parent, got %+v", got)
+	}
+
+	got, err = engine.RedactTransactions(ctx, []Transaction{rd1316Tx()}, "did:member", unionOpts(false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Hash != transfers[0].TxHash {
+		t.Fatalf("the parent of a surviving transfer must survive (§6), got %+v", got)
+	}
+	tx := got[0]
+	if tx.From != "[PRIVATE]" {
+		t.Errorf("From = %q, want [PRIVATE]", tx.From)
+	}
+	if tx.To == nil || *tx.To != rd1316Token {
+		t.Errorf("To = %v, want the token the member sees", tx.To)
+	}
+	if tx.Nonce != nil || tx.InputData != "" || tx.Value != "" {
+		t.Errorf("nonce/calldata/value revealed: nonce=%v input=%q value=%q", tx.Nonce, tx.InputData, tx.Value)
+	}
+	assertNoIdentity(t, tx, "tx", rd1316EOA, rd1316Callee)
+}
+
 // The union plays no part in RedactTransfers: the transfer that drove it
 // survives on its own (here the admin's G10 exemption), with the sender
 // [PRIVATE]. A non-admin whose union was driven by something else gets the

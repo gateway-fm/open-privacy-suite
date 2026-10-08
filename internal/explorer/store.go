@@ -1050,6 +1050,70 @@ func (s *Store) FindTransferParticipantTxs(ctx context.Context, visibleAddrs []s
 	return out, nil
 }
 
+// FindTransferTxsBetween returns the tx hashes that have a token transfer
+// whose from and to are both in sideAddrs, on a token in tokenAddrs. It backs
+// the third non-admin driver of the RD-1009 parent-row union (RD-1316): the
+// caller passes the addresses the viewer sees at Full plus the public ones
+// (zero address, precompiles) as sideAddrs, and the tokens the viewer has
+// event access to as tokenAddrs. For a viewer who is not exempt from the G10
+// drop, such a transfer row survives RedactTransfers (both sides identifiable,
+// event access on the token), while its parent tx — typically another user's
+// wallet calling the token — would be G10-dropped. Keeping the parent row
+// reveals nothing: the redactor renders it at the viewer's own visibility.
+//
+// Either slice empty → empty map. beforeBlock and limit bound the scan as in
+// FindTransferParticipantTxs. Returns lowercase tx hashes.
+func (s *Store) FindTransferTxsBetween(ctx context.Context, sideAddrs, tokenAddrs []string, beforeBlock *uint64, limit int) (map[string]bool, error) {
+	out := make(map[string]bool)
+	sides := normalizeAddrs(sideAddrs)
+	tokens := normalizeAddrs(tokenAddrs)
+	if len(sides) == 0 || len(tokens) == 0 {
+		return out, nil
+	}
+
+	query := `SELECT DISTINCT tx_hash FROM token_transfers
+		WHERE LOWER(token_address) = ANY($2)
+		  AND LOWER(from_address) = ANY($1)
+		  AND LOWER(to_address) = ANY($1)`
+	args := []any{sides, tokens}
+	if beforeBlock != nil {
+		query += ` AND block_number < $3`
+		args = append(args, *beforeBlock)
+	}
+	query += ` ORDER BY tx_hash`
+	if limit > 0 {
+		query += fmt.Sprintf(` LIMIT %d`, limit)
+	}
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("FindTransferTxsBetween: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var h string
+		if err := rows.Scan(&h); err != nil {
+			return nil, fmt.Errorf("FindTransferTxsBetween scan: %w", err)
+		}
+		out[strings.ToLower(h)] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("FindTransferTxsBetween rows.Err: %w", err)
+	}
+	return out, nil
+}
+
+// normalizeAddrs lowercases and trims addresses, dropping empty entries.
+func normalizeAddrs(addrs []string) []string {
+	out := make([]string, 0, len(addrs))
+	for _, a := range addrs {
+		if a = strings.TrimSpace(strings.ToLower(a)); a != "" {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
 // GetTransfersByAddress returns token transfers involving a specific address.
 func (s *Store) GetTransfersByAddress(ctx context.Context, address string, limit int, page AddressPage) ([]TokenTransfer, string, error) {
 	address = strings.ToLower(address)

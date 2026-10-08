@@ -10737,9 +10737,9 @@ paths:
         only (serves the explorer backend); not reachable through the public ingress.
         The response is privacy-filtered for the resolved viewer: transactions the
         viewer cannot see are dropped and surviving rows are redacted per the viewer''s
-        visibility. A transaction is also kept when one of its token transfers is
-        visible to the viewer; such a row shows no address the viewer could not already
-        see.'
+        visibility. A transaction is also kept when one of its token transfers involves
+        addresses the viewer sees in full; such a row shows no address the viewer
+        could not already see.'
       parameters:
       - description: Block number
         in: path
@@ -11583,9 +11583,8 @@ paths:
         The response is privacy-filtered for the resolved viewer: transactions the
         viewer cannot see are dropped, and surviving rows have addresses and values
         redacted per the viewer''s visibility. A transaction is also kept when one
-        of its token transfers is visible to the viewer, so this list agrees with
-        the transfer views; such a row shows no address the viewer could not already
-        see.'
+        of its token transfers involves addresses the viewer sees in full; such a
+        row shows no address the viewer could not already see.'
       parameters:
       - description: Max rows to return (1-100)
         in: query
@@ -11823,10 +11822,10 @@ paths:
         pagination. Private network only (serves the explorer backend); not reachable
         through the public ingress. The response is privacy-filtered for the resolved
         viewer: rows the viewer cannot see are dropped and surviving rows are redacted.
-        A transaction is also kept when one of its token transfers is visible to the
-        viewer; such a row shows no address the viewer could not already see. Note
-        the total is a SQL-level count that may slightly overcount relative to the
-        redacted rows in data.'
+        A transaction is also kept when one of its token transfers involves addresses
+        the viewer sees in full; such a row shows no address the viewer could not
+        already see. Note the total is a SQL-level count that may slightly overcount
+        relative to the redacted rows in data.'
       parameters:
       - description: 1-based page number
         in: query
