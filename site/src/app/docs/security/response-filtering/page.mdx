@@ -80,11 +80,11 @@ For a non-admin user, a key list that mixes an allowed slot with any other slot,
 
 Some nodes support state or block override sets as optional arguments on existing RPC methods such as `eth_call`. These options select temporary account state or block fields for the simulation; their shape and availability depend on the node implementation. OPS does not accept client-supplied overrides. Ordinary calls and simulations still run against the configured node's state at the requested block, under the normal access and tracing rules.
 
-The policy applies to every caller, including contract and organization admins. Requests with unsupported options are refused before tracing or forwarding and receive the same opaque `method not found` as other RPC access denials.
+The policy applies to every caller, including contract and organization admins. Requests with unsupported options are refused before tracing or forwarding and receive the same opaque `method not found` as other RPC access denials. A differently-cased `stateOverrides`, `blockOverrides` or `txIndex` key is refused earlier, with `400 invalid JSON-RPC request`, because the request has more than one reading (see [Security](/docs/security)).
 
 | Method | Rejected | Passes the option check |
 |--------|----------|----------|
-| `eth_call`, `eth_estimateGas`, `eth_createAccessList` | non-empty or malformed overrides in the third or fourth parameter; anything in the block-parameter position other than a block tag or number, `null`, or a block object with only `blockNumber`, `blockHash` and `requireCanonical`; more than four parameters | omitted, `null`, or `{}` positional overrides; supported block references; a boolean third parameter for `eth_createAccessList` optimization |
+| `eth_call`, `eth_estimateGas`, `eth_createAccessList` | non-empty or malformed overrides in the third or fourth parameter; anything in the block-parameter position other than a string (block tag or number), `null`, or a block object with only `blockNumber`, `blockHash` and `requireCanonical`; more than four parameters | omitted, `null`, or `{}` positional overrides; supported block references; a boolean third parameter for `eth_createAccessList` optimization |
 | `debug_traceCall` | any `stateOverrides`, `stateOverride`, `blockOverrides`, `blockOverride`, or `txIndex` config key, including case-equivalent spellings, regardless of its value | a config omitting those keys, subject to normal trace checks |
 
 A client emitting trace override keys with empty values must omit the keys. Passing the option check does not guarantee node support for a particular optional argument; normal RBAC, block-reference validation, and node validation still apply.

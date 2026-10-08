@@ -1420,11 +1420,14 @@ func TestRD1304_TraceTransaction_MalformedHashRefused(t *testing.T) {
 // replay-position keys in a debug_traceTransaction config are refused by the
 // trace config check: a 400 naming the overrides, before any upstream call.
 // The caller is a participant, so without that check the replay would be served.
+// The keys are spellings the request envelope accepts; over HTTP a case variant
+// of stateOverrides, blockOverrides or txIndex is refused earlier by the
+// envelope (400 invalid JSON-RPC request).
 func TestRD1304_TraceTransaction_OverrideConfigKeysRefused(t *testing.T) {
 	cases := map[string]map[string]any{
 		"stateOverrides": {"tracer": "callTracer", "stateOverrides": map[string]any{}},
-		"blockOverride":  {"blockOverride": map[string]any{"number": "0x1"}},
-		"TXINDEX":        {"tracer": "callTracer", "TXINDEX": 1},
+		"BlockOverride":  {"BlockOverride": map[string]any{"number": "0x1"}},
+		"txIndex":        {"tracer": "callTracer", "txIndex": 1},
 	}
 	for name, cfg := range cases {
 		t.Run(name, func(t *testing.T) {

@@ -13,8 +13,10 @@ const (
 	overrideKindMalformed = "malformed_override"
 
 	// maxOverrideAwareParams caps the positional params for the eth_call /
-	// eth_estimateGas family. The valid shapes are [call], [call, block],
-	// [call, block, stateOverride], [call, block, stateOverride, blockOverride].
+	// eth_estimateGas / eth_createAccessList family. The valid shapes are
+	// [call], [call, block], [call, block, stateOverride],
+	// [call, block, stateOverride, blockOverride], and for
+	// eth_createAccessList also [call, block, bool(, blockOverride)].
 	// Anything longer is rejected fail-closed rather than forwarded.
 	maxOverrideAwareParams = 4
 )
