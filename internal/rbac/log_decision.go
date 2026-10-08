@@ -24,14 +24,14 @@ const (
 // implementation, not a convention.)
 type LogEmitterFacts struct {
 	// IsAdmin: the viewer holds the admin claim in the emitting contract's
-	// owning org (per-contract, org-scoped). Bypasses every gate below.
+	// owning org (per-contract, org-scoped). Admits with masked payload.
 	IsAdmin bool
 
 	// Unlocked: the emitter has `allow_visibleto_unlock` set, the viewer is
 	// eligible, AND the viewer is listed in THIS log's transaction's own
 	// visibleTo row (RD-874) — the exact (viewer, emitting contract, tx) tuple.
-	// This is the ONLY path by which visibleTo becomes a standalone grant; it
-	// bypasses every gate below and is the only source of LogPayloadFull.
+	// This is the only visibleTo path that admits independently of the ordinary
+	// event gates, and the only source of LogPayloadFull.
 	Unlocked bool
 
 	// HasGrant: the viewer holds a contract_grant on the emitter — the
@@ -117,7 +117,7 @@ type LogDecision struct {
 // log, and with which payload?", shared by the RPC filter and the explorer
 // redactor. The gate order is identical for both layers:
 //
-//  1. visibleTo unlock          → admit, full payload (bypass everything)
+//  1. visibleTo unlock          → admit, full payload
 //  2. admin                     → admit, masked
 //  3. no resolvable ABI         → drop   (RD-875/889 embedded-address protection)
 //  4. M15 dynamic payload       → drop   (embedded-address protection)
@@ -134,9 +134,8 @@ type LogDecision struct {
 //     ordinary visibleTo and event rules never skip embedded-address masking.
 //   - The embedded-address protections (3, 4) are never relaxed by
 //     participation or visibleTo.
-//   - The grant gate (6) sits before event_rules and before the
-//     participant/visibleTo relaxations, so neither can admit a no-grant
-//     emitter — the class of leak RD-1208 closed.
+//   - Both the participant path (5) and the ordinary event paths (7) require
+//     a grant on the emitter (RD-1208).
 //
 // A policy profile that must switch the unlock off for some viewer does so by
 // clearing Unlocked before calling this function (or by a gate placed ahead of

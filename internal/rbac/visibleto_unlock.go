@@ -85,9 +85,8 @@ func UnlockableContracts(ctx context.Context, access *AccessController, viewerDI
 //     contract. Having the grant is enough, even if its event_rules say
 //     deny-all. A group is eligible unless it is a system group
 //     (`is_system`) or the seeded default group (`DefaultGroupID`), which
-//     auto-provisioned users join: a grant reached only through either
-//     would let a sender unlock for any registered user (RD-874 security
-//     analysis; REDACTION_SPEC §3.7.1; RD-1306). A group an operator
+//     auto-provisioned users join (REDACTION_SPEC §3.7.1; RD-1306).
+//     A group an operator
 //     configures as an identity provider's automatic group is treated like
 //     any other group: granting it a flagged contract is the operator's
 //     choice.

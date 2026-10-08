@@ -426,7 +426,7 @@ func TestVisibleToUnlockFullPayload_CrossLayer_RD1300(t *testing.T) {
 			"Payments log unlocked → exact payer/payee topics and intermediary bytes; Ledger (not flagged) keeps ordinary masking; Audit (flagged, no grant) dropped")
 	})
 	t.Run("flag on: deny-all grant holder listed gets the exact payload", func(t *testing.T) {
-		f.requireSurfaces(t, recipient2, tx1, []vtuLog{paymentLog}, "unlock bypasses deny-all event rules and masking")
+		f.requireSurfaces(t, recipient2, tx1, []vtuLog{paymentLog}, "unlock returns full payload with deny-all event rules")
 	})
 	t.Run("flag on: a later tx without its own visibleTo stays on the ordinary path", func(t *testing.T) {
 		f.requireSurfaces(t, recipient, tx2, nil, "tx2 not listed: must_be=self fails, no fallback")
@@ -468,7 +468,7 @@ func TestVisibleToUnlockFullPayload_CrossLayer_RD1300(t *testing.T) {
 	// ---- Dynamic identifier without the operator attestation (M15) ------
 	require.NoError(t, f.db.UpdateContractEventsAllowDynamicPayload(ctx, f.paymentCID, false))
 	f.srv.rbacAccessCtrl.InvalidateOrg(ctx, f.orgID)
-	t.Run("M15 gate: unlock bypasses the dynamic-payload drop, flag off drops it", func(t *testing.T) {
+	t.Run("dynamic payload: unlock returns full log, flag off drops it", func(t *testing.T) {
 		setUnlock(t, true)
 		f.requireSurfaces(t, recipient, tx1, []vtuLog{paymentLog, maskedLedger}, "unlock resolves before the M15 gate (RD-874)")
 		setUnlock(t, false)
@@ -497,7 +497,7 @@ func TestVisibleToUnlockFullPayload_CrossLayer_RD1300(t *testing.T) {
 	})
 }
 
-// TestVisibleToUnlockFullPayload_NoABI_RD1300: the unlock also bypasses the
+// TestVisibleToUnlockFullPayload_NoABI_RD1300: the unlock also admits without the
 // deny-when-no-ABI gate (RD-874). Without an ABI the ordinary path would drop
 // the log; unlocked, both layers must return it byte-for-byte.
 func TestVisibleToUnlockFullPayload_NoABI_RD1300(t *testing.T) {
@@ -533,7 +533,7 @@ func TestVisibleToUnlockFullPayload_NoABI_RD1300(t *testing.T) {
 // TestVisibleToUnlockEligibility_OrgAdmin_RD1300: an org admin of the owning
 // org is unlock-eligible without a contract_grant row — the org admin is the
 // contract owner's own authority (REDACTION_SPEC §3.7.1). Listed, they get the
-// full payload on every surface; unlisted, the admin bypass admits with the
+// full payload on every surface; unlisted, the admin path admits with the
 // ordinary masking, including on a tx where an org contract is a
 // token-transfer party.
 func TestVisibleToUnlockEligibility_OrgAdmin_RD1300(t *testing.T) {
@@ -563,7 +563,7 @@ func TestVisibleToUnlockEligibility_OrgAdmin_RD1300(t *testing.T) {
 	require.True(t, rbac.IsViewerEligibleForVisibleToUnlock(ctx, f.srv.rbacAccessCtrl, admin, f.payment),
 		"org admins are unlock-eligible without a contract_grant")
 	f.requireSurfaces(t, admin, listed, []vtuLog{raw}, "org admin listed on a flagged contract: unlock applies on every surface")
-	f.requireSurfaces(t, admin, unlisted, []vtuLog{masked}, "org admin, not listed: admin bypass admits, ordinary masking of user EOAs")
+	f.requireSurfaces(t, admin, unlisted, []vtuLog{masked}, "org admin, not listed: admin path admits with ordinary masking of user EOAs")
 
 	// Any org contract is Full for an org admin, so a token transfer touching
 	// one feeds the explorer's RD-1009 union. That must not count as a listing.

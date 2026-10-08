@@ -232,7 +232,7 @@ The `visibleTo` feature (renamed from `logVisibleTo`) allows a transaction sende
 | Mechanism | What a listed DID sees | What it requires |
 | --- | --- | --- |
 | **Transaction & receipt visibility** (always on) | The full transaction object (`eth_getTransactionByHash` and the block-index variants) and the full receipt (`eth_getTransactionReceipt`) for that one tx | Only that the viewer's DID is in the tx's `visibleTo` list. **No group access or contract grant is required.** Logs inside a returned receipt are still event-rule filtered. |
-| **Event-log unlock** (per-contract opt-in) | Every log **emitted by that opted-in contract in this transaction**, with its full event payload — bypassing the event-rules allowlist, `param_rules`, and embedded-address masking | The `allow_visibleto_unlock` flag on the contract **and** the viewer is eligible: an org admin, or a member of a group with a grant on the contract in its owning org (see eligibility below). Cross-org and anonymous viewers are denied. |
+| **Event-log unlock** (per-contract opt-in) | Every log **emitted by that opted-in contract in this transaction**, with its full event payload, independently of the event-rules allowlist, `param_rules`, and embedded-address masking | The `allow_visibleto_unlock` flag on the contract **and** the viewer is eligible: an org admin, or a member of a group with a grant on the contract in its owning org (see eligibility below). Cross-org and anonymous viewers are denied. |
 
 So "I listed Bob in `visibleTo`" does **not** by itself mean "Bob sees every event payload." Bob always gets the transaction and receipt; he only gets the unredacted event logs when the contract has opted in *and* Bob is grant-eligible.
 
