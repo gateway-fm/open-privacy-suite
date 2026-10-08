@@ -46,13 +46,12 @@ func TestReadProfile_ExplorerTx_Matrix(t *testing.T) {
 					assert.Equal(t, "42", string(tx.Value))
 					require.NotNil(t, tx.Nonce)
 					assert.Equal(t, uint64(7), *tx.Nonce)
-					// The row's transfer count would disclose how many of the
-					// tx's Transfer events the strict rule hides from the viewer.
+					// Strict transaction rows omit transfer-count summaries.
 					assert.Zero(t, tx.TokenTransferCount, "strict: no transfer count on the row")
 					assert.NotContains(t, tx.TxCategories, "token_transfer")
 				} else {
 					assert.Equal(t, http.StatusNotFound, code, string(body))
-					assert.False(t, rpHasAddr(body, rpE), "by-hash leaked the sender: %s", body)
+					assert.False(t, rpHasAddr(body, rpE), "by-hash included the sender: %s", body)
 				}
 
 				// Lists: global, paginated, block and contract-address feeds.
@@ -117,8 +116,8 @@ func TestReadProfile_ExplorerTx_Matrix(t *testing.T) {
 					// the value is kept.
 					assert.Equal(t, rpC, strings.ToLower(internals[0].From))
 					assert.Equal(t, "50", string(internals[0].Value))
-					assert.False(t, rpHasAddr(body, rpP), "internal call leaked the payee: %s", body)
-					assert.False(t, rpHasAddr(body2, rpP), "block internal calls leaked the payee: %s", body2)
+					assert.False(t, rpHasAddr(body, rpP), "internal call included the payee: %s", body)
+					assert.False(t, rpHasAddr(body2, rpP), "block internal calls included the payee: %s", body2)
 				} else {
 					assert.Empty(t, internals, "internal calls of another user's tx: %s", body)
 					assert.Empty(t, blockInternals, "block internal calls of another user's tx: %s", body2)
@@ -187,6 +186,79 @@ func TestReadProfile_ExplorerTx_Matrix(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, code, string(body))
 }
 
+func TestReadProfile_ParticipantFields_RPCExplorerParity(t *testing.T) {
+	f := setupRPFixture(t)
+	router := f.explorerRouter()
+	_, err := f.conn.ExecContext(context.Background(),
+		`UPDATE transactions SET from_address=$1, to_address=$2, input_data=$3 WHERE hash=$4`,
+		rpE, rpP, rpData, rpTx2)
+	require.NoError(t, err)
+
+	txObject := rpTxObject(rpTx2, rpE, rpData)
+	txObject["to"] = rpP
+	txBody := rpEnvelope(t, txObject)
+	receiptObject := rpReceiptObject(rpTx2, rpE, nil)
+	receiptObject["to"] = rpP
+	receiptBody := rpEnvelope(t, receiptObject)
+
+	for _, profile := range []rbac.ReadProfile{rbac.ReadProfileStandard, rbac.ReadProfileStrict} {
+		f.wireExplorer(profile)
+		p := f.rpProcessor(profile)
+		for _, name := range []string{"participant", "payee", "ordinary"} {
+			t.Run(profile.String()+"/"+name, func(t *testing.T) {
+				v := f.viewers[name]
+				out := f.call(t, p, v, rbac.MethodGetTransactionByHash, []any{rpTx2}, txBody)
+				receipt := f.call(t, p, v, rbac.MethodGetTransactionReceipt, []any{rpTx2}, receiptBody)
+				code, body := f.explorerGet(t, router, v, "/api/v1/explorer/transactions/"+rpTx2)
+				if name == "ordinary" {
+					assert.Equal(t, "null", string(rpResult(t, out)))
+					assert.Equal(t, "null", string(rpResult(t, receipt)))
+					assert.Equal(t, http.StatusNotFound, code, string(body))
+					for _, response := range [][]byte{out, receipt, body} {
+						for _, protected := range []string{rpTx2, rpE, rpP, rpData} {
+							assert.NotContains(t, string(response), protected)
+						}
+						for _, field := range []string{"value", "nonce"} {
+							assert.NotContains(t, string(response), `"`+field+`"`)
+						}
+					}
+					return
+				}
+
+				var rpcTx map[string]any
+				require.NoError(t, json.Unmarshal(rpResult(t, out), &rpcTx))
+				assert.Equal(t, rpTx2, rpcTx["hash"])
+				assert.Equal(t, rpE, rpcTx["from"])
+				assert.Equal(t, rpP, rpcTx["to"])
+				assert.Equal(t, rpData, rpcTx["input"])
+				assert.Equal(t, "0x2a", rpcTx["value"])
+				assert.Equal(t, "0x7", rpcTx["nonce"])
+				var rpcReceipt map[string]any
+				require.NoError(t, json.Unmarshal(rpResult(t, receipt), &rpcReceipt))
+				assert.Equal(t, rpTx2, rpcReceipt["transactionHash"])
+				assert.Equal(t, rpE, rpcReceipt["from"])
+				assert.Equal(t, rpP, rpcReceipt["to"])
+
+				require.Equal(t, http.StatusOK, code, string(body))
+				var tx explorer.Transaction
+				require.NoError(t, json.Unmarshal(body, &tx))
+				assert.Equal(t, rpcTx["hash"], tx.Hash)
+				assert.Equal(t, rpcTx["from"], tx.From)
+				require.NotNil(t, tx.To)
+				assert.Equal(t, rpcTx["to"], *tx.To)
+				assert.Equal(t, rpcTx["input"], tx.InputData)
+				assert.Equal(t, "42", string(tx.Value))
+				if profile.Strict() || name == "participant" {
+					require.NotNil(t, tx.Nonce)
+					assert.Equal(t, uint64(7), *tx.Nonce)
+				} else {
+					assert.Nil(t, tx.Nonce, "standard recipients retain the sender nonce policy")
+				}
+			})
+		}
+	}
+}
+
 func explorerTxHashes(t *testing.T, f *rpFixture, router *gin.Engine, v rpViewer, path, field string) []string {
 	t.Helper()
 	code, body := f.explorerGet(t, router, v, path)
@@ -205,7 +277,7 @@ func explorerTxHashes(t *testing.T, f *rpFixture, router *gin.Engine, v rpViewer
 	}
 	for _, other := range []string{rpE, rpQ} {
 		if !strings.EqualFold(other, v.addr) {
-			assert.False(t, rpHasAddr(body, other), "%s leaked %s: %s", path, other, body)
+			assert.False(t, rpHasAddr(body, other), "%s included %s: %s", path, other, body)
 		}
 	}
 	return out
@@ -233,7 +305,7 @@ func assertStrictTransfers(t *testing.T, v rpViewer, body []byte, got []explorer
 	assert.ElementsMatch(t, wantIdx, idx, "admitted transfers for %s", v.name)
 	for _, other := range []string{rpE, rpP, rpQ, rpR, rpAA} {
 		if !strings.EqualFold(other, v.addr) {
-			assert.False(t, rpHasAddr(body, other), "transfers leaked %s: %s", other, body)
+			assert.False(t, rpHasAddr(body, other), "transfers included %s: %s", other, body)
 		}
 	}
 }

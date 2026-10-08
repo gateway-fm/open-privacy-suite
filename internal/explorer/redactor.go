@@ -930,17 +930,16 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 		// sender explicitly chose to share this transaction with the viewer.
 		txVisibleToViewer := visibleHashes[strings.ToLower(tx.Hash)]
 
-		// Participant override: the counterparty address is revealed (so we don't
-		// replace it with [PRIVATE]), but sensitive metadata like nonce is still
-		// stripped based on the BASE visibility — the participant override only
-		// makes the address visible, not the sender's activity metadata.
+		// Strict participants receive the full transaction envelope. Standard
+		// participant views retain their base visibility policy for pseudonymous
+		// addresses and the sender's nonce.
 		fromLevel := baseFromLevel
 		toLevel := baseToLevel
 		if viewerIsParticipant || txVisibleToViewer {
-			if fromLevel == VisibilityHidden || fromLevel == VisibilityRedacted {
+			if (strict && viewerIsParticipant) || fromLevel == VisibilityHidden || fromLevel == VisibilityRedacted {
 				fromLevel = VisibilityFull
 			}
-			if toLevel == VisibilityHidden || toLevel == VisibilityRedacted {
+			if (strict && viewerIsParticipant) || toLevel == VisibilityHidden || toLevel == VisibilityRedacted {
 				toLevel = VisibilityFull
 			}
 		}
@@ -1103,7 +1102,7 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 		if tx.ContractAddress != nil && *tx.ContractAddress != "" {
 			caBase := visibilityMap[strings.ToLower(*tx.ContractAddress)]
 			caLevel := caBase
-			if (viewerIsParticipant || txVisibleToViewer) && isNonIdentifiable(caLevel) {
+			if (strict && viewerIsParticipant) || ((viewerIsParticipant || txVisibleToViewer) && isNonIdentifiable(caLevel)) {
 				caLevel = VisibilityFull
 			}
 			if caLevel == VisibilityFull || caLevel == VisibilityPseudonymous {
@@ -1172,20 +1171,18 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 			setMeta(*tx.To, baseToLevel)
 		}
 
-		// Participant override: even when the counterparty address is revealed,
-		// strip the sender's nonce if the sender is base-level private. The nonce
-		// reveals their lifetime tx count — the receiver doesn't need that.
-		if viewerIsParticipant && (baseFromLevel == VisibilityHidden || baseFromLevel == VisibilityRedacted) {
+		// Standard participant views keep the sender's nonce policy based on
+		// base visibility. Strict participants receive the same transaction
+		// fields as the admitted JSON-RPC envelope.
+		if !strict && viewerIsParticipant && (baseFromLevel == VisibilityHidden || baseFromLevel == VisibilityRedacted) {
 			redactedTx.Nonce = nil
 		}
 
 		redactedTxs = append(redactedTxs, redactedTx)
 	}
 
-	// RD-1299 strict: a transaction row carries no token-transfer count or
-	// category. The count covers every Transfer event of the tx, and the strict
-	// event rule may hide some of them from this viewer, so the count would
-	// disclose how many are hidden; the transfers view lists the admitted ones.
+	// RD-1299 strict transaction rows omit token-transfer counts and categories.
+	// The transfers view lists events admitted for the current viewer.
 	if r.readProfile.Strict() {
 		for i := range redactedTxs {
 			redactedTxs[i].TokenTransferCount = 0

@@ -48,7 +48,7 @@ func TestAdminSystem_ReadProfile_ReportsEffectivePolicy(t *testing.T) {
 }
 
 // The explorer's elevated admin audit view must never apply under strict,
-// whatever the flag says (strict wins; the flag cannot bypass it).
+// regardless of the configured flag (strict takes precedence).
 func TestOrgAdminViewUserTxsEffective_StrictWins(t *testing.T) {
 	cases := []struct {
 		profile rbac.ReadProfile

@@ -63,7 +63,7 @@ func TestReadProfile_RPCTxEnvelope_Matrix(t *testing.T) {
 						assert.Equal(t, "0x7", tx["nonce"], m)
 					} else {
 						assert.Equal(t, "null", string(res), "%s must be null: %s", m, out)
-						assert.False(t, rpHasAddr(out, rpE), "%s leaked the sender: %s", m, out)
+						assert.False(t, rpHasAddr(out, rpE), "%s included the sender: %s", m, out)
 					}
 				}
 
@@ -76,7 +76,7 @@ func TestReadProfile_RPCTxEnvelope_Matrix(t *testing.T) {
 					assert.Equal(t, "0x"+strings.Repeat("0", 512), rc["logsBloom"], "logsBloom is always zeroed")
 				} else {
 					assert.Equal(t, "null", string(res), "receipt must be null: %s", out)
-					assert.False(t, rpHasAddr(out, rpE), "receipt leaked the sender: %s", out)
+					assert.False(t, rpHasAddr(out, rpE), "receipt included the sender: %s", out)
 				}
 
 				// Block listings and block receipts: participant only, in BOTH

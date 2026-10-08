@@ -25,7 +25,7 @@ func resultOf(t *testing.T, body []byte) string {
 }
 
 func TestResponseFilters_FailClosedOnUnexpectedShape(t *testing.T) {
-	const leak = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"
+	const fixtureAddress = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"
 	cases := []struct {
 		name string
 		body string
@@ -34,19 +34,19 @@ func TestResponseFilters_FailClosedOnUnexpectedShape(t *testing.T) {
 	}{
 		{
 			name: "tx-by-hash: body is not JSON",
-			body: `{"jsonrpc":"2.0","id":1,"result":{"from":"` + leak + `"`,
+			body: `{"jsonrpc":"2.0","id":1,"result":{"from":"` + fixtureAddress + `"`,
 			run:  func(b []byte) []byte { return FilterTransactionByHash(rbac.ReadProfileStandard, b, nil, false, nil) },
 			want: "null",
 		},
 		{
 			name: "tx-by-hash: result is not an object",
-			body: `{"jsonrpc":"2.0","id":1,"result":["` + leak + `"]}`,
+			body: `{"jsonrpc":"2.0","id":1,"result":["` + fixtureAddress + `"]}`,
 			run:  func(b []byte) []byte { return FilterTransactionByHash(rbac.ReadProfileStandard, b, nil, false, nil) },
 			want: "null",
 		},
 		{
 			name: "block receipts: result is not an array",
-			body: `{"jsonrpc":"2.0","id":1,"result":{"from":"` + leak + `","to":"` + leak + `"}}`,
+			body: `{"jsonrpc":"2.0","id":1,"result":{"from":"` + fixtureAddress + `","to":"` + fixtureAddress + `"}}`,
 			run: func(b []byte) []byte {
 				return FilterBlockReceipts(rbac.ReadProfileStandard, b, nil, nil, nil, nil, nil, nil)
 			},
@@ -54,7 +54,7 @@ func TestResponseFilters_FailClosedOnUnexpectedShape(t *testing.T) {
 		},
 		{
 			name: "block receipts: body is not JSON",
-			body: `{"jsonrpc":"2.0","id":1,"result":[{"from":"` + leak + `"}`,
+			body: `{"jsonrpc":"2.0","id":1,"result":[{"from":"` + fixtureAddress + `"}`,
 			run: func(b []byte) []byte {
 				return FilterBlockReceipts(rbac.ReadProfileStandard, b, nil, nil, nil, nil, nil, nil)
 			},
@@ -62,26 +62,24 @@ func TestResponseFilters_FailClosedOnUnexpectedShape(t *testing.T) {
 		},
 		{
 			name: "block: result is not an object",
-			body: `{"jsonrpc":"2.0","id":1,"result":["` + leak + `"]}`,
+			body: `{"jsonrpc":"2.0","id":1,"result":["` + fixtureAddress + `"]}`,
 			run:  func(b []byte) []byte { return FilterBlockTransactions(rbac.ReadProfileStandard, b, nil, true) },
 			want: "null",
 		},
 		{
 			name: "block: body is not JSON",
-			body: `{"jsonrpc":"2.0","id":1,"result":{"transactions":[{"from":"` + leak + `"}`,
+			body: `{"jsonrpc":"2.0","id":1,"result":{"transactions":[{"from":"` + fixtureAddress + `"}`,
 			run:  func(b []byte) []byte { return FilterBlockTransactions(rbac.ReadProfileStandard, b, nil, true) },
 			want: "null",
 		},
 		{
 			name: "block: transactions is not an array",
-			body: `{"jsonrpc":"2.0","id":1,"result":{"number":"0x1","transactions":{"x":{"from":"` + leak + `"}}}}`,
+			body: `{"jsonrpc":"2.0","id":1,"result":{"number":"0x1","transactions":{"x":{"from":"` + fixtureAddress + `"}}}}`,
 			run:  func(b []byte) []byte { return FilterBlockTransactions(rbac.ReadProfileStandard, b, nil, true) },
 			want: `{"number":"0x1","transactions":[]}`,
 		},
 		{
-			// An aliased count method the proxy did not rewrite to a block
-			// fetch returns the node's raw count — the total including other
-			// users' transactions. It must not pass through.
+			// Count filters require a rewritten block response.
 			name: "tx count: result is a raw count, not a block",
 			body: `{"jsonrpc":"2.0","id":1,"result":"0x2a"}`,
 			run:  func(b []byte) []byte { return FilterBlockTransactionCount(b, nil) },
@@ -94,22 +92,21 @@ func TestResponseFilters_FailClosedOnUnexpectedShape(t *testing.T) {
 			want: "null",
 		},
 		{
-			// Previously the whole block object (header fields) was returned
-			// as the "count" for an empty block.
+			// Empty blocks return the numeric zero count.
 			name: "tx count: empty block counts zero",
-			body: `{"jsonrpc":"2.0","id":1,"result":{"number":"0x1","miner":"` + leak + `","transactions":[]}}`,
+			body: `{"jsonrpc":"2.0","id":1,"result":{"number":"0x1","miner":"` + fixtureAddress + `","transactions":[]}}`,
 			run:  func(b []byte) []byte { return FilterBlockTransactionCount(b, nil) },
 			want: `"0x0"`,
 		},
 		{
 			name: "tx count: block without a transactions field counts zero",
-			body: `{"jsonrpc":"2.0","id":1,"result":{"number":"0x1","miner":"` + leak + `"}}`,
+			body: `{"jsonrpc":"2.0","id":1,"result":{"number":"0x1","miner":"` + fixtureAddress + `"}}`,
 			run:  func(b []byte) []byte { return FilterBlockTransactionCount(b, nil) },
 			want: `"0x0"`,
 		},
 		{
 			name: "tx count: unparseable transactions fail closed",
-			body: `{"jsonrpc":"2.0","id":1,"result":{"number":"0x1","transactions":"` + leak + `"}}`,
+			body: `{"jsonrpc":"2.0","id":1,"result":{"number":"0x1","transactions":"` + fixtureAddress + `"}}`,
 			run:  func(b []byte) []byte { return FilterBlockTransactionCount(b, nil) },
 			want: "null",
 		},
@@ -117,7 +114,7 @@ func TestResponseFilters_FailClosedOnUnexpectedShape(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			out := tc.run([]byte(tc.body))
-			assert.NotContains(t, string(out), leak[2:], "unfiltered upstream data passed through: %s", out)
+			assert.NotContains(t, string(out), fixtureAddress[2:], "unfiltered upstream data passed through: %s", out)
 			assert.Equal(t, tc.want, resultOf(t, out))
 		})
 	}

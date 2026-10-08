@@ -178,8 +178,8 @@ func assertExplorerLogs(t *testing.T, surface string, v rpViewer, body []byte, g
 		wantIdx = []int{}
 	}
 	assert.Equal(t, wantIdx, idx, "%s: admitted logs for %s", surface, v.name)
-	// A refused log never leaks the third parties anywhere in the body.
+	// Refused log responses contain no third-party addresses.
 	for _, other := range []string{rpQ, rpR} {
-		assert.False(t, rpHasAddr(body, other), "%s: body leaks %s: %s", surface, other, body)
+		assert.False(t, rpHasAddr(body, other), "%s: body includes %s: %s", surface, other, body)
 	}
 }

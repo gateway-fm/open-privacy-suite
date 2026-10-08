@@ -142,8 +142,8 @@ func dataDecodes(nonIndexed abi.Arguments, data string) bool {
 	if err != nil {
 		return false
 	}
-	// Unpack accepts bytes after the declared fields. Require the exact
-	// canonical payload so those bytes cannot bypass field masking.
+	// Require the exact canonical encoding of the declared fields,
+	// including the full payload length.
 	canonical, err := nonIndexed.Pack(values...)
 	return err == nil && bytes.Equal(canonical, b)
 }

@@ -4,7 +4,7 @@ import "testing"
 
 // DecideTxEnvelope is the single admission decision for a transaction object,
 // a receipt and a block entry on every read surface (RD-1299). Each case
-// isolates one fact so a bypass cannot hide behind another.
+// varies one fact to verify its contribution to the verdict.
 func TestDecideTxEnvelope_TruthTable(t *testing.T) {
 	type tc struct {
 		name     string

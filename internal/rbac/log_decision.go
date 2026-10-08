@@ -123,9 +123,9 @@ type LogDecision struct {
 // log, and with which payload?", shared by the RPC filter and the explorer
 // redactor. The read profile is a required argument (RD-1299).
 //
-// Strict profile (and an unset profile) — evaluated ahead of every branch
-// below, so no bypass can precede it: admit, masked, iff the viewer's linked
-// address is an ABI-indexed `address` parameter of the event (IndexedSelf) AND
+// Strict profile (and an unset profile) — evaluated first: admit, masked,
+// iff the viewer's linked address is an ABI-indexed `address` parameter of
+// the event (IndexedSelf) AND
 // the ABI and dynamic-payload gates pass AND the viewer holds a grant on the
 // emitter AND (the event rules admit the event without the visibleTo fallback
 // OR the viewer is admin on the emitter — admin relaxes the rules, never

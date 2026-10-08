@@ -58,9 +58,8 @@ const strictTraceUnsupportedConfig = "only the call tracer is available for debu
 // strictTraceForwardBody vets a debug_traceTransaction request under the strict
 // read profile and returns the body the proxy forwards in place of the
 // caller's: the call tracer limited to the top-level frame, without logs. That
-// is what a participant already reads from the transaction and its receipt;
-// the internal frames and logs a full trace carries would bypass the strict
-// rules for internal calls and events (RD-1299). Accepted caller options: none,
+// matches the participant transaction and receipt view under strict
+// (RD-1299). Accepted caller options: none,
 // or the call tracer with no setting other than onlyTopCall:true and
 // withLog:false. Anything else (the default opcode logger, the prestate
 // tracer, JS tracers, timeouts) returns ok=false. Under the standard profile it

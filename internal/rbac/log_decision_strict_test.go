@@ -9,8 +9,8 @@ import "testing"
 // admit it (or the viewer is an admin, who may relax the rules but never
 // IndexedSelf). The admin claim, the visibleTo unlock, participation and the
 // ordinary visibleTo fallback never admit a log that fails IndexedSelf, and an
-// admitted log is always masked. Each row isolates one fact against a
-// maximally-permissive baseline, so a bypass cannot hide behind another gate.
+// admitted log is always masked. Each row varies one fact against a
+// baseline with every standard entitlement present.
 func TestDecideLogEmitter_StrictProfile(t *testing.T) {
 	base := LogEmitterFacts{
 		IndexedSelf:   true,
@@ -24,8 +24,8 @@ func TestDecideLogEmitter_StrictProfile(t *testing.T) {
 		mut(&f)
 		return f
 	}
-	// Every bypass the standard profile honours, all at once.
-	allBypasses := func(f *LogEmitterFacts) {
+	// All standard-profile entitlements are present together.
+	standardEntitlements := func(f *LogEmitterFacts) {
 		f.IsAdmin = true
 		f.Unlocked = true
 		f.IsParticipant = true
@@ -51,12 +51,12 @@ func TestDecideLogEmitter_StrictProfile(t *testing.T) {
 		{"not indexed-self drops despite unlock", with(func(f *LogEmitterFacts) { f.IndexedSelf = false; f.Unlocked = true }), false},
 		{"not indexed-self drops despite participation", with(func(f *LogEmitterFacts) { f.IndexedSelf = false; f.IsParticipant = true }), false},
 		{"not indexed-self drops despite visibleTo", with(func(f *LogEmitterFacts) { f.IndexedSelf = false; f.InVisibleTo = true }), false},
-		{"not indexed-self drops despite every bypass", with(func(f *LogEmitterFacts) { f.IndexedSelf = false; allBypasses(f) }), false},
+		{"not indexed-self drops despite all standard entitlements", with(func(f *LogEmitterFacts) { f.IndexedSelf = false; standardEntitlements(f) }), false},
 
 		// Grant and embedded-address gates still apply, whatever else holds.
-		{"no grant drops despite every bypass", with(func(f *LogEmitterFacts) { f.HasGrant = false; allBypasses(f) }), false},
-		{"no ABI drops despite every bypass", with(func(f *LogEmitterFacts) { f.ABIResolvable = false; allBypasses(f) }), false},
-		{"dynamic payload drops despite every bypass", with(func(f *LogEmitterFacts) { f.DynamicPayloadDropped = true; allBypasses(f) }), false},
+		{"no grant drops despite all standard entitlements", with(func(f *LogEmitterFacts) { f.HasGrant = false; standardEntitlements(f) }), false},
+		{"no ABI drops despite all standard entitlements", with(func(f *LogEmitterFacts) { f.ABIResolvable = false; standardEntitlements(f) }), false},
+		{"dynamic payload drops despite all standard entitlements", with(func(f *LogEmitterFacts) { f.DynamicPayloadDropped = true; standardEntitlements(f) }), false},
 
 		// Event rules: deny-all and a failed allowlist drop a non-admin,
 		// including participants and visibleTo recipients (no RD-1162 / RD-842

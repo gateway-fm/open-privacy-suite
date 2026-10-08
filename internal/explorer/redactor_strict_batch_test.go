@@ -167,10 +167,8 @@ func TestRedactInternalTransactions_Strict_BatchesParentLookups(t *testing.T) {
 	}
 }
 
-// Under strict a transaction row does not carry the token-transfer count or
-// category: the count would disclose how many of the tx's Transfer events the
-// strict event rule hides from the viewer. The transfers view lists the ones
-// the viewer may see.
+// Strict transaction rows omit token-transfer counts and categories.
+// The transfers view lists events admitted for the current viewer.
 func TestRedactTransactions_Strict_DropsTokenTransferCount(t *testing.T) {
 	to := sbToken
 	tx := Transaction{Hash: sbHash(0), From: sbViewer, To: &to, TokenTransferCount: 3, TxCategories: []string{"token_transfer"}}
@@ -191,5 +189,91 @@ func TestRedactTransactions_Strict_DropsTokenTransferCount(t *testing.T) {
 		if c == "token_transfer" {
 			t.Fatalf("strict: token_transfer category kept: %v", out[0].TxCategories)
 		}
+	}
+}
+
+func TestRedactTransactions_ParticipantFieldsByReadProfile(t *testing.T) {
+	cases := []struct {
+		name               string
+		linked             string
+		fromLevel, toLevel VisibilityLevel
+		admitted           bool
+		standardNonce      bool
+	}{
+		{"sender", sbOther, VisibilityFull, VisibilityHidden, true, true},
+		{"recipient-hidden-sender", sbViewer, VisibilityHidden, VisibilityFull, true, false},
+		{"recipient-redacted-sender", sbViewer, VisibilityRedacted, VisibilityFull, true, false},
+		{"recipient-pseudonymous-sender", sbViewer, VisibilityPseudonymous, VisibilityFull, true, true},
+		{"sender-pseudonymous-recipient", sbOther, VisibilityFull, VisibilityPseudonymous, true, true},
+		{"nonparticipant", sbToken, VisibilityHidden, VisibilityFull, false, false},
+	}
+	for _, profile := range []rbac.ReadProfile{rbac.ReadProfileStandard, rbac.ReadProfileStrict} {
+		for _, tc := range cases {
+			t.Run(profile.String()+"/"+tc.name, func(t *testing.T) {
+				nonce := uint64(7)
+				to := sbViewer
+				tx := Transaction{Hash: sbHash(0), From: sbOther, To: &to, Nonce: &nonce, Value: "42", InputData: "0xabcd"}
+				db := newCountingDB(VisibilityMap{sbOther: tc.fromLevel, sbViewer: tc.toLevel}, []string{tc.linked})
+				engine := NewRedactionEngine(nil, db, profile)
+				out, err := engine.RedactTransactions(context.Background(), []Transaction{tx}, "did:viewer")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !tc.admitted {
+					if len(out) != 0 {
+						t.Fatalf("nonparticipant must receive no hash, sender, recipient, value, calldata or nonce: got %+v", out)
+					}
+					return
+				}
+				if len(out) != 1 {
+					t.Fatalf("participant must receive the transaction: got %d rows", len(out))
+				}
+				got := out[0]
+				wantFrom, wantTo := tx.From, to
+				if !profile.Strict() {
+					if tc.fromLevel == VisibilityPseudonymous {
+						wantFrom = engine.applyRedaction(tx.From, tc.fromLevel)
+					}
+					if tc.toLevel == VisibilityPseudonymous {
+						wantTo = engine.applyRedaction(to, tc.toLevel)
+					}
+				}
+				if got.Hash != tx.Hash || got.From != wantFrom || got.To == nil || *got.To != wantTo || got.Value != tx.Value || got.InputData != tx.InputData {
+					t.Fatalf("participant fields differ: got %+v, want hash=%s from=%s to=%s value=%s calldata=%s", got, tx.Hash, wantFrom, wantTo, tx.Value, tx.InputData)
+				}
+				if profile.Strict() || tc.standardNonce {
+					if got.Nonce == nil || *got.Nonce != nonce {
+						t.Fatalf("participant must receive nonce %d, got %v", nonce, got.Nonce)
+					}
+				} else if got.Nonce != nil {
+					t.Fatalf("standard recipient nonce policy must remain unchanged, got %d", *got.Nonce)
+				}
+			})
+		}
+	}
+}
+
+func TestRedactTransactions_DeploymentAddressByReadProfile(t *testing.T) {
+	for _, profile := range []rbac.ReadProfile{rbac.ReadProfileStandard, rbac.ReadProfileStrict} {
+		t.Run(profile.String(), func(t *testing.T) {
+			created := sbToken
+			tx := Transaction{Hash: sbHash(0), From: sbOther, ContractAddress: &created}
+			db := newCountingDB(VisibilityMap{sbOther: VisibilityFull, sbToken: VisibilityPseudonymous}, []string{sbOther})
+			engine := NewRedactionEngine(nil, db, profile)
+			out, err := engine.RedactTransactions(context.Background(), []Transaction{tx}, "did:viewer")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(out) != 1 || out[0].ContractAddress == nil {
+				t.Fatalf("deployer must receive the created contract field: %+v", out)
+			}
+			want := created
+			if !profile.Strict() {
+				want = engine.applyRedaction(created, VisibilityPseudonymous)
+			}
+			if *out[0].ContractAddress != want {
+				t.Fatalf("created contract address = %s, want %s", *out[0].ContractAddress, want)
+			}
+		})
 	}
 }
