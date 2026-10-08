@@ -36,6 +36,7 @@ func setupTestServerForDevAdmin(t *testing.T) *Server {
 	t.Cleanup(func() { database.Close() })
 
 	cfg := &config.Config{
+		ReadProfile:    rbac.ReadProfileStandard,
 		AllowMockLogin: true,
 	}
 
@@ -112,6 +113,9 @@ func TestEnsureMockUserIsAdmin_ProvisionsMockUsers(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, access, "dev-admin group should have access configured")
 	assert.Contains(t, access.Claims, rbac.ClaimAdmin)
+	// The stored allowlist is the explicit "*" expansion, never a literal "*".
+	assert.NotContains(t, access.AllowedMethods, "*")
+	assert.Equal(t, rbac.AllAllowedMethods(), access.AllowedMethods)
 }
 
 func TestEnsureMockUserIsAdmin_Idempotent(t *testing.T) {

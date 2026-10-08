@@ -4,6 +4,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"sort"
 	"strings"
 	"time"
 )
@@ -67,6 +68,23 @@ func GeneratePseudonym(address string, key []byte) string {
 		letters[i] = 'A' + (sum[i] & 0x0f) // low nibble of each HMAC byte → 'A'..'P'
 	}
 	return "Address-" + string(letters)
+}
+
+// StrictAllowlist returns the explorer list allowlist of the strict read
+// profile (RD-1299) from a viewer's detailed visibility: the viewer's own
+// linked addresses and addresses under an approved disclosure grant, lowercased
+// and sorted. Visibility through a contract grant, an admin role or a visibleTo
+// share adds nothing. An empty map (for example after a failed lookup) yields
+// an empty allowlist, which hides every row.
+func StrictAllowlist(detailed map[string]AddressVisibility) []string {
+	out := make([]string, 0, len(detailed))
+	for addr, meta := range detailed {
+		if meta.Reason == ReasonOwnAddress || meta.Reason == ReasonDisclosureGrant {
+			out = append(out, strings.ToLower(addr))
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // GenerateAddressID creates an opaque identifier for an address that can be used for routing.

@@ -133,6 +133,42 @@ func (b *Backend) GetLogsByTransaction(ctx context.Context, txHash string) ([]ex
 	return mapLogs(resp.GetLogs()), nil
 }
 
+var _ explorer.TxDataBatchResolver = (*Backend)(nil)
+
+// GetLogsByTransactions keeps the strict profile's batched log lookup on the
+// indexer (explorer.TxDataBatchResolver): without this override the embedded
+// SQL fallback store's method would be promoted and answer from a different
+// data source than GetLogsByTransaction. The indexer API takes one hash per
+// ListLogs call.
+func (b *Backend) GetLogsByTransactions(ctx context.Context, txHashes []string) ([]explorer.Log, error) {
+	var out []explorer.Log
+	for _, h := range txHashes {
+		logs, err := b.GetLogsByTransaction(ctx, h)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, logs...)
+	}
+	return out, nil
+}
+
+// GetTransactionsByHashes keeps the strict profile's batched parent lookup on
+// the indexer, for the same reason as GetLogsByTransactions. Unknown hashes
+// are absent from the result.
+func (b *Backend) GetTransactionsByHashes(ctx context.Context, hashes []string) ([]explorer.Transaction, error) {
+	var out []explorer.Transaction
+	for _, h := range hashes {
+		tx, err := b.GetTransaction(ctx, h)
+		if err != nil {
+			return nil, err
+		}
+		if tx != nil {
+			out = append(out, *tx)
+		}
+	}
+	return out, nil
+}
+
 func (b *Backend) GetLogsByAddress(ctx context.Context, address string, limit int, offset int) ([]explorer.Log, int64, error) {
 	req := &indexerv1.ListLogsRequest{
 		ByAddress: address,

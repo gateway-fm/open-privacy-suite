@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 
+	"privacy-proxy/internal/disclosure"
 	"privacy-proxy/internal/rbac"
 	"privacy-proxy/internal/server/middleware"
 
@@ -60,6 +61,9 @@ import (
 //   c.Set(viewerDIDOverrideContextKey, target_did)
 //   c.Set(impersonationActorDIDContextKey, admin_did)
 //   c.Set(impersonationOrgIDContextKey, org_id)   // the explicit :org_id
+//   c.Request ctx marked disclosure.WithoutViewerGrants  // RD-1318
+//
+// (all through setImpersonationContext).
 //
 // Downstream:
 //
@@ -70,23 +74,23 @@ import (
 //     DB cache may still serve stale up to its TTL — that's RD-956's surface,
 //     not RD-928's.)
 //
-// Why this is safe for tier-2 admin same-org browse-as: by
-// rbac.computeOrgAdminPermissions, the admin has full claims on every
-// contract in their org, so any data exposed through the impersonated viewer
-// is already in the admin's reach via direct calls. Net new data: zero. The
-// surface is an *ergonomics* tool wrapped in audit logging, not a privilege
-// expansion. Cross-org is structurally impossible because (a) :org_id must be
-// one of the admin's own orgs and (b) the target-membership check in :org_id
-// runs before the override is set.
+// Scope: (a) :org_id must be one of the admin's own orgs and (b) the target
+// must be a member of :org_id, both checked before the override is set. On the
+// RPC subtree every authorization input is then pinned to :org_id
+// (withViewerOrgScope, RD-1308) and only the read methods in
+// impersonationRPCMethods are served. The explorer subtree is not pinned yet
+// (REDACTION_SPEC G26, RD-1315): a target who is also in another org brings
+// that org's grants into the explorer pages.
 
 // Context keys for the impersonation override. Strings, not custom types,
 // so the explorer handlers (which already read string keys like "subject")
-// stay readable. The keys are only written by impersonationGateMiddleware;
+// stay readable. The keys are only written by impersonationGateMiddleware
+// (through setImpersonationContext);
 // see the SECURITY: comment in getViewerDIDFromRequest for the invariant.
 const (
-	viewerDIDOverrideContextKey   = "rd928_viewer_did_override"
+	viewerDIDOverrideContextKey     = "rd928_viewer_did_override"
 	impersonationActorDIDContextKey = "rd928_impersonation_actor_did"
-	impersonationOrgIDContextKey  = "rd928_impersonation_org_id"
+	impersonationOrgIDContextKey    = "rd928_impersonation_org_id"
 )
 
 // errImpersonationTargetNotFound is the sentinel returned by the same-org
@@ -127,7 +131,9 @@ var errImpersonationTargetNotFound = errors.New("user not found")
 func (s *Server) registerImpersonationRoutes(adminGroup *gin.RouterGroup) {
 	// Explicit-org subtree: /impersonate/:target_did/in/:org_id/...
 	impIn := adminGroup.Group("/impersonate/:target_did/in/:org_id")
-	impIn.Use(s.impersonationGateMiddleware())
+	// RD-1299: the strict read profile refuses every View-as data surface,
+	// after the gate so the attempt is still authorised and audited.
+	impIn.Use(s.impersonationGateMiddleware(), s.strictReadProfileRefusesViewAs())
 
 	// Explorer subtree is re-mounted at /api/v1/explorer (matching its
 	// production prefix) so the BFF just prepends
@@ -172,6 +178,22 @@ func (s *Server) registerImpersonationRoutes(adminGroup *gin.RouterGroup) {
 	s.bindImpersonationBareReject(bareExplorer, bareReject)
 	bare.Any("/rpc", bareReject)
 	bare.Any("/rpc/:nested_org_id", bareReject)
+}
+
+// strictReadProfileRefusesViewAs refuses View-as under the strict read profile
+// (RD-1299): viewing as a member shows that member's own transactions,
+// receipts and events to an administrator, and strict never turns
+// administrative authority into read access to a member's chain data.
+func (s *Server) strictReadProfileRefusesViewAs() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if s.readProfile().Strict() {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+				"error": "view as user is not available under the strict read privacy profile",
+			})
+			return
+		}
+		c.Next()
+	}
 }
 
 // bindImpersonationBareReject mirrors the explorer endpoint shapes registered
@@ -309,9 +331,7 @@ func (s *Server) impersonationGateMiddleware() gin.HandlerFunc {
 		// downstream code (getViewerDIDFromRequest, handleJSONRPC) sees
 		// them. Audit log fires after dispatch so it captures the
 		// downstream decision in `reason` (allow / deny / error).
-		c.Set(viewerDIDOverrideContextKey, targetDID)
-		c.Set(impersonationActorDIDContextKey, adminDID)
-		c.Set(impersonationOrgIDContextKey, orgID)
+		setImpersonationContext(c, targetDID, adminDID, orgID)
 
 		c.Next()
 
@@ -348,6 +368,26 @@ func (s *Server) impersonationGateMiddleware() gin.HandlerFunc {
 				"admin_did", adminDID, "target_did", targetDID, "path", c.Request.URL.Path, "err", logErr)
 		}
 	}
+}
+
+// setImpersonationContext installs the impersonation override for one request:
+// the target as the resolved viewer, the acting admin and the explicit org, and
+// — on the request context, so it reaches every layer below the handlers
+// (visibility resolution, the RPC processor) — the mark that the target's
+// disclosure grants do not apply (RD-1318). A grant is approved by its
+// subject for the grantee only; an admin viewing as the grantee must not read
+// through it. impersonationGateMiddleware is the only production caller.
+func setImpersonationContext(c *gin.Context, targetDID, actorDID, orgID string) {
+	c.Set(viewerDIDOverrideContextKey, targetDID)
+	c.Set(impersonationActorDIDContextKey, actorDID)
+	c.Set(impersonationOrgIDContextKey, orgID)
+	c.Request = c.Request.WithContext(disclosure.WithoutViewerGrants(c.Request.Context()))
+}
+
+// disclosureGrantsApply reports whether the resolved viewer's disclosure grants
+// may be used for this request: never under impersonation (RD-1318).
+func disclosureGrantsApply(c *gin.Context) bool {
+	return !isImpersonating(c) && !disclosure.ViewerGrantsSuppressed(c.Request.Context())
 }
 
 // verifyImpersonationTargetInOrg returns nil iff the target user exists AND

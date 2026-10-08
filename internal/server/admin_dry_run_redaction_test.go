@@ -30,6 +30,12 @@ import (
 //     contract for read methods — if someone ever wires per-method
 //     redaction into the read path, the test changes intentionally.
 //
+// RD-1308: dry-run no longer uses `filterDryRunLogs` nor returns reads
+// unfiltered — both now go through the production response filter
+// (admin_dry_run_response_filter_test.go). The `filterDryRunLogs`
+// tests below pin the test-only wrapper's FilterEventLogs states; the
+// eth_call test still holds because eth_call has no response-filter case.
+//
 // The linked-address `must_be=self` hole in `filterDryRunLogs` (line
 // 408 hardcodes `addrs := []string{}`) is pinned as documented
 // behaviour — `TestFilterDryRunLogs_ParamRuleSelfAlwaysFails`. If the
@@ -174,7 +180,7 @@ func TestFilterDryRunLogs_WildcardPassesAllOnContract(t *testing.T) {
 	}
 
 	user := &rbac.User{ExternalID: "did:dr:r-user"}
-	got := filterDryRunLogs(logs, perms, user, "did:dr:r-user")
+	got := filterDryRunLogs(rbac.ReadProfileStandard, logs, perms, user, "did:dr:r-user")
 
 	require.Len(t, got, 2, "expected both contractA logs, contractB dropped")
 	for _, l := range got {
@@ -204,7 +210,7 @@ func TestFilterDryRunLogs_NoGrantDenies(t *testing.T) {
 	}
 
 	user := &rbac.User{ExternalID: "did:dr:r-user"}
-	got := filterDryRunLogs(logs, perms, user, "did:dr:r-user")
+	got := filterDryRunLogs(rbac.ReadProfileStandard, logs, perms, user, "did:dr:r-user")
 	assert.Empty(t, got, "logs from contracts the user has no grant on must be dropped")
 }
 
@@ -231,7 +237,7 @@ func TestFilterDryRunLogs_DenyEventRulesDropsAll(t *testing.T) {
 				mustLog(t, drrContractA, drrTopicY),
 			}
 			user := &rbac.User{ExternalID: "did:dr:r-user"}
-			got := filterDryRunLogs(logs, perms, user, "did:dr:r-user")
+			got := filterDryRunLogs(rbac.ReadProfileStandard, logs, perms, user, "did:dr:r-user")
 			assert.Empty(t, got, "deny-state event_rules must drop every log on the contract")
 		})
 	}
@@ -259,7 +265,7 @@ func TestFilterDryRunLogs_AllowlistMatchesByTopic0(t *testing.T) {
 	}
 
 	user := &rbac.User{ExternalID: "did:dr:r-user"}
-	got := filterDryRunLogs(logs, perms, user, "did:dr:r-user")
+	got := filterDryRunLogs(rbac.ReadProfileStandard, logs, perms, user, "did:dr:r-user")
 	require.Len(t, got, 2)
 	for _, l := range got {
 		var entry struct {
@@ -298,7 +304,7 @@ func TestFilterDryRunLogs_VisibleIsSubsetOfEmitted(t *testing.T) {
 	user := &rbac.User{ExternalID: "did:dr:r-user"}
 	cases := []*rbac.EffectivePermissions{wildcardA, denyA, allowlistA}
 	for i, p := range cases {
-		got := filterDryRunLogs(logs, p, user, "did:dr:r-user")
+		got := filterDryRunLogs(rbac.ReadProfileStandard, logs, p, user, "did:dr:r-user")
 		assert.LessOrEqual(t, len(got), len(logs), "case %d: visible exceeds emitted", i)
 		// Every entry in `got` must appear verbatim in `logs` (no
 		// mutation, no fabrication). Compare on the marshalled bytes.
@@ -346,7 +352,7 @@ func TestFilterDryRunLogs_ParamRuleSelfAlwaysFails(t *testing.T) {
 	log := mustLog(t, drrContractA, drrTopicX, userAddr)
 
 	user := &rbac.User{ExternalID: "did:dr:r-user"}
-	got := filterDryRunLogs([]json.RawMessage{log}, perms, user, "did:dr:r-user")
+	got := filterDryRunLogs(rbac.ReadProfileStandard, []json.RawMessage{log}, perms, user, "did:dr:r-user")
 	assert.Empty(t, got,
 		"current dry-run behaviour: must_be=self always fails because filterDryRunLogs "+
 			"passes empty userAddresses to FilterEventLogs (admin_dry_run.go:408 TODO). "+
@@ -359,11 +365,11 @@ func TestFilterDryRunLogs_ParamRuleSelfAlwaysFails(t *testing.T) {
 // safety check that prevents nil-deref regressions in the wrapper.
 func TestFilterDryRunLogs_NilOrEmptyInputs(t *testing.T) {
 	t.Run("nil perms", func(t *testing.T) {
-		got := filterDryRunLogs([]json.RawMessage{mustLog(t, drrContractA, drrTopicX)}, nil, nil, "did:any")
+		got := filterDryRunLogs(rbac.ReadProfileStandard, []json.RawMessage{mustLog(t, drrContractA, drrTopicX)}, nil, nil, "did:any")
 		assert.Nil(t, got)
 	})
 	t.Run("empty logs", func(t *testing.T) {
-		got := filterDryRunLogs(nil, dryRunPermsWith(nil), nil, "did:any")
+		got := filterDryRunLogs(rbac.ReadProfileStandard, nil, dryRunPermsWith(nil), nil, "did:any")
 		assert.Nil(t, got)
 	})
 }

@@ -7,6 +7,7 @@ import (
 
 	"privacy-proxy/internal/audit"
 	"privacy-proxy/internal/db"
+	"privacy-proxy/internal/rbac"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -65,6 +66,7 @@ func TestLogAccess_ForwardsResolvedOrgID(t *testing.T) {
 	// Both enhancedLogger and a non-nil hashChain are required for logAccess to
 	// take the chained path (the production path).
 	p := NewJSONRPCProcessor(JSONRPCProcessorConfig{
+		ReadProfile:         rbac.ReadProfileStandard,
 		EnhancedAuditLogger: cl,
 		HashChain:           audit.NewHashChain(""),
 	})
@@ -89,6 +91,7 @@ func TestLogAccess_ForwardsResolvedOrgID(t *testing.T) {
 func TestLogAccess_EmptyResolvedOrgIDStaysEmpty(t *testing.T) {
 	cl := &captureEnhancedLogger{}
 	p := NewJSONRPCProcessor(JSONRPCProcessorConfig{
+		ReadProfile:         rbac.ReadProfileStandard,
 		EnhancedAuditLogger: cl,
 		HashChain:           audit.NewHashChain(""),
 	})

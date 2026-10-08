@@ -10,6 +10,7 @@ import (
 
 	"privacy-proxy/internal/config"
 	"privacy-proxy/internal/metrics"
+	"privacy-proxy/internal/rbac"
 )
 
 // Operator-token privilege-separation confirming test (RD-1173 / RD-1175).
@@ -45,6 +46,7 @@ func TestOperatorTokenDeniedOnTenantAndFleetEndpoints_RD1173(t *testing.T) {
 
 	s := &Server{
 		config: &config.Config{
+			ReadProfile:      rbac.ReadProfileStandard,
 			Environment:      "production",
 			AdminAPIToken:    "full-admin-token-under-test",
 			OperatorAPIToken: operatorToken,

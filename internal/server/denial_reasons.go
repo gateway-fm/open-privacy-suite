@@ -28,6 +28,11 @@ const (
 	// ReasonInvalidRequestShape: malformed params the proxy validates before
 	// tracing (bad block tag, non-hex to/from, etc.).
 	ReasonInvalidRequestShape = "invalid_request_shape"
+	// ReasonStateOverrideNotAllowed: the request carried a state/code or block
+	// override (eth_call/eth_estimateGas params[2]/[3], or debug_traceCall
+	// stateOverrides/blockOverrides). Rejected fail-closed (RD-1305). A fact
+	// about the caller's OWN request (they sent the override) — safe to surface.
+	ReasonStateOverrideNotAllowed = "state_override_not_allowed"
 	// ReasonCrossOrg: a traced call touched a contract owned by another org or
 	// an unregistered (private-by-default) address. ORACLE-SENSITIVE — reveals
 	// that some address is/ isn't registered elsewhere; the wire path collapses
@@ -42,6 +47,12 @@ const (
 	// ReasonDeployClaimRequired: a debug_trace* / runtime-create path that
 	// requires the deploy (or admin) claim.
 	ReasonDeployClaimRequired = "deploy_claim_required"
+	// ReasonTraceAccessDenied: a debug_traceTransaction replay denied because
+	// the viewer is not a participant / admin-on-to / visibleTo recipient of
+	// the tx (RD-1304). Deliberately NOT on the wireReason allowlist — it
+	// collapses to the generic "access_denied" so a non-participant cannot
+	// distinguish a non-existent tx from one they may not see (no oracle).
+	ReasonTraceAccessDenied = "trace_access_denied"
 	// ReasonComplianceBlocked: a travel-rule / sanctions check blocked the tx.
 	ReasonComplianceBlocked = "compliance_blocked"
 	// ReasonRateLimited: request- or daily-rate limit hit (429).
@@ -53,6 +64,11 @@ const (
 	ReasonUpstreamError = "upstream_error"
 	// ReasonInternalError: an internal failure (500) — generic by construction.
 	ReasonInternalError = "internal_error"
+
+	// ReasonNotParticipant: under the strict read profile (RD-1299) the caller
+	// is not a participant (tx from/to) of the transaction whose data was
+	// requested. Collapsed on the wire (not in the wireReason allowlist).
+	ReasonNotParticipant = "not_participant"
 
 	// ReasonWireGenericDenied is the single value oracle-sensitive (and any
 	// unrecognized) reason codes collapse to on the wire (RD-1137 Part A). It
@@ -85,6 +101,7 @@ func wireReason(code string) string {
 		ReasonMethodNotAllowed, // safe only while RBAC denials stay a uniform 404 (see TestWireReason… / RBAC deny site)
 		ReasonSenderNotLinked,
 		ReasonInvalidRequestShape,
+		ReasonStateOverrideNotAllowed,
 		ReasonRateLimited,
 		ReasonConcurrencyLimited,
 		ReasonUpstreamError:

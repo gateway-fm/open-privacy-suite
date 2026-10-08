@@ -79,8 +79,9 @@ type ExplorerBackend interface {
 	// asymmetry by returning tx hashes whose token-transfer participants are
 	// visible to the viewer. See Store.FindTransferParticipantTxs for the full
 	// rationale and the privacy argument (the surviving transfer row already
-	// exposes the parent tx hash, so unioning these hashes into the tx-feed
-	// allowlist reveals nothing that wasn't already exposed).
+	// exposes the parent tx hash, so keeping the parent row adds nothing; the
+	// hashes only keep rows — the redactor never reveals an identity for them,
+	// RD-1316).
 	FindTransferParticipantTxs(ctx context.Context, visibleAddrs []string, beforeBlock *uint64, limit int) (map[string]bool, error)
 
 	// Logs

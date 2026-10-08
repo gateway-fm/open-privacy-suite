@@ -74,6 +74,12 @@ type LogEmitterFacts struct {
 	// rule, ignoring its param constraints. Drives the visibleTo param-rule
 	// fallback.
 	Topic0Allowlisted bool
+
+	// IndexedSelf (strict read profile, RD-1299): the emitter's registered ABI
+	// identifies the log's topic0 as a standard event whose indexed `address`
+	// parameter holds one of the viewer's linked addresses (see
+	// IndexedSelfMatcher). Mandatory under strict; ignored under standard.
+	IndexedSelf bool
 }
 
 // LogPayloadPolicy is how an admitted log's payload (topics + data) is
@@ -115,7 +121,19 @@ type LogDecision struct {
 
 // DecideLogEmitter is the single source of truth for "may this viewer see this
 // log, and with which payload?", shared by the RPC filter and the explorer
-// redactor. The gate order is identical for both layers:
+// redactor. The read profile is a required argument (RD-1299).
+//
+// Strict profile (and an unset profile) — evaluated first: admit, masked,
+// iff the viewer's linked address is an ABI-indexed `address` parameter of
+// the event (IndexedSelf) AND
+// the ABI and dynamic-payload gates pass AND the viewer holds a grant on the
+// emitter AND (the event rules admit the event without the visibleTo fallback
+// OR the viewer is admin on the emitter — admin relaxes the rules, never
+// IndexedSelf). The unlock, participation and visibleTo never admit, and the
+// payload is never full.
+//
+// Standard profile — the documented default. The gate order is identical for
+// both layers:
 //
 //  1. visibleTo unlock          → admit, full payload
 //  2. admin                     → admit, masked
@@ -141,7 +159,10 @@ type LogDecision struct {
 // clearing Unlocked before calling this function (or by a gate placed ahead of
 // branch 1); the ordinary verdict below then applies, which is why callers
 // must resolve every fact (ABI, M15, rules) even when Unlocked is set.
-func DecideLogEmitter(f LogEmitterFacts) LogDecision {
+func DecideLogEmitter(profile ReadProfile, f LogEmitterFacts) LogDecision {
+	if profile.Strict() {
+		return decideLogEmitterStrict(f)
+	}
 	if f.Unlocked {
 		return LogDecision{Admit: true, Payload: LogPayloadFull}
 	}
@@ -177,9 +198,32 @@ func DecideLogEmitter(f LogEmitterFacts) LogDecision {
 	}
 }
 
+// decideLogEmitterStrict is the strict read profile's event predicate (see
+// DecideLogEmitter). Every admission is masked.
+func decideLogEmitterStrict(f LogEmitterFacts) LogDecision {
+	if !f.IndexedSelf || !f.ABIResolvable || f.DynamicPayloadDropped || !f.HasGrant {
+		return LogDecision{}
+	}
+	admitMasked := LogDecision{Admit: true, Payload: LogPayloadMasked}
+	if f.IsAdmin {
+		return admitMasked
+	}
+	switch f.Rules {
+	case LogEventRulesWildcard:
+		return admitMasked
+	case LogEventRulesAllowlist:
+		if f.HasTopic0 && f.EventAllowed {
+			return admitMasked
+		}
+		return LogDecision{}
+	default: // LogEventRulesDeny
+		return LogDecision{}
+	}
+}
+
 // DecideLogEmitterAccess reports only the admit half of DecideLogEmitter. Kept
 // for callers that do not render payloads; a caller that renders an admitted
 // log MUST use DecideLogEmitter so it honours the payload policy.
-func DecideLogEmitterAccess(f LogEmitterFacts) bool {
-	return DecideLogEmitter(f).Admit
+func DecideLogEmitterAccess(profile ReadProfile, f LogEmitterFacts) bool {
+	return DecideLogEmitter(profile, f).Admit
 }

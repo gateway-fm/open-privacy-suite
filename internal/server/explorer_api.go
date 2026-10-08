@@ -284,8 +284,8 @@ func redactOptsFromFilter(filter *explorer.VisibilityFilter) explorer.RedactOpts
 			listed[strings.ToLower(h)] = true
 		}
 	}
-	// RD-1155: carry the label-only participant-union subset through so the
-	// redactor can distinguish participation from a visibleTo share.
+	// The participant-union subset (RD-1155) is carried through for
+	// completeness; since RD-1316 no redactor renders from it.
 	var pm map[string]bool
 	if len(filter.ParticipantTxHashes) > 0 {
 		pm = make(map[string]bool, len(filter.ParticipantTxHashes))
@@ -338,7 +338,9 @@ func (s *Server) buildRedactOptsForViewer(ctx context.Context, viewerDID string)
 // pointer through opts; auditAdminUserTxView and auditGrantFullReveal
 // inspect their respective fields.
 func (s *Server) applyAdminTxView(opts *explorer.RedactOpts) {
-	opts.OrgAdminViewUserTxs = s.config.OrgAdminViewUserTxs
+	// Strict wins (RD-1299): the audit view never applies under the strict
+	// read profile, whatever ORG_ADMIN_VIEW_USER_TXS says.
+	opts.OrgAdminViewUserTxs = s.orgAdminViewUserTxsEffective()
 	if opts.Stats == nil {
 		opts.Stats = &explorer.RedactStats{}
 	}
@@ -401,8 +403,8 @@ func (s *Server) auditAdminUserTxView(c *gin.Context, viewerDID, endpoint, targe
 //
 // Resource type is the disclosure-grant (not explorer_user_txs) so audit
 // reviewers can pivot from a grant ID to every reveal it produced.
-// ResourceName is the endpoint label; ResourceID is the target tx hash
-// or address when single-item, empty for list surfaces.
+// ResourceName is the endpoint label. The target tx hash or address lives
+// in NewValue; ResourceID is a UUID column and cannot hold those values.
 //
 // Best-effort, matching the other audit-log call sites: a write failure
 // is logged loudly but does not fail the read.
@@ -422,9 +424,6 @@ func (s *Server) auditGrantFullReveal(c *gin.Context, viewerDID, endpoint, targe
 			"reveal_class":            "disclosure_grant_full_counterparty",
 		},
 		IPAddress: c.ClientIP(),
-	}
-	if target != "" {
-		entry.ResourceID = &target
 	}
 	if err := s.db.CreateAuditLog(c.Request.Context(), entry); err != nil {
 		slog.Error("failed to write grant-full-reveal audit log",
@@ -757,6 +756,15 @@ func (s *Server) buildVisibilityFilter(ctx context.Context, viewerDID string) *e
 	// non-Full grant cells.
 	visMapDetailed, _ := s.db.GetBatchVisibilityDetailed(ctx, viewerDID, allAddrs)
 
+	// RD-1299 strict read profile: rows survive only for the viewer's own
+	// linked addresses (a transaction participant) and approved disclosure
+	// grants — no contract/admin visibility, no visibleTo shares, no RD-1009
+	// transfer-participant union — so lists, counts and stats match the
+	// participant rule the redactor and the RPC apply.
+	if s.readProfile().Strict() {
+		return strictVisibilityFilter(filter, visMapDetailed)
+	}
+
 	visibleSet := make(map[string]bool, len(visMap))
 	// fullVisible holds ONLY the addresses the viewer sees at Full. It drives
 	// the transfer-participant union below (RD-1079); the pseudonymous/redacted
@@ -807,24 +815,35 @@ func (s *Server) buildVisibilityFilter(ctx context.Context, viewerDID string) *e
 	//
 	// RD-1079: drive the union ONLY with addresses the viewer sees at FULL
 	// (`fullVisible`), NOT the pseudonymous/redacted disclosure-grant addresses
-	// that were also added to `visible` for SQL address-survival. VisibleTxHashes
-	// is a full-identity-reveal override in the redactor (it promotes both tx
-	// addresses to Full), so driving it from a *pseudonymous* grant subject would
-	// reveal that subject's counterparty's real address on every tx where the
-	// subject is a transfer participant — defeating the "graph without identity"
-	// guarantee of a pseudonymous disclosure. A Full-level viewer (admin, or a
-	// full disclosure grant) IS entitled to see counterparties, so the RD-1009
-	// coherence fix still applies to them. The cost for a pseudonymous/redacted-
-	// grant viewer: the subject's transfer still shows in /transfers
-	// (pseudonymised by the redactor's counterparty lens), but the parent tx
-	// does not surface in /transactions — a row-coherence gap that is strictly
-	// more private than the leak it replaces.
+	// that were also added to `visible` for SQL address-survival.
 	//
+	// RD-1316: the union keeps rows, it never reveals an identity — the
+	// redactor reveals only for ListedTxHashes (genuine shares) and renders a
+	// union-only row at the viewer's own visibility. Which addresses drive it:
+	//   - a viewer exempt from the G10 drop (isViewerAdmin: org admin or admin
+	//     claim) — every Full address, so their /transactions agrees with the
+	//     /transfers rows they already see;
+	//   - anyone else — only their own addresses and Full disclosure-grant
+	//     subjects, the cases where the transfer row survives on its own merits
+	//     (participant override, the grant lens). A plain contract grant does
+	//     not keep another user's one-side-hidden transaction: G10 drops it,
+	//     and the RPC returns null for it.
+	unionDrivers := fullVisible
+	if len(fullVisible) > 0 && !s.isViewerAdmin(ctx, viewerDID) {
+		unionDrivers = make([]string, 0, len(fullVisible))
+		for addr, meta := range visMapDetailed {
+			if meta.Level == explorer.VisibilityFull &&
+				(meta.Reason == explorer.ReasonOwnAddress || meta.Reason == explorer.ReasonDisclosureGrant) {
+				unionDrivers = append(unionDrivers, addr)
+			}
+		}
+	}
+
 	// Bounded scan: capped at transferParticipantUnionLimit to keep the join
 	// O(window) rather than O(full table).
-	if len(fullVisible) > 0 {
+	if len(unionDrivers) > 0 {
 		transferTxs, err := s.explorerStore.FindTransferParticipantTxs(
-			ctx, fullVisible, nil /* beforeBlock */, transferParticipantUnionLimit)
+			ctx, unionDrivers, nil /* beforeBlock */, transferParticipantUnionLimit)
 		if err == nil && len(transferTxs) > 0 {
 			// Dedup against any hashes the visibleTo lookup already added.
 			existing := make(map[string]bool, len(filter.VisibleTxHashes))
@@ -834,10 +853,9 @@ func (s *Server) buildVisibilityFilter(ctx context.Context, viewerDID string) *e
 			for h := range transferTxs {
 				if !existing[h] {
 					filter.VisibleTxHashes = append(filter.VisibleTxHashes, h)
-					// RD-1155: track the participant-union hashes separately so
-					// the redactor labels these reveals "Counterparty" rather than
-					// "Shared". Label-only — VisibleTxHashes still drives survival
-					// and SQL filtering exactly as before.
+					// RD-1155: the union hashes, tracked apart from the shares.
+					// Informational since RD-1316 (the union reveals nothing to
+					// label); VisibleTxHashes drives survival and SQL filtering.
 					filter.ParticipantTxHashes = append(filter.ParticipantTxHashes, h)
 					existing[h] = true
 				}
@@ -845,6 +863,16 @@ func (s *Server) buildVisibilityFilter(ctx context.Context, viewerDID string) *e
 		}
 	}
 
+	return filter
+}
+
+// strictVisibilityFilter completes the SQL allowlist for the strict read
+// profile: only the viewer's own linked addresses and addresses under an
+// approved disclosure grant (explorer.StrictAllowlist, which the cross-layer
+// TestAccessVisibilitySymmetry bounds). A failed visibility lookup (empty map)
+// leaves the allowlist empty, which hides everything (fail closed).
+func strictVisibilityFilter(filter *explorer.VisibilityFilter, detailed map[string]explorer.AddressVisibility) *explorer.VisibilityFilter {
+	filter.VisibleAddresses = append(filter.VisibleAddresses, explorer.StrictAllowlist(detailed)...)
 	return filter
 }
 
@@ -2883,6 +2911,31 @@ func (s *Server) getExplorerSearchSuggestions(c *gin.Context) {
 		suggestions = []explorer.SearchSuggestion{}
 	}
 
+	// RD-1299 strict read profile: a transaction hash is suggested only to a
+	// viewer who may open it (the same redactor decision as GET
+	// /transactions/:hash), so the search box is not a tx-existence oracle.
+	if s.readProfile().Strict() && len(suggestions) > 0 {
+		ctx := c.Request.Context()
+		viewerDID := s.getViewerDIDFromRequest(c)
+		// The viewer's redaction options are built once per request, on the
+		// first transaction suggestion, not once per suggestion.
+		var opts *explorer.RedactOpts
+		kept := suggestions[:0]
+		for _, sug := range suggestions {
+			if sug.Type == "transaction" {
+				if opts == nil {
+					o := s.buildRedactOptsForViewer(ctx, viewerDID)
+					opts = &o
+				}
+				if !s.strictTxVisible(ctx, viewerDID, sug.Value, *opts) {
+					continue
+				}
+			}
+			kept = append(kept, sug)
+		}
+		suggestions = kept
+	}
+
 	// Filter address-type suggestions based on visibility so private org contracts
 	// cannot be discovered via search autocomplete.
 	if len(suggestions) > 0 {
@@ -2923,6 +2976,21 @@ func (s *Server) getExplorerSearchSuggestions(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, suggestions)
+}
+
+// strictTxVisible reports whether the viewer may open the transaction under
+// the redactor's decision, given the viewer's redaction options (as built by
+// buildRedactOptsForViewer); any lookup failure is "no" (fail closed).
+func (s *Server) strictTxVisible(ctx context.Context, viewerDID, hash string, opts explorer.RedactOpts) bool {
+	if viewerDID == "" || s.explorerRedactor == nil {
+		return false
+	}
+	tx, err := s.explorerStore.GetTransaction(ctx, hash)
+	if err != nil || tx == nil {
+		return false
+	}
+	out, err := s.explorerRedactor.RedactTransactions(ctx, []explorer.Transaction{*tx}, viewerDID, opts)
+	return err == nil && len(out) == 1
 }
 
 // --- Stats ---

@@ -173,6 +173,7 @@ func setupTestServerForAuth(t *testing.T) (*Server, *auth.JWTService) {
 
 	// Create test config
 	cfg := &config.Config{
+		ReadProfile: rbac.ReadProfileStandard,
 		VerifierID:  "did:privado:verifier:test",
 		BaseURL:     "http://localhost:8080",
 		Environment: "development",

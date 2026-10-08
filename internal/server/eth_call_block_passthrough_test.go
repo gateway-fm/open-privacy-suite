@@ -82,6 +82,7 @@ func setupProcessorWithCapturingTracer(t *testing.T, srv *httptest.Server) (*JSO
 	t.Cleanup(rt.Stop)
 	tv := rbac.NewTraceValidator(ts.db)
 	proc := NewJSONRPCProcessor(JSONRPCProcessorConfig{
+		ReadProfile:        rbac.ReadProfileStandard,
 		RBACAccessCtrl:     ts.rbacAccessCtrl,
 		RateLimiter:        &noopRateLimiter{},
 		AccessLogger:       ts.db,

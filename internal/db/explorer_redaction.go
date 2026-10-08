@@ -4,9 +4,34 @@ import (
 	"context"
 	"strings"
 
+	"privacy-proxy/internal/disclosure"
 	"privacy-proxy/internal/evm/precompile"
 	"privacy-proxy/internal/explorer"
+	"privacy-proxy/internal/viewscope"
 )
+
+// viewScopeAllows reports whether group-derived contract visibility may be
+// resolved at all: always without an impersonation scope, and only for a
+// non-empty scope org with one (an empty scope matches no org — fail closed).
+func viewScopeAllows(ctx context.Context) bool {
+	org, scoped := viewscope.Org(ctx)
+	return !scoped || org != ""
+}
+
+// scopeContractGroupQuery restricts the "which groups make this contract Full
+// for the viewer" query to the impersonation scope org (RD-1308): an
+// impersonated read anchored to one org sees contracts through that org's
+// groups only, never through the user's grants or admin role elsewhere. The
+// comparison is on text so a malformed scope matches nothing instead of
+// failing the cast. Without a scope the query is returned unchanged.
+func scopeContractGroupQuery(ctx context.Context, query string, addrs []string) (string, []any) {
+	org, scoped := viewscope.Org(ctx)
+	if !scoped {
+		return query, []any{addrs}
+	}
+	return query + `
+				  AND c.org_id::text = $2`, []any{addrs, org}
+}
 
 // GetBatchVisibility resolves visibility rules for a list of addresses efficiently.
 // It replaces N+1 queries by looking up all address owners and their grants in bulk.
@@ -119,7 +144,7 @@ func (d *DB) GetBatchVisibility(ctx context.Context, viewerDID string, addresses
 		// 3-tier admin model: 'admin' in group_access.claims (tier 3, contract admin)
 		// does NOT grant org-wide contract visibility. Contract admins see only
 		// contracts explicitly granted to their group via contract_grant.
-		if viewerDID != "" && len(orgContractAddrs) > 0 {
+		if viewerDID != "" && len(orgContractAddrs) > 0 && viewScopeAllows(ctx) {
 			grantedGroupQuery := `
 				SELECT LOWER(c.address) AS addr, g.id AS group_id
 				FROM contracts c
@@ -128,8 +153,9 @@ func (d *DB) GetBatchVisibility(ctx context.Context, viewerDID string, addresses
 				WHERE LOWER(c.address) = ANY($1)
 				  AND (g.is_org_admin = true
 				       OR cg.id IS NOT NULL)`
+			grantedGroupQuery, args := scopeContractGroupQuery(ctx, grantedGroupQuery, orgContractAddrs)
 
-			orgRows, err := d.conn.QueryContext(ctx, grantedGroupQuery, orgContractAddrs)
+			orgRows, err := d.conn.QueryContext(ctx, grantedGroupQuery, args...)
 			if err != nil {
 				return nil, err
 			}
@@ -349,7 +375,7 @@ func (d *DB) GetBatchVisibilityDetailed(ctx context.Context, viewerDID string, a
 		// Find which groups grant visibility (same logic as GetBatchVisibility).
 		// Org admin (is_org_admin) sees ALL org contracts (tier 2).
 		// Contract grant holders see their granted contracts (any claim, including tier 3 admin).
-		if viewerDID != "" && len(orgContractAddrs) > 0 {
+		if viewerDID != "" && len(orgContractAddrs) > 0 && viewScopeAllows(ctx) {
 			orgContractQuery := `
 				SELECT LOWER(c.address) AS addr, g.id AS group_id
 				FROM contracts c
@@ -358,8 +384,9 @@ func (d *DB) GetBatchVisibilityDetailed(ctx context.Context, viewerDID string, a
 				WHERE LOWER(c.address) = ANY($1)
 				  AND (g.is_org_admin = true
 				       OR cg.id IS NOT NULL)`
+			orgContractQuery, args := scopeContractGroupQuery(ctx, orgContractQuery, orgContractAddrs)
 
-			orgRows, err := d.conn.QueryContext(ctx, orgContractQuery, orgContractAddrs)
+			orgRows, err := d.conn.QueryContext(ctx, orgContractQuery, args...)
 			if err != nil {
 				return nil, err
 			}
@@ -499,8 +526,11 @@ type disclosedGrantedAddress struct {
 // grant with empty scope and one new grant with `disclosure_level=full`), the
 // caller-side merge in GetBatchVisibility / GetBatchVisibilityDetailed picks
 // the MAX level via visibilityRank — more permissive grants win.
+//
+// Under an impersonation (disclosure.WithoutViewerGrants) it returns nothing:
+// the grants belong to the viewer, not to the admin viewing as them (RD-1318).
 func (d *DB) getDisclosedAddressesWithLevels(ctx context.Context, viewerDID string) ([]disclosedGrantedAddress, error) {
-	if viewerDID == "" {
+	if viewerDID == "" || disclosure.ViewerGrantsSuppressed(ctx) {
 		return nil, nil
 	}
 
@@ -520,8 +550,19 @@ func (d *DB) getDisclosedAddressesWithLevels(ctx context.Context, viewerDID stri
 		  AND g.expires_at > NOW()
 		  AND gr.org_id = r.org_id
 		  AND (m.expires_at IS NULL OR m.expires_at > NOW())`
+	args := []any{viewerDID}
+	// RD-1308: an impersonated read anchored to one org counts only grants
+	// whose disclosure request was made in that org (an empty scope, none).
+	if org, scoped := viewscope.Org(ctx); scoped {
+		if org == "" {
+			return nil, nil
+		}
+		query += `
+		  AND r.org_id::text = $2`
+		args = append(args, org)
+	}
 
-	rows, err := d.conn.QueryContext(ctx, query, viewerDID)
+	rows, err := d.conn.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

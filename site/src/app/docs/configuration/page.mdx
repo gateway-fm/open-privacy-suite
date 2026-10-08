@@ -222,9 +222,11 @@ The proxy uses `debug_traceCall` to validate all addresses touched by transactio
 
 <Callout title="Important: eth_call tracing scope">
 
-The eth_call cross-org trace fires **only** when the method resolves to `eth_call` (via `ResolveMethodAlias`). Chain-specific aliases declared in `EXTRA_RPC_NAMESPACES_FILE` with `"alias": "eth_call"` (e.g. an explicit `linea_call` entry) are traced. **Methods that match a wildcard prefix without an explicit alias are NOT traced** — and they're also not subject to RBAC contract access checks or response redaction, by the wildcard's design (see Extra RPC Namespaces below).
+The eth_call trace validation runs **only** when the method resolves to `eth_call` or `eth_estimateGas`. Chain-specific methods declared in `EXTRA_RPC_NAMESPACES_FILE` with `"alias": "eth_call"` (e.g. an explicit `linea_call` entry) are traced. **Passthrough methods are NOT traced** — and they are also not subject to contract access checks or response filtering (see Extra RPC Namespaces below).
 
-This is correct: a method the proxy has no alias mapping for has no defined `to`/`from`/`data` shape, so the proxy has nothing to extract for the trace and no way to know whether the method even runs the EVM. Operators who enable a wildcard namespace are accepting that **all** of that namespace's methods bypass cross-org isolation. If you need cross-org isolation on a chain-specific method, register it explicitly with an `alias` rather than relying on a wildcard.
+A passthrough method has no defined `to`/`from`/`data` shape, so the proxy has nothing to extract for the trace and no way to know whether the method even runs the EVM. To apply organization scope checks to a chain-specific method, declare it with an `alias` instead.
+
+The [simulation-option policy](/docs/security/response-filtering#state-and-block-overrides) follows standard methods and explicit method mappings. Map a chain-specific method only when its parameters match the standard method's layout. Client-supplied state and block overrides are unsupported for every caller, including admins. Details: RD-1305.
 
 </Callout>
 
@@ -236,7 +238,7 @@ Set `RUNTIME_TRACING_INTRA_ORG_GRANTS_ENABLED=true` to tighten this: when on, an
 
 - **Default OFF.** Org ownership remains the boundary unless you opt in.
 - **Cross-org isolation is unaffected** by this flag — calls into another org's contracts (and into unregistered addresses) are always denied regardless.
-- Governs both reads (`eth_call`, `debug_traceCall`) and writes (`eth_sendTransaction`, `eth_sendRawTransaction`, and contract-deploy constructor calls).
+- Governs both reads (`eth_call`) and writes (`eth_sendTransaction`, `eth_sendRawTransaction`, and contract-deploy constructor calls). Client `debug_traceCall` and standard-profile `debug_traceTransaction` always apply this check, whatever this flag says. Strict-profile mined traces return only the participant's top frame and retain organization ownership validation.
 - **In-flight deploys are not blocked.** Multi-contract or factory deploys (CREATE2/CREATE3) that reference a precomputed sibling address before it is mined still work — pre-registered deployment addresses are allowed for deploy-claim callers, the same as the direct-call access check.
 - Has no effect when runtime tracing is globally unavailable.
 
@@ -250,7 +252,15 @@ Set `RUNTIME_TRACING_INTRA_ORG_GRANTS_ENABLED=true` to tighten this: when on, an
 
 ## Extra RPC Namespaces
 
-To support chain-specific JSON-RPC methods (e.g. Linea, zkSync, Optimism), create a JSON config file and point to it with `EXTRA_RPC_NAMESPACES_FILE`:
+The proxy forwards a JSON-RPC method to the node only when it knows how to protect it:
+
+- **Built-in methods** — the standard `eth_*`, `net_*`, `web3_*` and `debug_trace*` methods the proxy models, each with its access check and response filtering.
+- **Aliased methods** — chain-specific methods you declare with an `alias` to a built-in method.
+- **Passthrough methods** — chain-specific methods you declare by exact name with `"passthrough": true`.
+
+Every other method is refused with `method not found` and never reaches the node, whatever a group's allowed methods say. This includes `eth_getRawTransaction*`, `eth_getAccount`, `eth_simulateV1`, `eth_callMany`, `eth_sendRawTransactionSync`, and the `trace_*`, `ots_*`, `erigon_*` and `parity_*` namespaces unless you declare a method from them as passthrough (see below — they return data the proxy cannot filter).
+
+To declare chain-specific methods (e.g. Linea, zkSync, Optimism), create a JSON config file and point to it with `EXTRA_RPC_NAMESPACES_FILE`:
 
 ```bash
 EXTRA_RPC_NAMESPACES_FILE=./rpc-namespaces.json
@@ -258,20 +268,17 @@ EXTRA_RPC_NAMESPACES_FILE=./rpc-namespaces.json
 
 All three compose files (`docker-compose.yml`, `docker-compose.privacy.yml`, and `docker-compose.privacy.dev.yml`) include the volume mount and env-var passthrough. The backend only loads the file when `EXTRA_RPC_NAMESPACES_FILE` is set; leave it empty to disable the feature.
 
-The file format is a versioned JSON object. Two schema versions are supported:
-
-- **v1** — explicit method list per namespace; each method needs an `alias` to a standard Ethereum method (recommended for tightly-controlled deployments).
-- **v2** — same as v1, plus an optional `wildcard` block per namespace that lets any method matching a prefix pass through without enumeration. Wildcard-matched methods are forwarded as-is — no contract access check, no response redaction. Use only when you trust the upstream chain's namespace.
-
-### v1 — explicit methods
-
 ```json
 {
   "version": 1,
   "namespaces": {
     "Linea": [
       {"method": "linea_estimateGas", "alias": "eth_estimateGas"},
-      {"method": "linea_getProof", "alias": "eth_getProof"}
+      {"method": "linea_getProof", "alias": "eth_getProof"},
+      {"method": "linea_getTransactionExclusionStatusV1", "alias": "eth_getTransactionByHash"}
+    ],
+    "zkEVM": [
+      {"method": "zkevm_batchNumber", "passthrough": true}
     ]
   }
 }
@@ -279,111 +286,71 @@ The file format is a versioned JSON object. Two schema versions are supported:
 
 | Field | Description |
 |-------|-------------|
-| `version` | Schema version (`1` or `2`). Required for forward compatibility. |
-| `namespaces` | Map of display label to method list (v1) or namespace object (v2). The key appears as the section heading in the admin UI. |
+| `version` | Schema version (`1` or `2`). Version `2` also accepts each namespace as an object `{"explicit": [...]}`. |
+| `namespaces` | Map of display label to method list. The label appears as the section heading in the admin UI. |
+| `method` | The exact method name. Wildcards (`*`) are not accepted. |
+| `alias` | A built-in method whose access checks and response filtering the method inherits. |
+| `passthrough` | `true` to forward the method unfiltered (see below). |
 
-Every method must specify an `alias` — a standard Ethereum method it inherits access control and response filtering from. This ensures contract-level checks, storage slot tiering, deployment detection, and participant-based response filtering apply consistently. The proxy rejects the config at startup if any method is missing an alias.
+Each entry needs **exactly one** of `alias` or `"passthrough": true`. The proxy refuses to start when an entry:
 
-### v2 — explicit methods + optional wildcard passthrough
+- has neither, or both;
+- contains `*`;
+- reuses the name of a built-in method (in any letter case);
+- sits in the `eth_`, `net_`, `web3_` or `engine_` namespace. The built-in methods own the standard namespaces, so an unmodelled method there can only be supported by the proxy itself; `engine_` is the consensus-client API and never belongs on this endpoint;
+- is globally blocked (`debug_*`, `admin_*`, `personal_*`, `miner_*`, `txpool_*`, `clique_*`, `les_*`);
+- has an `alias` that is not a supported built-in method; alias targets are trimmed and normalized to the built-in spelling at config load;
+- has an `alias` of `eth_sendTransaction`, `eth_sendRawTransaction`, `debug_traceCall`, `debug_traceTransaction`, `eth_getBlockByHash`, `eth_getBlockByNumber`, `eth_getBlockTransactionCountByHash` or `eth_getBlockTransactionCountByNumber`. These methods are protected by checks that apply only under their own name (sender linking, runtime tracing, travel-rule compliance, trace validation, block participant filtering), so an alias to them would skip those checks.
 
-In v2 each namespace value can be either an array (same as v1) or an object with `explicit` and optional `wildcard`:
+The proxy also refuses to start on a file that still contains a `wildcard` block. Prefix wildcards are not supported: list each method you need by name.
 
-```json
-{
-  "version": 2,
-  "namespaces": {
-    "Linea": {
-      "explicit": [
-        {"method": "linea_estimateGas", "alias": "eth_estimateGas"},
-        {"method": "linea_getProof", "alias": "eth_getProof"}
-      ],
-      "wildcard": {
-        "prefix": "linea_",
-        "deny": ["linea_sendTransaction", "linea_sendRawTransaction", "linea_sign*"]
-      }
-    },
-    "Trace": {
-      "explicit": [],
-      "wildcard": {"prefix": "trace_"}
-    }
-  }
-}
+### Aliased methods
+
+An aliased method inherits its alias target's contract access checks, storage-slot tiering, deployment detection, eth_call tracing and participant-based response filtering. Pick the alias whose parameters **and response shape** match the method: a response filter that does not recognise the shape cannot filter it. Aliases inherit the target historical-state restriction. For example, a concrete-block `linea_getProof` request is denied to non-org-admin viewers in the same way as `eth_getProof`. The Multicall check also uses the resolved target.
+
+### Passthrough methods
+
+A passthrough method is forwarded to the node **as-is**:
+
+- no contract access check (the proxy does not know whether the method takes an address);
+- no response filtering (the proxy does not know the response shape);
+- no eth_call tracing.
+
+**You are responsible for what a passthrough method returns.** Declare one only if you run a node that serves it and its responses cannot expose data your tenants must not see. The proxy lists the passthrough methods in a startup warning. Each call is tagged `matched_via: "passthrough"` in the SIEM audit stream.
+
+Because a passthrough method can return any tenant's data, only an admin-tier token (not a tier-2 org-admin JWT) can add one to a group. An org admin can keep or remove a passthrough method an admin already granted, but cannot add one. Before declaring a method passthrough, check which groups already list that name; an existing entry becomes live as soon as the method is declared:
+
+```sql
+SELECT g.org_id, g.id, g.slug
+FROM group_access ga
+JOIN groups g ON g.id = ga.group_id
+WHERE 'zkevm_batchNumber' = ANY (ga.allowed_methods);
 ```
 
-| Wildcard field | Description |
-|-------|-------------|
-| `prefix` | Required. Method-name prefix that opts methods into passthrough (e.g. `linea_`). |
-| `deny` | Optional list of method names or `prefix*` globs that the proxy rejects even when they match the wildcard prefix. Useful for state-mutating shapes the operator never wants exposed. |
+A passthrough method is available **only to groups that list it by exact name**:
 
-**What "passthrough" means for wildcard-matched methods.** The proxy:
+- A group's `*` entry never includes it.
+- Anonymous callers never get it, even if the anonymous group lists it.
+- The admin UI marks it **Unfiltered** in the group method picker.
 
-- forwards the request to the upstream node verbatim;
-- does **not** apply contract-level access checks (it doesn't know whether the method has an address parameter);
-- does **not** redact response fields (it doesn't know the response shape);
-- still applies the global block list (`debug_*`, `admin_*`, `personal_*`, `miner_*`, `txpool_*`, `clique_*`, `les_*` are always rejected);
-- still applies the namespace's `deny` list (evaluated before the prefix allow);
-- logs the call with `matched_via: "wildcard"` and the matched prefix in the SIEM audit stream.
+### Group `allowed_methods`
 
-**Operator responsibility for wildcard mode.** When you enable a wildcard, you are stating that you trust the upstream chain's namespace and accept that methods you haven't explicitly mapped don't get the proxy's privacy guarantees. If a future upstream release adds a method under the prefix that returns sensitive data your tenants shouldn't see, that data passes through. To narrow the surface:
+A group's `allowed_methods` holds exact method names. The admin API rejects, with `400`, any entry the proxy would not forward. That includes unknown methods, `prefix*` globs and entries not declared in the namespaces file. The anonymous group accepts built-in methods only, listed one by one: `*` is rejected there.
 
-1. Keep the deny list current as the upstream chain's catalog evolves.
-2. Prefer `explicit` entries (with proper `alias`) for any method that benefits from contract-access checks or response filtering.
-3. Don't enable a wildcard for namespaces you don't actually run.
+The API still accepts a bare `*` for scripting convenience. It stores the explicit list instead: every built-in `eth_*`/`net_*`/`web3_*`/`debug_trace*` method the group could be granted, plus aliased methods whose alias target is in that list, plus any other supported method listed next to the `*`. Passthrough methods and `eth_getProof`, `eth_createAccessList` and `eth_getBlockReceipts` are granted only when listed by name. The dashboard group editor does not offer those three built-in methods; grant them through the admin API. The editor shows them as "Also granted" and keeps them on save.
 
-Standard Ethereum-method redaction (`eth_getLogs` filtering, `eth_call` return-data redaction, etc.) is unaffected — it continues to operate on the alias target for explicit methods and on standard methods directly.
+The admin UI drops a stored entry the proxy does not support when it loads a group and shows a notice. Saving the group removes that entry.
 
-### Group `allowed_methods` interaction
+**Upgrading.** On upgrade, groups stored with a `*` entry are rewritten to the explicit list, and `prefix*` entries are removed. A group loses any method it reached only through such an entry: an aliased or passthrough chain-specific method, or `eth_getProof` / `eth_createAccessList` / `eth_getBlockReceipts`. Re-grant those by name. A group whose only entries were globs ends up with no methods, so its members can call nothing until you grant some. `eth_signTypedData` and `eth_signTypedData_v4` are now blocked; groups that list them keep the entry, but it is refused at request time, and the next save must drop it. Run this query before upgrading to find the groups the rewrite affects:
 
-A group's `allowed_methods` list works the same in both schemas, plus one v2-only addition: an entry of the form `<prefix>*` is honored only when a wildcard with that exact prefix is registered globally. Groups cannot invent prefixes the operator hasn't enabled.
-
-```json
-{
-  "allowed_methods": [
-    "eth_call",
-    "eth_getLogs",
-    "linea_estimateGas",
-    "linea_*"
-  ]
-}
+```sql
+SELECT g.org_id, g.id, g.slug, ga.allowed_methods
+FROM group_access ga
+JOIN groups g ON g.id = ga.group_id
+WHERE EXISTS (SELECT 1 FROM unnest(ga.allowed_methods) AS e WHERE strpos(e, '*') > 0);
 ```
 
-In the admin UI, wildcard-enabled namespaces render a single togglable "Allow all `<prefix>*` methods (passthrough)" entry alongside the explicit method checkboxes. The deny list is shown read-only as context.
-
-When `*` (the bare wildcard) is used in a group's allowed methods, all explicitly-known methods are included in the expansion; wildcard-matched methods continue to pass at request time via prefix match.
-
-### Precedence: explicit always wins over wildcard
-
-When a method could be matched both ways, explicit entries take precedence at every layer.
-
-**Alias resolution.** A method that appears in any namespace's `explicit` list keeps its declared alias and goes through the normal access-control + redaction path. The wildcard does not override that. If the same method also matches the namespace's wildcard prefix, the wildcard never sees it — alias resolution stops at the first explicit hit.
-
-**Group allowlist.** Inside a group's `allowed_methods`, an exact method name wins over a `<prefix>*` glob. The proxy first checks for `*` (admin shortcut) or an exact match; only if neither hits does it fall through to glob entries.
-
-**Deny list scope.** The wildcard's `deny` list narrows the wildcard's surface — it does not act as a global block. If an operator explicitly grants a deny-listed method to a group by exact name (either by listing it in a namespace's `explicit` block, or by adding the literal method name to a group's `allowed_methods`), that grant succeeds. The deny list only fires when access would otherwise be granted via the wildcard prefix. To block a method system-wide, rely on `GlobalBlockedMethods` (compile-time) or simply don't grant it to any group.
-
-Worked example with the config below:
-
-```json
-{
-  "version": 2,
-  "namespaces": {
-    "Linea": {
-      "explicit": [{"method": "linea_estimateGas", "alias": "eth_estimateGas"}],
-      "wildcard": {"prefix": "linea_", "deny": ["linea_sendTransaction", "linea_sign*"]}
-    }
-  }
-}
-```
-
-Group with `allowed_methods: ["linea_estimateGas", "linea_*"]`:
-
-| Method | Alias used | HasMethod | Outcome |
-|---|---|---|---|
-| `linea_estimateGas` | `eth_estimateGas` (explicit) | true (exact match) | contract checks + redaction via alias |
-| `linea_getProof` | none (no explicit entry) | true (via `linea_*` → wildcard match) | passthrough, no redaction |
-| `linea_sendTransaction` | none | false (wildcard match blocked by deny) | rejected with "method not allowed" |
-| `linea_signFoo` | none | false (deny `linea_sign*` glob) | rejected |
-| `debug_traceTransaction` | n/a | only if listed in the group's `allowed_methods` (or `*`) | gated by the method allowlist like any other method; cross-org isolation on results always enforced |
+Client `debug_traceTransaction` requires the method in the group's stored `allowed_methods`. Under the standard read profile, admitted senders, recipients, called-contract admins and shared recipients receive a validated call tree with access required for each contract. Under strict, linked senders/recipients receive only the top frame, without internal calls or logs, subject to organization ownership checks. Other tracers are rejected.
 
 A ready-to-use example is provided in `rpc-namespaces.example.json` — copy and customize it:
 
@@ -560,6 +527,7 @@ make db-new-migration name=add_feature
   { name: "MAX_ACCESS_LOG_ROWS", default: "0", description: "FIFO row cap on access_logs. When set above 0, the retention loop trims the oldest rows so at most this many remain. Complements RETENTION_ACCESS_LOGS for high-volume deployments. The audit hash chain stays verifiable across the cut via the audit_chain_anchor table." },
   { name: "RETENTION_COMPLIANCE_LOGS", default: "61320h", description: "How long compliance log entries are retained. Typically longer than access logs for regulatory audit trails. Default is roughly 7 years." },
   { name: "ORG_ADMIN_VIEW_USER_TXS", default: "false", description: "When true, org admins see user-to-user transaction rows that are otherwise dropped (both parties private) in the explorer, with the value/amount preserved so it matches the Transfer event they can already read. Counterparty addresses still render as [PRIVATE] — a volume/timing audit view, not real-address disclosure. Every request that reveals such a row is written to rbac_audit_log (actor, endpoint, row count, client IP). Default off = strict privacy (rows dropped, value zeroed)." },
+  { name: "PRIVACY_READ_PROFILE", default: "standard", description: "Read privacy policy for transactions, receipts and events on JSON-RPC and the Explorer Data API: standard or strict. Under strict a transaction or receipt reaches only a transaction participant (linked address is the tx from/to) and an event only a viewer named by one of its ABI-indexed address parameters; admin claims, visibleTo and ORG_ADMIN_VIEW_USER_TXS grant no read access, View as user and dry-run reads are refused, and a send that carries a visibleTo field is rejected. Fixed at startup; any other value (including one of only spaces) refuses to start. Empty = the CONFIG_FILE value, else standard. The effective value is reported at GET /api/v1/admin/system/read-profile. Switching back from strict to standard is a disclosure event: it re-applies the standard policy to existing data. See Strict Read Profile." },
   { name: "OAUTH_FIRST_PARTY_CLIENTS", default: "(empty)", description: "Silent-SSO allowlist for trusted first-party OAuth clients. Comma-separated entries of the form <client_id>:<bcrypt_hash>. The proxy verifies the matching client_secret at /oauth/token via HTTP Basic (RFC 6749 client_secret_basic) or client_secret_post. Empty = no client gets silent SSO; every flow falls back to interactive Privado. Use per-environment opaque IDs (e.g. explorer-prod-${random}) — the literal default 'explorer' is warned-on at startup in production mode. Recipe: id=explorer-prod-$(openssl rand -hex 8); secret=$(openssl rand -hex 32); hash=$(htpasswd -bnBC 12 '' \"$secret\" | tr -d ':\\n'); echo \"${id}:${hash}\"." },
 ]} />
 

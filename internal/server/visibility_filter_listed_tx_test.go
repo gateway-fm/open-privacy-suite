@@ -38,6 +38,7 @@ func TestRedactOptsFromFilter_ListedTxHashesAreOnlyGenuineListings(t *testing.T)
 
 func TestBuildVisibilityFilter_ListedTxHashesExcludeTransferUnion(t *testing.T) {
 	srv, database, conn := setupTestServerForExplorerTransactions(t)
+	srv.config.ReadProfile = rbac.ReadProfileStandard
 	_, err := conn.ExecContext(context.Background(), extendedExplorerSchemaRD1009)
 	require.NoError(t, err)
 	t.Cleanup(func() { _, _ = conn.ExecContext(context.Background(), "DROP TABLE IF EXISTS token_transfers") })
@@ -51,6 +52,9 @@ func TestBuildVisibilityFilter_ListedTxHashesExcludeTransferUnion(t *testing.T) 
 	wiringCreateGrant(t, database, cid, gid, &rbac.EventRulesField{Wildcard: true})
 	const viewer = "did:test:listed-viewer"
 	wiringCreateUserInGroup(t, database, viewer, gid)
+	const adminViewer = "did:test:listed-admin"
+	adminGroup := wiringCreateGroup(t, database, orgID, "listed-admins", nil, true)
+	wiringCreateUserInGroup(t, database, adminViewer, adminGroup)
 	viewerAddr := "0x" + strings.Repeat("d4", 20)
 	require.NoError(t, database.SystemLinkEthAddress(ctx, viewer, viewerAddr))
 
@@ -70,14 +74,42 @@ func TestBuildVisibilityFilter_ListedTxHashesExcludeTransferUnion(t *testing.T) 
 			tt.tx, contract, tt.from, tt.to, block)
 		require.NoError(t, err)
 	}
-	require.NoError(t, database.SaveTxVisibility(ctx, listed, []string{viewer}, "did:test:sender", orgID))
+	require.NoError(t, database.SaveTxVisibility(ctx, listed, []string{viewer, adminViewer}, "did:test:sender", orgID))
 
-	filter := srv.buildVisibilityFilter(ctx, viewer)
-	visible := append([]string(nil), filter.VisibleTxHashes...)
-	sort.Strings(visible)
-	require.Equal(t, []string{listed, unionViewer, unionContract}, visible, "precondition: the union feeds VisibleTxHashes")
-	require.Equal(t, []string{listed}, filter.ListedTxHashes, "only the genuine listing may be treated as 'listed'")
+	for _, tc := range []struct {
+		name          string
+		did           string
+		admin         bool
+		visibleHashes []string
+	}{
+		{"nonadmin own-address union", viewer, false, []string{listed, unionViewer}},
+		{"admin contract-driven union", adminViewer, true, []string{listed, unionContract}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.admin, srv.isViewerAdmin(ctx, tc.did), "viewer role is explicit")
+			visibility, err := database.GetBatchVisibility(ctx, tc.did, []string{contract, viewerAddr})
+			require.NoError(t, err)
+			require.Equal(t, explorer.VisibilityFull, visibility[contract], "both viewers have Full contract visibility")
+			require.Equal(t, !tc.admin, visibility[viewerAddr] == explorer.VisibilityFull, "the linked address is Full only for its owner")
 
-	opts := srv.buildRedactOptsForViewer(ctx, viewer)
-	require.Equal(t, map[string]bool{listed: true}, opts.ListedTxHashes)
+			filter := srv.buildVisibilityFilter(ctx, tc.did)
+			visible := append([]string(nil), filter.VisibleTxHashes...)
+			sort.Strings(visible)
+			require.Equal(t, tc.visibleHashes, visible)
+			require.Equal(t, []string{listed}, filter.ListedTxHashes, "only the genuine listing may be treated as listed")
+			if tc.admin {
+				require.Contains(t, filter.ParticipantTxHashes, unionContract, "admin Full contract visibility drives parent-row union")
+				require.NotContains(t, filter.ParticipantTxHashes, unionViewer, "the admin does not own the linked address")
+			} else {
+				require.Contains(t, filter.ParticipantTxHashes, unionViewer)
+				require.NotContains(t, filter.VisibleTxHashes, unionContract, "a plain contract grant does not drive parent-row union")
+				require.NotContains(t, filter.ParticipantTxHashes, unionContract)
+			}
+
+			opts := srv.buildRedactOptsForViewer(ctx, tc.did)
+			require.Equal(t, map[string]bool{listed: true}, opts.ListedTxHashes)
+			require.Equal(t, !tc.admin, opts.VisibleTxHashes[unionViewer], "the own-address union survives for its owner")
+			require.Equal(t, tc.admin, opts.VisibleTxHashes[unionContract], "contract-driven union requires the admin role")
+		})
+	}
 }

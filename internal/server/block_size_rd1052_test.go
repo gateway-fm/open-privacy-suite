@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"privacy-proxy/internal/explorer"
+	"privacy-proxy/internal/rbac"
 )
 
 // RD-1052: block `size` (serialized byte-length — a per-block aggregate over
@@ -37,7 +38,7 @@ func TestFilterBlockTransactions_BlockSize_Zeroed_RD1052(t *testing.T) {
 
 	// Participant and non-participant alike: size is zeroed unconditionally.
 	for _, full := range []bool{true, false} {
-		got := FilterBlockTransactions([]byte(response), []string{userAddr}, full)
+		got := FilterBlockTransactions(rbac.ReadProfileStandard, []byte(response), []string{userAddr}, full)
 		size, ok := extractBlockSize(t, got)
 		if !ok {
 			t.Fatalf("size key unexpectedly removed (full=%v): %s", full, got)
@@ -56,7 +57,7 @@ func TestFilterBlockTransactions_BlockSize_Zeroed_EmptyAndHashOnly_RD1052(t *tes
 		"no tx field":     `{"jsonrpc":"2.0","id":1,"result":{"number":"0x1","size":"0x2b0"}}`,
 	}
 	for name, response := range cases {
-		got := FilterBlockTransactions([]byte(response), []string{userAddr}, true)
+		got := FilterBlockTransactions(rbac.ReadProfileStandard, []byte(response), []string{userAddr}, true)
 		size, _ := extractBlockSize(t, got)
 		if size != `"0x0"` {
 			t.Errorf("%s: size must be zeroed, got %s", name, size)
@@ -69,7 +70,7 @@ func TestFilterBlockTransactions_BlockSize_Zeroed_EmptyAndHashOnly_RD1052(t *tes
 func TestFilterBlockTransactions_MissingSize_StaysAbsent_RD1052(t *testing.T) {
 	userAddr := "0xabc1234567890123456789012345678901234567"
 	response := `{"jsonrpc":"2.0","id":1,"result":{"number":"0x1","logsBloom":"0xdead","transactions":[]}}`
-	got := FilterBlockTransactions([]byte(response), []string{userAddr}, true)
+	got := FilterBlockTransactions(rbac.ReadProfileStandard, []byte(response), []string{userAddr}, true)
 	if _, ok := extractBlockSize(t, got); ok {
 		t.Errorf("size must stay absent when the source had none: %s", got)
 	}

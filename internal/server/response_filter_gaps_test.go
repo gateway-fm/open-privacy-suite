@@ -17,6 +17,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"privacy-proxy/internal/rbac"
 )
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -27,7 +29,7 @@ func TestFilterTransactionByHash_SelfTransaction(t *testing.T) {
 	// User sends to themselves — must see full tx.
 	addr := "0xabc1234567890123456789012345678901234567"
 	response := `{"jsonrpc":"2.0","id":1,"result":{"hash":"0xabc","from":"` + addr + `","to":"` + addr + `","input":"0x","nonce":"0x1"}}`
-	got := FilterTransactionByHash([]byte(response), []string{addr}, false)
+	got := FilterTransactionByHash(rbac.ReadProfileStandard, []byte(response), []string{addr}, false, nil)
 	if string(got) != response {
 		t.Errorf("self-tx should pass through unchanged\ngot:  %s\nwant: %s", got, response)
 	}
@@ -38,7 +40,7 @@ func TestFilterTransactionByHash_MultipleLinkedAddresses(t *testing.T) {
 	addr1 := "0xaaa1111111111111111111111111111111111111"
 	addr2 := "0xbbb2222222222222222222222222222222222222"
 	response := `{"jsonrpc":"2.0","id":1,"result":{"from":"0xother","to":"` + addr2 + `","input":"0x","nonce":"0x1"}}`
-	got := FilterTransactionByHash([]byte(response), []string{addr1, addr2}, false)
+	got := FilterTransactionByHash(rbac.ReadProfileStandard, []byte(response), []string{addr1, addr2}, false, nil)
 	if string(got) != response {
 		t.Errorf("tx involving second linked address should pass through\ngot: %s", got)
 	}
@@ -49,7 +51,7 @@ func TestFilterTransactionByHash_ChecksummedAddress(t *testing.T) {
 	stored := "0xd8da6bf26964af9d7eed9e03e53415d37aa96045"
 	checksummed := "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"
 	response := `{"jsonrpc":"2.0","id":1,"result":{"from":"` + checksummed + `","to":"0xother","input":"0x","nonce":"0x1"}}`
-	got := FilterTransactionByHash([]byte(response), []string{stored}, false)
+	got := FilterTransactionByHash(rbac.ReadProfileStandard, []byte(response), []string{stored}, false, nil)
 	if string(got) != response {
 		t.Errorf("checksummed address should match stored lowercase\ngot: %s", got)
 	}
@@ -58,7 +60,7 @@ func TestFilterTransactionByHash_ChecksummedAddress(t *testing.T) {
 func TestFilterTransactionByHash_ContractCreation_NonParticipant(t *testing.T) {
 	// Contract creation tx (to=null): non-participant must receive null.
 	response := `{"jsonrpc":"2.0","id":1,"result":{"from":"0xdeployer","to":null,"input":"0x60806040","nonce":"0x1"}}`
-	got := FilterTransactionByHash([]byte(response), []string{"0xabc1234567890123456789012345678901234567"}, false)
+	got := FilterTransactionByHash(rbac.ReadProfileStandard, []byte(response), []string{"0xabc1234567890123456789012345678901234567"}, false, nil)
 	var resp struct {
 		Result *json.RawMessage `json:"result"`
 	}
@@ -75,336 +77,9 @@ func TestFilterTransactionByHash_EIP1559_FieldsPreserved(t *testing.T) {
 	// EIP-1559 fields (maxFeePerGas, maxPriorityFeePerGas, type) must all be preserved.
 	addr := "0xabc1234567890123456789012345678901234567"
 	response := `{"jsonrpc":"2.0","id":1,"result":{"hash":"0xabc","from":"` + addr + `","to":"0xother","input":"0x","nonce":"0x1","maxFeePerGas":"0x1234","maxPriorityFeePerGas":"0x100","type":"0x2"}}`
-	got := FilterTransactionByHash([]byte(response), []string{addr}, false)
+	got := FilterTransactionByHash(rbac.ReadProfileStandard, []byte(response), []string{addr}, false, nil)
 	if string(got) != response {
 		t.Errorf("EIP-1559 fields must be preserved for participant\ngot:  %s\nwant: %s", got, response)
-	}
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// Group 2: FilterTransactionReceipt — edge cases and security gap docs
-// ──────────────────────────────────────────────────────────────────────────
-
-func TestFilterTransactionReceipt_NonParticipant_ReturnsNull(t *testing.T) {
-	// Non-participant receives null — no from/to/status/logs leakage at all.
-	// Consistent with FilterTransactionByHash returning null for non-participants.
-	response := `{"jsonrpc":"2.0","id":1,"result":{"from":"0xsender","to":"0xreceiver","status":"0x1","gasUsed":"0x5208","logs":[{"address":"0x1","topics":["0xevent"]}],"logsBloom":"0x1234"}}`
-	got := FilterTransactionReceipt([]byte(response), []string{"0xabc1234567890123456789012345678901234567"})
-
-	var resp struct {
-		Result *json.RawMessage `json:"result"`
-	}
-	if err := json.Unmarshal(got, &resp); err != nil {
-		t.Fatalf("output not valid JSON: %v\noutput: %s", err, got)
-	}
-	isNull := resp.Result == nil || string(*resp.Result) == "null"
-	if !isNull {
-		t.Errorf("non-participant must receive null result, got: %s", got)
-	}
-}
-
-func TestFilterTransactionReceipt_ContractCreation_Participant(t *testing.T) {
-	// Deployer's receipt: to=null, contractAddress present.
-	// Logs are filtered to only entries with topics matching the user's address.
-	// logsBloom is always zeroed for participants.
-	addr := "0xabc1234567890123456789012345678901234567"
-	paddedAddr := "0x000000000000000000000000abc1234567890123456789012345678901234567"
-	response := `{"jsonrpc":"2.0","id":1,"result":{"from":"` + addr + `","to":null,"contractAddress":"0xnewcontract","status":"0x1","logs":[{"address":"0x1","topics":["0xevent","` + paddedAddr + `"]}],"logsBloom":"0xfull"}}`
-	got := FilterTransactionReceipt([]byte(response), []string{addr})
-
-	var resp struct {
-		Result *struct {
-			From            string            `json:"from"`
-			ContractAddress string            `json:"contractAddress"`
-			Status          string            `json:"status"`
-			Logs            []json.RawMessage `json:"logs"`
-		} `json:"result"`
-	}
-	if err := json.Unmarshal(got, &resp); err != nil {
-		t.Fatalf("output not valid JSON: %v\noutput: %s", err, got)
-	}
-	if resp.Result == nil {
-		t.Fatal("expected non-null result for deployer")
-	}
-	if resp.Result.ContractAddress != "0xnewcontract" {
-		t.Errorf("contractAddress must be preserved, got: %s", resp.Result.ContractAddress)
-	}
-	if len(resp.Result.Logs) != 1 {
-		t.Errorf("deployer should see log with matching topic, got %d logs", len(resp.Result.Logs))
-	}
-}
-
-func TestFilterTransactionReceipt_ContractCreation_NonParticipant(t *testing.T) {
-	// Non-participant receives null — contractAddress not revealed either.
-	response := `{"jsonrpc":"2.0","id":1,"result":{"from":"0xdeployer","to":null,"contractAddress":"0xnewcontract","status":"0x1","logs":[{"address":"0x1"}],"logsBloom":"0xfull"}}`
-	got := FilterTransactionReceipt([]byte(response), []string{"0xabc1234567890123456789012345678901234567"})
-
-	var resp struct {
-		Result *json.RawMessage `json:"result"`
-	}
-	if err := json.Unmarshal(got, &resp); err != nil {
-		t.Fatalf("output not valid JSON: %v\noutput: %s", err, got)
-	}
-	isNull := resp.Result == nil || string(*resp.Result) == "null"
-	if !isNull {
-		t.Errorf("non-participant must receive null (not contractAddress), got: %s", got)
-	}
-}
-
-func TestFilterTransactionReceipt_NonParticipant_IDPreserved(t *testing.T) {
-	// The null response for a non-participant must preserve the original request ID.
-	response := `{"jsonrpc":"2.0","id":42,"result":{"from":"0xother","to":"0xother2","logs":[],"logsBloom":"0x0"}}`
-	got := FilterTransactionReceipt([]byte(response), []string{"0xabc1234567890123456789012345678901234567"})
-
-	var resp struct {
-		ID     json.RawMessage  `json:"id"`
-		Result *json.RawMessage `json:"result"`
-	}
-	if err := json.Unmarshal(got, &resp); err != nil {
-		t.Fatalf("output not valid JSON: %v", err)
-	}
-	if string(resp.ID) != "42" {
-		t.Errorf("null response must preserve request id=42, got: %s", resp.ID)
-	}
-	isNull := resp.Result == nil || string(*resp.Result) == "null"
-	if !isNull {
-		t.Errorf("expected null result, got: %s", got)
-	}
-}
-
-func TestFilterTransactionReceipt_CaseInsensitiveAddressMatch(t *testing.T) {
-	// Checksummed from/to in the RPC response must match lowercase stored address.
-	// Participant is recognised, but logs are filtered by topic and logsBloom is zeroed.
-	stored := "0xabc1234567890123456789012345678901234567"
-	checksummed := "0xAbC1234567890123456789012345678901234567"
-	paddedAddr := "0x000000000000000000000000abc1234567890123456789012345678901234567"
-	response := `{"jsonrpc":"2.0","id":1,"result":{"from":"` + checksummed + `","to":"0xother","logs":[{"address":"0x1","topics":["0xevent","` + paddedAddr + `"]}],"logsBloom":"0x1234"}}`
-	got := FilterTransactionReceipt([]byte(response), []string{stored})
-
-	var resp struct {
-		Result *struct {
-			From string            `json:"from"`
-			Logs []json.RawMessage `json:"logs"`
-		} `json:"result"`
-	}
-	if err := json.Unmarshal(got, &resp); err != nil {
-		t.Fatalf("output not valid JSON: %v\noutput: %s", err, got)
-	}
-	if resp.Result == nil {
-		t.Fatal("expected non-null result for participant")
-	}
-	if len(resp.Result.Logs) != 1 {
-		t.Errorf("expected 1 log with matching topic, got %d", len(resp.Result.Logs))
-	}
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// Group 3: FilterLogs — realistic event patterns and edge cases
-// ──────────────────────────────────────────────────────────────────────────
-
-var transferEventSig = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
-
-func TestFilterLogs_TransferEvent_SenderKept(t *testing.T) {
-	// ERC-20 Transfer(from, to, amount): user is sender (topics[1]).
-	userAddr := "0xabc1234567890123456789012345678901234567"
-	paddedSender := "0x000000000000000000000000abc1234567890123456789012345678901234567"
-	paddedReceiver := "0x000000000000000000000000bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	response := `{"jsonrpc":"2.0","id":1,"result":[{"topics":["` + transferEventSig + `","` + paddedSender + `","` + paddedReceiver + `"],"data":"0x0000000000000000000000000000000000000000000000000de0b6b3a7640000"}]}`
-
-	got := FilterLogs([]byte(response), []string{userAddr})
-	var resp struct {
-		Result []json.RawMessage `json:"result"`
-	}
-	if err := json.Unmarshal(got, &resp); err != nil {
-		t.Fatalf("output not valid JSON: %v", err)
-	}
-	if len(resp.Result) != 1 {
-		t.Errorf("sender should see their own Transfer event, got %d logs", len(resp.Result))
-	}
-}
-
-func TestFilterLogs_TransferEvent_ReceiverKept(t *testing.T) {
-	// ERC-20 Transfer(from, to, amount): user is receiver (topics[2]).
-	userAddr := "0xabc1234567890123456789012345678901234567"
-	paddedReceiver := "0x000000000000000000000000abc1234567890123456789012345678901234567"
-	paddedSender := "0x000000000000000000000000cccccccccccccccccccccccccccccccccccccccc"
-	response := `{"jsonrpc":"2.0","id":1,"result":[{"topics":["` + transferEventSig + `","` + paddedSender + `","` + paddedReceiver + `"],"data":"0x0000000000000000000000000000000000000000000000000de0b6b3a7640000"}]}`
-
-	got := FilterLogs([]byte(response), []string{userAddr})
-	var resp struct {
-		Result []json.RawMessage `json:"result"`
-	}
-	if err := json.Unmarshal(got, &resp); err != nil {
-		t.Fatalf("output not valid JSON: %v", err)
-	}
-	if len(resp.Result) != 1 {
-		t.Errorf("receiver should see Transfer event, got %d logs", len(resp.Result))
-	}
-}
-
-func TestFilterLogs_TransferEvent_ThirdPartyRemoved(t *testing.T) {
-	// User is neither sender nor receiver in a Transfer event.
-	userAddr := "0xabc1234567890123456789012345678901234567"
-	paddedSender := "0x000000000000000000000000dddddddddddddddddddddddddddddddddddddddd"
-	paddedReceiver := "0x000000000000000000000000eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
-	response := `{"jsonrpc":"2.0","id":1,"result":[{"topics":["` + transferEventSig + `","` + paddedSender + `","` + paddedReceiver + `"],"data":"0x1234"}]}`
-
-	got := FilterLogs([]byte(response), []string{userAddr})
-	var resp struct {
-		Result []json.RawMessage `json:"result"`
-	}
-	if err := json.Unmarshal(got, &resp); err != nil {
-		t.Fatalf("output not valid JSON: %v", err)
-	}
-	if len(resp.Result) != 0 {
-		t.Errorf("third party must not see Transfer event, got %d logs", len(resp.Result))
-	}
-}
-
-// SECURITY NOTE: The 'data' field of a kept log is NOT filtered.
-// A user who appears in indexed topics sees the full ABI-encoded data payload.
-// This is correct behavior — if you're a party, you see the event data.
-// Field-level redaction within data is a future TODO.
-func TestFilterLogs_DataFieldPassesThroughForParticipant(t *testing.T) {
-	userAddr := "0xabc1234567890123456789012345678901234567"
-	paddedAddr := "0x000000000000000000000000abc1234567890123456789012345678901234567"
-	sensitiveData := "0xdeadbeefcafebabe0000000000000000000000000000000000000000000000001234"
-	response := `{"jsonrpc":"2.0","id":1,"result":[{"topics":["0xevent","` + paddedAddr + `"],"data":"` + sensitiveData + `"}]}`
-
-	got := FilterLogs([]byte(response), []string{userAddr})
-	var resp struct {
-		Result []struct {
-			Data string `json:"data"`
-		} `json:"result"`
-	}
-	if err := json.Unmarshal(got, &resp); err != nil {
-		t.Fatalf("output not valid JSON: %v", err)
-	}
-	if len(resp.Result) != 1 {
-		t.Fatalf("expected 1 log (user is in topics), got %d", len(resp.Result))
-	}
-	if resp.Result[0].Data != sensitiveData {
-		t.Errorf("data field must pass through unchanged for participant, got: %s", resp.Result[0].Data)
-	}
-}
-
-func TestFilterLogs_NonZeroPrefixTopic_NotMatched(t *testing.T) {
-	// A topic with any non-zero byte in the 12-byte address padding is not an address topic.
-	// Even if the last 40 chars match the user's address, it must not match.
-	userAddr := "0xabc1234567890123456789012345678901234567"
-	// Non-zero prefix: first byte of padding is 0x01
-	badTopic := "0x0100000000000000000000000abc1234567890123456789012345678901234567"
-	response := `{"jsonrpc":"2.0","id":1,"result":[{"topics":["0xevent","` + badTopic + `"]}]}`
-
-	got := FilterLogs([]byte(response), []string{userAddr})
-	var resp struct {
-		Result []json.RawMessage `json:"result"`
-	}
-	if err := json.Unmarshal(got, &resp); err != nil {
-		t.Fatalf("output not valid JSON: %v", err)
-	}
-	if len(resp.Result) != 0 {
-		t.Errorf("topic with non-zero prefix must not match user address, got %d logs", len(resp.Result))
-	}
-}
-
-func TestFilterLogs_EmptyTopicsArray(t *testing.T) {
-	// Log with empty topics array — no address topics to match, must be filtered.
-	userAddr := "0xabc1234567890123456789012345678901234567"
-	response := `{"jsonrpc":"2.0","id":1,"result":[{"topics":[],"data":"0x1234"}]}`
-
-	got := FilterLogs([]byte(response), []string{userAddr})
-	var resp struct {
-		Result []json.RawMessage `json:"result"`
-	}
-	if err := json.Unmarshal(got, &resp); err != nil {
-		t.Fatalf("output not valid JSON: %v", err)
-	}
-	if len(resp.Result) != 0 {
-		t.Errorf("log with empty topics must be filtered out, got %d", len(resp.Result))
-	}
-}
-
-func TestFilterLogs_OnlyEventSigTopic(t *testing.T) {
-	// Log has only topics[0] (event signature hash), no indexed address parameters.
-	// topics[0] is a keccak256 hash and practically never has 12 leading zero bytes,
-	// so topicMatchesAddress rejects it. Must be filtered.
-	userAddr := "0xabc1234567890123456789012345678901234567"
-	response := `{"jsonrpc":"2.0","id":1,"result":[{"topics":["` + transferEventSig + `"],"data":"0x1234"}]}`
-
-	got := FilterLogs([]byte(response), []string{userAddr})
-	var resp struct {
-		Result []json.RawMessage `json:"result"`
-	}
-	if err := json.Unmarshal(got, &resp); err != nil {
-		t.Fatalf("output not valid JSON: %v", err)
-	}
-	if len(resp.Result) != 0 {
-		t.Errorf("log with only event sig topic (no address params) must be filtered, got %d", len(resp.Result))
-	}
-}
-
-func TestFilterLogs_AnonymousEvent_TopicZeroIsAddress(t *testing.T) {
-	// Anonymous events (Solidity `anonymous` keyword) have no event signature in
-	// topics[0] — the first indexed parameter occupies it instead. If that
-	// parameter is an address, we must recognise the user as a participant.
-	userAddr := "0xabc1234567890123456789012345678901234567"
-	paddedUser := "0x000000000000000000000000abc1234567890123456789012345678901234567"
-	otherAddr := "0x000000000000000000000000def4567890123456789012345678901234567890"
-
-	// Anonymous event: [paddedUser, otherAddr] — no sig hash, user is in topics[0].
-	response := `{"jsonrpc":"2.0","id":1,"result":[{"topics":["` + paddedUser + `","` + otherAddr + `"],"data":"0x"}]}`
-
-	got := FilterLogs([]byte(response), []string{userAddr})
-	var resp struct {
-		Result []json.RawMessage `json:"result"`
-	}
-	if err := json.Unmarshal(got, &resp); err != nil {
-		t.Fatalf("output not valid JSON: %v", err)
-	}
-	if len(resp.Result) != 1 {
-		t.Errorf("anonymous event with user address in topics[0] must be visible, got %d logs", len(resp.Result))
-	}
-}
-
-func TestFilterLogs_AnonymousEvent_TopicZeroNotUserAddress(t *testing.T) {
-	// Anonymous event where topics[0] is an address but not the user's — must be filtered.
-	userAddr := "0xabc1234567890123456789012345678901234567"
-	otherPadded := "0x000000000000000000000000def4567890123456789012345678901234567890"
-
-	response := `{"jsonrpc":"2.0","id":1,"result":[{"topics":["` + otherPadded + `"],"data":"0x"}]}`
-
-	got := FilterLogs([]byte(response), []string{userAddr})
-	var resp struct {
-		Result []json.RawMessage `json:"result"`
-	}
-	if err := json.Unmarshal(got, &resp); err != nil {
-		t.Fatalf("output not valid JSON: %v", err)
-	}
-	if len(resp.Result) != 0 {
-		t.Errorf("anonymous event with different address in topics[0] must be filtered, got %d logs", len(resp.Result))
-	}
-}
-
-func TestFilterLogs_MixedLogs_AllNonUser(t *testing.T) {
-	// Multiple logs, none involving the user — empty result.
-	userAddr := "0xabc1234567890123456789012345678901234567"
-	other1 := "0x000000000000000000000000aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	other2 := "0x000000000000000000000000bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	response := `{"jsonrpc":"2.0","id":1,"result":[` +
-		`{"topics":["0xevent","` + other1 + `"]},` +
-		`{"topics":["0xevent","` + other2 + `"]}` +
-		`]}`
-
-	got := FilterLogs([]byte(response), []string{userAddr})
-	var resp struct {
-		Result []json.RawMessage `json:"result"`
-	}
-	if err := json.Unmarshal(got, &resp); err != nil {
-		t.Fatalf("output not valid JSON: %v", err)
-	}
-	if len(resp.Result) != 0 {
-		t.Errorf("all non-user logs must be filtered, got %d", len(resp.Result))
 	}
 }
 
@@ -420,7 +95,7 @@ func TestFilterBlockTransactions_UserAsTo(t *testing.T) {
 		`{"from":"0xother1","to":"0xother2","input":"0x"}` +
 		`]}}`
 
-	got := FilterBlockTransactions([]byte(response), []string{userAddr}, true)
+	got := FilterBlockTransactions(rbac.ReadProfileStandard, []byte(response), []string{userAddr}, true)
 	var resp struct {
 		Result *struct {
 			Transactions []json.RawMessage `json:"transactions"`
@@ -447,7 +122,7 @@ func TestFilterBlockTransactions_MultipleLinkedAddresses(t *testing.T) {
 		`{"from":"0xother1","to":"0xother2","input":"0x"}` +
 		`]}}`
 
-	got := FilterBlockTransactions([]byte(response), []string{addr1, addr2}, true)
+	got := FilterBlockTransactions(rbac.ReadProfileStandard, []byte(response), []string{addr1, addr2}, true)
 	var resp struct {
 		Result *struct {
 			Transactions []json.RawMessage `json:"transactions"`
@@ -496,7 +171,7 @@ func TestFilterBlockTransactions_BlockLogsBloom_Zeroed(t *testing.T) {
 		`{"from":"0xother1","to":"0xother2","input":"0x"}` +
 		`]}}`
 
-	got := FilterBlockTransactions([]byte(response), []string{userAddr}, true)
+	got := FilterBlockTransactions(rbac.ReadProfileStandard, []byte(response), []string{userAddr}, true)
 	if bloom := extractBlockLogsBloom(t, got); bloom != expectedZeroBloom {
 		t.Errorf("block logsBloom must be zeroed when transactions are filtered\ngot:  %s\nwant: %s", bloom, expectedZeroBloom)
 	}
@@ -509,7 +184,7 @@ func TestFilterBlockTransactions_BlockLogsBloom_Zeroed_EmptyTxArray(t *testing.T
 	userAddr := "0xabc1234567890123456789012345678901234567"
 	response := `{"jsonrpc":"2.0","id":1,"result":{"number":"0x1","logsBloom":"0xdeadbeef","transactions":[]}}`
 
-	got := FilterBlockTransactions([]byte(response), []string{userAddr}, true)
+	got := FilterBlockTransactions(rbac.ReadProfileStandard, []byte(response), []string{userAddr}, true)
 	if bloom := extractBlockLogsBloom(t, got); bloom != expectedZeroBloom {
 		t.Errorf("logsBloom must be zeroed on empty-tx blocks\ngot:  %s\nwant: %s", bloom, expectedZeroBloom)
 	}
@@ -521,7 +196,7 @@ func TestFilterBlockTransactions_BlockLogsBloom_Zeroed_NoTxField(t *testing.T) {
 	userAddr := "0xabc1234567890123456789012345678901234567"
 	response := `{"jsonrpc":"2.0","id":1,"result":{"number":"0x1","logsBloom":"0xfeedface"}}`
 
-	got := FilterBlockTransactions([]byte(response), []string{userAddr}, true)
+	got := FilterBlockTransactions(rbac.ReadProfileStandard, []byte(response), []string{userAddr}, true)
 	if bloom := extractBlockLogsBloom(t, got); bloom != expectedZeroBloom {
 		t.Errorf("logsBloom must be zeroed on blocks with no transactions field\ngot:  %s\nwant: %s", bloom, expectedZeroBloom)
 	}
@@ -534,7 +209,7 @@ func TestFilterBlockTransactions_BlockLogsBloom_Zeroed_HashesOnly(t *testing.T) 
 	userAddr := "0xabc1234567890123456789012345678901234567"
 	response := `{"jsonrpc":"2.0","id":1,"result":{"number":"0x1","logsBloom":"0xdeadbeef","transactions":["0xhash1","0xhash2"]}}`
 
-	got := FilterBlockTransactions([]byte(response), []string{userAddr}, false)
+	got := FilterBlockTransactions(rbac.ReadProfileStandard, []byte(response), []string{userAddr}, false)
 	if bloom := extractBlockLogsBloom(t, got); bloom != expectedZeroBloom {
 		t.Errorf("logsBloom must be zeroed on hash-only blocks\ngot:  %s\nwant: %s", bloom, expectedZeroBloom)
 	}
@@ -548,7 +223,7 @@ func TestFilterBlockTransactions_BlockLogsBloom_Zeroed_NonParticipantViewer(t *t
 		`{"from":"0xother1","to":"0xother2","input":"0x"}` +
 		`]}}`
 
-	got := FilterBlockTransactions([]byte(response), []string{userAddr}, true)
+	got := FilterBlockTransactions(rbac.ReadProfileStandard, []byte(response), []string{userAddr}, true)
 	if bloom := extractBlockLogsBloom(t, got); bloom != expectedZeroBloom {
 		t.Errorf("logsBloom must be zeroed for non-participant viewers\ngot:  %s\nwant: %s", bloom, expectedZeroBloom)
 	}
@@ -588,7 +263,7 @@ func TestFilterBlockTransactions_BlockGasUsed_Zeroed_Participant(t *testing.T) {
 		`{"from":"0xother1","to":"0xother2","input":"0x","hash":"0xh2"}` +
 		`]}}`
 
-	got := FilterBlockTransactions([]byte(response), []string{userAddr}, true)
+	got := FilterBlockTransactions(rbac.ReadProfileStandard, []byte(response), []string{userAddr}, true)
 	gasUsed, blobGasUsed := extractBlockGasFields(t, got)
 	if gasUsed != expectedZeroGasUsed {
 		t.Errorf("gasUsed must be zeroed for participants\ngot:  %s\nwant: %s", gasUsed, expectedZeroGasUsed)
@@ -604,7 +279,7 @@ func TestFilterBlockTransactions_BlockGasUsed_Zeroed_NonParticipant(t *testing.T
 		`{"from":"0xother1","to":"0xother2","input":"0x","hash":"0xh1"}` +
 		`]}}`
 
-	got := FilterBlockTransactions([]byte(response), []string{userAddr}, true)
+	got := FilterBlockTransactions(rbac.ReadProfileStandard, []byte(response), []string{userAddr}, true)
 	gasUsed, blobGasUsed := extractBlockGasFields(t, got)
 	if gasUsed != expectedZeroGasUsed {
 		t.Errorf("gasUsed must be zeroed for non-participants (the actual presence-leak case)\ngot:  %s\nwant: %s", gasUsed, expectedZeroGasUsed)
@@ -618,7 +293,7 @@ func TestFilterBlockTransactions_BlockGasUsed_Zeroed_EmptyTxArray(t *testing.T) 
 	userAddr := "0xabc1234567890123456789012345678901234567"
 	response := `{"jsonrpc":"2.0","id":1,"result":{"number":"0x1","gasUsed":"0x500000","blobGasUsed":"0x20000","transactions":[]}}`
 
-	got := FilterBlockTransactions([]byte(response), []string{userAddr}, true)
+	got := FilterBlockTransactions(rbac.ReadProfileStandard, []byte(response), []string{userAddr}, true)
 	gasUsed, blobGasUsed := extractBlockGasFields(t, got)
 	if gasUsed != expectedZeroGasUsed {
 		t.Errorf("gasUsed must be zeroed on empty-tx blocks\ngot:  %s\nwant: %s", gasUsed, expectedZeroGasUsed)
@@ -632,7 +307,7 @@ func TestFilterBlockTransactions_BlockGasUsed_Zeroed_HashesOnly(t *testing.T) {
 	userAddr := "0xabc1234567890123456789012345678901234567"
 	response := `{"jsonrpc":"2.0","id":1,"result":{"number":"0x1","gasUsed":"0x500000","transactions":["0xhash1","0xhash2"]}}`
 
-	got := FilterBlockTransactions([]byte(response), []string{userAddr}, false)
+	got := FilterBlockTransactions(rbac.ReadProfileStandard, []byte(response), []string{userAddr}, false)
 	gasUsed, _ := extractBlockGasFields(t, got)
 	if gasUsed != expectedZeroGasUsed {
 		t.Errorf("gasUsed must be zeroed on hash-only blocks\ngot:  %s\nwant: %s", gasUsed, expectedZeroGasUsed)
@@ -645,7 +320,7 @@ func TestFilterBlockTransactions_BlockGasUsed_Untouched_WhenFieldAbsent(t *testi
 	userAddr := "0xabc1234567890123456789012345678901234567"
 	response := `{"jsonrpc":"2.0","id":1,"result":{"number":"0x1","gasUsed":"0x500000","transactions":[]}}`
 
-	got := FilterBlockTransactions([]byte(response), []string{userAddr}, true)
+	got := FilterBlockTransactions(rbac.ReadProfileStandard, []byte(response), []string{userAddr}, true)
 	var resp struct {
 		Result map[string]json.RawMessage `json:"result"`
 	}
@@ -665,7 +340,7 @@ func TestFilterBlockTransactions_ContractCreation_DeployerKept(t *testing.T) {
 		`{"from":"0xother","to":null,"input":"0x60806040"}` +
 		`]}}`
 
-	got := FilterBlockTransactions([]byte(response), []string{userAddr}, true)
+	got := FilterBlockTransactions(rbac.ReadProfileStandard, []byte(response), []string{userAddr}, true)
 	var resp struct {
 		Result *struct {
 			Transactions []json.RawMessage `json:"transactions"`
@@ -690,7 +365,7 @@ func TestFilterBlockTransactions_AllNonParticipant_BlockMetadataPreserved(t *tes
 		`{"from":"0xother3","to":"0xother4","input":"0x"}` +
 		`]}}`
 
-	got := FilterBlockTransactions([]byte(response), []string{userAddr}, true)
+	got := FilterBlockTransactions(rbac.ReadProfileStandard, []byte(response), []string{userAddr}, true)
 	var resp struct {
 		Result *struct {
 			Number       string            `json:"number"`
@@ -724,7 +399,7 @@ func TestFilterBlockReceipts_AllNonParticipant_EmptyArray(t *testing.T) {
 		`{"from":"0xother5","to":"0xother6","status":"0x0","gasUsed":"0x5208","logs":[],"logsBloom":"0x0"}` +
 		`]}`
 
-	got := FilterBlockReceipts([]byte(response), []string{userAddr})
+	got := FilterBlockReceipts(rbac.ReadProfileStandard, []byte(response), []string{userAddr}, nil, nil, nil, nil, nil)
 	var resp struct {
 		Result []json.RawMessage `json:"result"`
 	}
@@ -741,7 +416,7 @@ func TestFilterBlockReceipts_NonParticipant_NotLeaked(t *testing.T) {
 	userAddr := "0xabc1234567890123456789012345678901234567"
 	response := `{"jsonrpc":"2.0","id":1,"result":[{"from":"0xsender","to":"0xreceiver","status":"0x1","gasUsed":"0x5208","contractAddress":null,"logs":[],"logsBloom":"0x0"}]}`
 
-	got := FilterBlockReceipts([]byte(response), []string{userAddr})
+	got := FilterBlockReceipts(rbac.ReadProfileStandard, []byte(response), []string{userAddr}, nil, nil, nil, nil, nil)
 	var resp struct {
 		Result []json.RawMessage `json:"result"`
 	}
@@ -753,33 +428,45 @@ func TestFilterBlockReceipts_NonParticipant_NotLeaked(t *testing.T) {
 	}
 }
 
-func TestFilterBlockReceipts_ContractCreation_DeployerKeepsLogs(t *testing.T) {
-	// Contract creation receipt in a block — deployer sees logs whose topics match their address.
+func TestFilterBlockReceipts_ContractCreation_DeployerLogsFollowGrant(t *testing.T) {
+	// Contract creation receipt in a block: the deployer (tx from) keeps the
+	// receipt, and its logs go through the shared log engine like any receipt
+	// log (RD-1299): admitted on a granted emitter, dropped without a grant.
 	userAddr := "0xabc1234567890123456789012345678901234567"
+	emitter := "0x1111111111111111111111111111111111111111"
 	paddedAddr := "0x000000000000000000000000abc1234567890123456789012345678901234567"
-	response := `{"jsonrpc":"2.0","id":1,"result":[{"from":"` + userAddr + `","to":null,"contractAddress":"0xnewcontract","status":"0x1","logs":[{"address":"0x1","topics":["0xevent","` + paddedAddr + `"]}],"logsBloom":"0xfull"}]}`
+	response := `{"jsonrpc":"2.0","id":1,"result":[{"from":"` + userAddr + `","to":null,"contractAddress":"0xnewcontract","status":"0x1","transactionHash":"0xd1","logs":[{"address":"` + emitter + `","topics":["0xevent","` + paddedAddr + `"],"transactionHash":"0xd1"}],"logsBloom":"0xfull"}]}`
 
-	got := FilterBlockReceipts([]byte(response), []string{userAddr})
-	var resp struct {
-		Result []struct {
-			Logs []json.RawMessage `json:"logs"`
-		} `json:"result"`
+	logsFor := func(perms *rbac.EffectivePermissions) int {
+		got := FilterBlockReceipts(rbac.ReadProfileStandard, []byte(response), []string{userAddr}, perms, nil, nil, nil, nil)
+		var resp struct {
+			Result []struct {
+				Logs []json.RawMessage `json:"logs"`
+			} `json:"result"`
+		}
+		if err := json.Unmarshal(got, &resp); err != nil {
+			t.Fatalf("output not valid JSON: %v", err)
+		}
+		if len(resp.Result) != 1 {
+			t.Fatalf("expected the deployer's receipt, got %d", len(resp.Result))
+		}
+		return len(resp.Result[0].Logs)
 	}
-	if err := json.Unmarshal(got, &resp); err != nil {
-		t.Fatalf("output not valid JSON: %v", err)
+	granted := &rbac.EffectivePermissions{ContractAccess: map[string]rbac.ContractAccess{
+		emitter: {EventRules: &rbac.EventRulesField{Wildcard: true}},
+	}}
+	if n := logsFor(granted); n != 1 {
+		t.Errorf("deployer with a grant on the emitter must see its log, got %d", n)
 	}
-	if len(resp.Result) != 1 {
-		t.Fatalf("expected 1 receipt, got %d", len(resp.Result))
-	}
-	if len(resp.Result[0].Logs) != 1 {
-		t.Errorf("deployer must see log with matching topic, got %d logs", len(resp.Result[0].Logs))
+	if n := logsFor(&rbac.EffectivePermissions{ContractAccess: map[string]rbac.ContractAccess{}}); n != 0 {
+		t.Errorf("a topic naming the deployer is not a grant: without one the log must be dropped, got %d", n)
 	}
 }
 
 func TestFilterBlockReceipts_EmptyBlock(t *testing.T) {
 	// Empty block — empty array, valid response.
 	response := `{"jsonrpc":"2.0","id":1,"result":[]}`
-	got := FilterBlockReceipts([]byte(response), []string{"0xabc1234567890123456789012345678901234567"})
+	got := FilterBlockReceipts(rbac.ReadProfileStandard, []byte(response), []string{"0xabc1234567890123456789012345678901234567"}, nil, nil, nil, nil, nil)
 
 	var resp struct {
 		Result []json.RawMessage `json:"result"`
@@ -792,20 +479,14 @@ func TestFilterBlockReceipts_EmptyBlock(t *testing.T) {
 	}
 }
 
-// TestFilterBlockReceipts_ParticipantAddresslessOwnTxLog_GAP_RD1162 pins a KNOWN
-// GAP: eth_getBlockReceipts still uses the simple topic-address filter
-// (filterReceiptLogs), NOT the event-rules/participant path. So a participant's
-// own address-less log (e.g. PaymentCompleted, keyed by a business identifier)
-// is NOT admitted here — unlike eth_getLogs / eth_getTransactionReceipt after
-// RD-1162. The participant keeps the receipt envelope but the address-less log
-// is stripped.
-//
-// GAP RD-1162: fix = migrate eth_getBlockReceipts to FilterReceiptLogsWithEventRules
-// (the event-rules path). When fixed this test will see the log admitted — update
-// the expectation to 1 and move it out of the gap section.
-func TestFilterBlockReceipts_ParticipantAddresslessOwnTxLog_GAP_RD1162(t *testing.T) {
+// TestFilterBlockReceipts_ParticipantAddresslessOwnTxLog_RD1162: eth_getBlockReceipts
+// runs the same per-receipt decision as eth_getTransactionReceipt (RD-1299), so a
+// participant's own address-less log (e.g. PaymentCompleted, keyed by a business
+// identifier) on a granted contract is admitted here too (RD-1162), and dropped
+// without a grant.
+func TestFilterBlockReceipts_ParticipantAddresslessOwnTxLog_RD1162(t *testing.T) {
 	userAddr := "0xabc1234567890123456789012345678901234567"
-	contract := "0xcontract0000000000000000000000000000001"
+	contract := "0xc0ffee0000000000000000000000000000000001"
 	// Address-less log: topics = [event signature, indexed bytes32 record key];
 	// neither is the viewer's address. userAddr is the tx sender (participant).
 	eventTopic0 := "0xddd0000000000000000000000000000000000000000000000000000000000000"
@@ -814,86 +495,28 @@ func TestFilterBlockReceipts_ParticipantAddresslessOwnTxLog_GAP_RD1162(t *testin
 		`","status":"0x1","transactionHash":"0xdeadbeef","logs":[{"address":"` + contract +
 		`","topics":["` + eventTopic0 + `","` + recordKey + `"],"transactionHash":"0xdeadbeef"}],"logsBloom":"0xfull"}]}`
 
-	got := FilterBlockReceipts([]byte(response), []string{userAddr})
-	var resp struct {
-		Result []struct {
-			Logs []json.RawMessage `json:"logs"`
-		} `json:"result"`
+	logsFor := func(perms *rbac.EffectivePermissions) int {
+		got := FilterBlockReceipts(rbac.ReadProfileStandard, []byte(response), []string{userAddr}, perms, nil, nil, nil, nil)
+		var resp struct {
+			Result []struct {
+				Logs []json.RawMessage `json:"logs"`
+			} `json:"result"`
+		}
+		if err := json.Unmarshal(got, &resp); err != nil {
+			t.Fatalf("output not valid JSON: %v", err)
+		}
+		if len(resp.Result) != 1 {
+			t.Fatalf("participant's receipt must be kept, got %d receipts", len(resp.Result))
+		}
+		return len(resp.Result[0].Logs)
 	}
-	if err := json.Unmarshal(got, &resp); err != nil {
-		t.Fatalf("output not valid JSON: %v", err)
+	// Deny-all event rules: only the RD-1162 participant path can admit it.
+	granted := &rbac.EffectivePermissions{ContractAccess: map[string]rbac.ContractAccess{contract: {}}}
+	if n := logsFor(granted); n != 1 {
+		t.Errorf("participant must see their own address-less log on a granted contract, got %d", n)
 	}
-	if len(resp.Result) != 1 {
-		t.Fatalf("participant's receipt must be kept, got %d receipts", len(resp.Result))
-	}
-	if len(resp.Result[0].Logs) != 0 {
-		t.Errorf("GAP RD-1162: eth_getBlockReceipts does not yet admit a participant's "+
-			"address-less own-tx log; expected 0 logs (documented gap), got %d. "+
-			"If this is now 1, the gap was fixed — migrate getBlockReceipts to the "+
-			"event-rules path and update this test.", len(resp.Result[0].Logs))
-	}
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// Group 7: topicMatchesAddress — additional edge cases
-// ──────────────────────────────────────────────────────────────────────────
-
-func TestTopicMatchesAddress_ZeroAddress_OnlyMatchesZeroTopic(t *testing.T) {
-	// If a user links address(0), they would see events where address(0) appears as
-	// an indexed param — e.g., ERC-20 mint events (Transfer from address(0)).
-	// They do NOT see events for random non-zero addresses.
-	zeroAddr := "0x0000000000000000000000000000000000000000"
-	addrSet := map[string]bool{zeroAddr: true}
-
-	// A regular transfer topic (topics[1] = some real address) — must NOT match zero addr
-	transferSenderTopic := "0x000000000000000000000000abcdef1234567890123456789012345678901234"
-	if topicMatchesAddress(transferSenderTopic, addrSet) {
-		t.Errorf("zero address should not match a non-zero address topic")
-	}
-
-	// Zero-address topic (e.g., token mint: Transfer(0x0, recipient, amount))
-	// topics[1] = padded zero address
-	zeroTopic := "0x0000000000000000000000000000000000000000000000000000000000000000"
-	if !topicMatchesAddress(zeroTopic, addrSet) {
-		t.Errorf("zero address should match zero-padded zero-address topic (mint events)")
-	}
-}
-
-func TestTopicMatchesAddress_ShortTopics(t *testing.T) {
-	addrSet := map[string]bool{"0xabc1234567890123456789012345678901234567": true}
-	tests := []struct {
-		name  string
-		topic string
-		want  bool
-	}{
-		{"empty string", "", false},
-		{"just 0x", "0x", false},
-		{"too short 4 chars", "0x0000", false},
-		// 65 chars = odd hex — not exactly 66 chars
-		{"65 chars", "0x" + strings.Repeat("0", 63), false},
-		// 67 chars — too long
-		{"67 chars", "0x" + strings.Repeat("0", 65), false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := topicMatchesAddress(tt.topic, addrSet)
-			if got != tt.want {
-				t.Errorf("topicMatchesAddress(%q) = %v, want %v", tt.topic, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestTopicMatchesAddress_ExactlyValidLength(t *testing.T) {
-	// Exactly 66 chars, correctly zero-padded — must match.
-	addr := "0xabc1234567890123456789012345678901234567"
-	addrSet := map[string]bool{addr: true}
-	topic := "0x000000000000000000000000abc1234567890123456789012345678901234567"
-	if len(topic) != 66 {
-		t.Fatalf("test setup error: expected 66 chars, got %d", len(topic))
-	}
-	if !topicMatchesAddress(topic, addrSet) {
-		t.Errorf("valid 66-char zero-padded address topic must match")
+	if n := logsFor(&rbac.EffectivePermissions{ContractAccess: map[string]rbac.ContractAccess{}}); n != 0 {
+		t.Errorf("without a grant the log must be dropped (grant bound), got %d", n)
 	}
 }
 
@@ -918,8 +541,8 @@ func TestBehavioralConsistency_BlockTxAndBlockReceipts_BothShrink(t *testing.T) 
 		`{"from":"0xother3","to":"0xother4","status":"0x1","logs":[],"logsBloom":"0x0"}` +
 		`]}`
 
-	filteredTxBlock := FilterBlockTransactions([]byte(txBlock), []string{userAddr}, true)
-	filteredReceiptBlock := FilterBlockReceipts([]byte(receiptBlock), []string{userAddr})
+	filteredTxBlock := FilterBlockTransactions(rbac.ReadProfileStandard, []byte(txBlock), []string{userAddr}, true)
+	filteredReceiptBlock := FilterBlockReceipts(rbac.ReadProfileStandard, []byte(receiptBlock), []string{userAddr}, nil, nil, nil, nil, nil)
 
 	var txResp struct {
 		Result *struct {

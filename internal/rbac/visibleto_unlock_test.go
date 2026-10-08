@@ -5,6 +5,8 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+
+	"privacy-proxy/internal/viewscope"
 )
 
 // unlockStore is a Store double for the visibleTo-unlock eligibility helper.
@@ -127,6 +129,40 @@ func TestUnlockableContracts_EligibilityBoundary(t *testing.T) {
 		if store.contractCalls != 7 || store.userCalls != 1 || store.membershipCalls != 2 || store.grantCalls != 1 {
 			t.Fatalf("per-request cost: contracts=%d user=%d memberships=%d grants=%d, want 7 (one per unique non-empty address)/1/2 (one per owner org)/1 (org admin needs none)",
 				store.contractCalls, store.userCalls, store.membershipCalls, store.grantCalls)
+		}
+	})
+
+	t.Run("viewer org scope", func(t *testing.T) {
+		for _, tc := range []struct {
+			name string
+			org  string
+			want map[string]bool
+		}{
+			{"direct grant", orgA, map[string]bool{flaggedRegular: true}},
+			{"owning org admin", orgB, map[string]bool{flaggedAdmin: true}},
+			{"empty scope", "", map[string]bool{}},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				ctx := viewscope.WithOrg(context.Background(), tc.org)
+				store := newStore()
+				access := NewAccessController(store, 0)
+				got := UnlockableContracts(ctx, access, "did:test:viewer", all)
+				if !reflect.DeepEqual(got, tc.want) {
+					t.Errorf("UnlockableContracts = %v, want %v", got, tc.want)
+				}
+				if tc.org == "" {
+					if store.contractCalls != 0 || store.userCalls != 0 || store.membershipCalls != 0 || store.grantCalls != 0 {
+						t.Errorf("empty scope performs lookups: contracts=%d user=%d memberships=%d grants=%d", store.contractCalls, store.userCalls, store.membershipCalls, store.grantCalls)
+					}
+				} else if store.membershipCalls != 1 {
+					t.Errorf("memberships read for %d orgs, want 1", store.membershipCalls)
+				}
+				for _, addr := range []string{flaggedRegular, flaggedAdmin} {
+					if got := IsViewerEligibleForVisibleToUnlock(ctx, access, "did:test:viewer", addr); got != tc.want[addr] {
+						t.Errorf("IsViewerEligibleForVisibleToUnlock(%s) = %v, want %v", addr, got, tc.want[addr])
+					}
+				}
+			})
 		}
 	})
 

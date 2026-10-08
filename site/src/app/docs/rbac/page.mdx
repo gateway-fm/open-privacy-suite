@@ -29,7 +29,7 @@ smart contracts.
 
 The RBAC system uses a **two-layer permission model**: a method allowlist controls which RPC methods a group can call, and operational claims (`deploy`, `upgrade`, `admin`) gate specific high-privilege operations.
 
-1. **Method allowlist is the source of truth for non-privileged access** -- each group defines which RPC methods are permitted via `GroupAccess.allowed_methods`. If `eth_call` is not in the list, the user cannot call it. If `eth_sendTransaction` is not in the list, the user cannot send transactions.
+1. **Method allowlist is the source of truth for non-privileged access** -- each group defines which RPC methods are permitted via `GroupAccess.allowed_methods`. If `eth_call` is not in the list, the user cannot call it. If `eth_sendTransaction` is not in the list, the user cannot send transactions. The list names methods exactly, and it can only hold methods the proxy supports: the built-in methods plus the chain-specific methods the operator declares (see [Extra RPC Namespaces](/docs/configuration#extra-rpc-namespaces)). A method the proxy does not support is refused for everyone, whatever the list says.
 
 2. **Operational claims gate privileged operations** -- only `deploy`, `upgrade`, and `admin` are claim-gated. Contract deployment requires the `deploy` claim. Proxy upgrades require the `upgrade` claim. The `admin` claim implies both.
 
@@ -160,12 +160,57 @@ Non-privileged method access (reads + non-mutating calls + ordinary writes) is c
 
 The `debug_traceTransaction` and `debug_traceCall` methods are gated by the method
 allowlist like every other RPC method: a group can use them only if they appear in that
-group's allowed methods (or the group allows all methods). The `deploy` claim does **not**
+group's allowed methods. The `deploy` claim does **not**
 grant tracing — a group that holds `deploy` but does not list `debug_trace*` in its allowed
 methods cannot trace. This includes **org-admin groups**: an org-admin group that should be
-able to trace must include `debug_traceTransaction` / `debug_traceCall` (or `*`) in its
-allowed methods. Cross-organization isolation on trace results is always enforced separately,
-regardless of the allowlist.
+able to trace must include `debug_traceTransaction` / `debug_traceCall` in its
+allowed methods.
+
+Being on the allowlist is necessary but not sufficient. Each trace is also checked the same
+way as the method it mirrors:
+
+- **`debug_traceCall`** gets the same checks as `eth_call` for the target contract:
+  - the caller needs access to the contract;
+  - function restrictions apply;
+  - Multicall batches are refused;
+  - a historical block is refused for non-admins;
+  - a banned or unverified user is refused;
+  - a `from` that is not one of the caller's linked addresses is refused.
+- **`debug_traceTransaction`** follows the same access checks as `eth_getTransactionByHash`.
+  A user in more than one organization must use `/rpc/:org_id`, and a banned or unverified user
+  is refused. Under the standard read profile, a transaction is replayed only for its sender or recipient, an admin of the
+  contract it called, or a recipient it was shared with. Anyone else is denied, and a
+  transaction that does not exist is denied in exactly the same way.
+
+For `debug_traceCall` and standard-profile `debug_traceTransaction`, the proxy returns only the **call tree** (the `callTracer` output), and only when the
+caller has access to **every** contract the trace passes through, in the organization the
+request is for. A trace into a contract the caller has no access to is denied, even if the
+entry contract is accessible, because a trace shows every internal call's input and output.
+Function and argument restrictions apply to those internal calls as well. A proxy's delegated
+calls use the caller's permissions on the proxy, and the implementation must still pass the
+organization check. Validated precompiles, shared infrastructure and contract creation retain
+their existing access rules.
+
+Under the strict read profile, `debug_traceTransaction` returns only the top frame, without
+internal calls or logs, to an authenticated linked sender or recipient. Current contract
+grants and deploy/admin claims do not add readers or remove a participant's top frame.
+The returned frame must still pass the organization ownership checks; an unregistered
+call target remains unavailable. The proxy verifies participation against both the transaction
+lookup and the returned root frame. A nonparticipant and a missing transaction both receive
+404 `transaction not found`.
+
+A request with no tracer configured uses the profile's callTracer preset. Strict mined traces
+also accept only `onlyTopCall:true` and `withLog:false` as caller options. Explicit requests for any other output
+are rejected:
+
+- `prestateTracer`;
+- JavaScript tracers;
+- struct-logger options such as `enableMemory`;
+- `callTracer` with `withLog`;
+- state or block overrides.
+
+Supported client trace output consists of call-tree frames. Contract storage, memory and event
+logs retain their respective read-method policies.
 
 </Callout>
 
@@ -308,11 +353,13 @@ This prevents an admin from configuring event rules that target users or contrac
 
 <Callout variant="warning" title="Known limitations">
 
-- `eth_getStorageAt` uses tiered access (admin: all slots, non-admin: EIP-1967 proxy infrastructure slots only) which limits but does not fully prevent storage-level reads -- the four allowed proxy slots expose implementation/admin addresses only
+- `eth_getStorageAt` and `eth_getProof` use tiered access (admin: all slots, non-admin: EIP-1967 / EIP-2535 proxy infrastructure slots only) which limits but does not fully prevent storage-level reads -- the four allowed proxy slots expose implementation/admin addresses only, and an allowed proof also carries the contract's storage root and trie hashes (see [Response Filtering](/docs/security/response-filtering#eth_getproof))
 - Internal calls within contracts cannot be intercepted
 - Users without a linked ETH address cannot access functions with param constraints
 
 </Callout>
+
+**Client state and block overrides are unsupported for every caller, including admins.** Ordinary calls and simulations remain available against the configured node's state. OPS checks optional override arguments on call, gas-estimation, access-list, and trace methods, including explicitly mapped equivalents; bundled simulation methods are unsupported. See [Response filtering](/docs/security/response-filtering) for the accepted argument forms. Details: RD-1305.
 
 ### Multi-Organization Users
 
@@ -517,6 +564,10 @@ Tier-2 org admins can ask the proxy "what would user X see if they made this RPC
 
 <ApiEndpoint method="POST" path="/api/orgs/:org_id/dry-run" description="Dry-run an RPC call as another user (admin diagnostic)" />
 
+<Callout variant="info" title="Strict read profile">
+  With `PRIVACY_READ_PROFILE=strict`, dry-run of a read method is refused with 403 (and audited) because it would show the member's own chain data to the admin; a dry-run of a send still returns the allow/deny verdict, without the simulated trace or its logs. See [Strict Read Profile](/docs/security/strict-read-profile).
+</Callout>
+
 ### Who can call it
 
 - **Tier-2 org admin** in `:org_id` — yes, via JWT.
@@ -550,17 +601,18 @@ POST /api/orgs/:org_id/dry-run
 }
 ```
 
-Non-mutating methods (`eth_call`, `eth_getLogs`, `eth_getTransactionReceipt`, `eth_getTransactionByHash`, `eth_getBalance`, `eth_getCode`, `eth_getStorageAt`, `eth_blockNumber`, `eth_chainId`) pass through to the upstream node and return the user's would-be response.
+Non-mutating methods (`eth_call`, `eth_getLogs`, `eth_getTransactionReceipt`, `eth_getTransactionByHash`, `eth_getBalance`, `eth_getCode`, `eth_getStorageAt`, `eth_blockNumber`, `eth_chainId`) are forwarded to the upstream node, and the response goes through the same privacy filter as the user's own call, evaluated in `:org_id`: a transaction the user may not read comes back `null`, and logs and receipts are filtered and their embedded addresses redacted exactly as on the live RPC. The user's grants, admin role and `visibleTo` shares from another organization do not apply, and the user's own transactions or receipts with another organization's contract (including deploying one) come back `null`.
 
-Mutating methods (`eth_sendTransaction`) are translated to `debug_traceCall` against the upstream node — current state, no commit. The trace returns nested call frames + emitted logs; the proxy walks the frames and runs the logs through the impersonated user's RBAC view, returning both the full event list (`logs_emitted`) and the subset the user would actually see (`logs_visible_to_user`).
+Mutating methods (`eth_sendTransaction`, `eth_sendRawTransaction`) are translated to `debug_traceCall` against the upstream node — current state, no commit. The trace returns nested call frames + emitted logs; the proxy returns the full event list (`logs_emitted`) and the subset the user would see in that transaction's receipt (`logs_visible_to_user`), filtered and redacted the same way as a real receipt in `:org_id`.
 
 ### Operational requirements
 
 - The upstream node must expose `debug_traceCall` for mutating-method dry-run to work (Geth: `--http.api debug`). If unavailable, mutating calls return a clear error; non-mutating methods continue to work.
 - All dry-run calls are recorded in the `impersonation_log` table with the actor's DID, the impersonated user's DID, the method, a SHA-256 hash of the params (raw params are never persisted), the decision, and a correlation ID. Operators are expected to forward this log to their SIEM via the existing `audit-forwarder` integration.
 - Dry-run results have no side effects on chain state, no caching that would survive past the request, and no JWT minting at any point. The "impersonated" identity exists only inside one request handler.
+- Disclosure grants the user holds never apply to a dry-run: a grant is approved for the grantee only, so addresses it would disclose stay redacted in the answer (see [Selective Disclosure](/docs/disclosure)).
 
 ### Limitations
 
 - Cross-org impersonation is structurally blocked (admin in Org A can only dry-run or browse as users with a membership in Org A).
-- Dashboard View-as is read-only and scoped to one explicit organization. It applies the target user's visibility without merging the admin's broader grants; see [View as user](/docs/security/view-as-user).
+- Dashboard View-as is read-only and scoped to one explicit organization. It applies the target user's visibility without merging the admin's broader grants; its RPC calls are evaluated in the named organization the same way as dry-run. See [View as user](/docs/security/view-as-user).

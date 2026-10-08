@@ -3,6 +3,8 @@ package server
 import (
 	"encoding/json"
 	"testing"
+
+	"privacy-proxy/internal/rbac"
 )
 
 func TestFilterTransactionByHash(t *testing.T) {
@@ -53,7 +55,7 @@ func TestFilterTransactionByHash(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := FilterTransactionByHash([]byte(tt.response), userAddrs, false)
+			got := FilterTransactionByHash(rbac.ReadProfileStandard, []byte(tt.response), userAddrs, false, nil)
 			var resp struct {
 				Result *json.RawMessage `json:"result"`
 				Error  *json.RawMessage `json:"error"`
@@ -80,7 +82,7 @@ func TestFilterTransactionByHash(t *testing.T) {
 
 func TestFilterTransactionByHash_EmptyAddresses(t *testing.T) {
 	response := `{"jsonrpc":"2.0","id":1,"result":{"hash":"0xabc","from":"0xsomeone","to":"0xother","input":"0x","nonce":"0x1"}}`
-	got := FilterTransactionByHash([]byte(response), nil, false)
+	got := FilterTransactionByHash(rbac.ReadProfileStandard, []byte(response), nil, false, nil)
 	var resp struct {
 		Result *json.RawMessage `json:"result"`
 	}
@@ -101,14 +103,14 @@ func TestFilterTransactionByHash_LineaExclusionStatus(t *testing.T) {
 
 	// Linea exclusion status response: has "from" but no "to"
 	participantResponse := `{"jsonrpc":"2.0","id":1,"result":{"txHash":"0x526e","from":"0x4d144d7b9c96b26361d6ac74dd1d8267edca4fc2","nonce":"0x64","txRejectionStage":"SEQUENCER","reasonMessage":"Transaction line count for module ADD=402 is above the limit 70","blockNumber":"0x3039","timestamp":"2024-08-22T09:18:51Z"}}`
-	got := FilterTransactionByHash([]byte(participantResponse), userAddrs, false)
+	got := FilterTransactionByHash(rbac.ReadProfileStandard, []byte(participantResponse), userAddrs, false, nil)
 	if string(got) != participantResponse {
 		t.Errorf("participant should see full response\n got: %s\nwant: %s", got, participantResponse)
 	}
 
 	// Non-participant should get null
 	nonParticipantResponse := `{"jsonrpc":"2.0","id":2,"result":{"txHash":"0x526e","from":"0xother","nonce":"0x64","txRejectionStage":"SEQUENCER","reasonMessage":"some reason","blockNumber":"0x3039","timestamp":"2024-08-22T09:18:51Z"}}`
-	got = FilterTransactionByHash([]byte(nonParticipantResponse), userAddrs, false)
+	got = FilterTransactionByHash(rbac.ReadProfileStandard, []byte(nonParticipantResponse), userAddrs, false, nil)
 	var resp struct {
 		Result *json.RawMessage `json:"result"`
 	}
@@ -122,221 +124,9 @@ func TestFilterTransactionByHash_LineaExclusionStatus(t *testing.T) {
 
 	// Null result passes through (tx not in exclusion list)
 	nullResponse := `{"jsonrpc":"2.0","id":3,"result":null}`
-	got = FilterTransactionByHash([]byte(nullResponse), userAddrs, false)
+	got = FilterTransactionByHash(rbac.ReadProfileStandard, []byte(nullResponse), userAddrs, false, nil)
 	if string(got) != nullResponse {
 		t.Errorf("null result should pass through\n got: %s\nwant: %s", got, nullResponse)
-	}
-}
-
-func TestFilterTransactionReceipt(t *testing.T) {
-	userAddrs := []string{"0xabc1234567890123456789012345678901234567"}
-
-	paddedAddr := "0x000000000000000000000000abc1234567890123456789012345678901234567"
-
-	tests := []struct {
-		name          string
-		response      string
-		wantNull      bool // non-participant: result must be null
-		wantFull      bool // participant: receipt passes through unchanged (for null/error cases)
-		wantReceipt   bool // participant: receipt present with filtered logs
-		wantLogCount  int  // expected number of logs after filtering
-	}{
-		{
-			name:         "participant as from gets receipt with filtered logs",
-			response:     `{"jsonrpc":"2.0","id":1,"result":{"from":"0xabc1234567890123456789012345678901234567","to":"0xother","logs":[{"address":"0x1","topics":["0xevent","` + paddedAddr + `"]}],"logsBloom":"0x1234"}}`,
-			wantReceipt:  true,
-			wantLogCount: 1,
-		},
-		{
-			name:         "participant as to gets receipt with filtered logs",
-			response:     `{"jsonrpc":"2.0","id":2,"result":{"from":"0xother","to":"0xabc1234567890123456789012345678901234567","logs":[{"address":"0x1","topics":["0xevent","` + paddedAddr + `"]}],"logsBloom":"0x1234"}}`,
-			wantReceipt:  true,
-			wantLogCount: 1,
-		},
-		{
-			name:     "non-participant returns null",
-			response: `{"jsonrpc":"2.0","id":3,"result":{"from":"0xother1","to":"0xother2","logs":[{"address":"0x1","topics":["0xevent"]}],"logsBloom":"0x1234"}}`,
-			wantNull: true,
-		},
-		{
-			name:     "null result passes through",
-			response: `{"jsonrpc":"2.0","id":4,"result":null}`,
-			wantFull: true,
-		},
-		{
-			name:     "error passes through",
-			response: `{"jsonrpc":"2.0","id":5,"error":{"code":-32000,"message":"not found"}}`,
-			wantFull: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := FilterTransactionReceipt([]byte(tt.response), userAddrs)
-			if tt.wantFull {
-				if string(got) != tt.response {
-					t.Errorf("expected pass-through\n got: %s\nwant: %s", got, tt.response)
-				}
-				return
-			}
-			if tt.wantNull {
-				var resp struct {
-					Result *json.RawMessage `json:"result"`
-				}
-				if err := json.Unmarshal(got, &resp); err != nil {
-					t.Fatalf("output not valid JSON: %v\noutput: %s", err, got)
-				}
-				isNull := resp.Result == nil || string(*resp.Result) == "null"
-				if !isNull {
-					t.Errorf("expected null result for non-participant, got: %s", got)
-				}
-				return
-			}
-			if tt.wantReceipt {
-				var resp struct {
-					Result *struct {
-						Logs []json.RawMessage `json:"logs"`
-					} `json:"result"`
-				}
-				if err := json.Unmarshal(got, &resp); err != nil {
-					t.Fatalf("output not valid JSON: %v\noutput: %s", err, got)
-				}
-				if resp.Result == nil {
-					t.Fatal("expected non-null result for participant")
-				}
-				if len(resp.Result.Logs) != tt.wantLogCount {
-					t.Errorf("expected %d logs, got %d\noutput: %s", tt.wantLogCount, len(resp.Result.Logs), got)
-				}
-			}
-		})
-	}
-}
-
-func TestFilterTransactionReceipt_NilAddresses(t *testing.T) {
-	response := `{"jsonrpc":"2.0","id":1,"result":{"from":"0xsomeone","to":"0xother","logs":[{"address":"0x1","topics":["0xevent"]}],"logsBloom":"0xabc"}}`
-	got := FilterTransactionReceipt([]byte(response), nil)
-	var resp struct {
-		Result *json.RawMessage `json:"result"`
-	}
-	if err := json.Unmarshal(got, &resp); err != nil {
-		t.Fatalf("output not valid JSON: %v", err)
-	}
-	isNull := resp.Result == nil || string(*resp.Result) == "null"
-	if !isNull {
-		t.Errorf("expected null result for nil addresses (no participant match), got: %s", got)
-	}
-}
-
-func TestFilterLogs(t *testing.T) {
-	userAddrs := []string{"0xabc1234567890123456789012345678901234567"}
-	// Padded version of user's address as a topic
-	paddedAddr := "0x000000000000000000000000abc1234567890123456789012345678901234567"
-
-	tests := []struct {
-		name      string
-		response  string
-		wantCount int
-	}{
-		{
-			name:      "log with user address in topic[1] is kept",
-			response:  `{"jsonrpc":"2.0","id":1,"result":[{"topics":["0xeventSig","` + paddedAddr + `","0x0000000000000000000000000000000000000000000000000000000000000000"]}]}`,
-			wantCount: 1,
-		},
-		{
-			name:      "log with user address in topic[2] is kept",
-			response:  `{"jsonrpc":"2.0","id":2,"result":[{"topics":["0xeventSig","0x0000000000000000000000000000000000000000000000000000000000000000","` + paddedAddr + `"]}]}`,
-			wantCount: 1,
-		},
-		{
-			name:      "log without user address is removed",
-			response:  `{"jsonrpc":"2.0","id":3,"result":[{"topics":["0xeventSig","0x000000000000000000000000aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","0x000000000000000000000000bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]}]}`,
-			wantCount: 0,
-		},
-		{
-			// topics[0] holds a zero-padded address — anonymous event (no sig hash).
-			// The user IS a participant and must see this log.
-			name:      "anonymous event: user address in topic[0] is kept",
-			response:  `{"jsonrpc":"2.0","id":4,"result":[{"topics":["` + paddedAddr + `"]}]}`,
-			wantCount: 1,
-		},
-		{
-			// topics[0] holds a real keccak256 hash — normal event sig, not an address.
-			// keccak256 values don't have 12 leading zero bytes, so it must not match.
-			name:      "normal event: keccak256 sig in topic[0] not matched as address",
-			response:  `{"jsonrpc":"2.0","id":8,"result":[{"topics":["0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"]}]}`,
-			wantCount: 0,
-		},
-		{
-			name: "multiple logs: only user's are kept",
-			response: `{"jsonrpc":"2.0","id":5,"result":[` +
-				`{"topics":["0xeventSig","` + paddedAddr + `"]},` +
-				`{"topics":["0xeventSig","0x000000000000000000000000aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]}` +
-				`]}`,
-			wantCount: 1,
-		},
-		{
-			name:      "empty result passes through",
-			response:  `{"jsonrpc":"2.0","id":6,"result":[]}`,
-			wantCount: 0,
-		},
-		{
-			name:      "null result passes through",
-			response:  `{"jsonrpc":"2.0","id":7,"result":null}`,
-			wantCount: -1, // special: null passes through
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := FilterLogs([]byte(tt.response), userAddrs)
-			if tt.wantCount == -1 {
-				// null pass-through: result should be null
-				var resp struct {
-					Result *json.RawMessage `json:"result"`
-				}
-				if err := json.Unmarshal(got, &resp); err != nil {
-					t.Fatalf("output not valid JSON: %v", err)
-				}
-				if resp.Result != nil && string(*resp.Result) != "null" {
-					t.Errorf("expected null pass-through, got: %s", got)
-				}
-				return
-			}
-			var resp struct {
-				Result []json.RawMessage `json:"result"`
-			}
-			if err := json.Unmarshal(got, &resp); err != nil {
-				t.Fatalf("output not valid JSON: %v\noutput: %s", err, got)
-			}
-			if len(resp.Result) != tt.wantCount {
-				t.Errorf("expected %d logs, got %d\noutput: %s", tt.wantCount, len(resp.Result), got)
-			}
-		})
-	}
-}
-
-func TestTopicMatchesAddress(t *testing.T) {
-	addrSet := map[string]bool{
-		"0xabc1234567890123456789012345678901234567": true,
-	}
-	tests := []struct {
-		topic string
-		want  bool
-	}{
-		{"0x000000000000000000000000abc1234567890123456789012345678901234567", true},
-		{"0x000000000000000000000000ABC1234567890123456789012345678901234567", true}, // uppercase
-		{"0x000000000000000000000000ffffffffffffffffffffffffffffffffffffffff", false},
-		{"0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef", false}, // event sig (nonzero prefix)
-		{"0x0", false}, // too short
-		{"", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.topic, func(t *testing.T) {
-			got := topicMatchesAddress(tt.topic, addrSet)
-			if got != tt.want {
-				t.Errorf("topicMatchesAddress(%q) = %v, want %v", tt.topic, got, tt.want)
-			}
-		})
 	}
 }
 
@@ -365,7 +155,7 @@ func TestRpcResponseID(t *testing.T) {
 func TestFilterTransactionByHash_PreservesID(t *testing.T) {
 	// Verify that the null response preserves the original request ID
 	response := `{"jsonrpc":"2.0","id":999,"result":{"from":"0xother","to":"0xother2","input":"0x","nonce":"0x1"}}`
-	got := FilterTransactionByHash([]byte(response), []string{"0xmyaddr0000000000000000000000000000000000"}, false)
+	got := FilterTransactionByHash(rbac.ReadProfileStandard, []byte(response), []string{"0xmyaddr0000000000000000000000000000000000"}, false, nil)
 	var resp struct {
 		ID json.RawMessage `json:"id"`
 	}
@@ -419,7 +209,7 @@ func TestFilterBlockTransactions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := FilterBlockTransactions([]byte(tt.response), userAddrs, true)
+			got := FilterBlockTransactions(rbac.ReadProfileStandard, []byte(tt.response), userAddrs, true)
 			if tt.wantCount == -1 {
 				if string(got) != tt.response {
 					// For hash arrays or empty, response might be restructured but semantically same
@@ -488,7 +278,7 @@ func TestFilterBlockReceipts(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := FilterBlockReceipts([]byte(tt.response), userAddrs)
+			got := FilterBlockReceipts(rbac.ReadProfileStandard, []byte(tt.response), userAddrs, nil, nil, nil, nil, nil)
 			if tt.wantReceiptCount == -1 {
 				var v interface{}
 				if err := json.Unmarshal(got, &v); err != nil {
@@ -535,7 +325,7 @@ func TestFilterTransactionByHash_NonParticipantAdmin_ReturnsTx(t *testing.T) {
 	txJSON, _ := json.Marshal(tx)
 	rpcResponse := `{"jsonrpc":"2.0","id":1,"result":` + string(txJSON) + `}`
 
-	got := FilterTransactionByHash([]byte(rpcResponse), []string{adminAddr}, true)
+	got := FilterTransactionByHash(rbac.ReadProfileStandard, []byte(rpcResponse), []string{adminAddr}, true, nil)
 
 	var resp struct {
 		Result *json.RawMessage `json:"result"`
@@ -567,7 +357,7 @@ func TestFilterTransactionByHash_NonParticipantNonAdmin_ReturnsNull(t *testing.T
 	txJSON, _ := json.Marshal(tx)
 	rpcResponse := `{"jsonrpc":"2.0","id":1,"result":` + string(txJSON) + `}`
 
-	got := FilterTransactionByHash([]byte(rpcResponse), []string{viewerAddr}, false)
+	got := FilterTransactionByHash(rbac.ReadProfileStandard, []byte(rpcResponse), []string{viewerAddr}, false, nil)
 
 	var resp struct {
 		Result *json.RawMessage `json:"result"`
@@ -598,7 +388,7 @@ func TestFilterTransactionByHash_AdminIsParticipant_NoBypassNeeded(t *testing.T)
 	rpcResponse := `{"jsonrpc":"2.0","id":1,"result":` + string(txJSON) + `}`
 
 	// Even with isAdminOnTo=false, participant-as-from must still see the tx.
-	got := FilterTransactionByHash([]byte(rpcResponse), []string{selfAddr}, false)
+	got := FilterTransactionByHash(rbac.ReadProfileStandard, []byte(rpcResponse), []string{selfAddr}, false, nil)
 	if string(got) != rpcResponse {
 		t.Errorf("participant should pass through regardless of admin bit\n got: %s\nwant: %s", got, rpcResponse)
 	}

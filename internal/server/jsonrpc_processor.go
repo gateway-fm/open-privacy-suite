@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -71,6 +72,12 @@ type JSONRPCProcessor struct {
 	// that don't exercise field-redaction ⇒ the step is a no-op; production
 	// always wires it via JSONRPCProcessorConfig.AddressVisibilityResolver.
 	addrVisResolver addressVisibilityResolver
+
+	// readProfile is the deployment-wide read privacy profile (RD-1299),
+	// fixed at construction from PRIVACY_READ_PROFILE. Every response filter
+	// takes it as a required argument. The zero value (unset) is enforced as
+	// strict, so an unwired processor fails closed.
+	readProfile rbac.ReadProfile
 
 	// Circuit breaker + concurrency limiter (replaces rate limiter for authenticated users)
 	circuitBreaker         *middleware.CircuitBreaker
@@ -163,7 +170,7 @@ type ProcessRequest struct {
 	OrgID         string // Optional: specify which org to use (for users with multiple memberships)
 	Method        string
 	Params        []any
-	Body          []byte
+	Body          []byte // canonical envelope from ParseAndValidateBody, forwarded upstream
 	ClientIP      string
 	CorrelationID string // Request correlation ID for audit trail
 	// BypassPermsCache, when true, forces AccessController.CheckAccess to
@@ -265,6 +272,10 @@ type JSONRPCProcessorConfig struct {
 	// setters; a restart re-arms these env values (RD-915 KD-5 / RD-1053).
 	EthCallTracing              *EthCallTracingConfig // nil = enabled, 5s timeout
 	IntraOrgGrantTracingEnabled bool                  // zero value = OFF (RD-1053 default)
+
+	// ReadProfile is the read privacy profile (RD-1299). The zero value is
+	// enforced as strict: pass the configured value explicitly.
+	ReadProfile rbac.ReadProfile
 }
 
 // NewJSONRPCProcessor creates a fully wired processor from cfg (RD-1259).
@@ -290,6 +301,7 @@ func NewJSONRPCProcessor(cfg JSONRPCProcessorConfig) *JSONRPCProcessor {
 		logParams:              cfg.AuditLogParams,
 		auditBuffer:            cfg.AuditBuffer,
 		visibilityKick:         cfg.VisibilityKick,
+		readProfile:            cfg.ReadProfile,
 		ethCallTraceTimeout:    5 * time.Second,
 	}
 	// RD-915 env install. Wire-level safe-by-default: a nil config keeps
@@ -568,11 +580,10 @@ func (p *JSONRPCProcessor) logAccess(ctx context.Context, req *ProcessRequest, s
 				SourceIP:      req.ClientIP,
 				EntryHash:     hash,
 			}
-			// Tag wildcard-resolved methods so SIEM consumers can filter on the
-			// passthrough surface independently from explicitly-listed methods.
-			if w := rbac.MatchWildcard(req.Method); w != nil {
-				event.MatchedVia = "wildcard"
-				event.MatchedPrefix = w.Prefix
+			// Tag operator passthrough methods so SIEM consumers can filter on
+			// the unfiltered surface independently from modelled methods.
+			if rbac.IsPassthroughMethod(req.Method) {
+				event.MatchedVia = "passthrough"
 			}
 			p.siemForwarder.Send(event)
 		}
@@ -584,33 +595,78 @@ func (p *JSONRPCProcessor) logAccess(ctx context.Context, req *ProcessRequest, s
 }
 
 // ParseAndValidateBody parses and validates the JSON-RPC request body.
-// Returns the method, params, and any validation error.
-func ParseAndValidateBody(body []byte) (string, []any, *ProcessError) {
+// Returns the method, params, the canonical body to forward upstream, and any
+// validation error.
+//
+// The canonical body (proxy.Envelope.Canonical) holds exactly the members the
+// access decision is made on; it is what ProcessRequest.Body must carry, never
+// the client's bytes. An envelope whose member names can be read more than one
+// way (duplicate or case-variant names, RD-1303) is refused here, before any
+// access decision, with the same opaque message as malformed JSON.
+func ParseAndValidateBody(body []byte) (string, []any, []byte, *ProcessError) {
 	if len(body) > MaxRequestBodySize {
-		return "", nil, &ProcessError{
+		return "", nil, nil, &ProcessError{
 			StatusCode: http.StatusRequestEntityTooLarge,
 			Message:    "request body too large",
 		}
 	}
 
-	method, params, err := proxy.ParseRequest(body)
+	env, err := proxy.ParseEnvelope(body)
 	if err != nil {
-		if err == proxy.ErrBatchRequest {
-			return "", nil, &ProcessError{
+		if errors.Is(err, proxy.ErrBatchRequest) {
+			return "", nil, nil, &ProcessError{
 				StatusCode: http.StatusBadRequest,
 				Message:    "batch JSON-RPC requests are not supported for security reasons",
 			}
 		}
 		// Opaque client message; raw parse error (echoes offsets / body shape)
 		// stays in slog. (RD-1178 / RD-934)
-		slog.Warn("invalid JSON-RPC request", slog.Any("err", err))
-		return "", nil, &ProcessError{
+		if errors.Is(err, proxy.ErrAmbiguousRequest) {
+			slog.Warn("ambiguous JSON-RPC request refused", slog.Any("err", err))
+		} else {
+			slog.Warn("invalid JSON-RPC request", slog.Any("err", err))
+		}
+		return "", nil, nil, &ProcessError{
+			StatusCode: http.StatusBadRequest,
+			Message:    "invalid JSON-RPC request",
+		}
+	}
+	if reason := ambiguousParams(env); reason != "" {
+		slog.Warn("ambiguous JSON-RPC request refused", slog.String("reason", reason), slog.String("method", env.Method))
+		return "", nil, nil, &ProcessError{
 			StatusCode: http.StatusBadRequest,
 			Message:    "invalid JSON-RPC request",
 		}
 	}
 
-	return method, params, nil
+	// visibleTo/privateFor are the proxy's own metadata. The two send paths
+	// read them from the body and strip them before forwarding (RD-1163);
+	// for every other method they are dropped here, so they never reach the
+	// node. The method is canonicalised the same way Process dispatches.
+	forward := env.Canonical
+	switch rbac.CanonicalizeMethod(env.Method) {
+	case "eth_sendTransaction", "eth_sendRawTransaction":
+	default:
+		forward = env.CanonicalWithoutMetadata()
+	}
+	return env.Method, env.Params, forward, nil
+}
+
+// ambiguousParams returns env.ParamsAmbiguity() for methods whose params the
+// proxy's checks read, and "" for the payloads it never inspects: typed-data
+// signing (EIP-712 type and field names are the dApp's own) and
+// named passthrough methods. Aliased chain methods resolve to the standard method they inherit
+// checks from, so they stay covered. RD-1303.
+func ambiguousParams(env *proxy.Envelope) string {
+	method := rbac.CanonicalizeMethod(env.Method)
+	switch method {
+	case "eth_signTypedData", "eth_signTypedData_v3", "eth_signTypedData_v4":
+		return ""
+	}
+	if rbac.IsPassthroughMethod(method) {
+		return ""
+	}
+	return env.ParamsAmbiguity()
 }
 
 // Process handles the core business logic for a JSON-RPC request:
@@ -621,11 +677,9 @@ func ParseAndValidateBody(body []byte) (string, []any, *ProcessError) {
 func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *ProcessResult {
 	start := time.Now()
 
-	// RD-1180: canonicalize the method name ONCE at ingress so the special
-	// validation dispatch below (and target/selector extraction + RBAC gates
-	// downstream) can't be skipped by mixed-case method names. The upstream
-	// node still receives req.Body verbatim; only the internal method string is
-	// normalized. Unknown methods (linea_*, wildcard passthrough) pass through.
+	// Normalize built-in method names for internal dispatch and access checks.
+	// The canonical envelope preserves the caller's method spelling.
+	// Operator methods require an explicit registered alias or passthrough entry.
 	req.Method = rbac.CanonicalizeMethod(req.Method)
 
 	// Handle eth_sendRawTransaction specially - requires runtime tracing
@@ -633,9 +687,32 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 		return p.processRawTransaction(ctx, req)
 	}
 
-	// Handle debug traces specially - requires strict deep tree validation
+	// Handle debug traces specially - requires strict deep tree validation.
+	// Route any registry-resolved trace name through the guarded trace path.
+	// Dedicated trace aliases are rejected by exact catalog admission before
+	// trace-specific work.
 	if req.Method == "debug_traceTransaction" || req.Method == "debug_traceCall" {
 		return p.processDebugTrace(ctx, req)
+	}
+	if aliased := rbac.ResolveMethodAlias(req.Method); aliased == "debug_traceTransaction" || aliased == "debug_traceCall" {
+		return p.processDebugTrace(ctx, req)
+	}
+
+	// RD-1305: refuse unsupported simulation options before RBAC, tracing and
+	// forwarding. Use an opaque response and retain the reason in the access log.
+	// Org resolution has not run yet, so this audit row has no resolved org.
+	if denied, kind := rbac.DetectStateOverride(req.Method, req.Params); denied {
+		req.denialReason = ReasonStateOverrideNotAllowed
+		slog.Info("state/block override denied", "method", req.Method, "user", req.UserID, "ip", req.ClientIP, "kind", kind)
+		p.recordRPCOutcome(req.Method, "override_denied", start)
+		p.recordRBACDecision("denied")
+		p.logAccess(ctx, req, http.StatusForbidden, http.StatusNotFound)
+		return &ProcessResult{
+			Error: &ProcessError{
+				StatusCode: http.StatusNotFound,
+				Message:    "method not found",
+			},
+		}
 	}
 
 	// Resolve method alias for access control (e.g. linea_estimateGas → eth_estimateGas).
@@ -705,6 +782,13 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 		}
 	}
 	p.recordRBACDecision("allowed")
+
+	// RD-1299: a strict refusal of visibleTo precedes tracing and compliance.
+	if req.Method == "eth_sendTransaction" {
+		if res := p.strictProfileRejectsVisibleTo(ctx, req, false); res != nil {
+			return res
+		}
+	}
 
 	// Concurrency gate moves ABOVE the trace path (RD-915 F5). Pre-RD-915
 	// fix this sat below the trace, which meant a single JWT could pin N
@@ -1007,6 +1091,9 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 	// This filters responses to prevent cross-participant data leakage
 	// within the same organization.
 	responseBody = p.applyResponseFilter(ctx, req, result, responseBody)
+	// RD-1308: under a View-as scope, another org's transactions stay out
+	// even when the target took part in them. No-op for a user's own call.
+	responseBody = p.applyViewerOrgScopeEnvelope(ctx, req.Method, responseBody)
 
 	// Log successful access
 	p.recordRPCOutcome(req.Method, "success", start)
@@ -1046,39 +1133,34 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 	// inherit the same response filtering as their standard equivalents.
 	m := rbac.ResolveMethodAlias(req.Method)
 	switch {
-	case strings.EqualFold(m, rbac.MethodGetTransactionByHash):
+	case strings.EqualFold(m, rbac.MethodGetTransactionByHash),
+		strings.EqualFold(m, rbac.MethodGetTransactionByBlockHashAndIndex),
+		strings.EqualFold(m, rbac.MethodGetTransactionByBlockNumberAndIndex):
+		// One admission decision for the tx object on every method that
+		// returns it (rbac.DecideTxEnvelope, RD-1299).
 		addrs, err := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)
 		if err != nil {
-			addrs = nil // DB error — proceed with nil addrs; visibleTo + admin bypass still apply
+			addrs = nil // DB error — proceed with nil addrs (no participant match)
 		}
-		// Org-scoped admin bypass: compute whether the viewer has the
-		// admin claim in the tx's `to` contract's OWNING org specifically
-		// (not merged across all orgs the viewer belongs to). See
-		// viewerAdminContracts doc for why.
-		// IMPORTANT: viewerAdminContracts takes the internal user UUID
-		// (result.UserID), NOT the JWT DID — internally it queries
-		// user_memberships.user_id, which is the UUID FK. Passing the
-		// DID silently returns no matches and the bypass never fires.
-		// `result` may be nil on the visibleTo-only fallback path
-		// (the visibleTo recipient may not have a CheckAccess result);
-		// guard accordingly — empty userID makes viewerAdminContracts
-		// short-circuit to an empty map, the right answer when the
-		// viewer can't be admin-resolved.
-		contractAddrs := extractContractAddressesFromResponse(responseBody)
-		adminMap := p.viewerAdminContracts(ctx, viewerUUID(result), contractAddrs)
 		isAdminOnTo := false
-		for addr := range adminMap {
-			if adminMap[addr] {
-				isAdminOnTo = true
-				break // tx-by-hash response has at most one `to`
+		if !p.readProfile.Strict() {
+			// Org-scoped admin bypass (standard profile only): whether the
+			// viewer holds the admin claim in the tx's `to` contract's OWNING
+			// org specifically (not merged across all orgs the viewer belongs
+			// to). viewerAdminContracts takes the internal user UUID
+			// (result.UserID), NOT the JWT DID. `result` may be nil on the
+			// visibleTo-only fallback path; viewerUUID() guards that.
+			adminMap := p.viewerAdminContracts(ctx, viewerUUID(result), extractContractAddressesFromResponse(responseBody))
+			for _, v := range adminMap {
+				if v {
+					isAdminOnTo = true
+					break // a tx object has at most one `to`
+				}
 			}
 		}
-		filtered := FilterTransactionByHash(responseBody, addrs, isAdminOnTo)
-		// If participant + admin check returned null, check visibleTo as fallback
-		if isNullResult(filtered) && p.isResponseTxVisibleTo(ctx, req.UserID, responseBody) {
-			return responseBody
-		}
-		return filtered
+		return FilterTransactionByHash(p.readProfile, responseBody, addrs, isAdminOnTo, func() bool {
+			return p.isResponseTxVisibleTo(ctx, req.UserID, responseBody)
+		})
 
 	case strings.EqualFold(m, rbac.MethodGetTransactionReceipt):
 		addrs, err := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)
@@ -1086,7 +1168,7 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 			addrs = nil // DB error — proceed with nil addrs, visCtx handles visibleTo
 		}
 		perms := p.resolvePermsForFilter(ctx, result)
-		visCtx := p.buildTxVisibilityContext(ctx, req.UserID, responseBody)
+		visCtx := p.standardTxVisibilityContext(ctx, req.UserID, responseBody)
 		// Org-scoped admin map covers both the receipt-envelope bypass
 		// (for receipt.to) and the per-log admin bypass (for each log's
 		// emitting contract). Filter handles the lookup.
@@ -1099,7 +1181,7 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 		// visibleTo unlock of this exact (viewer, contract, tx), the full
 		// payload (RD-1300).
 		abiProv := p.contractABIProvider(ctx)
-		return filterReceiptLogsWithEventRules(responseBody, addrs, perms, abiProv, visCtx, adminMap, p.logFieldRenderer(ctx, req.UserID, abiProv))
+		return filterReceiptLogsWithEventRules(p.readProfile, responseBody, addrs, perms, abiProv, visCtx, adminMap, p.logFieldRenderer(ctx, req.UserID, abiProv))
 
 	case strings.EqualFold(m, rbac.MethodGetLogs):
 		addrs, err := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)
@@ -1111,18 +1193,22 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 		// Note: empty addrs is OK — user may have no linked ETH addresses but
 		// still has visibleTo entries. The filter handles this via visCtx.
 		perms := p.resolvePermsForFilter(ctx, result)
-		visCtx := p.buildTxVisibilityContext(ctx, req.UserID, responseBody)
+		visCtx := p.standardTxVisibilityContext(ctx, req.UserID, responseBody)
 		// RD-1162: admit logs of transactions the caller participated in
 		// (their linked address is the tx from/to) even when the event carries
 		// no address of theirs — bounded in FilterEventLogs by contract-grant
 		// access. Senders aren't present in log entries, so resolve them via a
 		// batched upstream eth_getTransactionByHash (a no-op when the caller has
-		// no linked addresses or the unique-tx count exceeds the cap).
-		if participants := p.buildParticipantTxHashes(addrs, responseBody); len(participants) > 0 {
-			if visCtx == nil {
-				visCtx = &rbac.TxVisibilityContext{ViewerDID: req.UserID}
+		// no linked addresses or the unique-tx count exceeds the cap). The
+		// strict event predicate ignores participation (RD-1299), so the
+		// upstream batch is skipped there.
+		if !p.readProfile.Strict() {
+			if participants := p.buildParticipantTxHashes(addrs, responseBody); len(participants) > 0 {
+				if visCtx == nil {
+					visCtx = &rbac.TxVisibilityContext{ViewerDID: req.UserID}
+				}
+				visCtx.ParticipantTxHashes = participants
 			}
-			visCtx.ParticipantTxHashes = participants
 		}
 		// Org-scoped admin-bypass map, indexed by each log's emitting
 		// contract. Takes the internal user UUID (result.UserID), not
@@ -1132,30 +1218,7 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 		// Admission and rendering in one pass (see the receipt case above):
 		// masked per RD-1214 unless the log is an RD-874 unlock (RD-1300).
 		abiProv := p.contractABIProvider(ctx)
-		return filterLogsWithEventRules(responseBody, addrs, perms, abiProv, visCtx, adminMap, p.logFieldRenderer(ctx, req.UserID, abiProv))
-
-	case strings.EqualFold(m, rbac.MethodGetTransactionByBlockHashAndIndex),
-		strings.EqualFold(m, rbac.MethodGetTransactionByBlockNumberAndIndex):
-		addrs, err := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)
-		if err != nil {
-			addrs = nil // DB error — proceed with nil addrs; visibleTo + admin bypass still apply
-		}
-		// Pass the internal user UUID (result.UserID), not the JWT DID.
-		// viewerUUID() guards against nil result.
-		adminMap := p.viewerAdminContracts(ctx, viewerUUID(result), extractContractAddressesFromResponse(responseBody))
-		isAdminOnTo := false
-		for _, v := range adminMap {
-			if v {
-				isAdminOnTo = true
-				break
-			}
-		}
-		filtered := FilterTransactionByHash(responseBody, addrs, isAdminOnTo)
-		// If participant + admin check returned null, check visibleTo as fallback
-		if isNullResult(filtered) && p.isResponseTxVisibleTo(ctx, req.UserID, responseBody) {
-			return responseBody
-		}
-		return filtered
+		return filterLogsWithEventRules(p.readProfile, responseBody, addrs, perms, abiProv, visCtx, adminMap, p.logFieldRenderer(ctx, req.UserID, abiProv))
 
 	case strings.EqualFold(m, rbac.MethodGetBlockByHash),
 		strings.EqualFold(m, rbac.MethodGetBlockByNumber):
@@ -1175,7 +1238,7 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 				originalFull = isFull
 			}
 		}
-		return FilterBlockTransactions(responseBody, addrs, originalFull)
+		return FilterBlockTransactions(p.readProfile, responseBody, addrs, originalFull)
 
 	case strings.EqualFold(m, "eth_getBlockTransactionCountByHash"),
 		strings.EqualFold(m, "eth_getBlockTransactionCountByNumber"):
@@ -1192,7 +1255,15 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 			// serving the raw receipts of every participant in the block.
 			addrs = nil
 		}
-		return FilterBlockReceipts(responseBody, addrs)
+		// Each kept receipt's logs go through the SAME engine and renderer as
+		// eth_getTransactionReceipt (RD-1299): grant, ABI and dynamic-payload
+		// gates, event rules, RD-1162 own-tx logs, RD-1214 masking and the
+		// RD-874 unlock payload.
+		perms := p.resolvePermsForFilter(ctx, result)
+		visCtx := p.standardTxVisibilityContext(ctx, req.UserID, responseBody)
+		adminMap := p.viewerAdminContracts(ctx, viewerUUID(result), extractContractAddressesFromResponse(responseBody))
+		abiProv := p.contractABIProvider(ctx)
+		return FilterBlockReceipts(p.readProfile, responseBody, addrs, perms, abiProv, visCtx, adminMap, p.logFieldRenderer(ctx, req.UserID, abiProv))
 	}
 	return responseBody
 }
@@ -1254,6 +1325,57 @@ func rewriteToGetBlock(originalBody []byte, newMethod string, params []any) []by
 		return nil
 	}
 	return b
+}
+
+// strictProfileRejectsVisibleTo refuses, under the strict read profile, a send
+// that carries a visibleTo field (RD-1299): there visibleTo grants no read
+// access, so the sender is told the share did not happen (an opaque 400) and
+// nothing is stored that a later profile change could re-activate. Presence is
+// refused whatever the entries (an empty or unresolvable list too). It runs
+// right after the RBAC verdict, before tracing, compliance and forwarding.
+// rawTx selects the eth_sendRawTransaction options position. nil = proceed.
+func (p *JSONRPCProcessor) strictProfileRejectsVisibleTo(ctx context.Context, req *ProcessRequest, rawTx bool) *ProcessResult {
+	if !p.readProfile.Strict() || !visibleToFieldPresent(req, rawTx) {
+		return nil
+	}
+	req.denialReason = ReasonInvalidRequestShape
+	p.logAccess(ctx, req, http.StatusBadRequest)
+	return &ProcessResult{
+		Error: &ProcessError{
+			StatusCode: http.StatusBadRequest,
+			Message:    "visibleTo is not supported on this network",
+		},
+	}
+}
+
+// visibleToFieldPresent reports whether a send carries a visibleTo field in any
+// position the send paths accept: top-level visibleTo / privateFor, the
+// eth_sendTransaction tx object (params[0]) or the eth_sendRawTransaction
+// options (params[1]).
+func visibleToFieldPresent(req *ProcessRequest, rawTx bool) bool {
+	if len(req.Body) > 0 {
+		var env map[string]json.RawMessage
+		if json.Unmarshal(req.Body, &env) == nil {
+			if _, ok := env["visibleTo"]; ok {
+				return true
+			}
+			if _, ok := env["privateFor"]; ok {
+				return true
+			}
+		}
+	}
+	idx := 0
+	if rawTx {
+		idx = 1
+	}
+	if len(req.Params) > idx {
+		if m, ok := req.Params[idx].(map[string]any); ok {
+			if _, ok := m["visibleTo"]; ok {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // checkCompliance runs travel rule compliance checks if the checker is configured.
@@ -1476,6 +1598,11 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 		}
 	}
 	p.recordRBACDecision("allowed")
+
+	// RD-1299: a strict refusal of visibleTo precedes tracing and compliance.
+	if res := p.strictProfileRejectsVisibleTo(ctx, req, true); res != nil {
+		return res
+	}
 
 	// Concurrency gate moves ABOVE the trace path (RD-915 F5). Mirrors
 	// the Process() path. Acquire before any trace so the cap covers

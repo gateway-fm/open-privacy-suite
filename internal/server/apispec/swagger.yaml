@@ -986,16 +986,6 @@ components:
           example: 25
           type: integer
       type: object
-    privacy-proxy_internal_apimodels.ExtraWildcardInfo:
-      properties:
-        deny:
-          items:
-            type: string
-          type: array
-          uniqueItems: false
-        prefix:
-          type: string
-      type: object
     privacy-proxy_internal_apimodels.GrantActivityLogEntry:
       properties:
         method:
@@ -1362,11 +1352,28 @@ components:
             items:
               type: string
             type: array
+          description: |-
+            ExtraNamespaces maps each operator-configured namespace label to its
+            method names (aliased and passthrough entries).
           type: object
-        extra_wildcards:
-          additionalProperties:
-            $ref: '#/components/schemas/privacy-proxy_internal_apimodels.ExtraWildcardInfo'
-          type: object
+        extra_passthrough:
+          description: |-
+            ExtraPassthrough lists the operator methods forwarded unfiltered (no
+            per-address access check, no response filtering, no tracing). A group
+            reaches them only by listing them by name.
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+        supported_methods:
+          description: |-
+            SupportedMethods lists every method a group's allowed_methods may hold
+            (built-in methods plus the operator methods above), sorted. Any other
+            stored entry is refused at request time and rejected on save.
+          items:
+            type: string
+          type: array
+          uniqueItems: false
       type: object
     privacy-proxy_internal_apimodels.MyAdminStatusResponse:
       properties:
@@ -1717,6 +1724,23 @@ components:
           $ref: '#/components/schemas/privacy-proxy_internal_apimodels.ProxyStatus'
         security:
           $ref: '#/components/schemas/privacy-proxy_internal_apimodels.SecurityStatus'
+      type: object
+    privacy-proxy_internal_apimodels.SystemReadProfileResponse:
+      properties:
+        org_admin_view_user_txs:
+          description: |-
+            OrgAdminViewUserTxs is whether the org-admin audit view is in effect
+            (always false under the strict profile).
+          type: boolean
+        org_admin_view_user_txs_configured:
+          description: |-
+            OrgAdminViewUserTxsConfigured is the configured ORG_ADMIN_VIEW_USER_TXS
+            value, reported so an overridden setting is visible.
+          type: boolean
+        profile:
+          description: 'Profile is the enforced read profile: "standard" or "strict".'
+          example: strict
+          type: string
       type: object
     privacy-proxy_internal_apimodels.SystemToggleRequest:
       properties:
@@ -7333,19 +7357,9 @@ paths:
       - 'Admin: RBAC'
   /api/v1/admin/orgs/{org_id}/dry-run:
     post:
-      description: 'Evaluates "what would this user see if they made this RPC call?"
-        in the path org, without mutating chain state. Read methods are forwarded
-        and redacted as the impersonated user; write methods (eth_sendTransaction
-        / eth_sendRawTransaction) are translated to debug_traceCall so the RBAC verdict
-        and the events the tx would emit (and the subset visible to the user) can
-        be inspected. Requires a tier-2 org-admin JWT of the path org: X-Admin-Token
-        credentials (both the full super-admin token and the operator token) are explicitly
-        rejected, since impersonation reads tenant data as the user. The impersonated
-        user must exist and be a member of the path org, else an opaque 404 (no cross-org
-        existence leak). Every evaluation is written to the impersonation audit log
-        fail-closed. Supported methods: eth_call, eth_getLogs, eth_getTransactionReceipt,
-        eth_getTransactionByHash, eth_getBalance, eth_getCode, eth_getStorageAt, eth_blockNumber,
-        eth_chainId, eth_sendTransaction, eth_sendRawTransaction.'
+      description: |-
+        Evaluates "what would this user see if they made this RPC call?" in the path org, without mutating chain state. Read methods are forwarded and redacted as the impersonated user; write methods (eth_sendTransaction / eth_sendRawTransaction) are translated to debug_traceCall so the RBAC verdict and the events the tx would emit (and the subset visible to the user) can be inspected. Requires a tier-2 org-admin JWT of the path org: X-Admin-Token credentials (both the full super-admin token and the operator token) are explicitly rejected, since impersonation reads tenant data as the user. The impersonated user must exist and be a member of the path org, else an opaque 404 (no cross-org existence leak). Every evaluation is written to the impersonation audit log fail-closed. Under the strict read privacy profile (PRIVACY_READ_PROFILE=strict) read methods are refused with 403 before anything is forwarded (the refusal is audited), and a simulated send returns only the allow/deny verdict, without the trace or its logs. Supported methods: eth_call, eth_getLogs, eth_getTransactionReceipt, eth_getTransactionByHash, eth_getBalance, eth_getCode, eth_getStorageAt, eth_blockNumber, eth_chainId, eth_sendTransaction, eth_sendRawTransaction.
+        Client state/block override options are unsupported regardless of the selected user's role, including admins.
       parameters:
       - description: Organization ID (UUID)
         in: path
@@ -7389,8 +7403,9 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
-          description: source address not on the private network, or X-Admin-Token/operator
-            credentials used (dry-run requires a tier-2 admin JWT)
+          description: source address not on the private network, X-Admin-Token/operator
+            credentials used (dry-run requires a tier-2 admin JWT), or a read method
+            under the strict read profile
         "404":
           content:
             application/json:
@@ -7779,17 +7794,22 @@ paths:
       - 'Admin: RBAC'
     put:
       description: 'Creates or replaces the group''s access settings. Body: allowed_methods
-        ([]string; "*" expands to the full method list), claims ([]string of operational
-        claims: deploy/upgrade/admin), rpc_api_key (encrypted at rest, never returned
-        in clear), verbose_errors. is_system group access can only be modified by
-        the full admin token (X-Admin-Token; unlike the other gates here, the operator
-        token is rejected for is_system too). Reshaping an is_org_admin group''s access
-        is rejected for a tier-2 org-admin JWT (an admin-tier token — full admin or
-        operator — is required); reshaping a regular group''s access is rejected for
-        the operator token (tenant management is the org admin''s job), which may
-        reshape admin-tier groups (is_org_admin / is_org_readonly_admin) and the global
-        default group. On is_org_admin groups claims must be empty and at least one
-        method is required. The returned rpc_api_key is masked.'
+        ([]string of exact method names the proxy supports — built-in methods and
+        operator-declared chain-specific methods; "*" is stored as its explicit expansion
+        merged with the other listed entries, never literally; the anonymous system
+        group accepts built-in methods only, listed by name; operator passthrough
+        methods can be added only with an admin-tier token, a tier-2 org-admin JWT
+        may keep or remove them), claims ([]string of operational claims: deploy/upgrade/admin),
+        rpc_api_key (encrypted at rest, never returned in clear), verbose_errors.
+        is_system group access can only be modified by the full admin token (X-Admin-Token;
+        unlike the other gates here, the operator token is rejected for is_system
+        too). Reshaping an is_org_admin group''s access is rejected for a tier-2 org-admin
+        JWT (an admin-tier token — full admin or operator — is required); reshaping
+        a regular group''s access is rejected for the operator token (tenant management
+        is the org admin''s job), which may reshape admin-tier groups (is_org_admin
+        / is_org_readonly_admin) and the global default group. On is_org_admin groups
+        claims must be empty and at least one method is required. The returned rpc_api_key
+        is masked.'
       parameters:
       - description: Organization ID (UUID)
         in: path
@@ -7826,8 +7846,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
-          description: invalid body, method/claim mismatch, or org-admin claim/method
-            invariant violated
+          description: invalid body, unsupported method in allowed_methods, method/claim
+            mismatch, or org-admin claim/method invariant violated
         "401":
           content:
             application/json:
@@ -7841,7 +7861,8 @@ paths:
                 $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
           description: source address not on the private network, group not in the
             path org, system-group access changed by non-super-admin, tier-2 JWT reshaping
-            an org-admin group, or operator token reshaping a regular group
+            an org-admin group, operator token reshaping a regular group, or tier-2
+            JWT adding a passthrough method
         "500":
           content:
             application/json:
@@ -8539,8 +8560,9 @@ paths:
   /api/v1/admin/status:
     get:
       description: 'Operational status: proxy liveness and port, upstream node health/latency,
-        compliance/travel-rule configuration, and the extra RPC namespaces/wildcards
-        available to the frontend.'
+        compliance/travel-rule configuration, and the RPC methods a group may be granted
+        (supported methods, operator namespaces, and the operator passthrough methods
+        forwarded unfiltered).'
       responses:
         "200":
           content:
@@ -8742,6 +8764,39 @@ paths:
       summary: Toggle intra-org grant tracing
       tags:
       - 'Admin: system'
+  /api/v1/admin/system/read-profile:
+    get:
+      description: Effective deployment-wide read privacy profile (PRIVACY_READ_PROFILE,
+        fixed at startup) and the effective state of the org-admin audit view (ORG_ADMIN_VIEW_USER_TXS).
+        Under "strict", transactions and receipts are returned only to a transaction
+        participant and an event only when an indexed address parameter of its registered
+        ABI is one of the viewer's linked addresses; the org-admin audit view is then
+        always off, whatever ORG_ADMIN_VIEW_USER_TXS says. Read-only; any admin the
+        middleware admits.
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/privacy-proxy_internal_apimodels.SystemReadProfileResponse'
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
+          description: missing or invalid admin token
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
+          description: source address not on the private network
+      security:
+      - AdminToken: []
+      summary: Get the read privacy profile
+      tags:
+      - 'Admin: system'
   /api/v1/admin/system/version:
     get:
       description: Build identity (version, commit, build time) of the running binary.
@@ -8772,11 +8827,9 @@ paths:
       - 'Admin: system'
   /api/v1/admin/test-request:
     post:
-      description: 'Dashboard diagnostic: runs one method through RBAC, travel-rule
-        compliance, and upstream forwarding, using a synthetic identity ("test:dashboard")
-        or the subject of a supplied jwt_token. On an upstream JSON-RPC-level error
-        the call still returns HTTP 200 with the error in the response body. Requires
-        the private-network source gate (403 otherwise).'
+      description: |-
+        Dashboard diagnostic: runs one method through RBAC, travel-rule compliance, and upstream forwarding, using a synthetic identity ("test:dashboard") or the subject of a supplied jwt_token. On an upstream JSON-RPC-level error the call still returns HTTP 200 with the error in the response body. Requires the private-network source gate (403 otherwise).
+        Client state/block override options follow the RPC policy for every caller, including admins.
       requestBody:
         content:
           application/json:
@@ -8801,7 +8854,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
-          description: invalid request body or invalid JWT
+          description: invalid request body, invalid JWT, or a trace method (debug_traceCall
+            / debug_traceTransaction are not supported here; use dry-run or view-as-user)
         "401":
           content:
             application/json:
@@ -10865,7 +10919,9 @@ paths:
         replaces addresses with stable pseudonyms and hides values and hashes; "redacted"
         (or any unknown level) shows only direction, gas, status and timing with "[PRIVATE]"
         counterparties. Fail-closed: a revoked or expired grant, or an address_id
-        that does not belong to the grant, yields 403/404.'
+        that does not belong to the grant, yields 403/404. Under the View-as mirror
+        it always returns 404: the target''s grants are not available to the admin
+        viewing as them.'
       parameters:
       - description: Disclosure grant ID
         in: path
@@ -10949,7 +11005,9 @@ paths:
         grant''s requester, the grant scope must include activity_logs or full_disclosure,
         and only entries inside the grant''s validity window are returned. Fail-closed:
         anonymous callers are rejected, and "grant missing"/"not your grant"/"expired"
-        all return the same 404 to prevent enumeration.'
+        all return the same 404 to prevent enumeration. Under the View-as mirror it
+        always returns 404: the target''s grants are not available to the admin viewing
+        as them.'
       parameters:
       - description: Disclosure grant ID
         in: path
@@ -11019,7 +11077,8 @@ paths:
         is returned ONLY for a "full" grant; a "pseudonymous" grant returns a stable
         pseudonym and no real address; other levels return neither. Fail-closed: a
         revoked or expired grant, or an address_id that does not belong to the grant,
-        yields 403/404.'
+        yields 403/404. Under the View-as mirror it always returns 404: the target''s
+        grants are not available to the admin viewing as them.'
       parameters:
       - description: Disclosure grant ID
         in: path
@@ -11931,7 +11990,9 @@ paths:
         for the resolved viewer: the viewer DID comes from a validated JWT (or the
         impersonation override) — never from a query param — and for non-full grants
         the disclosed address is a pseudonym or "[PRIVATE]", never the real address.
-        Fail-closed: with no resolvable viewer, only empty lists are returned.'
+        Fail-closed: with no resolvable viewer, only empty lists are returned. Under
+        the View-as mirror no disclosed addresses are listed: the target''s grants
+        are not available to the admin viewing as them.'
       parameters:
       - description: 'Viewer wallet address (0x-prefixed hex), echoed back for display
           only. The viewer identity is resolved solely from the JWT — a wallet value
@@ -12905,11 +12966,17 @@ paths:
       description: |-
         Single Ethereum JSON-RPC 2.0 request, method-allowlisted and RBAC-checked, with per-method response redaction. Batch (array) requests are rejected.
 
+        Member names must be exact-case and unique: a request that repeats a member name, holds two names differing only in letter case in one object (at any depth), or uses a case variant of a JSON-RPC member (e.g. `Method`) is rejected with 400 before any access decision and never reaches the node; so is an `id` that is not a string, a number or null. For methods whose params the proxy checks (all but typed-data signing and named passthrough), so are a case variant of a standard request field inside params (e.g. `To`) and an object whose `data` and `input` differ. The node receives a request rebuilt from the members the proxy read (jsonrpc, id, method, params); `visibleTo`/`privateFor` and any other top-level members are never forwarded.
+
         `Authorization: Bearer <token>` is OPTIONAL: anonymous callers are restricted to the anonymous method allowlist; authenticated callers get per-method RBAC and response redaction based on their identity.
+
+        Client state/block override options on call, gas-estimation, access-list, and trace methods are unsupported for all callers, including admins. Positional null/empty-object placeholders remain allowed; debug_traceCall override and replay-position config keys must be omitted. Ordinary calls remain subject to the normal access and node validation rules.
 
         The transaction-sending methods (eth_sendTransaction / eth_sendRawTransaction) additionally accept a top-level `visibleTo` array (alias `privateFor`) of DIDs and/or linked ETH addresses, granting those viewers per-transaction visibility of the emitted event logs (RD-1163). It is accepted only for log-emitting contract calls.
 
-        A JSON-RPC-level error (bad params, node error, or a masked authorization denial) is returned with HTTP 200 in the JSON-RPC error member. The non-200 statuses below are transport / access / rate-limit failures that never reach the node. `POST /` and `POST /rpc` are the same operation.
+        Ordinary upstream JSON-RPC errors retain their JSON-RPC error member. Transport, access and rate-limit failures use the non-200 statuses below. `POST /` and `POST /rpc` are the same operation.
+
+        Client call traces and standard-profile mined traces return validated call-tree frames. The viewer's contract, function and argument permissions apply to returned calls, including delegated storage contexts. Strict-profile mined traces return only a linked transaction participant's top frame, without internal calls or logs, subject to organization ownership checks. Trace or upstream failures return opaque non-200 errors.
       parameters:
       - description: Organization the access decision resolves against (only on /rpc/{org_id})
         in: path
@@ -12939,7 +13006,9 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
-          description: unreadable body, malformed/batch JSON-RPC, or invalid visibleTo
+          description: unreadable body, malformed, ambiguous (duplicate or case-variant
+            members) or batch JSON-RPC, invalid visibleTo, or an unsupported tracer/config
+            (a tracer other than callTracer, withLog or malformed trace params)
         "401":
           content:
             application/json:
@@ -12952,14 +13021,15 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
-          description: runtime-trace or compliance denial
+          description: runtime-trace, standard-profile mined-trace access, or compliance
+            denial
         "404":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
-          description: method not allowed for the caller (denials are masked as method
-            not found)
+          description: method not allowed for the caller, or a strict-profile mined
+            trace unavailable to the caller
         "413":
           content:
             application/json:
@@ -12994,11 +13064,17 @@ paths:
       description: |-
         Single Ethereum JSON-RPC 2.0 request, method-allowlisted and RBAC-checked, with per-method response redaction. Batch (array) requests are rejected.
 
+        Member names must be exact-case and unique: a request that repeats a member name, holds two names differing only in letter case in one object (at any depth), or uses a case variant of a JSON-RPC member (e.g. `Method`) is rejected with 400 before any access decision and never reaches the node; so is an `id` that is not a string, a number or null. For methods whose params the proxy checks (all but typed-data signing and named passthrough), so are a case variant of a standard request field inside params (e.g. `To`) and an object whose `data` and `input` differ. The node receives a request rebuilt from the members the proxy read (jsonrpc, id, method, params); `visibleTo`/`privateFor` and any other top-level members are never forwarded.
+
         `Authorization: Bearer <token>` is OPTIONAL: anonymous callers are restricted to the anonymous method allowlist; authenticated callers get per-method RBAC and response redaction based on their identity.
+
+        Client state/block override options on call, gas-estimation, access-list, and trace methods are unsupported for all callers, including admins. Positional null/empty-object placeholders remain allowed; debug_traceCall override and replay-position config keys must be omitted. Ordinary calls remain subject to the normal access and node validation rules.
 
         The transaction-sending methods (eth_sendTransaction / eth_sendRawTransaction) additionally accept a top-level `visibleTo` array (alias `privateFor`) of DIDs and/or linked ETH addresses, granting those viewers per-transaction visibility of the emitted event logs (RD-1163). It is accepted only for log-emitting contract calls.
 
-        A JSON-RPC-level error (bad params, node error, or a masked authorization denial) is returned with HTTP 200 in the JSON-RPC error member. The non-200 statuses below are transport / access / rate-limit failures that never reach the node. `POST /` and `POST /rpc` are the same operation.
+        Ordinary upstream JSON-RPC errors retain their JSON-RPC error member. Transport, access and rate-limit failures use the non-200 statuses below. `POST /` and `POST /rpc` are the same operation.
+
+        Client call traces and standard-profile mined traces return validated call-tree frames. The viewer's contract, function and argument permissions apply to returned calls, including delegated storage contexts. Strict-profile mined traces return only a linked transaction participant's top frame, without internal calls or logs, subject to organization ownership checks. Trace or upstream failures return opaque non-200 errors.
       parameters:
       - description: Organization the access decision resolves against (only on /rpc/{org_id})
         in: path
@@ -13028,7 +13104,9 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
-          description: unreadable body, malformed/batch JSON-RPC, or invalid visibleTo
+          description: unreadable body, malformed, ambiguous (duplicate or case-variant
+            members) or batch JSON-RPC, invalid visibleTo, or an unsupported tracer/config
+            (a tracer other than callTracer, withLog or malformed trace params)
         "401":
           content:
             application/json:
@@ -13041,14 +13119,15 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
-          description: runtime-trace or compliance denial
+          description: runtime-trace, standard-profile mined-trace access, or compliance
+            denial
         "404":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
-          description: method not allowed for the caller (denials are masked as method
-            not found)
+          description: method not allowed for the caller, or a strict-profile mined
+            trace unavailable to the caller
         "413":
           content:
             application/json:
@@ -13106,7 +13185,9 @@ tags:
 - description: 'Read-only "view as user" mirror: the explorer and JSON-RPC surfaces
     re-mounted under /api/v1/admin/impersonate/{target_did}/in/{org_id}/..., GET-only,
     tier-2 admin gated, per-request audited. The mirrored operations are documented
-    once, under their canonical /api/v1/explorer and /rpc paths.'
+    once, under their canonical /api/v1/explorer and /rpc paths. The JSON-RPC mirror
+    serves only the dry-run read methods and the org-free metadata methods (any other
+    method in the body returns 400), and evaluates them in the named org only.'
   name: 'Admin: impersonation'
 - description: Fleet-level shared contract infrastructure and Azure tenant administration.
   name: 'Admin: shared infrastructure'
