@@ -755,6 +755,39 @@ func TestDetectMulticall(t *testing.T) {
 			},
 			expectMulticall: false,
 		},
+		{
+			name:   "calldata in input only",
+			method: "eth_call",
+			params: []any{
+				map[string]any{
+					"to":    "0xca11bde05977b3631167028862be2a173976ca11",
+					"input": "0x252dba42000000000000000000000000",
+				},
+			},
+			expectMulticall: true,
+		},
+		{
+			name:   "calldata in input only, sendTransaction",
+			method: "eth_sendTransaction",
+			params: []any{
+				map[string]any{
+					"to":    "0xca11bde05977b3631167028862be2a173976ca11",
+					"input": "0x82ad56cb",
+				},
+			},
+			expectMulticall: true,
+		},
+		{
+			name:   "non-multicall calldata in input only",
+			method: "eth_call",
+			params: []any{
+				map[string]any{
+					"to":    "0xca11bde05977b3631167028862be2a173976ca11",
+					"input": "0xa9059cbb",
+				},
+			},
+			expectMulticall: false,
+		},
 	}
 
 	for _, tt := range tests {
