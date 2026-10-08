@@ -8,14 +8,14 @@ import { RBACTestFixture } from '../../helpers/rbac-fixtures';
 //
 // Acceptance "Expect": RBAC → Contracts → Grants → enable the per-contract
 // visibleTo unlock → the enabled-state caption must say the unlock reaches
-// only the listed DIDs that ALREADY HOLD contract group access in this org
-// (cross-org / anonymous stay denied) — it must NOT claim the sender can reveal
-// to "any DID" they list.
+// only listed users with an eligible contract grant or org-admin membership in
+// this org (cross-org / anonymous stay denied) — it must NOT claim the sender
+// can reveal to "any DID" they list.
 //
 // The exact copy asserted here mirrors the vitest guard in
 // frontend/src/components/rbac/__tests__/ContractGrantsManager.test.tsx
-// ("already hold contract group access in this org" present; "with any DID
-// they list" absent), lifted to the full browser stack.
+// ("eligible contract grant or org-admin membership in this org" present;
+// "with any DID they list" absent), lifted to the full browser stack.
 //
 // Flow to reach the caption (matches ContractGrantsManager.tsx):
 //   contracts tab → shield ("Manage permissions") → "Contract Permissions"
@@ -68,10 +68,10 @@ test.describe('visibleTo unlock caption (RD-1069)', () => {
     await expect(page.getByText(/Enable visibleTo unlock\?/i)).toBeVisible({ timeout: 5000 });
     await page.getByRole('button', { name: /^enable$/i }).click();
 
-    // Enabled-state caption must gate on existing contract group access and
-    // must NOT promise reveal-to-any-DID.
+    // Enabled-state caption must gate on an eligible grant or org-admin
+    // membership in this org and must NOT promise reveal-to-any-DID.
     await expect(
-      page.getByText(/already hold contract group access in this org/i),
+      page.getByText(/eligible contract grant or org-admin membership in this org/i),
     ).toBeVisible({ timeout: 10000 });
     await expect(page.getByText(/with any DID they list/i)).toHaveCount(0);
   });
