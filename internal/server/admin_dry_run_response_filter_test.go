@@ -341,14 +341,20 @@ func TestDryRun_TxByHash_ParticipantSeesOwnTx_RD1308(t *testing.T) {
 	f.serve(rbac.MethodGetTransactionByHash, drfEnvelope(t, drfTx(drfMemberEOA, drfOtherEOA, h)))
 
 	resp, raw := f.dryRun(t, rbac.MethodGetTransactionByHash, []any{h})
-	var tx struct {
-		From, Input, Nonce, Value string
+	mirrored := f.mirror(t, rbac.MethodGetTransactionByHash, []any{h})
+	for surface, result := range map[string]json.RawMessage{
+		"dry-run": drfResult(t, resp.Response),
+		"mirror":  drfResult(t, []byte(mirrored)),
+	} {
+		var tx struct {
+			From, Input, Nonce, Value string
+		}
+		require.NoError(t, json.Unmarshal(result, &tx), "%s: %s %s", surface, raw, mirrored)
+		assert.Equal(t, drfMemberEOA, strings.ToLower(tx.From), surface)
+		assert.Equal(t, drfCalldata, tx.Input, surface)
+		assert.Equal(t, "0x7", tx.Nonce, surface)
+		assert.Equal(t, "0x2a", tx.Value, surface)
 	}
-	require.NoError(t, json.Unmarshal(drfResult(t, resp.Response), &tx), raw)
-	assert.Equal(t, drfMemberEOA, strings.ToLower(tx.From))
-	assert.Equal(t, drfCalldata, tx.Input)
-	assert.Equal(t, "0x7", tx.Nonce)
-	assert.Equal(t, "0x2a", tx.Value)
 }
 
 func TestDryRunAndViewAsRPC_DeployerAccessUsesNamedOrg_RD1308(t *testing.T) {
@@ -394,8 +400,9 @@ func TestDryRunAndViewAsRPC_DeployerAccessUsesNamedOrg_RD1308(t *testing.T) {
 // the user's own session in that org may read it.
 func TestDryRunAndViewAsRPC_StateReads_RD1308(t *testing.T) {
 	const (
-		slot  = "0x0" // not an infrastructure slot: admin claim required
-		value = "0x00000000000000000000000000000000000000000000000000000000000013a8"
+		slot            = "0x0" // not an infrastructure slot: admin claim required
+		eip1967ImplSlot = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc"
+		value           = "0x00000000000000000000000000000000000000000000000000000000000013a8"
 	)
 	cases := []struct {
 		name      string
@@ -410,6 +417,8 @@ func TestDryRunAndViewAsRPC_StateReads_RD1308(t *testing.T) {
 			params: []any{drfAdminCO, slot, "latest"}, wantAllow: true},
 		{name: "eth_getStorageAt, plain grant, non-infrastructure slot", method: rbac.MethodGetStorageAt,
 			params: []any{drfContractO, slot, "latest"}, wantAllow: false},
+		{name: "eth_getStorageAt, plain grant, EIP-1967 implementation slot", method: rbac.MethodGetStorageAt,
+			params: []any{drfContractO, eip1967ImplSlot, "latest"}, wantAllow: true},
 		{name: "eth_getStorageAt, org-P contract", method: rbac.MethodGetStorageAt,
 			params: []any{drfContractP, slot, "latest"}, wantAllow: false,
 			ownOrg: func(f *drfFixture) string { return f.orgP }},
@@ -459,10 +468,10 @@ func TestDryRunAndViewAsRPC_StateReads_RD1308(t *testing.T) {
 	}
 }
 
-// Dry-run resolves the user's permissions fresh, as the View-as RPC mirror
+// Dry-run skips the in-memory permission cache, as the View-as RPC mirror
 // does: a grant revoked after the user's own last call no longer allows the
-// read, although the user's cached permissions still hold it.
-func TestDryRunAndViewAsRPC_ResolvePermissionsFresh_RD1308(t *testing.T) {
+// read, although the in-memory cache still holds the user's old permissions.
+func TestDryRunAndViewAsRPC_SkipInMemoryPermissionCache_RD1308(t *testing.T) {
 	f := setupDRFFixture(t)
 	ctx := context.Background()
 	const target = "0x13080000000000000000000000000000000000c3"
@@ -481,7 +490,7 @@ func TestDryRunAndViewAsRPC_ResolvePermissionsFresh_RD1308(t *testing.T) {
 
 	f.serve(rbac.MethodGetBalance, drfEnvelope(t, "0x1234"))
 	resp, raw := f.dryRun(t, rbac.MethodGetBalance, params)
-	assert.Equal(t, "deny", resp.Decision, "dry-run must not answer from permissions cached before the revocation: %s", raw)
+	assert.Equal(t, "deny", resp.Decision, "dry-run must not answer from permissions cached in memory before the revocation: %s", raw)
 	w := f.mirrorRaw(t, rbac.MethodGetBalance, params)
 	assert.Equal(t, http.StatusNotFound, w.Code, "the View-as mirror gives the same answer: %s", w.Body.String())
 	assert.False(t, f.reached(rbac.MethodGetBalance), "a revoked read is decided before upstream forwarding")
@@ -1073,6 +1082,28 @@ func TestDryRun_DisclosureGrantFromOtherOrg_NotApplied_RD1308(t *testing.T) {
 	resp, raw := f.dryRun(t, rbac.MethodGetLogs, params)
 	assert.Contains(t, strings.ToLower(string(resp.Response)), bare(drfMemberEOA), "the log stays admitted: %s", raw)
 	assert.NotContains(t, strings.ToLower(string(resp.Response)), bare(subjectEOA), "an org-P disclosure grant applied in an org-O dry-run: %s", raw)
+
+	mirrored := strings.ToLower(f.mirror(t, rbac.MethodGetLogs, params))
+	assert.Contains(t, mirrored, bare(drfMemberEOA), "the View-as RPC mirror admits the same log")
+	assert.NotContains(t, mirrored, bare(subjectEOA), "an org-P disclosure grant applied on the org-O View-as RPC mirror")
+}
+
+// The dry-run method set is reviewed explicitly, as the mirror's is.
+func TestDryRunMethods_ExactSet_RD1308(t *testing.T) {
+	collect := func(set map[string]bool) []string {
+		out := make([]string, 0, len(set))
+		for m, ok := range set {
+			if ok {
+				out = append(out, m)
+			}
+		}
+		return out
+	}
+	assert.ElementsMatch(t, []string{
+		"eth_call", "eth_getLogs", "eth_getTransactionReceipt", "eth_getTransactionByHash",
+		"eth_getBalance", "eth_getCode", "eth_getStorageAt", "eth_blockNumber", "eth_chainId",
+	}, collect(dryRunReadMethods))
+	assert.ElementsMatch(t, []string{"eth_sendTransaction", "eth_sendRawTransaction"}, collect(dryRunTraceMethods))
 }
 
 // A trace that reverts yields no visible logs: its receipt would carry none.

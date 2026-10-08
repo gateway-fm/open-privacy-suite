@@ -22,12 +22,9 @@ The mechanism is a parallel URL tree on the Open Privacy Suite that always names
 
 View-as always resolves against **one explicit organization** — the org named in the URL.
 
-In the dashboard, that org is the one currently selected in the org-context dropdown. When an admin clicks **View as user**, the session is anchored to that org: the impersonated view shows what the target user sees **in that org**, evaluated against that org's grants.
+In the dashboard, that org is the one currently selected in the org-context dropdown. When an admin clicks **View as user**, the session is anchored to that org: you must administer it, and the target user must be a member of it.
 
-This matters for admins who are tier-2 in more than one org. If you administer both Org A and Org B, and the target user is a member of both, then:
-
-- Selecting **Org A** in the dropdown shows the user's Org A view (Org A's grants decide what's visible).
-- Selecting **Org B** shows the user's Org B view, which can differ when the underlying grants diverge.
+This matters for admins who are tier-2 in more than one org. If you administer both Org A and Org B, and the target user is a member of both, the session is anchored to whichever of the two is selected in the dropdown when you start it.
 
 The org is never guessed. If no org is selected, the dashboard does not start a View-as session, and a hand-crafted request without an org returns **400 "org_id is required"**. There is no silent "first matching org" fallback — the org you see is always the org you picked.
 
@@ -60,9 +57,9 @@ While the banner is up:
 
 What the admin sees vs what the user sees: **the redaction layer and visible dataset are the target user's own.** Logs the target cannot read are removed; addresses they cannot resolve are returned redacted; contracts they cannot access are denied. The admin's own broader visibility is not merged into the session. Clicking **Stop viewing as** restores the normal admin view.
 
-RPC calls under View-as return the target's view **in the named organization only**, the same answer the [dry-run](/docs/rbac#admin-dry-run--impersonation) gives for the same call:
+RPC calls under View-as give the same answer the [dry-run](/docs/rbac#admin-dry-run--impersonation) gives for the same call:
 
-| What decides visibility | Applies in View-as RPC |
+| What decides visibility | Applies |
 |---|---|
 | The target's grants, admin role and `visibleTo` unlock eligibility in the named org | Yes |
 | The target's grants or admin role in any other org | No |

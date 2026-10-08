@@ -88,7 +88,7 @@ var dryRunTraceMethods = map[string]bool{
 // handleDryRun handles POST /api/orgs/:org_id/dry-run.
 //
 // @Summary      Dry-run an RPC call as a user
-// @Description  Evaluates "what would this user see if they made this RPC call?" in the path org, without mutating chain state. Read methods are forwarded, and the response goes through the same privacy filter as the user's own call, evaluated in the path org only: the user's grants, admin role and visibleTo shares from other organizations do not apply; a transaction or receipt the user may not read, or one involving another organization's contract, comes back null; logs are filtered and their embedded addresses redacted. Write methods (eth_sendTransaction / eth_sendRawTransaction) are translated to debug_traceCall so the RBAC verdict, the events the tx would emit, and the subset the user would see in its receipt can be inspected. If the user's view cannot be produced, nothing from the node is returned (500). Requires a tier-2 org-admin JWT of the path org: X-Admin-Token credentials (both the full super-admin token and the operator token) are explicitly rejected, since impersonation reads tenant data as the user. The impersonated user must exist and be a member of the path org, else an opaque 404 (no cross-org existence leak). Every evaluation is written to the impersonation audit log fail-closed. Supported methods: eth_call, eth_getLogs, eth_getTransactionReceipt, eth_getTransactionByHash, eth_getBalance, eth_getCode, eth_getStorageAt, eth_blockNumber, eth_chainId, eth_sendTransaction, eth_sendRawTransaction.
+// @Description  Evaluates "what would this user see if they made this RPC call?" in the path org, without mutating chain state. Read methods are forwarded, and the response goes through the same privacy filter as the user's own call, evaluated in the path org only: the user's grants, admin role and visibleTo shares from other organizations do not apply; a transaction or receipt the user may not read, or one sent to or deploying another organization's contract, comes back null; logs are filtered, and embedded addresses the user cannot see are redacted. Write methods (eth_sendTransaction / eth_sendRawTransaction) are translated to debug_traceCall so the RBAC verdict, the events the tx would emit, and the subset the user would see in its receipt can be inspected. If the user's view cannot be produced, nothing from the node is returned (500). Requires a tier-2 org-admin JWT of the path org: X-Admin-Token credentials (both the full super-admin token and the operator token) are explicitly rejected, since impersonation reads tenant data as the user. The impersonated user must exist and be a member of the path org, else an opaque 404 (no cross-org existence leak). Every evaluation is written to the impersonation audit log fail-closed. Supported methods: eth_call, eth_getLogs, eth_getTransactionReceipt, eth_getTransactionByHash, eth_getBalance, eth_getCode, eth_getStorageAt, eth_blockNumber, eth_chainId, eth_sendTransaction, eth_sendRawTransaction.
 // @Tags         Admin: RBAC
 // @Accept       json
 // @Produce      json
@@ -762,9 +762,9 @@ func dryRunAccessRequest(userDID, orgID string, rpc apimodels.DryRunRPCBlock) (*
 		TargetAddress:    rbac.GetTargetAddress(accessMethod, params),
 		FunctionSelector: rbac.GetFunctionSelector(accessMethod, params),
 		RequiredClaims:   requiredClaims,
-		// Resolve the user's current permissions, as the View-as RPC mirror
-		// does (ProcessRequest.BypassPermsCache), so both give the same answer
-		// right after a grant or membership change.
+		// Skip the in-memory permission cache, as the View-as RPC mirror does
+		// (ProcessRequest.BypassPermsCache), so both resolve the user's
+		// permissions the same way right after a grant or membership change.
 		BypassCache: true,
 	}, nil
 }

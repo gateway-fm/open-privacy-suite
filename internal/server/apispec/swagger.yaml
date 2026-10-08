@@ -7338,18 +7338,18 @@ paths:
         and the response goes through the same privacy filter as the user''s own call,
         evaluated in the path org only: the user''s grants, admin role and visibleTo
         shares from other organizations do not apply; a transaction or receipt the
-        user may not read, or one involving another organization''s contract, comes
-        back null; logs are filtered and their embedded addresses redacted. Write
-        methods (eth_sendTransaction / eth_sendRawTransaction) are translated to debug_traceCall
-        so the RBAC verdict, the events the tx would emit, and the subset the user
-        would see in its receipt can be inspected. If the user''s view cannot be produced,
-        nothing from the node is returned (500). Requires a tier-2 org-admin JWT of
-        the path org: X-Admin-Token credentials (both the full super-admin token and
-        the operator token) are explicitly rejected, since impersonation reads tenant
-        data as the user. The impersonated user must exist and be a member of the
-        path org, else an opaque 404 (no cross-org existence leak). Every evaluation
-        is written to the impersonation audit log fail-closed. Supported methods:
-        eth_call, eth_getLogs, eth_getTransactionReceipt, eth_getTransactionByHash,
+        user may not read, or one sent to or deploying another organization''s contract,
+        comes back null; logs are filtered, and embedded addresses the user cannot
+        see are redacted. Write methods (eth_sendTransaction / eth_sendRawTransaction)
+        are translated to debug_traceCall so the RBAC verdict, the events the tx would
+        emit, and the subset the user would see in its receipt can be inspected. If
+        the user''s view cannot be produced, nothing from the node is returned (500).
+        Requires a tier-2 org-admin JWT of the path org: X-Admin-Token credentials
+        (both the full super-admin token and the operator token) are explicitly rejected,
+        since impersonation reads tenant data as the user. The impersonated user must
+        exist and be a member of the path org, else an opaque 404 (no cross-org existence
+        leak). Every evaluation is written to the impersonation audit log fail-closed.
+        Supported methods: eth_call, eth_getLogs, eth_getTransactionReceipt, eth_getTransactionByHash,
         eth_getBalance, eth_getCode, eth_getStorageAt, eth_blockNumber, eth_chainId,
         eth_sendTransaction, eth_sendRawTransaction.'
       parameters:
@@ -13114,7 +13114,7 @@ tags:
     tier-2 admin gated, per-request audited. The mirrored operations are documented
     once, under their canonical /api/v1/explorer and /rpc paths. The JSON-RPC mirror
     serves only the dry-run read methods and the org-free metadata methods (any other
-    method in the body returns 400), and evaluates them in the named org only.'
+    method in the body returns 400), and answers them as the dry-run does.'
   name: 'Admin: impersonation'
 - description: Fleet-level shared contract infrastructure and Azure tenant administration.
   name: 'Admin: shared infrastructure'

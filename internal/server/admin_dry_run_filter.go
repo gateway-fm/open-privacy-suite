@@ -66,9 +66,10 @@ func (s *Server) filterDryRunReadResponse(
 // exemption) and the same embedded-address field redaction as a real
 // eth_getTransactionReceipt. A receipt the user may not read yields no logs.
 //
-// An error means the visible subset could not be computed (no filter wired,
-// or the receipt could not be built); the caller must not report "none
-// visible" in that case.
+// An error means the filter could not run at all (none wired, or the receipt
+// could not be built); the caller must not report "none visible" then. Lookup
+// failures inside the production filter fail closed to "not visible", exactly
+// as on the user's own receipt call.
 func (s *Server) dryRunTraceLogsVisibleToUser(
 	ctx context.Context,
 	trace *dryRunTraceResult,

@@ -563,4 +563,4 @@ Mutating methods (`eth_sendTransaction`, `eth_sendRawTransaction`) are translate
 ### Limitations
 
 - Cross-org impersonation is structurally blocked (admin in Org A can only dry-run or browse as users with a membership in Org A).
-- Dashboard View-as is read-only and scoped to one explicit organization. It applies the target user's visibility without merging the admin's broader grants; its RPC calls are evaluated in the named organization the same way as dry-run. See [View as user](/docs/security/view-as-user).
+- Dashboard View-as is read-only and scoped to one explicit organization. It applies the target user's visibility without merging the admin's broader grants; its RPC calls give the same answer as dry-run. See [View as user](/docs/security/view-as-user).

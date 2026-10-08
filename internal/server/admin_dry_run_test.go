@@ -368,8 +368,8 @@ func TestDryRunAccessRequest_MatchesEnforcementDerivation(t *testing.T) {
 		assert.Equal(t, "0xabc0000000000000000000000000000000000001", got.TargetAddress)
 		assert.Equal(t, rbac.GetFunctionSelector("eth_call", params), got.FunctionSelector)
 		// Same as the View-as RPC mirror (ProcessRequest.BypassPermsCache):
-		// an impersonated check never answers from the permission cache.
-		assert.True(t, got.BypassCache, "dry-run must resolve permissions fresh")
+		// an impersonated check never answers from the in-memory cache.
+		assert.True(t, got.BypassCache, "dry-run must skip the in-memory permission cache")
 	})
 
 	t.Run("eth_sendRawTransaction", func(t *testing.T) {
@@ -388,7 +388,7 @@ func TestDryRunAccessRequest_MatchesEnforcementDerivation(t *testing.T) {
 		assert.Equal(t, wantTo, got.TargetAddress)
 		assert.Equal(t, extractSelector(data), got.FunctionSelector)
 		assert.Equal(t, buildTxParams(from, wantTo, data, value), got.Params)
-		assert.True(t, got.BypassCache, "dry-run must resolve permissions fresh")
+		assert.True(t, got.BypassCache, "dry-run must skip the in-memory permission cache")
 	})
 
 	t.Run("undecodable raw tx is an error, not an empty target", func(t *testing.T) {

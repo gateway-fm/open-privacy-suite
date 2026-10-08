@@ -690,12 +690,12 @@ A tier-2 org admin can ask the proxy "what would user X see if they made this RP
 | Self-dry-run rejected | `req.UserDID == adminDID` check | 400 — would skew audit reasoning. |
 | Method allowlist | `dryRunReadMethods` ∪ `dryRunTraceMethods` | 400 with the supported set listed. |
 | Cross-org user invisible | `GetUserOrgIDs(user.ID)` must include `:org_id` | generic 404 "user not found" — identical to "user does not exist." |
-| Same RBAC pipeline | `CheckAccess` runs as the impersonated user with their own `EffectivePermissions`, resolved fresh (`BypassCache`, as on the View-as RPC mirror) | no parallel implementation that could diverge from real-request behaviour, and no answer from permissions cached before a grant or membership change. |
+| Same RBAC pipeline | `CheckAccess` runs as the impersonated user with their own `EffectivePermissions`, skipping the in-memory permission cache (`BypassCache`, as on the View-as RPC mirror) | no parallel implementation that could diverge from real-request behaviour, and the same permission resolution as the View-as RPC mirror right after a grant or membership change. |
 | Same response filter (RD-1308) | every read response, and the `logs_visible_to_user` receipt of a traced write, goes through `JSONRPCProcessor.applyResponseFilter` as the impersonated user, pinned to `:org_id` (`filterDryRunReadResponse`, `dryRunTraceLogsVisibleToUser`) | a transaction the user may not read is `null`; logs and receipts are filtered and field-redacted as on the live RPC. If the user's view cannot be produced (no processor wired), nothing from the node is returned: 500, audited as `error` (`response_filter_unavailable`). |
 
 ### Org pinning (RD-1308)
 
-Dry-run and the View-as **RPC** mirror (`/impersonate/:did/in/:org_id/rpc`) carry a view scope (`internal/viewscope`) naming the path org. Under it every authorization input of the RPC read path resolves in that org only; a user's own call never carries it.
+Dry-run and the View-as RPC mirror (`/impersonate/:did/in/:org_id/rpc`) carry a view scope (`internal/viewscope`) naming the path org. Under it every authorization input of the RPC read path resolves in that org only; a user's own call never carries it.
 
 | Input | User's own call | Dry-run / View-as RPC (scope = `:org_id`) |
 |---|---|---|
