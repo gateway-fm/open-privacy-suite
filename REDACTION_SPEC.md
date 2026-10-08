@@ -777,7 +777,7 @@ Dry-run and the View-as RPC mirror (`/impersonate/:did/in/:org_id/rpc`) carry a 
 | Admin exemption (`viewerAdminContracts`) | admin claim in the contract's owning org | contracts owned by the scope org only |
 | visibleTo shares (`txVisibilityForViewer`) | every `tx_visible_to` row listing the user | rows whose `org_id` (the org the send was authorised under) is the scope org |
 | visibleTo unlock (`rbac.UnlockableContracts`) | flagged contracts the user is eligible on | shared helper includes flagged contracts owned by the scope org only |
-| Nested-call gate for `eth_call` (RD-915) | all the user's orgs | the scope org (dry-run already pinned it; the mirror now does too). Like the user's own call, it runs for a targeted call only while runtime `eth_call` tracing is on, and always for a creation-shaped call (RD-1323). |
+| Nested-call gate for `eth_call` (RD-915) | all the user's orgs | the scope org (dry-run already pinned it; the mirror now does too). Like the user's own call, it runs for a targeted call only while runtime `eth_call` tracing is on, and always for a creation-shaped call, which is refused when the runtime tracer is unavailable (RD-1323). |
 | Embedded-address redaction (`GetBatchVisibility*`) | Full through any of the user's groups, and applicable disclosure grants | Full through the scope org's groups; disclosure grants must also apply to the session (§6) and have been requested in the scope org |
 | Transaction envelope (`applyViewerOrgScopeEnvelope`) | participant / visibleTo / admin rules | additionally `null` when `to`, a receipt's `contractAddress`, or the contract a deployment transaction creates (derived from sender + nonce) is owned by another org — even for the user's own transaction |
 

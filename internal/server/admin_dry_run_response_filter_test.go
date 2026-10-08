@@ -721,6 +721,56 @@ func TestEthCallTracing_ViewerOrgScopePinsNestedCalls_RD1308(t *testing.T) {
 		"an empty scope denies instead of widening to every org")
 }
 
+// A creation-shaped eth_call (no `to`, RD-1323) is traced against the scope
+// org too: the deploy claim must be held in that org, and the creation code
+// may not reach another org's contract, although the member's own call (they
+// belong to both orgs) may do either.
+func TestEthCallTracing_ViewerOrgScopePinsCreationShapedCalls_RD1308(t *testing.T) {
+	created, foreignP := fixedAddr(0x34), fixedAddr(0x35)
+	creationReq := func(did string) *ProcessRequest {
+		return &ProcessRequest{UserID: did, Method: "eth_call", Params: []any{map[string]any{"data": creationCode}, "latest"}}
+	}
+	for _, tc := range []struct {
+		name               string
+		deployInO, deployP bool
+		frame              traceFrame
+	}{
+		{
+			name:    "deploy claim held only in the other org",
+			deployP: true,
+			frame:   traceFrame{Type: "CREATE", From: fixedAddr(0x36), To: created},
+		},
+		{
+			name:      "creation code reads another org's contract",
+			deployInO: true,
+			frame: traceFrame{Type: "CREATE", From: fixedAddr(0x36), To: created,
+				Calls: []traceFrame{{Type: "STATICCALL", From: created, To: foreignP}}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			proc, ts := setupProcessorWithMockTracer(t, newScriptedTracer(t, tc.frame, tc.frame))
+			ctx := context.Background()
+			orgO := registerForeignOrgContract(t, ctx, ts, fixedAddr(0x37))
+			orgP := registerForeignOrgContract(t, ctx, ts, foreignP)
+			claims := func(deploy bool) []rbac.Claim {
+				if deploy {
+					return []rbac.Claim{rbac.ClaimDeploy}
+				}
+				return nil
+			}
+			did := "did:drf:creation-" + uuid.New().String()
+			uid := drCreateUserInGroup(t, ts.db, did, drCreateGroup(t, ts.db, orgO, "drf-co-"+orgO[:6], claims(tc.deployInO), false))
+			impAddUserToGroup(t, ts.db, uid, drCreateGroup(t, ts.db, orgP, "drf-cp-"+orgP[:6], claims(tc.deployP), false))
+
+			require.Nil(t, proc.validateEthCallWithTracing(ctx, creationReq(did), ""),
+				"control: the member's own creation-shaped call is allowed across their orgs")
+			denied := proc.validateEthCallWithTracing(withViewerOrgScope(ctx, orgO), creationReq(did), "")
+			require.NotNil(t, denied, "an org-O impersonation scope must judge the creation in org O only")
+			assert.Equal(t, http.StatusForbidden, denied.StatusCode)
+		})
+	}
+}
+
 // The participant rule admits the member's own transactions whatever they
 // touch. Under the path-org pin, a transaction (or receipt) addressed to a
 // contract of another org stays out even though the member sent it.
@@ -784,6 +834,7 @@ func TestImpersonationRPC_RefusesMethodsOutsideTheReadSet_RD1308(t *testing.T) {
 			w := httptest.NewRecorder()
 			f.router.ServeHTTP(w, req)
 			assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+			assert.JSONEq(t, `{"error":"method not supported under impersonation"}`, w.Body.String(), "refused by the mirror's method set, not a later check")
 			assert.False(t, f.reached(tc.method), "%s reached the node through the read-only mirror", tc.method)
 			assert.False(t, f.reached(tc.canonical), "%s reached the node through the read-only mirror", tc.canonical)
 		})
