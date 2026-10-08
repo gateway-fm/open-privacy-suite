@@ -13,32 +13,32 @@ import (
 // Note: No longer used for claim gating — retained for AllAllowedMethods() and reference.
 var ReadMethods = map[string]bool{
 	// Chain/Network info
-	"eth_chainId":      true,
-	"eth_blockNumber":  true,
-	"net_version":      true,
-	"net_listening":    true,
-	"net_peerCount":    true,
+	"eth_chainId":        true,
+	"eth_blockNumber":    true,
+	"net_version":        true,
+	"net_listening":      true,
+	"net_peerCount":      true,
 	"web3_clientVersion": true,
-	"web3_sha3":        true,
-	"eth_syncing":      true,
-	"eth_accounts":     true,
+	"web3_sha3":          true,
+	"eth_syncing":        true,
+	"eth_accounts":       true,
 
 	// Account/Balance queries
-	"eth_getBalance":           true,
-	"eth_getCode":              true,
-	"eth_getStorageAt":         true,
-	"eth_getTransactionCount":  true,
+	"eth_getBalance":          true,
+	"eth_getCode":             true,
+	"eth_getStorageAt":        true,
+	"eth_getTransactionCount": true,
 
 	// Block queries
-	"eth_getBlockByHash":                     true,
-	"eth_getBlockByNumber":                   true,
-	"eth_getBlockTransactionCountByHash":     true,
-	"eth_getBlockTransactionCountByNumber":   true,
+	"eth_getBlockByHash":                   true,
+	"eth_getBlockByNumber":                 true,
+	"eth_getBlockTransactionCountByHash":   true,
+	"eth_getBlockTransactionCountByNumber": true,
 
 	// Transaction queries
-	"eth_getTransactionByHash":              true,
-	"eth_getTransactionReceipt":             true,
-	"eth_getTransactionByBlockHashAndIndex": true,
+	"eth_getTransactionByHash":                true,
+	"eth_getTransactionReceipt":               true,
+	"eth_getTransactionByBlockHashAndIndex":   true,
 	"eth_getTransactionByBlockNumberAndIndex": true,
 
 	// Contract calls (read-only)
@@ -54,12 +54,12 @@ var ReadMethods = map[string]bool{
 	"eth_getLogs": true,
 
 	// Filter methods (used for event polling)
-	"eth_newFilter":                  true,
-	"eth_newBlockFilter":             true,
+	"eth_newFilter":                   true,
+	"eth_newBlockFilter":              true,
 	"eth_newPendingTransactionFilter": true,
-	"eth_getFilterChanges":           true,
-	"eth_getFilterLogs":              true,
-	"eth_uninstallFilter":            true,
+	"eth_getFilterChanges":            true,
+	"eth_getFilterLogs":               true,
+	"eth_uninstallFilter":             true,
 }
 
 // WriteMethods classifies state-modifying RPC methods.
@@ -120,6 +120,11 @@ var canonicalMethodByLower = func() map[string]string {
 var canonicalExtraMethods = []string{
 	"eth_getProof",
 	"eth_createAccessList",
+	"eth_getBlockReceipts",
+	"eth_getUncleByBlockHashAndIndex",
+	"eth_getUncleByBlockNumberAndIndex",
+	"eth_getUncleCountByBlockHash",
+	"eth_getUncleCountByBlockNumber",
 }
 
 // CanonicalizeMethod normalizes a JSON-RPC method name to its canonical
@@ -243,7 +248,9 @@ var ExtraNamespaces map[string][]string
 // MethodAliases maps chain-specific methods to their standard equivalents
 // for access control purposes (e.g. "linea_estimateGas" → "eth_estimateGas").
 // Methods with aliases inherit the same contract access checks, storage slot
-// tiering, deployment detection, and function selector extraction as their target.
+// tiering, historical-state guard, deployment detection, and function selector
+// extraction as their target. Targets are stored canonicalized
+// (RegisterExtraNamespaces).
 //
 // Wildcard-matched methods do NOT populate this map — they pass through to the
 // upstream node without alias-based redaction (see WildcardNamespace).
@@ -315,6 +322,23 @@ func SnapshotMethodRegistriesForTest() (restore func()) {
 	}
 }
 
+// IsStandardMethod reports whether method is one of the built-in standard RPC
+// methods (case-insensitive): one CanonicalizeMethod knows or one the proxy
+// classifies in ReadOpsMap / WriteOpsMap. Config loading uses it to refuse a
+// standard method as a chain-specific method or alias key: the node executes
+// the raw method (the request body is forwarded verbatim) while many access
+// decisions key on the alias target, so remapping a standard method would
+// strip it of its own checks.
+func IsStandardMethod(method string) bool {
+	lower := strings.ToLower(strings.TrimSpace(method))
+	if _, ok := canonicalMethodByLower[lower]; ok {
+		return true
+	}
+	// Methods classified in ReadOpsMap / WriteOpsMap but not in the canonical
+	// set (includes the response-filtered eth_getBlockReceipts).
+	return ReadOpsMap[lower] || WriteOpsMap[lower]
+}
+
 // RegisterExtraNamespaces registers operator-configured chain-specific methods,
 // their access control aliases, and any prefix-wildcard configurations. Called
 // once at startup from server initialization, strictly before
@@ -331,7 +355,12 @@ func RegisterExtraNamespaces(methodNames map[string][]string, aliases map[string
 		}
 	}
 	for method, alias := range aliases {
-		MethodAliases[method] = alias
+		// Store the target in its canonical spelling: the case-sensitive
+		// decisions keyed on the alias target (e.g. GetTargetAddress and
+		// GetFunctionSelector, function and proxy-upgrade rules, the
+		// storage-slot tier, eth_getLogs validation, eth_call tracing) match
+		// canonical names, so a mis-cased target would silently skip them.
+		MethodAliases[method] = CanonicalizeMethod(alias)
 	}
 	Wildcards = wildcards
 }

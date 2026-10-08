@@ -31,6 +31,7 @@ const (
 	MethodGetCode             = "eth_getCode"
 	MethodGetBalance          = "eth_getBalance"
 	MethodGetTransactionCount = "eth_getTransactionCount"
+	MethodGetProof            = "eth_getProof"
 
 	// Transaction send / call methods.
 	MethodCall               = "eth_call"
