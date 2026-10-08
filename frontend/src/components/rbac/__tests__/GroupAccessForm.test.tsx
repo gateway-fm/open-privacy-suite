@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
@@ -977,6 +977,103 @@ describe('GroupAccessForm', () => {
       expect(passthroughLabel).toHaveTextContent(/unfiltered/i);
       const aliasedLabel = screen.getByText('zkevm_aliased').closest('label');
       expect(aliasedLabel).not.toHaveTextContent(/unfiltered/i);
+    });
+
+    // Only an admin-tier token may add a passthrough method to a group; the
+    // dashboard's JWT session is tier-2 (the backend answers 403). The
+    // picker must not offer what the save would refuse.
+    describe('passthrough methods and the caller tier', () => {
+      const passthroughStatus = () =>
+        statusWith({
+          extra_namespaces: { zkEVM: ['zkevm_batchNumber', 'zkevm_aliased'] },
+          extra_passthrough: ['zkevm_batchNumber'],
+        });
+      const isChecked = (method: string) =>
+        !!screen.getByText(method).closest('label')?.querySelector('.bg-primary');
+
+      it('does not let a tier-2 admin add a passthrough method', async () => {
+        const user = userEvent.setup();
+        const onSave = vi.fn();
+        let capturedMethods: string[] | undefined;
+        server.use(
+          http.get('/api/v1/admin/orgs/:orgId/groups/:groupId/access', () =>
+            HttpResponse.json(mockGroupAccess)
+          ),
+          passthroughStatus(),
+          http.put('/api/v1/admin/orgs/:orgId/groups/:groupId/access', async ({ request }) => {
+            const body = (await request.json()) as { allowed_methods: string[] };
+            capturedMethods = body.allowed_methods;
+            return HttpResponse.json({ ...mockGroupAccess, ...body });
+          })
+        );
+
+        renderGroupAccessForm({ onSave });
+        await waitFor(() => {
+          expect(screen.getByText('zkevm_batchNumber')).toBeInTheDocument();
+        });
+
+        const passthroughLabel = screen.getByText('zkevm_batchNumber').closest('label')!;
+        expect(passthroughLabel).toHaveAttribute('aria-disabled', 'true');
+        expect(screen.getByText(/can be added only with an admin-tier token/)).toBeInTheDocument();
+        await user.click(passthroughLabel);
+        expect(isChecked('zkevm_batchNumber')).toBe(false);
+
+        // Select All in the namespace adds the aliased method only.
+        const section = screen.getByText('zkEVM').closest('div.border') as HTMLElement;
+        await user.click(within(section).getByText('Select All'));
+        expect(isChecked('zkevm_aliased')).toBe(true);
+        expect(isChecked('zkevm_batchNumber')).toBe(false);
+
+        await user.click(screen.getByText('Save Access Settings'));
+        await waitFor(() => expect(onSave).toHaveBeenCalled());
+        expect(capturedMethods).toContain('zkevm_aliased');
+        expect(capturedMethods).not.toContain('zkevm_batchNumber');
+      });
+
+      it('lets a tier-2 admin keep or remove a passthrough method already granted', async () => {
+        const user = userEvent.setup();
+        server.use(
+          http.get('/api/v1/admin/orgs/:orgId/groups/:groupId/access', () =>
+            HttpResponse.json({ ...mockGroupAccess, allowed_methods: ['eth_call', 'zkevm_batchNumber'] })
+          ),
+          passthroughStatus()
+        );
+
+        renderGroupAccessForm({});
+        await waitFor(() => {
+          expect(screen.getByText('zkevm_batchNumber')).toBeInTheDocument();
+        });
+
+        const passthroughLabel = screen.getByText('zkevm_batchNumber').closest('label')!;
+        expect(passthroughLabel).not.toHaveAttribute('aria-disabled', 'true');
+        expect(isChecked('zkevm_batchNumber')).toBe(true);
+        await user.click(passthroughLabel);
+        expect(isChecked('zkevm_batchNumber')).toBe(false);
+        await user.click(passthroughLabel);
+        expect(isChecked('zkevm_batchNumber')).toBe(true);
+      });
+
+      it('lets an admin-tier token add a passthrough method', async () => {
+        localStorage.setItem('privacy_proxy_admin_token', 'test-admin-token');
+        const user = userEvent.setup();
+        server.use(
+          http.get('/api/v1/admin/orgs/:orgId/groups/:groupId/access', () =>
+            HttpResponse.json(mockGroupAccess)
+          ),
+          passthroughStatus()
+        );
+
+        renderGroupAccessForm({});
+        await waitFor(() => {
+          expect(screen.getByText('zkevm_batchNumber')).toBeInTheDocument();
+        });
+
+        const passthroughLabel = screen.getByText('zkevm_batchNumber').closest('label')!;
+        expect(passthroughLabel).not.toHaveAttribute('aria-disabled', 'true');
+        expect(screen.queryByText(/can be added only with an admin-tier token/)).not.toBeInTheDocument();
+        await user.click(passthroughLabel);
+        expect(isChecked('zkevm_batchNumber')).toBe(true);
+      });
     });
   });
 });

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { rbacApi } from '@/api/rbac';
+import { getAdminToken } from '@/api/adminClient';
 import type { SetGroupAccessInput, PermissionPreset } from '@/types/rbac';
 import {
   METHOD_SECTIONS,
@@ -65,6 +66,15 @@ export default function GroupAccessForm({
   // only, so they are not loaded into the picker; saving replaces them with
   // the methods selected here, which the notice below says.
   const [storedWildcards, setStoredWildcards] = useState<string[]>([]);
+  // Methods the group held when the form loaded. A tier-2 caller may keep or
+  // remove a passthrough method an admin already granted, but not add one.
+  const [storedMethods, setStoredMethods] = useState<string[]>([]);
+  // Only an admin-tier token (X-Admin-Token) may add a passthrough method;
+  // the dashboard's JWT session is tier-2 and the backend answers 403. The
+  // backend stays the authoritative gate; this keeps the picker honest.
+  const canAddPassthrough = getAdminToken() !== '';
+  const passthroughLocked = (method: string) =>
+    !canAddPassthrough && extraPassthrough.includes(method) && !storedMethods.includes(method);
 
   // reason: intentional reload-on-groupId. loadAccess/loadExtraNamespaces are
   // non-memoised helpers that read current state via closure; adding them to
@@ -106,6 +116,7 @@ export default function GroupAccessForm({
         // picker and surfaced in a notice instead of silently disappearing.
         const stored: string[] = access.allowed_methods || [];
         setStoredWildcards(stored.filter((m: string) => m.includes('*')));
+        setStoredMethods(stored.filter((m: string) => !m.includes('*')));
         setAllowedMethods(stored.filter((m: string) => !m.includes('*')));
         setRpcApiKey(access.rpc_api_key || '');
         setVerboseErrors(access.verbose_errors ?? false);
@@ -140,7 +151,9 @@ export default function GroupAccessForm({
     setAllowedMethods(prev =>
       prev.includes(method)
         ? prev.filter(m => m !== method)
-        : [...prev, method]
+        : passthroughLocked(method)
+          ? prev
+          : [...prev, method]
     );
   };
 
@@ -156,7 +169,7 @@ export default function GroupAccessForm({
   const selectAllInSection = (methods: readonly string[]) => {
     setAllowedMethods(prev => {
       const others = prev.filter(m => !methods.includes(m));
-      return [...others, ...methods];
+      return [...others, ...methods.filter(m => prev.includes(m) || !passthroughLocked(m))];
     });
   };
 
@@ -461,12 +474,22 @@ export default function GroupAccessForm({
               {nsMethods.length > 0 && (
                 <div className="border-t border-neutral-200 p-3">
                   <div className="grid grid-cols-2 gap-1.5">
-                    {nsMethods.map((method) => (
+                    {nsMethods.map((method) => {
+                      const locked = passthroughLocked(method) && !allowedMethods.includes(method);
+                      return (
                       <label
                         key={method}
-                        className="flex items-center gap-2 p-1.5 rounded hover:bg-primary-50 cursor-pointer border border-transparent hover:border-neutral-100 transition-colors"
+                        aria-disabled={locked || undefined}
+                        title={locked ? 'Only an admin-tier token can add a passthrough method to a group.' : undefined}
+                        className={cn(
+                          'flex items-center gap-2 p-1.5 rounded border border-transparent transition-colors',
+                          locked
+                            ? 'opacity-60 cursor-not-allowed'
+                            : 'hover:bg-primary-50 cursor-pointer hover:border-neutral-100'
+                        )}
                         onClick={(e) => {
                           e.preventDefault();
+                          if (locked) return;
                           toggleMethod(method);
                         }}
                       >
@@ -490,8 +513,15 @@ export default function GroupAccessForm({
                           </span>
                         )}
                       </label>
-                    ))}
+                      );
+                    })}
                   </div>
+                  {nsMethods.some(m => passthroughLocked(m) && !allowedMethods.includes(m)) && (
+                    <p className="text-[11px] text-neutral-500 mt-2">
+                      Unfiltered methods can be added only with an admin-tier token. You can keep or
+                      remove one an admin already granted.
+                    </p>
+                  )}
                 </div>
               )}
             </div>
