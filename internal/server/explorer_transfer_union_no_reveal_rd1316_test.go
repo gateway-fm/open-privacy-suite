@@ -85,7 +85,8 @@ func setupRD1316Fixture(t *testing.T) *rd1316Fixture {
 	exec(`INSERT INTO token_transfers (tx_hash, log_index, token_address, from_address, to_address, value, block_number)
 		VALUES ($1, 0, $2, $3, $4, 1000, $5)`, hash, rd1316Token, rd1316EOA, rd1316Vault, block)
 	exec(`INSERT INTO internal_transactions (tx_hash, block_number, trace_address, from_address, to_address, value, call_type)
-		VALUES ($1, $2, '0', $3, $4, 0, 'CALL'), ($1, $2, '0,0', $4, $5, 0, 'STATICCALL')`, hash, block, rd1316EOA, rd1316Token, rd1316Callee)
+		VALUES ($1, $2, '0', $3, $4, 0, 'CALL'), ($1, $2, '0,0', $4, $5, 0, 'STATICCALL'), ($1, $2, '0,1', $4, $6, 0, 'CALL')`,
+		hash, block, rd1316EOA, rd1316Token, rd1316Callee, rd1316Vault)
 
 	return &rd1316Fixture{srv: srv, conn: conn, router: setupCoherenceRouter(srv), hash: hash}
 }
@@ -147,18 +148,26 @@ func TestExplorer_TransferUnion_KeepsRowsWithoutRevealing_RD1316(t *testing.T) {
 	// tokenAddress is public infrastructure on a transfer row (§3.3).
 	requireNoForeignIdentity(t, rr.Body.String(), "GET /transactions/:hash/transfers", rd1316EOA)
 
+	// The union keeps the parent only: its frames follow the ordinary frame
+	// rules. The frame into the admin's vault survives with the token
+	// [PRIVATE]; the two frames with both sides private (the wallet's call,
+	// the token's call into another org's contract) are dropped.
 	rr = f.get(t, rd1316AdminDID, "/transactions/"+f.hash+"/internal")
 	require.Equal(t, http.StatusOK, rr.Code)
-	var frames []json.RawMessage
+	var frames []explorer.InternalTransaction
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &frames))
-	assert.Len(t, frames, 2, "the kept parent's frames survive: %s", rr.Body.String())
+	require.Len(t, frames, 1, "only the frame with a side the admin sees: %s", rr.Body.String())
+	assert.Equal(t, "[PRIVATE]", frames[0].From)
+	require.NotNil(t, frames[0].To)
+	assert.Equal(t, rd1316Vault, strings.ToLower(*frames[0].To))
 	requireNoForeignIdentity(t, rr.Body.String(), "GET /transactions/:hash/internal")
 
 	// A plain grant holder of the vault is not an admin: G10 drops another
 	// user's one-side-hidden tx, and the union does not keep it for them.
+	// (/internal is pinned separately: GAP G28.)
 	rr = f.get(t, rd1316GrantDID, "/transactions/"+f.hash)
 	assert.Equal(t, http.StatusNotFound, rr.Code, rr.Body.String())
-	for _, path := range []string{"/transactions?limit=25", "/transactions/" + f.hash + "/transfers", "/transactions/" + f.hash + "/internal"} {
+	for _, path := range []string{"/transactions?limit=25", "/transactions/" + f.hash + "/transfers"} {
 		rr = f.get(t, rd1316GrantDID, path)
 		require.Equal(t, http.StatusOK, rr.Code, path)
 		assert.NotContains(t, rr.Body.String(), f.hash[:20], "%s kept a row for a non-admin: %s", path, rr.Body.String())
@@ -430,6 +439,49 @@ func TestBuildVisibilityFilter_BothSidesVisibleTransfers_RD1316(t *testing.T) {
 		assert.NotContains(t, filter.VisibleTxHashes, h, "a hidden side or no event access: not kept")
 	}
 	assert.Empty(t, filter.ListedTxHashes, "the union never becomes a listing")
+}
+
+// GAP G28: a derived row can survive while its parent tx does not. Both cases
+// predate RD-1316; these tests pin the current behaviour so the fix cannot land
+// (or the gap widen) silently.
+func TestExplorer_DerivedRowWithoutParent_GAP_G28(t *testing.T) {
+	f := setupRD1316Fixture(t)
+
+	// GAP G28 (1): internal frames have no G10 drop. The vault grant holder's
+	// GET /transactions/:hash is 404 (G10), yet /internal returns the frame
+	// into the vault, with the token [PRIVATE]. Desired: no frame without the
+	// parent (apply G10 to frames for non-admins) — fix before release.
+	rr := f.get(t, rd1316GrantDID, "/transactions/"+f.hash)
+	require.Equal(t, http.StatusNotFound, rr.Code, rr.Body.String())
+	rr = f.get(t, rd1316GrantDID, "/transactions/"+f.hash+"/internal")
+	require.Equal(t, http.StatusOK, rr.Code)
+	var frames []explorer.InternalTransaction
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &frames))
+	require.Len(t, frames, 1, "GAP G28: the frame into the vault surfaces without its parent: %s", rr.Body.String())
+	assert.Equal(t, "[PRIVATE]", frames[0].From)
+	requireNoForeignIdentity(t, rr.Body.String(), "grant holder /internal")
+
+	// GAP G28 (2): an admin's /transfers keeps a mint to a private wallet on
+	// another org's token (the zero address is public; admins skip G10 and the
+	// event-access strip — G13), but the zero address does not drive the admin
+	// union, so the parent (a private wallet calling another org's token) is
+	// dropped. Desired: the mint row and its parent agree — fix before release.
+	const otherWallet = "0x7777777777777777777777777777777777771316"
+	f.addWalletUser(t, "did:privado:rd1316_mint_recipient", otherWallet)
+	block := seedExplorerBlock(t, f.conn)
+	mintHash := "0x1316" + strings.Repeat("7", 60)
+	seedExplorerTransaction(t, f.conn, block, mintHash, rd1316EOA, rd1316Token)
+	_, err := f.conn.Exec(`INSERT INTO token_transfers (tx_hash, log_index, token_address, from_address, to_address, value, block_number)
+		VALUES ($1, 0, $2, $3, $4, 9, $5)`, mintHash, rd1316Token, rd1316Zero, otherWallet, block)
+	require.NoError(t, err)
+	rr = f.get(t, rd1316AdminDID, "/transactions/"+mintHash+"/transfers")
+	require.Equal(t, http.StatusOK, rr.Code)
+	var transfers []explorer.TokenTransfer
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &transfers))
+	require.Len(t, transfers, 1, "GAP G28: the admin sees the mint: %s", rr.Body.String())
+	assert.Equal(t, "[PRIVATE]", transfers[0].To)
+	rr = f.get(t, rd1316AdminDID, "/transactions/"+mintHash)
+	assert.Equal(t, http.StatusNotFound, rr.Code, "GAP G28: the mint's parent is dropped for the admin: %s", rr.Body.String())
 }
 
 // Positive control: a genuine visibleTo share of the same tx still reveals the

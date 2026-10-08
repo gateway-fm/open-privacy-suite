@@ -597,11 +597,12 @@ func anyAddressMatches(v any, viewerAddrs map[string]bool) bool {
 
 // RedactOpts provides optional overrides for transaction redaction.
 type RedactOpts struct {
-	// VisibleTxHashes is the set of tx hashes whose rows are always kept for
-	// the viewer: genuine visibleTo shares plus the RD-1009
-	// transfer-participant union. Membership alone only keeps the row; the
-	// addresses are revealed only for hashes also in ListedTxHashes (a
-	// genuine share) — the union never reveals an identity (RD-1316).
+	// VisibleTxHashes is the set of tx hashes whose transaction rows are
+	// always kept for the viewer: genuine visibleTo shares plus the RD-1009
+	// transfer-participant union. Membership alone only keeps the tx row
+	// (RedactTransactions) — it keeps no transfer or internal-frame row and
+	// reveals no address; reveals are keyed on ListedTxHashes (a genuine
+	// share) only (RD-1316).
 	VisibleTxHashes map[string]bool
 
 	// ListedTxHashes is the set of tx hashes whose visibleTo row genuinely
@@ -1413,7 +1414,6 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 	if len(opts) > 0 {
 		ropts = opts[0]
 	}
-	visibleHashes := ropts.VisibleTxHashes
 	adminAuditView := ropts.adminAuditView()
 
 	addrMap := make(map[string]bool)
@@ -1489,21 +1489,18 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 		fromIsParentParty := viewerIsParentParticipant && t.From != "" && parentParticipantSet[strings.ToLower(t.From)]
 		toIsParentParty := viewerIsParentParticipant && t.To != nil && *t.To != "" && parentParticipantSet[strings.ToLower(*t.To)]
 
-		// visibleTo override: an internal tx inherits its parent's allowlist
-		// membership. When the parent tx is in VisibleTxHashes (either because
-		// the sender explicitly shared the hash, or because RD-1009's
-		// transfer-participant union added it), the internal tx must survive
-		// — otherwise /transactions/:hash/internal would drop a row whose
-		// parent /transactions and /transfers feeds just rendered. Same
-		// cross-surface row-survival bug class as RD-1009; same fix shape
-		// (parent-tx allowlist threaded into the drop predicate).
+		// visibleTo override: a frame inherits its parent's genuine share. When
+		// the sender listed the viewer on the parent tx (ListedTxHashes), the
+		// frame survives and its addresses are revealed, mirroring
+		// RedactTransactions/RedactTransfers.
 		//
-		// RD-1316: only the explicit share (ListedTxHashes) also reveals the
-		// frame addresses. A union-only parent keeps its frames but renders
-		// each side at the viewer's own level — a frame's target can be any
-		// org's private contract (the RD-1122 / RD-1223 concern).
+		// RD-1316: the RD-1009 transfer-participant union (VisibleTxHashes)
+		// plays no part here, as in RedactTransfers. It keeps the parent row
+		// only; the parent's frames follow the ordinary rules below, so a
+		// frame with both sides private — another org's call tree, since a
+		// frame's target can be any org's private contract (the RD-1122 /
+		// RD-1223 concern) — is dropped unless the admin audit view keeps it.
 		txVisibleToViewer := ropts.ListedTxHashes[strings.ToLower(t.TxHash)]
-		txKeptByUnion := visibleHashes[strings.ToLower(t.TxHash)] && !txVisibleToViewer
 
 		baseFromLevel := visMap[strings.ToLower(t.From)]
 		baseToLevel := VisibilityFull
@@ -1583,21 +1580,17 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 		//
 		// txVisibleToViewer above already upgraded fromLevel/toLevel to Full
 		// when the parent tx is genuinely shared, so the bothHidden branch
-		// cannot fire for those. A union-only parent (txKeptByUnion) is not
-		// promoted, so it is exempted here explicitly — the frame survives
-		// with both sides [PRIVATE] (RD-1009 coherence, RD-1316).
+		// cannot fire for those.
 		//
 		// Grant override mirrors RedactTransactions: a disclosure grant on
 		// either party keeps the row regardless of bothHidden — required
 		// for the redacted-grant cell of the matrix.
 		bothHidden := isNonIdentifiable(fromLevel) && isNonIdentifiable(toLevel)
 		if bothHidden && !txVisibleViaGrant {
-			if !adminAuditView && !txKeptByUnion {
+			if !adminAuditView {
 				continue
 			}
-			if adminAuditView {
-				ropts.recordAdminReveal()
-			}
+			ropts.recordAdminReveal()
 		}
 
 		redacted := t

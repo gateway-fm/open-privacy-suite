@@ -340,8 +340,10 @@ func TestRedactTransactions_UnionRowUnderAdminView_CountsReveal_RD1316(t *testin
 	}
 }
 
-// Same audit rule on the internal frames of a union-kept parent: each frame
-// with both sides private is counted when the audit view reveals its value.
+// Internal frames of a union-kept parent follow the ordinary frame rules, so
+// under the audit view each frame with both sides private is kept and counted
+// like any other admin-view reveal. Without the audit view (a non-admin with
+// the flag set) those frames are dropped.
 func TestRedactInternalTransactions_UnionFramesUnderAdminView_CountsReveal_RD1316(t *testing.T) {
 	itxs := []InternalTransaction{
 		{TxHash: rd1316Hash, TraceAddress: "0", From: rd1316EOA, To: strPtr(rd1316Token), Value: "3"},
@@ -365,27 +367,47 @@ func TestRedactInternalTransactions_UnionFramesUnderAdminView_CountsReveal_RD131
 	if stats.AdminUserTxsRevealed != 2 {
 		t.Errorf("AdminUserTxsRevealed = %d, want 2 (the two frames with both sides private)", stats.AdminUserTxsRevealed)
 	}
+
+	stats = &RedactStats{}
+	opts = unionOpts(false)
+	opts.OrgAdminViewUserTxs = true
+	opts.Stats = stats
+	got, err = rd1316Engine(nil).RedactInternalTransactions(context.Background(), itxs, "did:member", opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].TraceAddress != "0,1" || stats.AdminUserTxsRevealed != 0 {
+		t.Errorf("no audit view for a non-admin: only the frame with a visible side survives, uncounted; got %+v (count %d)", got, stats.AdminUserTxsRevealed)
+	}
 }
 
-func TestRedactInternalTransactions_UnionKeepsRowWithoutRevealing_RD1316(t *testing.T) {
+// The union keeps the parent row only. Like sibling transfers, the parent's
+// internal frames follow the ordinary frame rules: a frame with at least one
+// side the viewer can see survives (the other side [PRIVATE]); a frame with
+// both sides private — another org's call tree — is dropped. The result is the
+// same with and without the union entry.
+func TestRedactInternalTransactions_UnionDoesNotKeepPrivateFrames_RD1316(t *testing.T) {
 	itxs := []InternalTransaction{
 		{TxHash: rd1316Hash, TraceAddress: "0", From: rd1316EOA, To: strPtr(rd1316Token), Value: "0"},
 		{TxHash: rd1316Hash, TraceAddress: "0,0", From: rd1316Token, To: strPtr(rd1316Callee), Value: "0"},
 		{TxHash: rd1316Hash, TraceAddress: "0,1", From: rd1316Token, To: strPtr(rd1316Vault), Value: "1000"},
 	}
 	for _, admin := range []bool{true, false} {
-		got, err := rd1316Engine(nil).RedactInternalTransactions(context.Background(), itxs, "did:viewer", unionOpts(admin))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(got) != len(itxs) {
-			t.Fatalf("admin=%v: internal frames of a kept parent tx must survive, got %d of %d", admin, len(got), len(itxs))
-		}
-		for _, itx := range got {
-			assertNoIdentity(t, itx, "internal tx")
-		}
-		if got[2].To == nil || *got[2].To != rd1316Vault {
-			t.Errorf("admin=%v: the viewer's own contract stays visible, got %v", admin, got[2].To)
+		for _, opts := range []RedactOpts{unionOpts(admin), {ViewerIsAdmin: admin}} {
+			got, err := rd1316Engine(nil).RedactInternalTransactions(context.Background(), itxs, "did:viewer", opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got) != 1 || got[0].TraceAddress != "0,1" {
+				t.Fatalf("admin=%v union=%v: only the frame into the viewer's contract survives, got %+v", admin, opts.VisibleTxHashes != nil, got)
+			}
+			if got[0].From != "[PRIVATE]" || got[0].To == nil || *got[0].To != rd1316Vault {
+				t.Errorf("admin=%v: from=%q to=%v, want [PRIVATE] and the viewer's contract", admin, got[0].From, got[0].To)
+			}
+			if got[0].Value != "" {
+				t.Errorf("admin=%v: value revealed beside a private side: %s", admin, got[0].Value)
+			}
+			assertNoIdentity(t, got, "internal txs")
 		}
 	}
 }

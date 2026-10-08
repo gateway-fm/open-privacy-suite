@@ -271,15 +271,14 @@ any one of them is a privacy or UX regression:
    `GET /transactions/:hash=X` returns 200 (not 404). And vice
    versa: if the list drops `X`, by-hash returns 404. The single
    shared opts builder above is the load-bearing contract.
-3. **Parent-tx allowlist propagates to derived feeds** (this PR).
-   If `GET /transactions/:hash=X` returns 200, then for every row
-   the underlying tables hold for parent `X`,
-   `GET /transactions/:hash=X/transfers`,
-   `GET /transactions/:hash=X/internal`, and
-   `GET /transactions/:hash=X/logs` surface their rows (subject to
-   the per-row field-level rules from the field-rendering matrix
-   and event-rule / ABI gates on logs). No derived feed silently
-   contradicts the parent's row-survival decision.
+3. **A kept parent does not keep its derived rows.**
+   When `GET /transactions/:hash=X` returns 200, each row of
+   `GET /transactions/:hash=X/transfers`, `/internal` and `/logs` is
+   still decided by its own rules: a transfer or an internal call
+   with both sides private to the viewer is dropped (an org admin
+   with `ORG_ADMIN_VIEW_USER_TXS` keeps it, audited), and logs follow
+   the event-rule and ABI gates. The parent being visible never
+   widens what its derived rows show.
 4. **Field-rendering rules are independent of row-survival.**
    When a row survives (under any of the above invariants), the
    field-rendering matrix governs every field substitution. The
@@ -313,7 +312,8 @@ any one of them is a privacy or UX regression:
    calldata and nonce are cleared beside it. Value is cleared too,
    except under `ORG_ADMIN_VIEW_USER_TXS` (counted in the audit log)
    or a disclosure grant's lens. That transfer follows the normal
-   rules; other transfers in the transaction are not kept by it.
+   rules; other transfers and the transaction's internal calls are
+   not kept by it.
    Only a `visibleTo` share by the sender, a disclosure grant
    (through its lens) or the viewer's own participation reveals those
    addresses. A contract grant alone does not keep another user's
