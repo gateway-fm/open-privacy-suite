@@ -16035,7 +16035,7 @@
         },
         "/api/v1/explorer/blocks/{number}/transactions": {
             "get": {
-                "description": "Returns the transactions contained in a block. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: transactions fully hidden from the viewer are dropped and surviving rows are redacted per the viewer's visibility.",
+                "description": "Returns the transactions contained in a block. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: transactions the viewer cannot see are dropped and surviving rows are redacted per the viewer's visibility. A transaction is also kept when one of its token transfers is visible to the viewer; such a row shows no address the viewer could not already see.",
                 "parameters": [
                     {
                         "description": "Block number",
@@ -17158,7 +17158,7 @@
         },
         "/api/v1/explorer/transactions": {
             "get": {
-                "description": "Returns a page of transactions, newest first. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: transactions where every participant is hidden are dropped, and surviving rows have addresses and values redacted per the viewer's visibility.",
+                "description": "Returns a page of transactions, newest first. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: transactions the viewer cannot see are dropped, and surviving rows have addresses and values redacted per the viewer's visibility. A transaction is also kept when one of its token transfers is visible to the viewer, so this list agrees with the transfer views; such a row shows no address the viewer could not already see.",
                 "parameters": [
                     {
                         "description": "Max rows to return (1-100)",
@@ -17230,7 +17230,7 @@
         },
         "/api/v1/explorer/transactions/paginated": {
             "get": {
-                "description": "Returns a page of transactions plus a total count, using page/pageSize pagination. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: rows fully hidden from the viewer are dropped and surviving rows are redacted. Note the total is a SQL-level count that may slightly overcount relative to the redacted rows in data.",
+                "description": "Returns a page of transactions plus a total count, using page/pageSize pagination. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: rows the viewer cannot see are dropped and surviving rows are redacted. A transaction is also kept when one of its token transfers is visible to the viewer; such a row shows no address the viewer could not already see. Note the total is a SQL-level count that may slightly overcount relative to the redacted rows in data.",
                 "parameters": [
                     {
                         "description": "1-based page number",

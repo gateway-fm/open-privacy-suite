@@ -852,7 +852,7 @@ func (s *Server) buildVisibilityFilter(ctx context.Context, viewerDID string, vi
 // getExplorerTransactions returns a page of recent transactions, newest first.
 //
 // @Summary      List recent transactions
-// @Description  Returns a page of transactions, newest first. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: transactions where every participant is hidden are dropped, and surviving rows have addresses and values redacted per the viewer's visibility.
+// @Description  Returns a page of transactions, newest first. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: transactions the viewer cannot see are dropped, and surviving rows have addresses and values redacted per the viewer's visibility. A transaction is also kept when one of its token transfers is visible to the viewer, so this list agrees with the transfer views; such a row shows no address the viewer could not already see.
 // @Tags         Explorer
 // @Produce      json
 // @Param        limit query int false "Max rows to return (1-100)" default(25)
@@ -1417,7 +1417,7 @@ func (s *Server) indexExplorerBlock(c *gin.Context) {
 // getExplorerBlockTransactions returns the transactions in a block.
 //
 // @Summary      Transactions in a block
-// @Description  Returns the transactions contained in a block. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: transactions fully hidden from the viewer are dropped and surviving rows are redacted per the viewer's visibility.
+// @Description  Returns the transactions contained in a block. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: transactions the viewer cannot see are dropped and surviving rows are redacted per the viewer's visibility. A transaction is also kept when one of its token transfers is visible to the viewer; such a row shows no address the viewer could not already see.
 // @Tags         Explorer
 // @Produce      json
 // @Param        number path int true "Block number"
@@ -1540,7 +1540,7 @@ func (s *Server) getExplorerLatestBlockNumber(c *gin.Context) {
 // getExplorerTransactionsPaginated returns a page of transactions with a total.
 //
 // @Summary      List transactions (page/pageSize)
-// @Description  Returns a page of transactions plus a total count, using page/pageSize pagination. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: rows fully hidden from the viewer are dropped and surviving rows are redacted. Note the total is a SQL-level count that may slightly overcount relative to the redacted rows in data.
+// @Description  Returns a page of transactions plus a total count, using page/pageSize pagination. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: rows the viewer cannot see are dropped and surviving rows are redacted. A transaction is also kept when one of its token transfers is visible to the viewer; such a row shows no address the viewer could not already see. Note the total is a SQL-level count that may slightly overcount relative to the redacted rows in data.
 // @Tags         Explorer
 // @Produce      json
 // @Param        page query int false "1-based page number" default(1)
