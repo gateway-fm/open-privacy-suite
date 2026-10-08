@@ -337,18 +337,19 @@ export default function ContractGrantsManager({
                   )}
                 </div>
                 <p className="text-xs text-neutral-500">
-                  When enabled, a transaction sender on this contract can grant
-                  per-event visibility to anyone they list in the tx's <code>visibleTo</code>{' '}
-                  array — bypassing the contract grant's event rules and parameter
-                  rules for that one transaction. Default off; existing additive
-                  behaviour stays.
+                  When enabled, a transaction sender on this contract can share
+                  its full event payloads with eligible users listed in the tx's{' '}
+                  <code>visibleTo</code> array, independently of the contract grant's
+                  event rules and parameter rules for that transaction. Default off;
+                  existing additive behaviour stays.
                 </p>
                 {allowVisibleToUnlock && (
                   <p className="text-xs text-amber-700 flex items-center gap-1">
                     <ShieldAlert className="w-3 h-3" />
                     Tx senders can unlock a transaction's event payloads only to
-                    listed DIDs that already hold contract group access in this
-                    org; cross-org and anonymous viewers remain denied.
+                    listed users with an eligible contract grant or org-admin
+                    membership in this org. Default and system groups are excluded;
+                    cross-org and anonymous viewers remain denied.
                   </p>
                 )}
                 {unlockSuccess && (
@@ -396,8 +397,8 @@ export default function ContractGrantsManager({
                 <p className="text-sm text-neutral-600 mt-1">
                   Once enabled, any transaction sender on this contract can share
                   that transaction&apos;s events from this contract as full event
-                  payloads, including embedded addresses (bypassing event rules and
-                  parameter rules), with anyone they list in <code>visibleTo</code>.
+                  payloads, including embedded addresses, independently of event
+                  rules and parameter rules, with anyone they list in <code>visibleTo</code>.
                   Listed users need an eligible contract grant in this org, or
                   org-admin membership there. Default and system groups are excluded;
                   cross-org and anonymous viewers remain denied.

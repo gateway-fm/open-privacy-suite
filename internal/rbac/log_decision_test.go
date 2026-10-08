@@ -97,8 +97,8 @@ func TestDecideLogEmitter_PayloadPolicy(t *testing.T) {
 	}{
 		// ---- the only full-payload path ----
 		{"unlock alone → full payload", LogEmitterFacts{Unlocked: true}, LogDecision{Admit: true, Payload: LogPayloadFull}},
-		{"unlock bypasses no-ABI with full payload", LogEmitterFacts{Unlocked: true, HasGrant: true, ABIResolvable: false}, LogDecision{Admit: true, Payload: LogPayloadFull}},
-		{"unlock bypasses M15 with full payload", LogEmitterFacts{Unlocked: true, HasGrant: true, ABIResolvable: true, DynamicPayloadDropped: true, HasTopic0: true}, LogDecision{Admit: true, Payload: LogPayloadFull}},
+		{"unlock full payload without ABI", LogEmitterFacts{Unlocked: true, HasGrant: true, ABIResolvable: false}, LogDecision{Admit: true, Payload: LogPayloadFull}},
+		{"unlock full payload with dynamic event", LogEmitterFacts{Unlocked: true, HasGrant: true, ABIResolvable: true, DynamicPayloadDropped: true, HasTopic0: true}, LogDecision{Admit: true, Payload: LogPayloadFull}},
 		{"unlock + admin → full payload (the unlock wins)", LogEmitterFacts{Unlocked: true, IsAdmin: true}, LogDecision{Admit: true, Payload: LogPayloadFull}},
 
 		// ---- every other admit path is masked ----
