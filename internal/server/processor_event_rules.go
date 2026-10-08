@@ -226,6 +226,17 @@ func (p *JSONRPCProcessor) buildTxVisibilityContext(ctx context.Context, userDID
 	}
 }
 
+// standardTxVisibilityContext is buildTxVisibilityContext for the read
+// filters: under the strict read profile it returns nil without the lookup,
+// because the strict transaction and event decisions ignore visibleTo
+// listings and the unlock (RD-1299).
+func (p *JSONRPCProcessor) standardTxVisibilityContext(ctx context.Context, userDID string, responseBody []byte) *rbac.TxVisibilityContext {
+	if p.readProfile.Strict() {
+		return nil
+	}
+	return p.buildTxVisibilityContext(ctx, userDID, responseBody)
+}
+
 // buildVisibleToUnlockableMap returns the (lowercased address → true) map
 // of contracts where the per-contract `allow_visibleto_unlock` flag is
 // set AND the viewer is unlock-eligible — rbac.UnlockableContracts, the

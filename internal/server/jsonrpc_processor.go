@@ -1168,7 +1168,7 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 			addrs = nil // DB error — proceed with nil addrs, visCtx handles visibleTo
 		}
 		perms := p.resolvePermsForFilter(ctx, result)
-		visCtx := p.buildTxVisibilityContext(ctx, req.UserID, responseBody)
+		visCtx := p.standardTxVisibilityContext(ctx, req.UserID, responseBody)
 		// Org-scoped admin map covers both the receipt-envelope bypass
 		// (for receipt.to) and the per-log admin bypass (for each log's
 		// emitting contract). Filter handles the lookup.
@@ -1193,18 +1193,22 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 		// Note: empty addrs is OK — user may have no linked ETH addresses but
 		// still has visibleTo entries. The filter handles this via visCtx.
 		perms := p.resolvePermsForFilter(ctx, result)
-		visCtx := p.buildTxVisibilityContext(ctx, req.UserID, responseBody)
+		visCtx := p.standardTxVisibilityContext(ctx, req.UserID, responseBody)
 		// RD-1162: admit logs of transactions the caller participated in
 		// (their linked address is the tx from/to) even when the event carries
 		// no address of theirs — bounded in FilterEventLogs by contract-grant
 		// access. Senders aren't present in log entries, so resolve them via a
 		// batched upstream eth_getTransactionByHash (a no-op when the caller has
-		// no linked addresses or the unique-tx count exceeds the cap).
-		if participants := p.buildParticipantTxHashes(addrs, responseBody); len(participants) > 0 {
-			if visCtx == nil {
-				visCtx = &rbac.TxVisibilityContext{ViewerDID: req.UserID}
+		// no linked addresses or the unique-tx count exceeds the cap). The
+		// strict event predicate ignores participation (RD-1299), so the
+		// upstream batch is skipped there.
+		if !p.readProfile.Strict() {
+			if participants := p.buildParticipantTxHashes(addrs, responseBody); len(participants) > 0 {
+				if visCtx == nil {
+					visCtx = &rbac.TxVisibilityContext{ViewerDID: req.UserID}
+				}
+				visCtx.ParticipantTxHashes = participants
 			}
-			visCtx.ParticipantTxHashes = participants
 		}
 		// Org-scoped admin-bypass map, indexed by each log's emitting
 		// contract. Takes the internal user UUID (result.UserID), not
@@ -1256,7 +1260,7 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 		// gates, event rules, RD-1162 own-tx logs, RD-1214 masking and the
 		// RD-874 unlock payload.
 		perms := p.resolvePermsForFilter(ctx, result)
-		visCtx := p.buildTxVisibilityContext(ctx, req.UserID, responseBody)
+		visCtx := p.standardTxVisibilityContext(ctx, req.UserID, responseBody)
 		adminMap := p.viewerAdminContracts(ctx, viewerUUID(result), extractContractAddressesFromResponse(responseBody))
 		abiProv := p.contractABIProvider(ctx)
 		return FilterBlockReceipts(p.readProfile, responseBody, addrs, perms, abiProv, visCtx, adminMap, p.logFieldRenderer(ctx, req.UserID, abiProv))
