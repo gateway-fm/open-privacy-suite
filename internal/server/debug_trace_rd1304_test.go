@@ -1416,6 +1416,37 @@ func TestRD1304_TraceTransaction_MalformedHashRefused(t *testing.T) {
 	}
 }
 
+// The simulation-option check classifies debug_traceCall only, so override and
+// replay-position keys in a debug_traceTransaction config are refused by the
+// trace config check: a 400 naming the overrides, before any upstream call.
+// The caller is a participant, so without that check the replay would be served.
+func TestRD1304_TraceTransaction_OverrideConfigKeysRefused(t *testing.T) {
+	cases := map[string]map[string]any{
+		"stateOverrides": {"tracer": "callTracer", "stateOverrides": map[string]any{}},
+		"blockOverride":  {"blockOverride": map[string]any{"number": "0x1"}},
+		"TXINDEX":        {"tracer": "callTracer", "TXINDEX": 1},
+	}
+	for name, cfg := range cases {
+		t.Run(name, func(t *testing.T) {
+			c := newTraceCanary(t)
+			proc, ts := setupTraceProcessor(t, c)
+			ctx := context.Background()
+			addr := fixedAddr(0xc9)
+			me := fixedAddr(0x19)
+			c.txFrom, c.txTo, c.topTo = me, addr, addr
+			u := newTraceUser(t, ctx, ts, "", nil, traceMethods, me) // participant (sender)
+			addContract(t, ctx, ts, u.orgID, addr, u.groupID)
+
+			res := proc.Process(ctx, traceReq(u.did, "", "debug_traceTransaction", "0x"+strings.Repeat("ab", 32), cfg))
+			require.True(t, denied(res), "%s must be refused", name)
+			assert.Equal(t, http.StatusBadRequest, res.Error.StatusCode)
+			assert.Equal(t, traceDenyOverrides, res.Error.Message)
+			assert.Equal(t, ReasonInvalidRequestShape, res.Error.Reason)
+			assert.Empty(t, c.snapshot(), "%s: nothing may reach the node", name)
+		})
+	}
+}
+
 // Config keys are matched case-insensitively (as geth decodes them), and keys
 // that collide by case are ambiguous and refused.
 func TestRD1304_TraceCall_CaseVariantConfigKeysRefused(t *testing.T) {

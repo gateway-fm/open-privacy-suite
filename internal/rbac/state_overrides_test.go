@@ -115,11 +115,13 @@ func TestDetectStateOverride_Alias(t *testing.T) {
 	defer restore()
 
 	// Operator aliases linea_call → eth_call and linea_estimateGas → eth_estimateGas.
-	RegisterExtraNamespaces(
+	if err := RegisterExtraNamespaces(
 		map[string][]string{"Linea": {"linea_call", "linea_estimateGas"}},
 		map[string]string{"linea_call": "eth_call", "linea_estimateGas": "eth_estimateGas"},
 		nil,
-	)
+	); err != nil {
+		t.Fatalf("registering the aliases: %v", err)
+	}
 
 	if denied, _ := DetectStateOverride("linea_call", []any{tx(), "latest", nonEmptyOverride()}); !denied {
 		t.Fatal("aliased linea_call with a state override must be detected")
@@ -136,20 +138,31 @@ func TestDetectStateOverride_Alias(t *testing.T) {
 	}
 }
 
+// TestDetectStateOverride_RawMethodPolicy pins the raw-method half of
+// DetectStateOverride: a simulation method mapped onto a target with no option
+// policy keeps its own policy. Config loading refuses a built-in method as an
+// alias key, so the mapping is injected straight into the registry to reach
+// the defence-in-depth branch.
 func TestDetectStateOverride_RawMethodPolicy(t *testing.T) {
 	defer SnapshotMethodRegistriesForTest()()
-	RegisterExtraNamespaces(
-		map[string][]string{"Example": {"eth_call", "eth_estimateGas", "eth_createAccessList", "debug_traceCall"}},
-		map[string]string{
-			"eth_call":             "eth_getBalance",
-			"eth_estimateGas":      "eth_getBalance",
-			"eth_createAccessList": "eth_getBalance",
-			"debug_traceCall":      "eth_getBalance",
-		},
-		nil,
-	)
-	for _, method := range []string{"eth_call", "eth_estimateGas", "eth_createAccessList", "debug_traceCall"} {
+	methods := []string{"eth_call", "eth_estimateGas", "eth_createAccessList", "debug_traceCall"}
+
+	aliases := make(map[string]string, len(methods))
+	for _, m := range methods {
+		aliases[m] = "eth_getBalance"
+	}
+	if err := RegisterExtraNamespaces(map[string][]string{"Example": methods}, aliases, nil); err == nil {
+		t.Fatal("config loading must refuse a built-in method as an alias key")
+	}
+
+	for _, m := range methods {
+		MethodAliases[m] = "eth_getBalance"
+	}
+	for _, method := range methods {
 		t.Run(method, func(t *testing.T) {
+			if got := ResolveMethodAlias(method); got != "eth_getBalance" {
+				t.Fatalf("test setup: %s resolves to %q, want the injected eth_getBalance", method, got)
+			}
 			params := []any{tx(), "latest", nonEmptyOverride()}
 			if method == "debug_traceCall" {
 				params[2] = map[string]any{"stateOverrides": nonEmptyOverride()}

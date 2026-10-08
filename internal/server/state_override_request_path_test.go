@@ -199,37 +199,49 @@ func TestProcessDebugTrace_StateOverrideNeverReachesNode(t *testing.T) {
 		assert.Equal(t, int64(1), canary.hits.Load(), "plain debug_traceCall must reach the node exactly once")
 	})
 
-	denied := []struct {
-		name, body    string
-		parseRejected bool
-	}{
-		{"stateOverrides", `{"jsonrpc":"2.0","id":1,"method":"debug_traceCall","params":[` + call + `,"latest",{"tracer":"callTracer","stateOverrides":` + override + `}]}`, false},
-		{"blockOverrides", `{"jsonrpc":"2.0","id":1,"method":"debug_traceCall","params":[` + call + `,"latest",{"blockOverrides":{"number":"0x1"}}]}`, false},
-		// Repeated option keys follow the same presence rule.
-		{"duplicate stateOverrides key", `{"jsonrpc":"2.0","id":1,"method":"debug_traceCall","params":[` + call + `,"latest",{"stateOverrides":` + override + `,"stateOverrides":{}}]}`, true},
-		// Equivalent case-folded spellings follow the same presence rule.
-		{"long-s stateOverrides key", `{"jsonrpc":"2.0","id":1,"method":"debug_traceCall","params":[` + call + `,"latest",{"ſtateOverrides":` + override + `}]}`, true},
+	traceBody := func(cfg string) string {
+		return `{"jsonrpc":"2.0","id":1,"method":"debug_traceCall","params":[` + call + `,"latest",` + cfg + `]}`
+	}
+
+	// Every body here passes the request envelope and reaches the option
+	// classifier, so the override check is what refuses it: with the check
+	// removed, the trace path's own config check answers 400 or the call is
+	// traced without the option.
+	denied := []struct{ name, body string }{
+		{"stateOverrides", traceBody(`{"tracer":"callTracer","stateOverrides":` + override + `}`)},
+		{"blockOverrides", traceBody(`{"blockOverrides":{"number":"0x1"}}`)},
+		// The option keys must be absent: an empty value is still refused.
+		{"empty stateOverrides", traceBody(`{"tracer":"callTracer","stateOverrides":{}}`)},
+		// Spellings a case-insensitive decoder takes for the option keys.
+		{"long-s stateOverride key", traceBody(`{"tracer":"callTracer","ſtateOverride":` + override + `}`)},
+		{"Kelvin-sign blockOverride key", traceBody(`{"tracer":"callTracer","bloc` + "K" + `Override":{"number":"0x1"}}`)},
 	}
 	for _, tc := range denied {
 		t.Run(tc.name, func(t *testing.T) {
 			scripted.hits.Store(0)
 			canary.hits.Store(0)
 			cl.gotDenialReason = ""
-			if tc.parseRejected {
-				_, _, _, perr := ParseAndValidateBody([]byte(tc.body))
-				require.NotNil(t, perr)
-				assert.Equal(t, http.StatusBadRequest, perr.StatusCode)
-				assert.Equal(t, int64(0), scripted.hits.Load())
-				assert.Equal(t, int64(0), canary.hits.Load())
-				assert.Empty(t, cl.gotDenialReason, "the request does not enter the processor")
-				return
-			}
 			res := processRaw(t, proc, did, tc.body)
 			require.NotNil(t, res.Error, "%s must be denied", tc.name)
 			assert.Equal(t, http.StatusNotFound, res.Error.StatusCode, "opaque 404 on the wire")
+			assert.Equal(t, "method not found", res.Error.Message)
 			assert.Equal(t, int64(0), scripted.hits.Load(), "%s: no validation trace may run", tc.name)
 			assert.Equal(t, int64(0), canary.hits.Load(), "%s: a denied override must NOT reach the node", tc.name)
-			assert.Equal(t, ReasonStateOverrideNotAllowed, cl.gotDenialReason)
+			assert.Equal(t, ReasonStateOverrideNotAllowed, cl.gotDenialReason, "%s: must be denied by the override check", tc.name)
+		})
+	}
+
+	// A repeated key or a case variant of a known request field never gets
+	// that far: the request envelope refuses the body with a 400 before the
+	// processor runs.
+	for _, tc := range []struct{ name, body string }{
+		{"duplicate stateOverrides key", traceBody(`{"stateOverrides":` + override + `,"stateOverrides":{}}`)},
+		{"long-s stateOverrides key", traceBody(`{"ſtateOverrides":` + override + `}`)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, _, perr := ParseAndValidateBody([]byte(tc.body))
+			require.NotNil(t, perr, "%s must be refused by the envelope", tc.name)
+			assert.Equal(t, http.StatusBadRequest, perr.StatusCode)
 		})
 	}
 }
