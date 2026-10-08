@@ -418,9 +418,12 @@ func TestE2E_Proxy_JSONRPCWithAuth(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusBadGateway {
+	// The token is accepted (no 401) and the method passes RBAC (no masked
+	// 404). This eth_call carries no call object, so the nested-call check
+	// refuses it as an invalid shape instead of forwarding it to the node.
+	if resp.StatusCode != http.StatusBadRequest {
 		body, _ := io.ReadAll(resp.Body)
-		t.Errorf("expected 200 or 502 (node might not be running), got %d: %s", resp.StatusCode, string(body))
+		t.Errorf("expected 400 (eth_call without a call object), got %d: %s", resp.StatusCode, string(body))
 	}
 }
 

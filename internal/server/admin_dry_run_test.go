@@ -55,7 +55,11 @@ func setupDryRunTestServer(t *testing.T) *dryRunTestServer {
 		TxVisibilityStore:         ts.db,
 		AddressVisibilityResolver: ts.db,
 	})
+	return dryRunServerFor(ts)
+}
 
+// dryRunServerFor mounts the dry-run route on an existing test server.
+func dryRunServerFor(ts *testServerRBAC) *dryRunTestServer {
 	// Inject a minimal middleware that mirrors what
 	// adminAuthMiddleware sets in production. Real auth is exercised
 	// elsewhere (admin_auth_test.go); here we just need the context

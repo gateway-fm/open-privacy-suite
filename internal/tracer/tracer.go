@@ -42,6 +42,10 @@ type CallTarget struct {
 	From  string
 	To    string
 	Depth int
+	// Error is the frame's error as reported by the tracer ("" on success).
+	// A failed CREATE (e.g. an address collision) reports the address of
+	// existing code, which must not be mistaken for a freshly created one.
+	Error string
 	// StorageAddress is derived from the strict call tree for client traces.
 	// Delegated frames retain their parent's storage context.
 	StorageAddress string
@@ -122,7 +126,7 @@ type callFrame struct {
 // Callers that need a literal "latest" should pass the string.
 func (t *Tracer) TraceCall(ctx context.Context, from, to, data, value string, blockParam any) (*TraceResult, error) {
 	// Build the call object
-	callObj := map[string]string{}
+	callObj := map[string]any{}
 	if from != "" {
 		callObj["from"] = from
 	}
@@ -135,6 +139,14 @@ func (t *Tracer) TraceCall(ctx context.Context, from, to, data, value string, bl
 	if value != "" {
 		callObj["value"] = value
 	}
+	return t.TraceCallObject(ctx, callObj, blockParam)
+}
+
+// TraceCallObject traces the complete call object. Creation simulations must
+// retain execution inputs such as gas, fees, access lists and nonce: reducing
+// them to from/to/data/value can select a different constructor branch.
+// It does not mutate callObj or add client-supplied state/block overrides.
+func (t *Tracer) TraceCallObject(ctx context.Context, callObj map[string]any, blockParam any) (*TraceResult, error) {
 
 	// Use the callTracer preset with onlyTopCall: false to get all nested calls
 	tracerConfig := map[string]any{
@@ -243,6 +255,7 @@ func (t *Tracer) extractCallTargets(frame *callFrame, result *TraceResult, depth
 			From:  frame.From,
 			To:    frame.To,
 			Depth: depth,
+			Error: frame.Error,
 		})
 	case "CREATE":
 		result.HasCreate = true
@@ -251,6 +264,7 @@ func (t *Tracer) extractCallTargets(frame *callFrame, result *TraceResult, depth
 			From:  frame.From,
 			To:    frame.To, // For CREATE, "to" is the created contract address
 			Depth: depth,
+			Error: frame.Error,
 		})
 	case "CREATE2":
 		result.HasCreate2 = true
@@ -259,6 +273,7 @@ func (t *Tracer) extractCallTargets(frame *callFrame, result *TraceResult, depth
 			From:  frame.From,
 			To:    frame.To, // For CREATE2, "to" is the created contract address
 			Depth: depth,
+			Error: frame.Error,
 		})
 	}
 
