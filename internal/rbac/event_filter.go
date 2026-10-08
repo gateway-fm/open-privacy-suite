@@ -60,7 +60,7 @@ type TxVisibilityProvider interface {
 // 0x-prefixed contract address; the value is true iff
 // `contract.allow_visibleto_unlock` is set AND the viewer holds an
 // eligible group membership on the contract (see
-// rbac.IsViewerEligibleForVisibleToUnlock for the gate). When the map
+// UnlockableContracts / IsViewerEligibleForVisibleToUnlock for the gate). When the map
 // reports true for a log's emitting contract AND the viewer is in the
 // tx's visibleTo set, the log passes the filter unconditionally —
 // bypassing the deny-when-no-ABI gate, event_rules, and param_rules
@@ -135,6 +135,11 @@ type logEntry struct {
 // → one org at the schema level: belt + braces. If that invariant ever
 // weakens (manual DB edit, future multi-org feature, migration bug),
 // the runtime check still denies cross-org admin leaks.
+//
+// FilterEventLogs returns the admitted raw logs only. A caller that renders
+// admitted logs to a client MUST use FilterEventLogsDetailed and honour each
+// log's payload policy (RD-1300): the raw logs here still carry every
+// embedded address.
 func FilterEventLogs(
 	logs []json.RawMessage,
 	perms *EffectivePermissions,
@@ -146,10 +151,37 @@ func FilterEventLogs(
 	if len(logs) == 0 {
 		return logs
 	}
+	admitted := FilterEventLogsDetailed(logs, perms, userAddresses, abiProvider, visCtx, isAdminByContract)
+	out := make([]json.RawMessage, len(admitted))
+	for i, a := range admitted {
+		out[i] = a.Raw
+	}
+	return out
+}
 
+// AdmittedLog is one log that passed admission, together with the payload
+// policy the shared decision attached to it (RD-1300). The policy travels with
+// the log object from admission to rendering; it is never serialised or
+// re-derived, so it cannot drift onto another log.
+type AdmittedLog struct {
+	Raw     json.RawMessage
+	Payload LogPayloadPolicy
+}
+
+// FilterEventLogsDetailed is FilterEventLogs returning, for every admitted log,
+// the payload policy decided by DecideLogEmitter for that exact log: its own
+// emitting contract and its own transaction hash. Order is preserved.
+func FilterEventLogsDetailed(
+	logs []json.RawMessage,
+	perms *EffectivePermissions,
+	userAddresses []string,
+	abiProvider ABIProvider,
+	visCtx *TxVisibilityContext,
+	isAdminByContract map[string]bool,
+) []AdmittedLog {
 	// Fail-closed: if permissions couldn't be resolved, deny all logs.
-	if perms == nil {
-		return []json.RawMessage{}
+	if len(logs) == 0 || perms == nil {
+		return []AdmittedLog{}
 	}
 
 	// Build lowercase address set for O(1) lookup.
@@ -158,7 +190,7 @@ func FilterEventLogs(
 		addrSet[strings.ToLower(a)] = true
 	}
 
-	filtered := make([]json.RawMessage, 0, len(logs))
+	filtered := make([]AdmittedLog, 0, len(logs))
 	for _, rawLog := range logs {
 		var entry logEntry
 		if err := json.Unmarshal(rawLog, &entry); err != nil {
@@ -168,7 +200,7 @@ func FilterEventLogs(
 		contractAddr := strings.ToLower(entry.Address)
 
 		// Resolve the per-log facts, then defer the admit/deny verdict to the
-		// shared decision engine (rbac.DecideLogEmitterAccess, RD-1214) so the
+		// shared decision engine (rbac.DecideLogEmitter, RD-1214/RD-1300) so the
 		// RPC filter and the explorer redactor apply the SAME policy and cannot
 		// drift. Each fact below mirrors a gate that used to live inline here;
 		// the engine encodes the (unchanged) gate order and semantics.
@@ -179,7 +211,8 @@ func FilterEventLogs(
 			// owning org sees all its logs. Caller scopes this per-contract.
 			IsAdmin: isAdminByContract[contractAddr],
 			// RD-874 visibleTo unlock: allow_visibleto_unlock + eligible +
-			// listed in the tx's visibleTo (the only standalone-grant path).
+			// listed in THIS log's own tx visibleTo (the only standalone-grant
+			// path, and the only source of LogPayloadFull).
 			Unlocked: visCtx != nil && visCtx.UnlockableContracts[contractAddr] && isViewerInVisibleTo(visCtx, rawLog),
 			// Grant eligibility (RD-874/RD-1208): a ContractAccess entry exists.
 			HasGrant: access != nil,
@@ -233,8 +266,8 @@ func FilterEventLogs(
 			}
 		}
 
-		if DecideLogEmitterAccess(facts) {
-			filtered = append(filtered, rawLog)
+		if d := DecideLogEmitter(facts); d.Admit {
+			filtered = append(filtered, AdmittedLog{Raw: rawLog, Payload: d.Payload})
 		}
 	}
 

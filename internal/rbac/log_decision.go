@@ -17,20 +17,21 @@ const (
 
 // LogEmitterFacts are the normalised, per-(viewer, log) inputs to the shared
 // log-visibility decision. Each layer resolves these from its own data model
-// and calls DecideLogEmitterAccess, so the admit/deny decision has a single
+// and calls DecideLogEmitter, so the admit/deny decision has a single
 // source of truth and the RPC filter (rbac.FilterEventLogs) and the explorer
 // redactor (explorer.RedactionEngine.RedactLogsWithOpts) cannot drift apart.
 // (RD-1214 — completes RD-887; the symmetry invariant becomes an
 // implementation, not a convention.)
 type LogEmitterFacts struct {
 	// IsAdmin: the viewer holds the admin claim in the emitting contract's
-	// owning org (per-contract, org-scoped). Bypasses every gate below.
+	// owning org (per-contract, org-scoped). Admits with masked payload.
 	IsAdmin bool
 
 	// Unlocked: the emitter has `allow_visibleto_unlock` set, the viewer is
-	// eligible, AND the viewer is in the tx's visibleTo set (RD-874). This is
-	// the ONLY path by which visibleTo becomes a standalone grant; it bypasses
-	// every gate below.
+	// eligible, AND the viewer is listed in THIS log's transaction's own
+	// visibleTo row (RD-874) — the exact (viewer, emitting contract, tx) tuple.
+	// This is the only visibleTo path that admits independently of the ordinary
+	// event gates, and the only source of LogPayloadFull.
 	Unlocked bool
 
 	// HasGrant: the viewer holds a contract_grant on the emitter — the
@@ -75,56 +76,110 @@ type LogEmitterFacts struct {
 	Topic0Allowlisted bool
 }
 
-// DecideLogEmitterAccess is the single source of truth for "may this viewer see
-// this log?", shared by the RPC filter and the explorer redactor. It returns
-// true to admit the log, false to drop it. The gate order is identical for both
-// layers:
+// LogPayloadPolicy is how an admitted log's payload (topics + data) is
+// rendered. It is part of the shared decision so the RPC and explorer layers
+// render an admitted log identically (RD-1300).
+type LogPayloadPolicy int
+
+const (
+	// LogPayloadMasked — every embedded address (indexed topics + ABI-decoded
+	// non-indexed data) the viewer may not see is zeroed via the shared
+	// explorer.RedactLogAddressFields primitive (RD-1214). The zero value, so
+	// any log whose policy was never set explicitly is masked (fail-closed).
+	LogPayloadMasked LogPayloadPolicy = iota
+	// LogPayloadFull — the log is returned exactly as emitted. Produced ONLY by
+	// the RD-874 visibleTo unlock: the contract owner opted the emitter in, and
+	// the sender listed this viewer on this transaction (REDACTION_SPEC §3.7.1).
+	LogPayloadFull
+)
+
+// String implements fmt.Stringer for test diagnostics.
+func (p LogPayloadPolicy) String() string {
+	switch p {
+	case LogPayloadMasked:
+		return "masked"
+	case LogPayloadFull:
+		return "full"
+	default:
+		return "unknown"
+	}
+}
+
+// LogDecision is the shared per-(viewer, log) verdict: whether the log is
+// admitted and, if so, how its payload is rendered. The zero value is
+// "drop" (and Masked), so a partially-filled decision never admits.
+type LogDecision struct {
+	Admit   bool
+	Payload LogPayloadPolicy
+}
+
+// DecideLogEmitter is the single source of truth for "may this viewer see this
+// log, and with which payload?", shared by the RPC filter and the explorer
+// redactor. The gate order is identical for both layers:
 //
-//  1. admin / visibleTo-unlock  → admit  (bypass everything)
-//  2. no resolvable ABI         → drop   (RD-875/889 embedded-address protection)
-//  3. M15 dynamic payload       → drop   (embedded-address protection)
-//  4. participant AND grant     → admit  (RD-1162, grant-bounded)
-//  5. no grant                  → drop   (RD-874/RD-1208 — grant eligibility is load-bearing)
-//  6. event_rules:
-//     wildcard                → admit
-//     allowlist               → admit iff topic0 is allowlisted AND
+//  1. visibleTo unlock          → admit, full payload
+//  2. admin                     → admit, masked
+//  3. no resolvable ABI         → drop   (RD-875/889 embedded-address protection)
+//  4. M15 dynamic payload       → drop   (embedded-address protection)
+//  5. participant AND grant     → admit, masked (RD-1162, grant-bounded)
+//  6. no grant                  → drop   (RD-874/RD-1208 — grant eligibility is load-bearing)
+//  7. event_rules:
+//     wildcard                → admit, masked
+//     allowlist               → admit, masked iff topic0 is allowlisted AND
 //     (param rules satisfied OR viewer in visibleTo); else drop
 //     deny-all                → drop
 //
-// Two invariants are structural here (not left to each caller):
-//   - The embedded-address protections (2, 3) are never relaxed by
+// Structural invariants (not left to each caller):
+//   - LogPayloadFull comes from the unlock branch only. Admin, participant,
+//     ordinary visibleTo and event rules never skip embedded-address masking.
+//   - The embedded-address protections (3, 4) are never relaxed by
 //     participation or visibleTo.
-//   - The grant gate (5) sits before event_rules and before the
-//     participant/visibleTo relaxations, so neither can admit a no-grant
-//     emitter — the class of leak RD-1208 closed.
-func DecideLogEmitterAccess(f LogEmitterFacts) bool {
-	if f.IsAdmin || f.Unlocked {
-		return true
+//   - Both the participant path (5) and the ordinary event paths (7) require
+//     a grant on the emitter (RD-1208).
+//
+// A policy profile that must switch the unlock off for some viewer does so by
+// clearing Unlocked before calling this function (or by a gate placed ahead of
+// branch 1); the ordinary verdict below then applies, which is why callers
+// must resolve every fact (ABI, M15, rules) even when Unlocked is set.
+func DecideLogEmitter(f LogEmitterFacts) LogDecision {
+	if f.Unlocked {
+		return LogDecision{Admit: true, Payload: LogPayloadFull}
+	}
+	if f.IsAdmin {
+		return LogDecision{Admit: true, Payload: LogPayloadMasked}
 	}
 	if !f.ABIResolvable {
-		return false
+		return LogDecision{}
 	}
 	if f.DynamicPayloadDropped {
-		return false
+		return LogDecision{}
 	}
+	admitMasked := LogDecision{Admit: true, Payload: LogPayloadMasked}
 	if f.IsParticipant && f.HasGrant {
-		return true
+		return admitMasked
 	}
 	if !f.HasGrant {
-		return false
+		return LogDecision{}
 	}
 	switch f.Rules {
 	case LogEventRulesWildcard:
-		return true
+		return admitMasked
 	case LogEventRulesAllowlist:
 		if !f.HasTopic0 {
-			return false
+			return LogDecision{}
 		}
-		if f.EventAllowed {
-			return true
+		if f.EventAllowed || (f.Topic0Allowlisted && f.InVisibleTo) {
+			return admitMasked
 		}
-		return f.Topic0Allowlisted && f.InVisibleTo
+		return LogDecision{}
 	default: // LogEventRulesDeny
-		return false
+		return LogDecision{}
 	}
+}
+
+// DecideLogEmitterAccess reports only the admit half of DecideLogEmitter. Kept
+// for callers that do not render payloads; a caller that renders an admitted
+// log MUST use DecideLogEmitter so it honours the payload policy.
+func DecideLogEmitterAccess(f LogEmitterFacts) bool {
+	return DecideLogEmitter(f).Admit
 }

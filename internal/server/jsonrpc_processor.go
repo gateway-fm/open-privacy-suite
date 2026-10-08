@@ -1093,10 +1093,13 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 		// Pass the internal user UUID (result.UserID), not the JWT DID.
 		// viewerUUID() guards against nil result (visibleTo-only path).
 		adminMap := p.viewerAdminContracts(ctx, viewerUUID(result), extractContractAddressesFromResponse(responseBody))
-		filtered := FilterReceiptLogsWithEventRules(responseBody, addrs, perms, p.contractABIProvider(ctx), visCtx, adminMap)
-		// RD-1214: field-redact embedded addresses in the admitted receipt logs
-		// (same resolver + primitive as the explorer, so both hide the same set).
-		return p.redactReceiptResponseFields(ctx, req.UserID, filtered)
+		// Admission and rendering in one pass: each admitted receipt log is
+		// rendered with the payload policy decided for it — RD-1214 masking
+		// (same resolver + primitive as the explorer) or, for an RD-874
+		// visibleTo unlock of this exact (viewer, contract, tx), the full
+		// payload (RD-1300).
+		abiProv := p.contractABIProvider(ctx)
+		return filterReceiptLogsWithEventRules(responseBody, addrs, perms, abiProv, visCtx, adminMap, p.logFieldRenderer(ctx, req.UserID, abiProv))
 
 	case strings.EqualFold(m, rbac.MethodGetLogs):
 		addrs, err := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)
@@ -1126,10 +1129,10 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 		// the JWT DID — viewerAdminContracts queries user_memberships
 		// by UUID FK. viewerUUID() guards against nil result.
 		adminMap := p.viewerAdminContracts(ctx, viewerUUID(result), extractContractAddressesFromResponse(responseBody))
-		filtered := FilterLogsWithEventRules(responseBody, addrs, perms, p.contractABIProvider(ctx), visCtx, adminMap)
-		// RD-1214: field-redact embedded addresses in the admitted logs (same
-		// resolver + primitive as the explorer, so both hide the same set).
-		return p.redactLogsArrayResponseFields(ctx, req.UserID, filtered)
+		// Admission and rendering in one pass (see the receipt case above):
+		// masked per RD-1214 unless the log is an RD-874 unlock (RD-1300).
+		abiProv := p.contractABIProvider(ctx)
+		return filterLogsWithEventRules(responseBody, addrs, perms, abiProv, visCtx, adminMap, p.logFieldRenderer(ctx, req.UserID, abiProv))
 
 	case strings.EqualFold(m, rbac.MethodGetTransactionByBlockHashAndIndex),
 		strings.EqualFold(m, rbac.MethodGetTransactionByBlockNumberAndIndex):

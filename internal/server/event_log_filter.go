@@ -65,6 +65,23 @@ func (p *storeABIProvider) IsEventsAllowDynamicPayload(address string) bool {
 	return p.dynamicPayloadCache[addr]
 }
 
+// admittedLogRenderer turns the admitted logs of one response into their wire
+// form. Admission and rendering run in ONE in-memory pass: each log's payload
+// policy (rbac.AdmittedLog.Payload) reaches the renderer attached to the log it
+// was decided for, never through a re-serialised or index-aligned side channel
+// (RD-1300). The renderer may drop a log it cannot render; it never adds one.
+type admittedLogRenderer func([]rbac.AdmittedLog) []json.RawMessage
+
+// rawAdmittedLogs is the renderer used when a caller asks for admission only:
+// it returns every admitted log verbatim.
+func rawAdmittedLogs(admitted []rbac.AdmittedLog) []json.RawMessage {
+	out := make([]json.RawMessage, len(admitted))
+	for i, a := range admitted {
+		out[i] = a.Raw
+	}
+	return out
+}
+
 // FilterLogsWithEventRules filters an eth_getLogs response using the unified
 // event filtering logic in rbac.FilterEventLogs.
 //
@@ -80,6 +97,11 @@ func (p *storeABIProvider) IsEventsAllowDynamicPayload(address string) bool {
 // isAdminByContract — see rbac.FilterEventLogs for semantics. Map keys
 // are lowercased contract addresses; presence with true means the viewer
 // has the admin claim in THAT contract's owning org only.
+//
+// This is ADMISSION ONLY: admitted logs are returned verbatim, embedded
+// addresses included. A caller that answers a client MUST render through
+// filterLogsWithEventRules with JSONRPCProcessor.logFieldRenderer, which
+// applies each log's payload policy (RD-1214 masking / RD-874 unlock).
 func FilterLogsWithEventRules(
 	responseBody []byte,
 	userAddresses []string,
@@ -88,6 +110,24 @@ func FilterLogsWithEventRules(
 	visCtx *rbac.TxVisibilityContext,
 	isAdminByContract map[string]bool,
 ) []byte {
+	return filterLogsWithEventRules(responseBody, userAddresses, perms, abiProvider, visCtx, isAdminByContract, nil)
+}
+
+// filterLogsWithEventRules is FilterLogsWithEventRules with the admitted logs
+// rendered by render (nil = verbatim). Every failure path fails closed to an
+// empty result, never to the upstream body.
+func filterLogsWithEventRules(
+	responseBody []byte,
+	userAddresses []string,
+	perms *rbac.EffectivePermissions,
+	abiProvider rbac.ABIProvider,
+	visCtx *rbac.TxVisibilityContext,
+	isAdminByContract map[string]bool,
+	render admittedLogRenderer,
+) []byte {
+	if render == nil {
+		render = rawAdmittedLogs
+	}
 	var resp struct {
 		JSONRPC string           `json:"jsonrpc"`
 		ID      json.RawMessage  `json:"id"`
@@ -112,13 +152,17 @@ func FilterLogsWithEventRules(
 		return emptyLogsResponse(responseBody)
 	}
 
-	// Single-pass: FilterEventLogs handles both event-rule and default
-	// address-based filtering depending on whether EventRules is configured.
-	finalLogs := rbac.FilterEventLogs(rawLogs, perms, userAddresses, abiProvider, visCtx, isAdminByContract)
+	// Single-pass: FilterEventLogsDetailed handles both event-rule and default
+	// address-based filtering depending on whether EventRules is configured,
+	// and attaches each admitted log's payload policy for the renderer.
+	finalLogs := render(rbac.FilterEventLogsDetailed(rawLogs, perms, userAddresses, abiProvider, visCtx, isAdminByContract))
+	if finalLogs == nil {
+		finalLogs = []json.RawMessage{}
+	}
 
 	filteredJSON, err := json.Marshal(finalLogs)
 	if err != nil {
-		return responseBody
+		return emptyLogsResponse(responseBody)
 	}
 
 	result := json.RawMessage(filteredJSON)
@@ -132,7 +176,7 @@ func FilterLogsWithEventRules(
 		Result:  result,
 	})
 	if err != nil {
-		return responseBody
+		return emptyLogsResponse(responseBody)
 	}
 	return out
 }
@@ -152,6 +196,10 @@ func FilterLogsWithEventRules(
 // pre-scoped bool keeps the invariant as belt + schema as braces.
 //
 // visCtx provides optional per-tx visibleTo data (may be nil).
+//
+// Like FilterLogsWithEventRules this is admission only (receipt logs are
+// returned verbatim); client-facing callers render through
+// filterReceiptLogsWithEventRules with JSONRPCProcessor.logFieldRenderer.
 func FilterReceiptLogsWithEventRules(
 	responseBody []byte,
 	userAddresses []string,
@@ -159,6 +207,20 @@ func FilterReceiptLogsWithEventRules(
 	abiProvider rbac.ABIProvider,
 	visCtx *rbac.TxVisibilityContext,
 	isAdminByContract map[string]bool,
+) []byte {
+	return filterReceiptLogsWithEventRules(responseBody, userAddresses, perms, abiProvider, visCtx, isAdminByContract, nil)
+}
+
+// filterReceiptLogsWithEventRules is FilterReceiptLogsWithEventRules with the
+// admitted receipt logs rendered by render (nil = verbatim).
+func filterReceiptLogsWithEventRules(
+	responseBody []byte,
+	userAddresses []string,
+	perms *rbac.EffectivePermissions,
+	abiProvider rbac.ABIProvider,
+	visCtx *rbac.TxVisibilityContext,
+	isAdminByContract map[string]bool,
+	render admittedLogRenderer,
 ) []byte {
 	var resp struct {
 		JSONRPC string           `json:"jsonrpc"`
@@ -180,8 +242,9 @@ func FilterReceiptLogsWithEventRules(
 	}
 
 	var receipt struct {
-		From string `json:"from"`
-		To   string `json:"to"`
+		From            string `json:"from"`
+		To              string `json:"to"`
+		TransactionHash string `json:"transactionHash"`
 	}
 	if err := json.Unmarshal(raw, &receipt); err != nil {
 		// Fail-closed: unparseable receipt → return null
@@ -246,10 +309,16 @@ func FilterReceiptLogsWithEventRules(
 		}
 	}
 
+	// A receipt's logs are judged against the listing of THIS receipt's
+	// transaction only: a log carrying another transactionHash (only a faulty
+	// upstream produces one) must not borrow that other tx's visibleTo — neither
+	// for the RD-874 unlock nor for the ordinary param-rule fallback (RD-1300).
+	logVisCtx := scopeTxVisibilityTo(visCtx, receipt.TransactionHash)
+
 	// Filter the logs once. applyEventRulesToReceipt calls FilterEventLogs (both
 	// event-rule and default address-based filtering) and returns how many logs
 	// the viewer is entitled to — the RD-1183 envelope-admission signal.
-	result, entitledLogs := applyEventRulesToReceipt(raw, perms, userAddresses, abiProvider, visCtx, isAdminByContract)
+	result, entitledLogs := applyEventRulesToReceipt(raw, perms, userAddresses, abiProvider, logVisCtx, isAdminByContract, render)
 
 	// Envelope admission:
 	//   - participant / visibleTo / admin: always (existing behavior).
@@ -301,7 +370,11 @@ func applyEventRulesToReceipt(
 	abiProvider rbac.ABIProvider,
 	visCtx *rbac.TxVisibilityContext,
 	isAdminByContract map[string]bool,
+	render admittedLogRenderer,
 ) (json.RawMessage, int) {
+	if render == nil {
+		render = rawAdmittedLogs
+	}
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(rawReceipt, &m); err != nil {
 		return receiptWithEmptyLogs(rawReceipt), 0 // fail-closed
@@ -317,11 +390,15 @@ func applyEventRulesToReceipt(
 		return receiptWithEmptyLogs(rawReceipt), 0 // fail-closed
 	}
 
-	filtered := rbac.FilterEventLogs(arr, perms, userAddresses, abiProvider, visCtx, isAdminByContract)
+	admitted := rbac.FilterEventLogsDetailed(arr, perms, userAddresses, abiProvider, visCtx, isAdminByContract)
+	rendered := render(admitted)
+	if rendered == nil {
+		rendered = []json.RawMessage{}
+	}
 
-	newLogs, err := json.Marshal(filtered)
+	newLogs, err := json.Marshal(rendered)
 	if err != nil {
-		return rawReceipt, 0
+		return receiptWithEmptyLogs(rawReceipt), 0 // fail-closed
 	}
 	m["logs"] = newLogs
 
@@ -333,7 +410,26 @@ func applyEventRulesToReceipt(
 	if err != nil {
 		return receiptWithEmptyLogs(rawReceipt), 0 // fail-closed
 	}
-	return out, len(filtered)
+	// Entitlement is the admission count: a log the renderer could not render
+	// still proves the viewer is entitled to part of this receipt (RD-1183).
+	return out, len(admitted)
+}
+
+// scopeTxVisibilityTo returns a copy of visCtx whose visibleTo listings are
+// restricted to txHash (nil stays nil). Used by the receipt path so the
+// receipt's logs can only match the receipt's own listing.
+func scopeTxVisibilityTo(visCtx *rbac.TxVisibilityContext, txHash string) *rbac.TxVisibilityContext {
+	if visCtx == nil {
+		return nil
+	}
+	scoped := *visCtx
+	scoped.TxVisibility = map[string][]string{}
+	if h := strings.ToLower(txHash); h != "" {
+		if dids, ok := visCtx.TxVisibility[h]; ok {
+			scoped.TxVisibility[h] = dids
+		}
+	}
+	return &scoped
 }
 
 // emptyLogsResponse returns a JSON-RPC response with an empty logs array,
@@ -348,15 +444,16 @@ func emptyLogsResponse(responseBody []byte) []byte {
 func receiptWithEmptyLogs(rawReceipt json.RawMessage) json.RawMessage {
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(rawReceipt, &m); err != nil {
-		// Can't even parse the receipt — return as-is (already a failure path)
-		return rawReceipt
+		// Can't even parse the receipt — never return it raw (its logs would
+		// be unfiltered); a null result is the fail-closed form.
+		return json.RawMessage("null")
 	}
 	m["logs"] = json.RawMessage("[]")
 	zeroBloom := `"0x` + strings.Repeat("0", 512) + `"`
 	m["logsBloom"] = json.RawMessage(zeroBloom)
 	out, err := json.Marshal(m)
 	if err != nil {
-		return rawReceipt
+		return json.RawMessage("null")
 	}
 	return out
 }
