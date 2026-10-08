@@ -868,14 +868,11 @@ func (s *Server) buildVisibilityFilter(ctx context.Context, viewerDID string) *e
 
 // strictVisibilityFilter completes the SQL allowlist for the strict read
 // profile: only the viewer's own linked addresses and addresses under an
-// approved disclosure grant. A failed visibility lookup (empty map) leaves the
-// allowlist empty, which hides everything (fail closed).
+// approved disclosure grant (explorer.StrictAllowlist, which the cross-layer
+// TestAccessVisibilitySymmetry bounds). A failed visibility lookup (empty map)
+// leaves the allowlist empty, which hides everything (fail closed).
 func strictVisibilityFilter(filter *explorer.VisibilityFilter, detailed map[string]explorer.AddressVisibility) *explorer.VisibilityFilter {
-	for addr, meta := range detailed {
-		if meta.Reason == explorer.ReasonOwnAddress || meta.Reason == explorer.ReasonDisclosureGrant {
-			filter.VisibleAddresses = append(filter.VisibleAddresses, strings.ToLower(addr))
-		}
-	}
+	filter.VisibleAddresses = append(filter.VisibleAddresses, explorer.StrictAllowlist(detailed)...)
 	return filter
 }
 
