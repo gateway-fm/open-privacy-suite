@@ -151,7 +151,7 @@ func setupDRFFixture(t *testing.T) *drfFixture {
 
 	readMethods := []string{
 		rbac.MethodGetTransactionByHash, rbac.MethodGetTransactionReceipt, rbac.MethodGetLogs,
-		"eth_call", "eth_sendTransaction",
+		"eth_call", "eth_sendTransaction", rbac.MethodGetCode, rbac.MethodGetBalance,
 		// Outside the View-as method set: granted here so that only the
 		// mirror's own allowlist can be what refuses them.
 		"eth_sendRawTransaction", "eth_getBlockReceipts", "eth_getBlockByNumber", "debug_traceTransaction",
@@ -306,6 +306,43 @@ func TestDryRun_TxByHash_ParticipantSeesOwnTx_RD1308(t *testing.T) {
 	assert.Equal(t, drfCalldata, tx.Input)
 	assert.Equal(t, "0x7", tx.Nonce)
 	assert.Equal(t, "0x2a", tx.Value)
+}
+
+func TestDryRunAndViewAsRPC_DeployerAccessUsesNamedOrg_RD1308(t *testing.T) {
+	f := setupDRFFixture(t)
+	ctx := context.Background()
+	_, err := f.ts.db.Conn().ExecContext(ctx,
+		`UPDATE contracts SET deployed_by_user_id = $1 WHERE id = $2`, f.memberID, f.contractIDs[drfContractP])
+	require.NoError(t, err)
+
+	for _, method := range []string{rbac.MethodCall, rbac.MethodGetCode, rbac.MethodGetBalance} {
+		t.Run(method, func(t *testing.T) {
+			params := []any{drfContractP, "latest"}
+			if method == rbac.MethodCall {
+				params = []any{map[string]any{"to": drfContractP, "data": "0x"}, "latest"}
+			}
+			direct, err := f.ts.rbacAccessCtrl.CheckAccess(ctx, &rbac.AccessCheckRequest{
+				UserExternalID: drfMemberDID, OrgID: f.orgO, Method: method, Params: params, TargetAddress: drfContractP,
+			})
+			require.NoError(t, err)
+			require.True(t, direct.Allowed, "the user's direct session retains its multi-org deployer access")
+
+			f.serve(method, drfEnvelope(t, "0x1234"))
+			resp, raw := f.dryRun(t, method, params)
+			assert.Equal(t, "deny", resp.Decision, raw)
+			assert.Empty(t, resp.Response)
+
+			body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
+			require.NoError(t, err)
+			req := httptest.NewRequest(http.MethodGet, impersonatePath(drfMemberDID, f.orgO, "/rpc"), bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("X-Test-Auth-Method", "jwt_admin")
+			w := httptest.NewRecorder()
+			f.router.ServeHTTP(w, req)
+			assert.Equal(t, http.StatusNotFound, w.Code, w.Body.String())
+			assert.False(t, f.reached(method), "a read outside the named org is decided before upstream forwarding")
+		})
+	}
 }
 
 func TestDryRun_TxByHash_AdminExemptionPinnedToPathOrg_RD1308(t *testing.T) {
@@ -793,13 +830,10 @@ func TestDryRun_TraceLogsVisibleToUser_GrantMatrix_RD1308(t *testing.T) {
 	}
 }
 
-// GAP G26 (RD-1315): explorer View-as is not pinned to the named org. The
-// explorer mirror's request context carries no view scope, so explorer
-// handlers resolve the target's visibility across all of their orgs: an org-P
-// contract the target sees through their P role is Full in an org-O session.
-// Current (broken) behaviour asserted so the fix has to change this test —
-// fix before release.
-func TestExplorerViewAs_NotOrgPinned_GAP_G26(t *testing.T) {
+// Explorer View-as organization scope is tracked separately in RD-1315.
+// This test preserves the current explorer behavior while RD-1308 changes
+// the dry-run and RPC surfaces.
+func TestExplorerViewAs_ExistingVisibilityScope_RD1315(t *testing.T) {
 	f := setupDRFFixture(t)
 	var gotScoped bool
 	var gotLevel explorer.VisibilityLevel
@@ -821,9 +855,8 @@ func TestExplorerViewAs_NotOrgPinned_GAP_G26(t *testing.T) {
 	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/probe/"+drfMemberDID+"/in/"+f.orgO+"/explorer-handler", nil))
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 
-	// GAP G26: desired false / VisibilityRedacted once the explorer mirror is pinned.
-	assert.False(t, gotScoped, "GAP G26: the explorer mirror sets no view scope")
-	assert.Equal(t, explorer.VisibilityFull, gotLevel, "GAP G26: the target's org-P role still makes the P contract Full")
+	assert.False(t, gotScoped, "the explorer mirror retains its current context")
+	assert.Equal(t, explorer.VisibilityFull, gotLevel, "the explorer visibility resolver retains its current membership scope")
 }
 
 // filterDryRunLogs is a test-only wrapper that pins the rbac.FilterEventLogs

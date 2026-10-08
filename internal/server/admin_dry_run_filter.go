@@ -33,10 +33,8 @@ func dryRunTraceReceiptHash() (string, error) {
 // impersonated user's own call would be filtered — the production
 // applyResponseFilter, run as userDID with the CheckAccess result of the
 // dry-run — with every authorization input pinned to the path org (RD-1308).
-// So a transaction the user is not entitled to comes back null, a transaction
-// with another org's contract comes back null even when the user took part in
-// it, logs carry the admin exemption and visibleTo shares of the path org only,
-// and embedded addresses are field-redacted as on the live RPC.
+// Transaction admission, event rules, admin exemptions, visibleTo shares and
+// embedded-address rendering all use the named organization's view.
 func (s *Server) filterDryRunReadResponse(
 	ctx context.Context,
 	rpc apimodels.DryRunRPCBlock,

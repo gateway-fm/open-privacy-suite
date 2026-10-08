@@ -35,13 +35,10 @@ import (
 // to debug_traceCall so the admin can see RBAC's verdict + the events
 // the tx WOULD emit + the subset visible to user X.
 //
-// Why this is safe for tier-2: read answers are the impersonated user's
-// own view, produced by the production response filter with every
-// authorization input pinned to :org_id (RD-1308, viewer_org_scope.go) —
-// nothing from the user's other orgs. The write-method trace and its
-// logs_emitted are returned unfiltered, but validateDryRunTrace first
-// requires every frame to stay inside :org_id, on whose contracts a
-// tier-2 admin already holds full claims (computeOrgAdminPermissions).
+// Read answers use the production response filter within :org_id
+// (RD-1308, viewer_org_scope.go). The write-method trace and logs_emitted
+// are admin diagnostics; validateDryRunTrace checks their frames against
+// the same named organization before they are returned.
 //
 // Super-admin (X-Admin-Token) is explicitly rejected — they have no
 // data-layer reach into RPC/explorer responses today, and impersonation
@@ -108,6 +105,7 @@ var dryRunTraceMethods = map[string]bool{
 func (s *Server) handleDryRun(c *gin.Context) {
 	ctx := c.Request.Context()
 	orgID := c.Param("org_id")
+	ctx = withViewerOrgScope(ctx, orgID)
 
 	// Reject the token credentials explicitly. orgScopingMiddleware lets both
 	// admin_token (full) and operator_token through any :org_id — we have to

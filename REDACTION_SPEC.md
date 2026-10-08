@@ -694,12 +694,13 @@ Dry-run and the View-as **RPC** mirror (`/impersonate/:did/in/:org_id/rpc`) carr
 
 | Input | User's own call | Dry-run / View-as RPC (scope = `:org_id`) |
 |---|---|---|
+| Access-check organization context (`OrgContext`) | all user memberships | the scope org only, including deployer and preregistration access |
 | Effective permissions (`resolvePermsForFilter`) | merged across all the user's orgs | the scope org's only; not a member → none |
 | Admin exemption (`viewerAdminContracts`) | admin claim in the contract's owning org | contracts owned by the scope org only |
 | visibleTo shares (`txVisibilityForViewer`) | every `tx_visible_to` row listing the user | rows whose `org_id` (the org the send was authorised under) is the scope org |
 | visibleTo unlock (`buildVisibleToUnlockableMap`) | flagged contracts the user is eligible on | flagged contracts owned by the scope org only |
 | Nested-call gate for `eth_call` (RD-915) | all the user's orgs | the scope org (dry-run already pinned it; the mirror now does too). Like the user's own call, it runs only while runtime `eth_call` tracing is on. |
-| Embedded-address redaction (`GetBatchVisibility*`) | Full through any of the user's groups, and any of their disclosure grants | Full through the scope org's groups and disclosure grants requested in the scope org only |
+| Embedded-address redaction (`GetBatchVisibility*`) | Full through any of the user's groups, and applicable disclosure grants | Full through the scope org's groups; disclosure grants must also apply to the session (§6) and have been requested in the scope org |
 | Transaction envelope (`applyViewerOrgScopeEnvelope`) | participant / visibleTo / admin rules | additionally `null` when `to`, a receipt's `contractAddress`, or the contract a deployment transaction creates (derived from sender + nonce) is owned by another org — even for the user's own transaction |
 
 The user's own linked addresses stay theirs: a transaction between the user and an address no org owns is shown, because the user's own activity is what the tool answers about. An empty scope matches no org, so every pinned lookup fails closed.

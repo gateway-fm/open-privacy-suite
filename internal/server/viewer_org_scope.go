@@ -90,13 +90,10 @@ func (p *JSONRPCProcessor) txVisibilityForViewer(ctx context.Context, txHashes [
 }
 
 // applyViewerOrgScopeEnvelope nulls, under an impersonation scope, a
-// transaction or receipt whose recipient (or deployed contract) is a contract
-// owned by another org. The participant rule admits the user's own
-// transactions whatever they touch, so without this a multi-org user's
-// transaction with an org-P contract — its calldata, value and nonce — would
-// reach an org-O administrator. A deployment transaction (no `to`) is judged by
-// the contract it creates, derived from the sender and nonce. Runs after the
-// response filter; a lookup or parse error fails closed. No-op without a scope.
+// transaction or receipt whose recipient (or deployed contract) is owned by
+// another org. Deployment transactions are evaluated using the created
+// address derived from the sender and nonce. Runs after the response filter;
+// a lookup or parse error returns null. No-op without a scope.
 func (p *JSONRPCProcessor) applyViewerOrgScopeEnvelope(ctx context.Context, method string, body []byte) []byte {
 	scope, scoped := viewerOrgScope(ctx)
 	if !scoped {
