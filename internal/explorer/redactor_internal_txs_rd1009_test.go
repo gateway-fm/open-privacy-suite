@@ -5,15 +5,15 @@ import (
 	"testing"
 )
 
-// TestRedactInternalTransactions_VisibleTxHashesOverride_RD1009 pinned the
-// RD-1009 follow-up: RedactInternalTransactions honoured the parent-tx
-// allowlist (VisibleTxHashes) so /transactions/:hash/internal agreed with the
-// parent's row survival. RD-1316 narrows that: the transfer-participant union
+// TestRedactInternalTransactions_UnionKeepsNoPrivateFrame_RD1009 replaces the
+// RD-1009 follow-up pin under which RedactInternalTransactions honoured the
+// parent-tx allowlist (VisibleTxHashes), so /transactions/:hash/internal kept
+// every frame of a kept parent. RD-1316 narrows that: the transfer-participant union
 // keeps the parent row only, and the parent's frames follow the ordinary frame
 // rules, like its sibling transfers. A frame with both sides private is
 // dropped even when the parent hash is in the union; only a genuine visibleTo
 // listing (ListedTxHashes) of the parent keeps and reveals it.
-func TestRedactInternalTransactions_VisibleTxHashesOverride_RD1009(t *testing.T) {
+func TestRedactInternalTransactions_UnionKeepsNoPrivateFrame_RD1009(t *testing.T) {
 	const sharedTxHash = "0xdeadbeefcafebabe"
 
 	// Internal-tx with both sides hidden to the viewer — the parent tx is in

@@ -161,10 +161,10 @@ func TestAccessVisibilitySymmetry(t *testing.T) {
 		})
 	}
 
-	// RD-1316: a tx from that wallet whose token transfer reaches an orgA
-	// contract is kept for the org admin by the transfer-participant union
-	// (VisibleTxHashes) — and, matching the RPC denial above, the wallet stays
-	// [PRIVATE] on it. Only a genuine visibleTo listing would reveal it.
+	// RD-1316: a tx from that wallet (here to an orgB contract the admin cannot
+	// see) that the transfer-participant union keeps for the org admin — passed
+	// in directly as VisibleTxHashes — still renders the wallet [PRIVATE],
+	// matching the RPC denial above. Only a genuine visibleTo listing reveals.
 	t.Run("org admin → another user's EOA on a transfer-linked row", func(t *testing.T) {
 		const hash = "0x5555000000000000000000000000000000000000000000000000000000000001"
 		to := contractB2

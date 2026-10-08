@@ -812,19 +812,21 @@ func (s *Server) buildVisibilityFilter(ctx context.Context, viewerDID string, vi
 	//
 	// RD-1316: the union keeps rows, it never reveals an identity — the
 	// redactor reveals only for ListedTxHashes (genuine shares) and renders a
-	// union-only row at the viewer's own visibility. So the union follows the
-	// transfer rows the viewer actually sees, and no further. Drivers:
+	// union-only row at the viewer's own visibility. Drivers:
 	//   - a viewer exempt from the G10 drop (isViewerAdmin: org admin or admin
 	//     claim): every Full address. Their /transfers keeps any transfer with
 	//     one identifiable side, so /transactions must keep its parent.
 	//   - anyone else, whose /transfers applies G10 (both sides identifiable,
 	//     unless a participant or grant lens applies) and the event-access strip:
-	//     (1) their own addresses — the participant override keeps the transfer;
-	//     (2) Full disclosure-grant subjects — the grant lens keeps it;
-	//     (3) transfers whose two sides are both Full or public (the zero
-	//         address, a precompile), on a token the viewer has event access
-	//         to: mints and burns of a visible contract's tokens, and transfers
-	//         between two visible contracts.
+	//     (1) their own addresses and (2) Full disclosure-grant subjects: the
+	//         parent is the viewer's own or the granted party's activity, kept
+	//         whether or not the transfer row itself survives the event-access
+	//         strip;
+	//     (3) for coherence only, and so bounded by the transfer rows the
+	//         viewer actually sees: transfers whose two sides are both Full or
+	//         public (the zero address, a precompile), on a token the viewer
+	//         has event access to — mints and burns of a visible contract's
+	//         tokens, and transfers between two visible contracts.
 	//     A transfer with a hidden side does not survive G10 for them, so its
 	//     parent (another user's one-side-hidden tx) is not kept either; the
 	//     RPC returns null for it.
@@ -894,7 +896,7 @@ func (s *Server) buildVisibilityFilter(ctx context.Context, viewerDID string, vi
 // getExplorerTransactions returns a page of recent transactions, newest first.
 //
 // @Summary      List recent transactions
-// @Description  Returns a page of transactions, newest first. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: transactions the viewer cannot see are dropped, and surviving rows have addresses and values redacted per the viewer's visibility. A transaction is also kept when one of its token transfers involves addresses the viewer sees in full; such a row shows no address the viewer could not already see.
+// @Description  Returns a page of transactions, newest first. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: transactions the viewer cannot see are dropped, and surviving rows have addresses and values redacted per the viewer's visibility. A transaction may also be kept because of one of its token transfers (for example a transfer into a contract the viewer manages); such a row shows no address the viewer could not already see.
 // @Tags         Explorer
 // @Produce      json
 // @Param        limit query int false "Max rows to return (1-100)" default(25)
@@ -1459,7 +1461,7 @@ func (s *Server) indexExplorerBlock(c *gin.Context) {
 // getExplorerBlockTransactions returns the transactions in a block.
 //
 // @Summary      Transactions in a block
-// @Description  Returns the transactions contained in a block. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: transactions the viewer cannot see are dropped and surviving rows are redacted per the viewer's visibility. A transaction is also kept when one of its token transfers involves addresses the viewer sees in full; such a row shows no address the viewer could not already see.
+// @Description  Returns the transactions contained in a block. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: transactions the viewer cannot see are dropped and surviving rows are redacted per the viewer's visibility. A transaction may also be kept because of one of its token transfers (for example a transfer into a contract the viewer manages); such a row shows no address the viewer could not already see.
 // @Tags         Explorer
 // @Produce      json
 // @Param        number path int true "Block number"
@@ -1582,7 +1584,7 @@ func (s *Server) getExplorerLatestBlockNumber(c *gin.Context) {
 // getExplorerTransactionsPaginated returns a page of transactions with a total.
 //
 // @Summary      List transactions (page/pageSize)
-// @Description  Returns a page of transactions plus a total count, using page/pageSize pagination. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: rows the viewer cannot see are dropped and surviving rows are redacted. A transaction is also kept when one of its token transfers involves addresses the viewer sees in full; such a row shows no address the viewer could not already see. Note the total is a SQL-level count that may slightly overcount relative to the redacted rows in data.
+// @Description  Returns a page of transactions plus a total count, using page/pageSize pagination. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: rows the viewer cannot see are dropped and surviving rows are redacted. A transaction may also be kept because of one of its token transfers (for example a transfer into a contract the viewer manages); such a row shows no address the viewer could not already see. Note the total is a SQL-level count that may slightly overcount relative to the redacted rows in data.
 // @Tags         Explorer
 // @Produce      json
 // @Param        page query int false "1-based page number" default(1)

@@ -441,9 +441,11 @@ func TestBuildVisibilityFilter_BothSidesVisibleTransfers_RD1316(t *testing.T) {
 	assert.Empty(t, filter.ListedTxHashes, "the union never becomes a listing")
 }
 
-// GAP G28: a derived row can survive while its parent tx does not. Both cases
-// predate RD-1316; these tests pin the current behaviour so the fix cannot land
-// (or the gap widen) silently.
+// GAP G28: a derived row can survive while its parent tx does not. Case (2)
+// predates RD-1316; case (1) predates it for txs with no visible transfer party,
+// and RD-1316's narrower non-admin union extends it to this transfer-linked tx.
+// These tests pin the current behaviour so the fix cannot land (or the gap
+// widen) silently.
 func TestExplorer_DerivedRowWithoutParent_GAP_G28(t *testing.T) {
 	f := setupRD1316Fixture(t)
 

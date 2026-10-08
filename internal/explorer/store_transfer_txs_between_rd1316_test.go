@@ -85,6 +85,14 @@ func TestFindTransferTxsBetween_RD1316(t *testing.T) {
 		}
 	}
 
+	got, err = store.FindTransferTxsBetween(ctx, []string{zero, vault, "0x00000000000000000000000000000000000000a2"}, []string{token}, nil, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Errorf("limit caps the result: want 2 of the 3 matches, got %v", got)
+	}
+
 	bb := uint64(7)
 	got, err = store.FindTransferTxsBetween(ctx, []string{zero, vault}, []string{token}, &bb, 100)
 	if err != nil {
