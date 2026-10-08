@@ -16,13 +16,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// RD-1316 — end to end on the explorer: an org admin (and a plain grant holder)
-// of a vault contract that receives a token transfer keeps the sender's
-// transaction row on every surface (RD-1009 coherence), but never sees the
-// sender's identity: another org's user EOA stays [PRIVATE], the calldata,
-// nonce and value are stripped, and the EOA appears nowhere in the body —
-// field or addressMetadata key. Before the fix the transfer-participant union
-// revealed all of it.
+// RD-1316 exercises explorer parent-row inclusion, ordinary field rendering
+// and genuine shares through the HTTP routes for admins and grant holders.
 const (
 	rd1316Vault    = "0xcccccccccccccccccccccccccccccccccccc1316"
 	rd1316Token    = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb1316"

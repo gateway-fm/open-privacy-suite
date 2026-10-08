@@ -7,13 +7,9 @@ import (
 	"testing"
 )
 
-// RD-1316 — the RD-1009 transfer-participant union keeps rows, it never
-// reveals identities. A tx lands in the union (VisibleTxHashes, labelled in
-// ParticipantTxHashes) because one of its token-transfer parties is Full for
-// the viewer — for an org admin, any org contract. Before the fix the
-// redactors treated a union hash like a genuine visibleTo share and promoted
-// both parties to Full, so the admin got another org's user EOA, the calldata,
-// value and nonce. Only a genuine listing (ListedTxHashes) may reveal.
+// RD-1316 verifies parent-row inclusion at the viewer's ordinary address
+// visibility. Genuine shares use ListedTxHashes; transfer participation
+// uses VisibleTxHashes and retains the existing field-rendering policy.
 
 const (
 	rd1316EOA    = "0x1316000000000000000000000000000000000e01" // another org's user EOA (Hidden)
