@@ -75,26 +75,25 @@ type Envelope struct {
 	// visibleTo and privateFor, in that order, only those that were present.
 	// id, params and the proxy metadata are copied byte for byte (number
 	// precision and absent-vs-null preserved); method is re-encoded from the
-	// decoded string the access decision used. Any other top-level member is
-	// dropped.
+	// decoded string (or the name given to SetMethod). Any other top-level
+	// member is dropped.
 	Canonical []byte
 
 	members      [len(forwardedMembers)][]byte
 	fieldVariant string // first params member name that is a case variant of a request field
 }
 
-// ParamsAmbiguity reports, as a log reason, how params could be read one way
-// by the proxy's checks and another by the node, or "" when they cannot:
-//   - a member name that is a case variant of a standard request field
-//     (`{"To": X}`): a case-insensitive node decoder (Go's, in Geth and
-//     Erigon) reads it as the field, the proxy's exact lookup does not;
-//   - an object carrying both `data` and `input` with different values: Geth
-//     and anvil execute `input`, the proxy's selector check and trace read
-//     `data` first. Equal values (web3.js sends both) are fine.
+// ParamsAmbiguity reports, as a log reason, why params do not have exactly one
+// reading, or "" when they do. The proxy's checks read params by exact member
+// name, and the request is accepted only when that is its single reading:
+//   - no member name is a case variant of a standard request field
+//     (`{"To": X}`);
+//   - an object that carries both `data` and `input` holds the same calldata
+//     in each. Equal values (web3.js sends both) are fine.
 //
 // The caller refuses the request when the proxy reads the method's params;
-// for payloads it never inspects (typed-data signing, named passthrough)
-// the names are just data.
+// for payloads it never inspects (named passthrough methods) the names are
+// just data.
 func (e *Envelope) ParamsAmbiguity() string {
 	if e.fieldVariant != "" {
 		return "case variant of a request field in params"
@@ -142,6 +141,18 @@ func (e *Envelope) CanonicalWithoutMetadata() []byte {
 		return e.Canonical
 	}
 	return buildCanonical(e.members, e.Method, false)
+}
+
+// SetMethod replaces the method name and rebuilds Canonical with it. The
+// caller passes the spelling its access decision is made on, so the body
+// forwarded to the node names the method that was authorized. An envelope
+// without a method member is left as it is.
+func (e *Envelope) SetMethod(method string) {
+	if e.members[memberMethod] == nil {
+		return
+	}
+	e.Method = method
+	e.Canonical = buildCanonical(e.members, method, true)
 }
 
 // CheckDecodedRequest applies envelope validation to decoded method/params

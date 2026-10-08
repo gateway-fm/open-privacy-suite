@@ -266,10 +266,9 @@ func TestParseEnvelope_ParamFieldCaseVariants(t *testing.T) {
 	}
 }
 
-// TestParseEnvelope_DataInputConflict: Geth and anvil execute `input` when a
-// call object carries both, while the proxy's selector check and trace read
-// `data` first. Differing values are flagged; equal values (web3.js sends
-// both) are not.
+// TestParseEnvelope_DataInputConflict: a call object that carries both `data`
+// and `input` must hold one calldata value. Differing values are flagged;
+// equal values (web3.js sends both) are not.
 func TestParseEnvelope_DataInputConflict(t *testing.T) {
 	cases := map[string]bool{
 		`[{"to":"0x0a","data":"0xa9059cbb","input":"0x095ea7b3"},"latest"]`:              false,
@@ -660,6 +659,36 @@ func TestEnvelope_CanonicalWithoutMetadata(t *testing.T) {
 	}
 	if string(plain.CanonicalWithoutMetadata()) != string(plain.Canonical) {
 		t.Fatal("without metadata present, both bodies must be identical")
+	}
+}
+
+// TestEnvelope_SetMethod: renaming the method rebuilds both canonical bodies
+// with the new name and leaves every other member byte for byte; an envelope
+// without a method member is left unchanged.
+func TestEnvelope_SetMethod(t *testing.T) {
+	env, err := ParseEnvelope([]byte(`{"jsonrpc":"2.0","id":123456789012345678901234567890,"method":"ETH_SENDTRANSACTION","params":[{"value":1.50}],"visibleTo":["did:a:b"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	env.SetMethod("eth_sendTransaction")
+	if env.Method != "eth_sendTransaction" {
+		t.Fatalf("Method = %q", env.Method)
+	}
+	if got, want := string(env.Canonical), `{"jsonrpc":"2.0","id":123456789012345678901234567890,"method":"eth_sendTransaction","params":[{"value":1.50}],"visibleTo":["did:a:b"]}`; got != want {
+		t.Fatalf("Canonical = %s, want %s", got, want)
+	}
+	if got, want := string(env.CanonicalWithoutMetadata()), `{"jsonrpc":"2.0","id":123456789012345678901234567890,"method":"eth_sendTransaction","params":[{"value":1.50}]}`; got != want {
+		t.Fatalf("CanonicalWithoutMetadata = %s, want %s", got, want)
+	}
+
+	noMethod, err := ParseEnvelope([]byte(`{"jsonrpc":"2.0","id":1,"params":[]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := string(noMethod.Canonical)
+	noMethod.SetMethod("eth_chainId")
+	if noMethod.Method != "" || string(noMethod.Canonical) != before {
+		t.Fatalf("an envelope without a method member must stay unchanged: Method=%q Canonical=%s", noMethod.Method, noMethod.Canonical)
 	}
 }
 
