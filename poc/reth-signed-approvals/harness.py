@@ -61,6 +61,13 @@ def prepare():
         "solc", "--optimize", "--optimize-runs", "200", "--evm-version", "shanghai",
         "--combined-json", "abi,bin,bin-runtime", "contracts/Applications.sol",
     ]))
+    prepare_fixtures(compiled)
+
+
+def prepare_fixtures(compiled):
+    """Write identical genesis fixtures for native and Docker demo runners."""
+    SCRATCH.mkdir(parents=True, exist_ok=True)
+    EVIDENCE.mkdir(parents=True, exist_ok=True)
     (EVIDENCE / "contracts.json").write_text(json.dumps(compiled, indent=2) + "\n")
     codes = {name.split(":")[-1]: "0x" + obj["bin-runtime"]
              for name, obj in compiled["contracts"].items()}

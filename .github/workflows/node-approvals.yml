@@ -2,10 +2,10 @@ name: Node approvals
 
 on:
   pull_request:
-    paths: ['node-approvals/**', 'internal/**', 'proto/**', 'go.mod', 'go.sum', 'poc/**', 'scripts/init-audit-db.sh', '.github/workflows/node-approvals.yml']
+    paths: ['node-approvals/**', 'internal/**', 'proto/**', 'go.mod', 'go.sum', 'poc/**', 'scripts/init-audit-db.sh', 'scripts/reth-demo.sh', 'docker-compose.reth-demo.yml', 'Dockerfile.backend', '.dockerignore', 'frontend/Dockerfile', 'Makefile', '.github/workflows/node-approvals.yml']
   push:
     branches: [main, poc/ops-besu-signed-approvals]
-    paths: ['node-approvals/**', 'internal/**', 'proto/**', 'go.mod', 'go.sum', 'poc/**', 'scripts/init-audit-db.sh', '.github/workflows/node-approvals.yml']
+    paths: ['node-approvals/**', 'internal/**', 'proto/**', 'go.mod', 'go.sum', 'poc/**', 'scripts/init-audit-db.sh', 'scripts/reth-demo.sh', 'docker-compose.reth-demo.yml', 'Dockerfile.backend', '.dockerignore', 'frontend/Dockerfile', 'Makefile', '.github/workflows/node-approvals.yml']
   workflow_dispatch:
   schedule:
     - cron: '23 3 * * 1'
@@ -39,6 +39,12 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+      - name: Validate Docker demo lifecycle
+        if: matrix.node == 'reth'
+        run: |
+          bash -n scripts/reth-demo.sh
+          python3 -m unittest discover -s poc/reth-signed-approvals -p test_docker_demo.py
+          docker compose --env-file /dev/null -f docker-compose.reth-demo.yml config --quiet
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         if: matrix.node == 'besu'
         with:

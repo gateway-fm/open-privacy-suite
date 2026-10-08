@@ -1,0 +1,199 @@
+# Development-only signed approvals demo. Run through `make demo-reth`.
+# All application/node binaries are built in containers from this checkout.
+services:
+  demo-init:
+    image: ${RETH_DEMO_PROJECT:-ops-reth-demo}-tools:local
+    build:
+      context: .
+      dockerfile: node-approvals/docker/Dockerfile.tools
+      target: dev
+    command: ["init"]
+    volumes:
+      - demo-data:/demo
+    networks: [internal]
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ops_approvals_demo
+      AUDIT_APP_PASSWORD: audit-demo-only
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./scripts/init-audit-db.sh:/docker-entrypoint-initdb.d/10-audit.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ops_approvals_demo"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    networks: [internal]
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--requirepass", "redis-demo-only"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis-demo-only", "ping"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    networks: [internal]
+
+  reth:
+    image: ${RETH_DEMO_PROJECT:-ops-reth-demo}-reth:local
+    build:
+      context: .
+      dockerfile: node-approvals/docker/Dockerfile.reth
+      target: dev
+      args:
+        CARGO_BUILD_JOBS: ${RETH_DEMO_BUILD_JOBS:-4}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        exec ops-reth-approvals node --chain /demo/evidence/genesis.json
+        --datadir /data --http --http.addr 0.0.0.0 --http.port 8545
+        --http.api eth,debug,web3,net,txpool --authrpc.addr 0.0.0.0
+        --authrpc.port 8551 --authrpc.jwtsecret /demo/engine.jwt
+        --ipcdisable --disable-discovery --addr 127.0.0.1 --port 0
+        --max-outbound-peers 0 --max-inbound-peers 0
+        --txpool.max-account-slots 1024 --metrics 0.0.0.0:9001
+        --log.file.directory /data/logs 2>/demo/node.log
+    environment:
+      OPS_APPROVALS: "1"
+      OPS_APPROVAL_CHAIN_ID: "31337"
+      OPS_APPROVAL_LISTEN: 0.0.0.0:50051
+      # Private Compose network only; approval/Engine ports are never published.
+      OPS_APPROVAL_ALLOWED_SOURCES: any
+      OPS_APPROVAL_PUBLIC_KEYS: default=ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c
+      OPS_APPROVAL_WAIT_MS: "1500"
+      OPS_APPROVAL_DIAGNOSTICS: "1"
+    volumes:
+      - demo-data:/demo
+      - reth-data:/data
+    ports:
+      - "127.0.0.1:${RETH_DEMO_RPC_PORT:-0}:8545"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          wget -q -O- --header='Content-Type: application/json'
+          --post-data='{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}'
+          http://127.0.0.1:8545 | grep -q '0x7a69'
+      interval: 2s
+      timeout: 5s
+      retries: 60
+    depends_on:
+      demo-init:
+        condition: service_completed_successfully
+    networks: [internal]
+
+  proxy-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+      target: dev
+      args:
+        VERSION: ${VERSION:-dev}
+        GIT_COMMIT: ${GIT_COMMIT:-none}
+        BUILD_TIME: ${BUILD_TIME:-unknown}
+    environment:
+      ENVIRONMENT: development
+      GIN_MODE: release
+      PORT: "8080"
+      BASE_URL: http://localhost
+      NODE_URL: http://reth:8545
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/ops_approvals_demo?sslmode=disable
+      AUDIT_ADMIN_DATABASE_URL: postgres://postgres:postgres@postgres:5432/ops_approvals_demo_audit?sslmode=disable
+      AUDIT_DATABASE_URL: postgres://privacy_proxy_app:audit-demo-only@postgres:5432/ops_approvals_demo_audit?sslmode=disable
+      REDIS_URL: redis://:redis-demo-only@redis:6379/0
+      JWT_SECRET: ops-reth-demo-access-secret-at-least-32-bytes
+      JWT_REFRESH_SECRET: ops-reth-demo-refresh-secret-at-least-32-bytes
+      ADMIN_API_TOKEN: ops-reth-local-demo-only
+      ALLOW_MOCK_LOGIN: "true"
+      MOCK_SIGNATURES: "false"
+      ENABLE_TRAVEL_RULE: "true"
+      VERIFIER_ID: did:privado:verifier:dev-0000000000000000
+      DISABLE_COINGECKO: "true"
+      TRACE_TIERED_VALIDATION: "false"
+      EXPLORER_DATABASE_URL: ""
+      AUDIT_BUFFER_DIR: /var/lib/pp/auditbuf
+      OPS_APPROVAL_NODE: reth
+      OPS_APPROVAL_TARGETS: reth:50051
+      OPS_APPROVAL_SEED_FILE: /demo/approval-seed.hex
+      OPS_APPROVAL_KEY_ID: default
+      OPS_APPROVAL_MAX_BATCH: "32"
+    volumes:
+      - demo-data:/demo:ro
+      - audit-buffer:/var/lib/pp/auditbuf
+    ports:
+      - "127.0.0.1:${RETH_DEMO_BACKEND_PORT:-0}:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health"]
+      interval: 2s
+      timeout: 5s
+      retries: 60
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      reth:
+        condition: service_healthy
+    networks: [internal]
+
+  proxy-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: dev
+    environment:
+      VITE_API_TARGET: http://proxy-backend:8080
+      VITE_ALLOW_MOCK_LOGIN: "true"
+    ports:
+      - "127.0.0.1:${RETH_DEMO_FRONTEND_PORT:-0}:5173"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:5173"]
+      interval: 2s
+      timeout: 5s
+      retries: 60
+    depends_on:
+      proxy-backend:
+        condition: service_healthy
+    networks: [internal]
+
+  demo:
+    image: ${RETH_DEMO_PROJECT:-ops-reth-demo}-tools:local
+    profiles: [tools]
+    user: "1000:1000"
+    command: ["seed"]
+    volumes:
+      - demo-data:/demo
+    depends_on:
+      proxy-backend:
+        condition: service_healthy
+      proxy-frontend:
+        condition: service_healthy
+    networks: [internal]
+
+  block-driver:
+    image: ${RETH_DEMO_PROJECT:-ops-reth-demo}-tools:local
+    profiles: [driver]
+    user: "1000:1000"
+    command: ["drive"]
+    volumes:
+      - demo-data:/demo:ro
+    depends_on:
+      proxy-backend:
+        condition: service_healthy
+    networks: [internal]
+
+networks:
+  # Project-scoped bridge. Docker's internal-only network suppresses the host
+  # port mappings on some engines; exposure is restricted by the explicit
+  # localhost publications above. Engine/approval/database ports stay unpublished.
+  internal: {}
+volumes:
+  demo-data:
+  postgres-data:
+  reth-data:
+  audit-buffer:

@@ -4,6 +4,10 @@ Supported integration source for OPS V1. Besu loads a plugin; Reth runs a custom
 against an unmodified upstream checkout. Both use the same [wire contract](../docs/implementation/approvals-wire-contract.md)
 and Go-signed golden vectors. The OPS V2 policy runtime is separate work.
 
+For a complete local Reth/OPS stack with every service and tool in Docker, run
+`make demo-reth`. See the [developer demo](docker/README.md) for the paused
+walkthrough, acceptance checks and scoped cleanup commands.
+
 An approval authorizes one transaction hash and its observed execution fingerprint. OPS checks
 policy and hands the approval to asynchronous signing/delivery workers before forwarding the
 transaction. The producer executes a candidate provisionally and commits it only if its

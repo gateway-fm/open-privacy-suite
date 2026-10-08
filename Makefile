@@ -83,6 +83,30 @@ quickstart-down:
 quickstart-reset:
 	@./scripts/quickstart.sh --reset
 
+# Development-only signed approvals stack: all tools, OPS, Reth and the frontend
+# run in Docker. Project-scoped random localhost ports permit parallel checkouts.
+.PHONY: demo-reth demo-reth-check demo-reth-walkthrough demo-reth-down demo-reth-reset demo-reth-logs demo-reth-status
+demo-reth:
+	@./scripts/reth-demo.sh up
+
+demo-reth-check:
+	@./scripts/reth-demo.sh check
+
+demo-reth-walkthrough:
+	@./scripts/reth-demo.sh walkthrough
+
+demo-reth-down:
+	@./scripts/reth-demo.sh down
+
+demo-reth-reset:
+	@./scripts/reth-demo.sh reset
+
+demo-reth-logs:
+	@./scripts/reth-demo.sh logs
+
+demo-reth-status:
+	@./scripts/reth-demo.sh status
+
 # Stop all services
 stop:
 	docker-compose down
