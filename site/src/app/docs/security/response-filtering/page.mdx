@@ -80,20 +80,20 @@ For a non-admin user, a key list that mixes an allowed slot with any other slot,
 
 Some nodes support state or block override sets as optional arguments on existing RPC methods such as `eth_call`. These options select temporary account state or block fields for the simulation; their shape and availability depend on the node implementation. OPS does not accept client-supplied overrides. Ordinary calls and simulations still run against the configured node's state at the requested block, under the normal access and tracing rules.
 
-The policy applies to every caller, including contract and organization admins. Requests with unsupported options are refused before tracing or forwarding and receive the same opaque `method not found` as other RPC access denials.
+The policy applies to every caller, including contract and organization admins. Requests with unsupported options are refused before tracing or forwarding and receive the same opaque `method not found` as other RPC access denials. A differently-cased `stateOverrides`, `blockOverrides` or `txIndex` key is refused earlier, with `400 invalid JSON-RPC request`, because the request has more than one reading (see [Security](/docs/security)).
 
 | Method | Rejected | Passes the option check |
 |--------|----------|----------|
-| `eth_call`, `eth_estimateGas`, `eth_createAccessList` | non-empty or malformed overrides in the third or fourth parameter; objects with unsupported keys in the block-parameter position; more than four parameters | omitted, `null`, or `{}` positional overrides; supported block references; a boolean third parameter for `eth_createAccessList` optimization |
+| `eth_call`, `eth_estimateGas`, `eth_createAccessList` | non-empty or malformed overrides in the third or fourth parameter; anything in the block-parameter position other than a string (block tag or number), `null`, or a block object with only `blockNumber`, `blockHash` and `requireCanonical`; more than four parameters | omitted, `null`, or `{}` positional overrides; supported block references; a boolean third parameter for `eth_createAccessList` optimization |
 | `debug_traceCall` | any `stateOverrides`, `stateOverride`, `blockOverrides`, `blockOverride`, or `txIndex` config key, including case-equivalent spellings, regardless of its value | a config omitting those keys, subject to normal trace checks |
 
-A client emitting trace override keys with empty values must omit the keys. Passing the option check does not guarantee node support for a particular optional argument; normal RBAC, block-reference validation, and node validation still apply. Explicitly mapped chain-specific methods follow their mapped method's policy and require a compatible parameter layout.
+A client emitting trace override keys with empty values must omit the keys. Passing the option check does not guarantee node support for a particular optional argument; normal RBAC, block-reference validation, and node validation still apply.
+
+A chain-specific method declared with an `alias` is checked under its alias target's rules. For example, `linea_estimateGas` aliased to `eth_estimateGas` is refused when it carries an override set, whether in the second parameter or in the standard override positions. A **passthrough** method gets no option check: its arguments, overrides included, are forwarded as sent. Do not declare a simulation method as passthrough; see [Passthrough methods](/docs/configuration#passthrough-methods).
 
 Bundled methods `eth_simulateV1`, `eth_simulate`, `eth_multicallV1`, `eth_callMany`, and `eth_callBundle` are unsupported.
 
-Rejected override requests are recorded with `state_override_not_allowed`. These early access-log entries have no resolved organization and appear in the fleet-wide Access Logs view. Admin dry-run and test-request diagnostics apply the same policy. OPS's internally constructed node requests for approval preparation remain available with their own simulation options.
-
-Details: RD-1305.
+Rejected override requests are recorded in Access Logs with the reason "State override not allowed" (`state_override_not_allowed`). The check runs before the request's organization is resolved, so these entries carry no organization: they appear only in the fleet-wide Access Logs view, not in an organization admin's view. A group with verbose error reasons receives `state_override_not_allowed` only on `/rpc/:org_id`. Admin dry-run and test-request diagnostics apply the same policy.
 
 ---
 
@@ -191,6 +191,8 @@ Keeping a log entry does not mean returning it verbatim. A single event can carr
 
 This makes `eth_getLogs`, transaction receipts, and the block explorer reveal the **same** set of addresses to a given user — a log fetched over JSON-RPC exposes nothing the explorer would have hidden, and vice versa.
 
+The one exception to this masking is the per-contract `visibleTo` unlock described below: when a contract has opted in and the sender listed an eligible user on a transaction, that user receives the contract's logs from that transaction exactly as emitted, embedded addresses included — identically through `eth_getLogs`, the receipt, and the block explorer's transaction log view.
+
 <Callout variant="warning" title="A zeroed address looks like the zero address">
   A redacted address slot is zeroed, which is indistinguishable from a genuine zero address (for example, a token mint or burn whose `from`/`to` is `0x000…0`). Clients must not treat a zero address inside a returned log as authoritative — it may be a real zero address or a redacted one.
 </Callout>
@@ -267,7 +269,7 @@ The `visibleTo` feature (renamed from `logVisibleTo`) allows a transaction sende
 | Mechanism | What a listed DID sees | What it requires |
 | --- | --- | --- |
 | **Transaction & receipt visibility** (always on) | The full transaction object (`eth_getTransactionByHash` and the block-index variants) and the full receipt (`eth_getTransactionReceipt`) for that one tx | Only that the viewer's DID is in the tx's `visibleTo` list. **No group access or contract grant is required.** Logs inside a returned receipt are still event-rule filtered. |
-| **Event-log unlock** (per-contract opt-in) | **All** event logs of that tx — bypassing the event-rules allowlist, `param_rules`, and field-level redaction | The `allow_visibleto_unlock` flag on the contract **and** the viewer holds an in-org contract grant (see eligibility below). Cross-org and anonymous viewers are denied. |
+| **Event-log unlock** (per-contract opt-in) | Every log **emitted by that opted-in contract in this transaction**, with its full event payload, independently of the event-rules allowlist, `param_rules`, and embedded-address masking | The `allow_visibleto_unlock` flag on the contract **and** the viewer is eligible: an org admin, or a member of a group with a grant on the contract in its owning org (see eligibility below). Cross-org and anonymous viewers are denied. |
 
 So "I listed Bob in `visibleTo`" does **not** by itself mean "Bob sees every event payload." Bob always gets the transaction and receipt; he only gets the unredacted event logs when the contract has opted in *and* Bob is grant-eligible.
 
@@ -309,10 +311,10 @@ All forms present on one request are combined (deduped, capped at 32 recipients)
 By default `visibleTo` is **additive** -- it never restricts existing access:
 
 - If a viewer already has access to an event through normal event rules or address-based filtering, `visibleTo` has no effect.
-- If a viewer is denied an event because `must_be=self` param rules fail, `visibleTo` serves as a fallback: the log is visible if the viewer's DID appears in the list. This fallback applies **only on contracts the viewer already holds a grant to**.
+- If a viewer is denied an event because `must_be=self` param rules fail, `visibleTo` serves as a fallback: the log is visible if the viewer's DID appears in that transaction's list. This fallback applies **only on contracts the viewer already holds a grant to**, and only the sender's listing counts — being a party to a token transfer in the transaction does not. In the block explorer this fallback, like the unlock, currently applies on a transaction's log view, not in the global or per-address log lists.
 - `visibleTo` does **not** grant access to a contract the viewer has **no** grant on. Logs from an ungranted contract stay hidden even when the viewer is listed in the tx's `visibleTo` — grant eligibility is required. (The viewer still receives the transaction/receipt envelope, but its logs are filtered.) Standalone `visibleTo`-based event access requires the per-contract unlock opt-in below.
 - `visibleTo` does **not** bypass the topic0 allowlist. If an event's signature is not in the allowed event rules, it remains hidden regardless of `visibleTo`.
-- Admin users always see all events -- `visibleTo` does not change admin behavior.
+- Admin users always see all events -- `visibleTo` does not change which events they see. On a contract that enables the unlock described below, a listed org admin also receives those logs with the full payload instead of masked addresses.
 
 Per-contract operators can opt **out of additive-only** behaviour and into the unlock semantic described below.
 
@@ -329,21 +331,33 @@ PUT /api/orgs/:org_id/contracts/:address/visibleto-unlock
 
 Admin-only on the contract's owning org. Default is `false` -- existing additive behaviour stays unless explicitly opted in.
 
-**When the flag is true and a transaction's `visibleTo` lists a viewer who is in an eligible group on this contract, the viewer sees ALL event logs of that one transaction** -- including events whose topic0 is not in their event-rules allowlist, including events that fail their `param_rules`, and including embedded private addresses in topics/data. The unlock is **per-tx, all-events**.
+**When the flag is true and a transaction lists an eligible viewer, that viewer sees every log emitted by this opted-in contract in this one transaction** -- including events absent from their event-rules allowlist, events that fail their parameter rules, and the full event payload with every embedded address in topics and data. `eth_getLogs`, the receipt, and the block explorer's transaction log view return these logs identically. A log emitted by a different contract in the same transaction is checked against **that other contract's** grant and flag. A later transaction is checked against its own `visibleTo` list. Only the sender's listing counts: being a party to a token transfer in a transaction does not unlock that transaction's logs.
+
+### Example: one call, two emitters
+
+Alice submits one call to `PaymentContract`, which emits `PaymentCreated(payer, payee, intermediary)` and also moves tokens on `LedgerContract`, which emits `Transfer(from, to, value)`, in the same transaction. Alice lists settlement reviewer Sam in the transaction's `visibleTo`. Sam holds grants on both contracts; his `PaymentContract` grant allowlists `PaymentCreated` only when Sam is the payer, and Sam is neither payer nor payee.
+
+| `PaymentContract` setting | What Sam receives |
+|---------------------------|-------------------|
+| `allow_visibleto_unlock=false` (default) | `PaymentCreated` passes the `visibleTo` fallback for his allowlisted event, with the payer, payee and intermediary addresses zeroed. `Transfer` is filtered by his `LedgerContract` grant, with hidden addresses zeroed. |
+| `allow_visibleto_unlock=true` | `PaymentCreated` exactly as emitted, including the payer, payee and intermediary addresses. `Transfer` is unchanged: `LedgerContract` did not opt in, so its ordinary rules and masking still apply. |
+
+A `PaymentSettled` event emitted by a **later transaction** is not covered by Alice's earlier `visibleTo` list.
 
 **Eligibility requires both:**
 
 1. The viewer is registered (has a DID-backed user account -- anonymous viewers are denied).
-2. The viewer is a member of at least one **non-system** group whose org matches the contract's owning org, AND that group has a `contract_grant` on this contract. The grant's `event_rules` may be deny-all -- the unlock works because of the grant link, not its rule set.
+2. In the contract's owning org, the viewer is either an **org admin**, or a member of a group that has a `contract_grant` on this contract. The grant's `event_rules` may be deny-all -- the unlock works because of the grant link, not its rule set. Grants held by **system groups** or by the built-in **default group** that new users join automatically do not count: granting the default group access to a flagged contract does not make every user eligible. A group you configure as the automatic group for an Azure AD tenant is treated like any other group -- granting it access to a flagged contract makes every user provisioned into it eligible.
 
-Cross-org isolation: a viewer who has access only in another org cannot be unlocked, even if they are listed in `visibleTo`. Anonymous and system groups are excluded.
+Cross-org isolation: a viewer who has access only in another org cannot be unlocked, even if they are listed in `visibleTo`. Anonymous viewers are denied.
 
 **Per-tx blast-radius cap:** `visibleTo` lists at `eth_sendTransaction` time are capped at **32 entries**. Larger lists are rejected with HTTP 400. Use a dedicated group + grant for larger recipient sets.
 
 **Operator security checklist before flipping the flag:**
 
 - Contracts with the flag on let the tx sender authorise per-event visibility for any DID they list. Set this only on contracts where that's the intended workflow.
-- The set of users who can see a contract's events grows beyond what your `groups + grants` enumeration shows when the flag is on. Plan for that in access reviews.
+- The set of users who can see a contract's events grows beyond what your `groups + grants` enumeration shows when the flag is on: for access reviews, check which eligible grant holders were listed on each transaction — grants alone do not show who received a particular unlocked event.
+- A sender who is themselves eligible can list their own DID and receive the full payload of everything the contract emits in their transaction, including third-party addresses the contract writes into its events. Org admins are eligible on every contract of their organization, so a listed org admin also sees user addresses that are otherwise kept private from admins. Enable the flag only on contracts whose events are meant to be shared in full with any eligible, listed participant.
 - Revoking a viewer's group membership cuts their unlock access immediately on the next request -- the eligibility check runs per-request.
 
 ### RPC method access still required

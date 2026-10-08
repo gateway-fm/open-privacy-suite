@@ -13,8 +13,10 @@ const (
 	overrideKindMalformed = "malformed_override"
 
 	// maxOverrideAwareParams caps the positional params for the eth_call /
-	// eth_estimateGas family. The valid shapes are [call], [call, block],
-	// [call, block, stateOverride], [call, block, stateOverride, blockOverride].
+	// eth_estimateGas / eth_createAccessList family. The valid shapes are
+	// [call], [call, block], [call, block, stateOverride],
+	// [call, block, stateOverride, blockOverride], and for
+	// eth_createAccessList also [call, block, bool(, blockOverride)].
 	// Anything longer is rejected fail-closed rather than forwarded.
 	maxOverrideAwareParams = 4
 )
@@ -46,9 +48,10 @@ func keyFoldsTo(key, name string) bool {
 // It checks both raw and operator-aliased methods. Positional state/block
 // overrides must be null or empty objects; debug-trace override and
 // replay-position keys must be absent. The block-reference slot accepts only
-// block-reference keys, and createAccessList retains its boolean optimization
-// option. Unknown or malformed override values are refused. The returned kind
-// is an internal audit label; callers use an opaque denial.
+// null, a string or an EIP-1898 object, and createAccessList retains its
+// boolean optimization option. Unknown or malformed override values are
+// refused. The returned kind is an internal audit label; callers use an
+// opaque denial.
 func DetectStateOverride(method string, params []any) (bool, string) {
 	raw := CanonicalizeMethod(method)
 	if denied, kind := detectStateOverrideForMethod(raw, params); denied {
@@ -69,8 +72,8 @@ func detectStateOverrideForMethod(resolved string, params []any) (bool, string) 
 		if len(params) > maxOverrideAwareParams {
 			return true, overrideKindMalformed
 		}
-		// params[1] must be a block reference (tag/hex string or EIP-1898
-		// object). Other object keys are unsupported in this position.
+		// params[1] must be a block reference: null, a tag/hex string or an
+		// EIP-1898 object. Any other object or type is refused.
 		if denied, kind := classifyBlockRefSlot(params, 1); denied {
 			return true, kind
 		}
@@ -113,24 +116,28 @@ func detectStateOverrideForMethod(resolved string, params []any) (bool, string) 
 	}
 }
 
-// classifyBlockRefSlot rejects objects with keys outside the EIP-1898 block
-// reference set. Block tags/numbers, nil and supported object keys pass here;
-// the block parser remains responsible for validating block-reference values.
+// classifyBlockRefSlot accepts only the block-reference shapes in the block
+// slot: nil, a string (tag or number) or an object whose keys are all EIP-1898
+// block keys. An object with any other key is an override set; any other type
+// is not a block reference and is refused as malformed. The block parser
+// remains responsible for validating the block-reference values themselves.
 func classifyBlockRefSlot(params []any, idx int) (bool, string) {
 	if len(params) <= idx || params[idx] == nil {
 		return false, ""
 	}
-	m, ok := params[idx].(map[string]any)
-	if !ok {
-		// Leave other block-reference shape validation to the block parser.
+	switch v := params[idx].(type) {
+	case string:
 		return false, ""
-	}
-	for key := range m {
-		if !isEIP1898BlockKey(key) {
-			return true, overrideKindState
+	case map[string]any:
+		for key := range v {
+			if !isEIP1898BlockKey(key) {
+				return true, overrideKindState
+			}
 		}
+		return false, ""
+	default:
+		return true, overrideKindMalformed
 	}
-	return false, ""
 }
 
 func isEIP1898BlockKey(key string) bool {

@@ -1325,7 +1325,7 @@ const MaxRequestBodySize = 1 << 20 // 1MB
 // @Description
 // @Description  Ordinary upstream JSON-RPC errors retain their JSON-RPC error member. Transport, access and rate-limit failures use the non-200 statuses below. `POST /` and `POST /rpc` are the same operation.
 // @Description
-// @Description  Client traces return only validated call-tree frames. The viewer's contract, function and argument permissions apply to returned calls, including delegated storage contexts. Trace or upstream failures return opaque non-200 errors.
+// @Description  Client traces return only validated call-tree frames. The viewer's contract, function and argument permissions apply to returned calls, including delegated storage contexts. Internal-call values (a nested call's input, value, output and revert reason) are returned only to a viewer who may read the storage of the contract that produced them; otherwise they are omitted and named in the call's `redacted` array. Trace or upstream failures return opaque non-200 errors.
 // @Tags         JSON-RPC
 // @Accept       json
 // @Produce      json
@@ -2027,7 +2027,7 @@ func (s *Server) getStatus(c *gin.Context) {
 // @Produce      json
 // @Param        request body apimodels.TestRequestInput true "method, params, and optional jwt_token / org_id"
 // @Success      200 {object} apimodels.TestRequestResponse "forwarded result (or an upstream JSON-RPC error message) plus latency"
-// @Failure      400 {object} apimodels.APIError "invalid request body, invalid JWT, or unsupported trace method (an invalid call shape refused by the trace returns a TestRequestResponse)"
+// @Failure      400 {object} apimodels.APIError "invalid request body, invalid JWT, or a trace method (debug_traceCall / debug_traceTransaction are not supported here; send them to /rpc or /rpc/{org_id}); an invalid call shape refused by the nested-call trace returns a TestRequestResponse"
 // @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
 // @Failure      403 {object} apimodels.TestRequestResponse "RBAC, nested-call trace or compliance denied (network-gate rejections return the generic error envelope)"
 // @Failure      500 {object} apimodels.TestRequestResponse "access-check or trace-validation error"
@@ -2066,7 +2066,7 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 	// methods. Use the RPC trace endpoint with its access and output checks.
 	if tm := rbac.ResolveMethodAlias(input.Method); tm == "debug_traceCall" || tm == "debug_traceTransaction" ||
 		input.Method == "debug_traceCall" || input.Method == "debug_traceTransaction" {
-		respondBadRequest(c, "trace methods are not supported via test-request; use the dry-run or view-as-user surfaces")
+		respondBadRequest(c, "trace methods are not supported via test-request; send them to /rpc or /rpc/{org_id}")
 		return
 	}
 

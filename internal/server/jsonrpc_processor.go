@@ -620,6 +620,11 @@ func ParseAndValidateBody(body []byte) (string, []any, []byte, *ProcessError) {
 			Message:    "invalid JSON-RPC request",
 		}
 	}
+	// Access is decided on the built-in spelling of a catalog method
+	// (CanonicalizeMethod, as Process dispatches), so the forwarded body
+	// carries that spelling rather than the caller's. Operator methods are
+	// matched by exact name and are left unchanged.
+	env.SetMethod(rbac.CanonicalizeMethod(env.Method))
 	if reason := ambiguousParams(env); reason != "" {
 		slog.Warn("ambiguous JSON-RPC request refused", slog.String("reason", reason), slog.String("method", env.Method))
 		return "", nil, nil, &ProcessError{
@@ -631,9 +636,9 @@ func ParseAndValidateBody(body []byte) (string, []any, []byte, *ProcessError) {
 	// visibleTo/privateFor are the proxy's own metadata. The two send paths
 	// read them from the body and strip them before forwarding (RD-1163);
 	// for every other method they are dropped here, so they never reach the
-	// node. The method is canonicalised the same way Process dispatches.
+	// node.
 	forward := env.Canonical
-	switch rbac.CanonicalizeMethod(env.Method) {
+	switch env.Method {
 	case "eth_sendTransaction", "eth_sendRawTransaction":
 	default:
 		forward = env.CanonicalWithoutMetadata()
@@ -642,17 +647,11 @@ func ParseAndValidateBody(body []byte) (string, []any, []byte, *ProcessError) {
 }
 
 // ambiguousParams returns env.ParamsAmbiguity() for methods whose params the
-// proxy's checks read, and "" for the payloads it never inspects: typed-data
-// signing (EIP-712 type and field names are the dApp's own) and
-// named passthrough methods. Aliased chain methods resolve to the standard method they inherit
-// checks from, so they stay covered. RD-1303.
+// proxy's checks read, and "" for named passthrough methods, whose payloads it
+// never inspects. Aliased chain methods resolve to the standard method they
+// inherit checks from, so they stay covered. RD-1303.
 func ambiguousParams(env *proxy.Envelope) string {
-	method := rbac.CanonicalizeMethod(env.Method)
-	switch method {
-	case "eth_signTypedData", "eth_signTypedData_v3", "eth_signTypedData_v4":
-		return ""
-	}
-	if rbac.IsPassthroughMethod(method) {
+	if rbac.IsPassthroughMethod(rbac.CanonicalizeMethod(env.Method)) {
 		return ""
 	}
 	return env.ParamsAmbiguity()
@@ -666,9 +665,10 @@ func ambiguousParams(env *proxy.Envelope) string {
 func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *ProcessResult {
 	start := time.Now()
 
-	// Normalize built-in method names for internal dispatch and access checks.
-	// The canonical envelope preserves the caller's method spelling.
-	// Operator methods require an explicit registered alias or passthrough entry.
+	// Normalize built-in method names for internal dispatch and access checks;
+	// ParseAndValidateBody already wrote the same spelling into the forwarded
+	// body. Operator methods require an explicit registered alias or
+	// passthrough entry.
 	req.Method = rbac.CanonicalizeMethod(req.Method)
 
 	// Handle eth_sendRawTransaction specially - requires runtime tracing
@@ -706,7 +706,9 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 
 	// Resolve method alias for access control (e.g. linea_estimateGas → eth_estimateGas).
 	// The alias determines which access control rules apply (contract checks, storage tiering, etc.)
-	// while the original method name is kept for the RBAC allowlist check and node forwarding.
+	// while the requested method name (an alias or passthrough name as configured, or a
+	// catalog method in its built-in spelling) is kept for the RBAC allowlist check and node
+	// forwarding.
 	accessMethod := rbac.ResolveMethodAlias(req.Method)
 
 	// Build RBAC access check request using the alias for target/selector extraction
@@ -1159,10 +1161,13 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 		// Pass the internal user UUID (result.UserID), not the JWT DID.
 		// viewerUUID() guards against nil result (visibleTo-only path).
 		adminMap := p.viewerAdminContracts(ctx, viewerUUID(result), extractContractAddressesFromResponse(responseBody))
-		filtered := FilterReceiptLogsWithEventRules(responseBody, addrs, perms, p.contractABIProvider(ctx), visCtx, adminMap)
-		// RD-1214: field-redact embedded addresses in the admitted receipt logs
-		// (same resolver + primitive as the explorer, so both hide the same set).
-		return p.redactReceiptResponseFields(ctx, req.UserID, filtered)
+		// Admission and rendering in one pass: each admitted receipt log is
+		// rendered with the payload policy decided for it — RD-1214 masking
+		// (same resolver + primitive as the explorer) or, for an RD-874
+		// visibleTo unlock of this exact (viewer, contract, tx), the full
+		// payload (RD-1300).
+		abiProv := p.contractABIProvider(ctx)
+		return filterReceiptLogsWithEventRules(responseBody, addrs, perms, abiProv, visCtx, adminMap, p.logFieldRenderer(ctx, req.UserID, abiProv))
 
 	case strings.EqualFold(m, rbac.MethodGetLogs):
 		addrs, err := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)
@@ -1192,10 +1197,10 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 		// the JWT DID — viewerAdminContracts queries user_memberships
 		// by UUID FK. viewerUUID() guards against nil result.
 		adminMap := p.viewerAdminContracts(ctx, viewerUUID(result), extractContractAddressesFromResponse(responseBody))
-		filtered := FilterLogsWithEventRules(responseBody, addrs, perms, p.contractABIProvider(ctx), visCtx, adminMap)
-		// RD-1214: field-redact embedded addresses in the admitted logs (same
-		// resolver + primitive as the explorer, so both hide the same set).
-		return p.redactLogsArrayResponseFields(ctx, req.UserID, filtered)
+		// Admission and rendering in one pass (see the receipt case above):
+		// masked per RD-1214 unless the log is an RD-874 unlock (RD-1300).
+		abiProv := p.contractABIProvider(ctx)
+		return filterLogsWithEventRules(responseBody, addrs, perms, abiProv, visCtx, adminMap, p.logFieldRenderer(ctx, req.UserID, abiProv))
 
 	case strings.EqualFold(m, rbac.MethodGetTransactionByBlockHashAndIndex),
 		strings.EqualFold(m, rbac.MethodGetTransactionByBlockNumberAndIndex):

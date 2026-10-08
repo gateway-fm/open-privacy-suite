@@ -79,9 +79,15 @@ type ExplorerBackend interface {
 	// asymmetry by returning tx hashes whose token-transfer participants are
 	// visible to the viewer. See Store.FindTransferParticipantTxs for the full
 	// rationale and the privacy argument (the surviving transfer row already
-	// exposes the parent tx hash, so unioning these hashes into the tx-feed
-	// allowlist reveals nothing that wasn't already exposed).
+	// exposes the parent tx hash, so keeping the parent row adds nothing; the
+	// hashes only keep rows — the redactor never reveals an identity for them,
+	// RD-1316).
 	FindTransferParticipantTxs(ctx context.Context, visibleAddrs []string, beforeBlock *uint64, limit int) (map[string]bool, error)
+	// FindTransferTxsBetween returns tx hashes with a token transfer whose from
+	// and to are both in sideAddrs, on a token in tokenAddrs — the non-admin
+	// parent-row union for mints, burns and transfers between visible
+	// contracts (RD-1316). Row survival only. See Store.FindTransferTxsBetween.
+	FindTransferTxsBetween(ctx context.Context, sideAddrs, tokenAddrs []string, beforeBlock *uint64, limit int) (map[string]bool, error)
 
 	// Logs
 	GetLogsByTransaction(ctx context.Context, txHash string) ([]Log, error)

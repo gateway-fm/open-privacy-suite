@@ -225,8 +225,8 @@ func TestJSONRPCEnvelope_Authenticated_AmbiguousNeverForwarded(t *testing.T) {
 
 // TestJSONRPCEnvelope_SpecialPaths covers the methods with their own
 // processing branch (raw transactions, traces, rewritten block queries) and a
-// case-variant field inside a call object, which a Go-based node reads as the
-// field while the proxy's exact lookup does not see it.
+// case-variant field inside a call object, which is refused because the
+// proxy reads request fields by exact name only.
 func TestJSONRPCEnvelope_SpecialPaths(t *testing.T) {
 	h := setupEnvelopeHarness(t)
 	token, orgID := h.envelopeMember(t, "eth_call", "eth_sendRawTransaction", "debug_traceCall", "eth_getBlockByNumber")
@@ -330,6 +330,16 @@ func TestJSONRPCEnvelope_ForwardsExactlyWhatWasAuthorised(t *testing.T) {
 			want: `{"jsonrpc":"2.0","id":1,"method":"eth_getBalance","params":["` + envAddrA + `", "latest"]}`,
 		},
 		{
+			name: "anonymous, catalog method forwarded in its built-in spelling", path: "/rpc",
+			body: `{"jsonrpc":"2.0","id":4,"method":"ETH_CHAINID","params":[]}`,
+			want: `{"jsonrpc":"2.0","id":4,"method":"eth_chainId","params":[]}`,
+		},
+		{
+			name: "authenticated, catalog method forwarded in its built-in spelling", path: "/rpc/" + orgID, token: token,
+			body: `{"jsonrpc":"2.0","id":5,"method":"Eth_GetBalance","params":["` + envAddrA + `","latest"]}`,
+			want: `{"jsonrpc":"2.0","id":5,"method":"eth_getBalance","params":["` + envAddrA + `","latest"]}`,
+		},
+		{
 			name: "alias forwarded under its own name", path: "/rpc/" + orgID, token: token,
 			body: `{"jsonrpc":"2.0","id":2,"method":"linea_getBalance","params":["` + envAddrA + `","latest"]}`,
 			want: `{"jsonrpc":"2.0","id":2,"method":"linea_getBalance","params":["` + envAddrA + `","latest"]}`,
@@ -365,6 +375,39 @@ func TestParseAndValidateBody_ProxyMetadataOnlyOnSends(t *testing.T) {
 		require.Nil(t, perr)
 		assert.Equal(t, `{"jsonrpc":"2.0","id":1,"method":"`+method+`","params":[]}`, string(body), method)
 	}
+}
+
+// TestParseAndValidateBody_ForwardsCanonicalMethodName: access is decided on
+// the built-in spelling of a catalog method, so that spelling is what the
+// forwarded body carries, never the caller's letter case. Operator methods
+// are matched by exact name and keep theirs.
+func TestParseAndValidateBody_ForwardsCanonicalMethodName(t *testing.T) {
+	t.Cleanup(rbac.SnapshotMethodRegistriesForTest())
+	rbac.MethodAliases["linea_GetBalance"] = "eth_getBalance"
+	rbac.PassthroughMethods["lotus_Send"] = true
+
+	for _, tc := range []struct{ sent, want string }{
+		{"ETH_CHAINID", "eth_chainId"},
+		{"eth_chaİnId", "eth_chainId"}, // U+0130 folds to "i"
+		{"Eth_GetBalance", "eth_getBalance"},
+		{"eth_getBalance", "eth_getBalance"},
+		{"linea_GetBalance", "linea_GetBalance"},
+		{"lotus_Send", "lotus_Send"},
+		{"unknown_Method", "unknown_Method"},
+	} {
+		t.Run(tc.sent, func(t *testing.T) {
+			method, _, body, perr := ParseAndValidateBody([]byte(`{"jsonrpc":"2.0","id":1,"method":"` + tc.sent + `","params":[]}`))
+			require.Nil(t, perr)
+			assert.Equal(t, tc.want, method, "method handed to the processor")
+			assert.Equal(t, `{"jsonrpc":"2.0","id":1,"method":"`+tc.want+`","params":[]}`, string(body), "forwarded body")
+		})
+	}
+
+	t.Run("send keeps its metadata", func(t *testing.T) {
+		_, _, body, perr := ParseAndValidateBody([]byte(`{"jsonrpc":"2.0","id":1,"method":"ETH_SENDRAWTRANSACTION","params":["0x01"],"visibleTo":["did:a:b"]}`))
+		require.Nil(t, perr)
+		assert.Equal(t, `{"jsonrpc":"2.0","id":1,"method":"eth_sendRawTransaction","params":["0x01"],"visibleTo":["did:a:b"]}`, string(body))
+	})
 }
 
 // TestProcessCalledOnlyFromHandleJSONRPC pins the single choke point: the
@@ -491,7 +534,8 @@ func TestTestRequest_RefusesCaseVariantRequestField(t *testing.T) {
 
 // TestParseAndValidateBody_ParamsRulesScopedToReadMethods: the request-field
 // and data/input rules refuse params the proxy's checks read, and leave alone
-// payloads it never inspects (typed-data signing, named passthrough).
+// only the payloads of named passthrough methods, which it never inspects.
+// Typed-data signing is globally blocked and gets no exemption.
 func TestParseAndValidateBody_ParamsRulesScopedToReadMethods(t *testing.T) {
 	t.Cleanup(rbac.SnapshotMethodRegistriesForTest())
 	rbac.MethodAliases["linea_call"] = "eth_call"
@@ -504,6 +548,7 @@ func TestParseAndValidateBody_ParamsRulesScopedToReadMethods(t *testing.T) {
 		"data and input differ":  `{"jsonrpc":"2.0","id":1,"method":"eth_call","params":[{"to":"` + envAddrA + `","data":"0xa9059cbb","input":"0x095ea7b3"},"latest"]}`,
 		"estimateGas BlockHash":  `{"jsonrpc":"2.0","id":1,"method":"eth_estimateGas","params":[{"to":"` + envAddrA + `"},{"BlockHash":"0x01"}]}`,
 		"sendRawTransaction opt": `{"jsonrpc":"2.0","id":1,"method":"eth_sendRawTransaction","params":["0x01",{"VisibleTo":["did:a:b"]}]}`,
+		"typed data To":          `{"jsonrpc":"2.0","id":1,"method":"eth_signTypedData_v4","params":["` + envAddrA + `",{"types":{"EIP712Domain":[],"Data":[{"name":"To","type":"address"}]},"primaryType":"Data","message":{"To":"` + envAddrB + `","Value":1}}]}`,
 	}
 	for name, body := range refused {
 		t.Run("refuses "+name, func(t *testing.T) {
@@ -514,9 +559,8 @@ func TestParseAndValidateBody_ParamsRulesScopedToReadMethods(t *testing.T) {
 		})
 	}
 	accepted := map[string]string{
-		"typed data with PascalCase type and field names": `{"jsonrpc":"2.0","id":1,"method":"eth_signTypedData_v4","params":["` + envAddrA + `",{"types":{"EIP712Domain":[],"Data":[{"name":"To","type":"address"}]},"primaryType":"Data","message":{"To":"` + envAddrB + `","Value":1}}]}`,
-		"named passthrough PascalCase schema":             `{"jsonrpc":"2.0","id":1,"method":"lotus_send","params":[{"To":"f01","From":"f02","Value":"1","Nonce":1}]}`,
-		"data and input equal ignoring hex case":          `{"jsonrpc":"2.0","id":1,"method":"eth_call","params":[{"to":"` + envAddrA + `","data":"0xA9059CBB","input":"0xa9059cbb"},"latest"]}`,
+		"named passthrough PascalCase schema":    `{"jsonrpc":"2.0","id":1,"method":"lotus_send","params":[{"To":"f01","From":"f02","Value":"1","Nonce":1}]}`,
+		"data and input equal ignoring hex case": `{"jsonrpc":"2.0","id":1,"method":"eth_call","params":[{"to":"` + envAddrA + `","data":"0xA9059CBB","input":"0xa9059cbb"},"latest"]}`,
 	}
 	for name, body := range accepted {
 		t.Run("accepts "+name, func(t *testing.T) {

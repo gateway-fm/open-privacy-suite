@@ -32,7 +32,7 @@ Dangerous JSON-RPC methods are blocked regardless of user permissions:
 | `eth_subscribe` | WebSocket subscriptions (bypasses filtering) |
 | `eth_unsubscribe` | WebSocket subscriptions |
 
-**Exception:** `debug_traceCall` and `debug_traceTransaction` are *not* blocked by the `debug_*` rule. They are gated by the group method allowlist, then checked like the method each one mirrors: `debug_traceCall` like `eth_call` for its target contract, and `debug_traceTransaction` like `eth_getTransactionByHash` (sender, recipient, admin of the called contract, or a shared recipient only). The proxy returns only the call tree (`callTracer`), and only when the caller has access to every contract the trace passes through, in the organization the request is for. Requests for storage-, memory- or log-revealing output are rejected: `prestateTracer`, JavaScript tracers, struct-logger options, `callTracer` with `withLog`, and state or block overrides. A request with no tracer configured gets the call tree. See [RBAC](/docs/rbac). All other `debug_*` methods are blocked.
+**Exception:** `debug_traceCall` and `debug_traceTransaction` are *not* blocked by the `debug_*` rule. They are gated by the group method allowlist, then checked like the method each one mirrors: `debug_traceCall` like `eth_call` for its target contract, and `debug_traceTransaction` like `eth_getTransactionByHash` (sender, recipient, admin of the called contract, or a shared recipient only). The proxy returns only the call tree (`callTracer`), and only when the caller has access to every contract the trace passes through, in the organization the request is for. Values inside internal calls are returned only to a caller who may read the storage of the contract that produced them; other callers get the call tree with those values removed. Requests for storage-, memory- or log-revealing output are rejected: `prestateTracer`, JavaScript tracers, struct-logger options, `callTracer` with `withLog`, and state or block overrides. A request with no tracer configured gets the call tree. See [RBAC](/docs/rbac). All other `debug_*` methods are blocked.
 
 ### Unsupported Methods Are Never Forwarded
 
@@ -70,7 +70,7 @@ JSON-RPC batch requests (`[{...},{...}]`) are rejected outright. This prevents:
 
 ### Request Envelope Validation
 
-JSON parsers disagree about member names that repeat or differ only in letter case. One parser reads `{"method":"A","Method":"B"}` as method `B`, while another executes `A`. If the proxy and the node read a request differently, the access decision would apply to a different call from the one the node runs. To prevent this, the proxy refuses requests that it and a node could read differently. It returns `400 {"error":"invalid JSON-RPC request"}`, the same response as for malformed JSON, and nothing is sent to the node.
+The proxy accepts a request only if it has exactly one reading, so the call it authorizes is the call the node receives. A request that does not is refused with `400 {"error":"invalid JSON-RPC request"}`, the same response as for malformed JSON, and nothing is sent to the node.
 
 A request is refused when:
 
@@ -81,11 +81,11 @@ A request is refused when:
 - two member names in the same object differ only in letter case, at any depth (for example `data` and `Data` inside a transaction object);
 - a top-level member is a case variant of `jsonrpc`, `id`, `method`, `params`, `visibleTo` or `privateFor`, such as `Method` or `PARAMS`;
 - inside `params`, a member name is a case variant of a standard request field, such as `To` for `to`, `Address` for `address` or `BlockHash` for `blockHash`. The fields covered are those of transaction and call objects, log filters, block selectors, tracer options, and state and block overrides.
-- inside `params`, an object carries both `data` and `input` with different values. Some nodes execute one and some the other. Equal values are accepted.
+- inside `params`, an object carries both `data` and `input` with different values. Equal values are accepted.
 
-The two `params` rules apply to every method whose parameters the proxy checks. They do not apply to typed-data signing (`eth_signTypedData*`), whose type and field names belong to the application, or to named passthrough methods, which are forwarded without parameter checks. The case-variant rules also catch look-alike letters that some platforms match case-insensitively, such as the dotless `ı`. The same rules apply to the `rpc` block of the admin dry-run and to the dashboard test request.
+The two `params` rules apply to every method except named passthrough methods, which are forwarded without parameter checks. The case-variant rules also cover look-alike letters, such as the dotless `ı`. The same rules apply to the `rpc` block of the admin dry-run and to the dashboard test request.
 
-The node receives a request rebuilt from the members the proxy read. It contains only `jsonrpc`, `id`, `method` and `params`. The proxy's own `visibleTo`/`privateFor` members are consumed on transaction sends and are never forwarded. `id` and `params` are passed through as sent, with number precision unchanged, except where the proxy itself rewrites a request; for example, block queries are always fetched with full transaction objects. Other top-level members are not forwarded. Standard clients (ethers, viem, web3.py, Hardhat, Foundry and wallets) always send exact-case, unique member names, so they are unaffected.
+The node receives a request rebuilt from the members the proxy read. It contains only `jsonrpc`, `id`, `method` and `params`, and a built-in method is named in its standard spelling whatever letter case the caller used (`ETH_GETBALANCE` is forwarded as `eth_getBalance`). The proxy's own `visibleTo`/`privateFor` members are consumed on transaction sends and are never forwarded. `id` and `params` are passed through as sent, with number precision unchanged, except where the proxy itself rewrites a request; for example, block queries are always fetched with full transaction objects. Other top-level members are not forwarded. Standard clients (ethers, viem, web3.py, Hardhat, Foundry and wallets) always send exact-case, unique member names, so they are unaffected.
 
 ### Multicall Detection
 
@@ -611,6 +611,6 @@ A standalone verifier CLI is planned.
 | Parameter validation | Only method/contract validated | Upstream node validation |
 | Token revocation | Database lookup per request | Consider Redis for high volume |
 | Multicall | Only 3 hardcoded addresses blocked | Mitigated by runtime tracing (all calls validated regardless of target) |
-| Method case handling | Method names are canonicalized to their standard spelling before access checks and dispatch | Built-in methods match case-insensitively; any other method must match an operator-declared name exactly, or it is refused |
+| Method case handling | Method names are canonicalized to their standard spelling before access checks, dispatch and forwarding | Built-in methods match case-insensitively; any other method must match an operator-declared name exactly, or it is refused |
 | Historical state | `eth_call`, `eth_getBalance`, `eth_getCode`, `eth_getStorageAt`, `eth_getTransactionCount` and `eth_getProof` at a block number or block hash are blocked for anonymous users and for authenticated users who are not org admins; chain-specific methods aliased to one of them are blocked the same way | Access checks use current contract ownership, so these methods are not served at a specific block number or hash to anyone who is not an org admin. Named tags such as `latest`, `pending`, `safe` and `finalized` are not affected; wallets that pin concrete block numbers (e.g. MetaMask) can hit this denial |
 | Response filtering gaps | `eth_getBlockReceipts` keeps only the caller's own receipts and filters their logs by address match; per-contract event rules and embedded-address redaction apply to `eth_getTransactionReceipt` and `eth_getLogs` only | Granted only by exact name, never through `*`; prefer `eth_getTransactionReceipt`. See [Response Filtering](/docs/security/response-filtering) |

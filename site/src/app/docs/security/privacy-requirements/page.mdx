@@ -236,11 +236,13 @@ This is a contract for handler authors: **do not roll your own**
 `RedactOpts`. The current call surface, and the only shape we support
 going forward:
 
-- **List handlers** (`/transactions`, `/transfers`, …): call
-  `s.buildVisibilityFilter(ctx, viewerDID)` to get a `VisibilityFilter`
-  (used by the SQL allowlist), then derive `RedactOpts` via
-  `redactOptsFromFilter(filter)`. Set `ViewerIsAdmin` and apply the
-  `applyAdminTxView` wiring on the returned opts.
+- **List handlers** (`/transactions`, `/transfers`, …): resolve
+  `isViewerAdmin` once, call
+  `s.buildVisibilityFilter(ctx, viewerDID, isAdmin)` to get a
+  `VisibilityFilter` (used by the SQL allowlist), then derive
+  `RedactOpts` via `redactOptsFromFilter(filter)`. Set `ViewerIsAdmin`
+  to the same value and apply the `applyAdminTxView` wiring on the
+  returned opts.
 - **Single-item handlers** (`/transactions/:hash`,
   `/transactions/:hash/internal`, …): call
   `s.buildRedactOptsForViewer(ctx, viewerDID)`. This helper internally
@@ -271,15 +273,14 @@ any one of them is a privacy or UX regression:
    `GET /transactions/:hash=X` returns 200 (not 404). And vice
    versa: if the list drops `X`, by-hash returns 404. The single
    shared opts builder above is the load-bearing contract.
-3. **Parent-tx allowlist propagates to derived feeds** (this PR).
-   If `GET /transactions/:hash=X` returns 200, then for every row
-   the underlying tables hold for parent `X`,
-   `GET /transactions/:hash=X/transfers`,
-   `GET /transactions/:hash=X/internal`, and
-   `GET /transactions/:hash=X/logs` surface their rows (subject to
-   the per-row field-level rules from the field-rendering matrix
-   and event-rule / ABI gates on logs). No derived feed silently
-   contradicts the parent's row-survival decision.
+3. **A kept parent does not keep its derived rows.**
+   When `GET /transactions/:hash=X` returns 200, each row of
+   `GET /transactions/:hash=X/transfers`, `/internal` and `/logs` is
+   still decided by its own rules: a transfer or an internal call
+   with both sides private to the viewer is dropped (an org admin
+   with `ORG_ADMIN_VIEW_USER_TXS` keeps it, audited), and logs follow
+   the event-rule and ABI gates. The parent being visible never
+   widens what its derived rows show.
 4. **Field-rendering rules are independent of row-survival.**
    When a row survives (under any of the above invariants), the
    field-rendering matrix governs every field substitution. The
@@ -301,6 +302,25 @@ any one of them is a privacy or UX regression:
    lens). Participants and `visibleTo` recipients bypass the grant
    lens — they already know the counterparty via their own wallet.
    Pinned by an integration test.
+6. **A row kept for coherence reveals nothing new.**
+   When a viewer gets a transaction only because of one of its token
+   transfers (for an org admin, a transfer involving any org contract;
+   for anyone else, a transfer involving their own wallet or the
+   subject of a full disclosure grant, or a transfer whose two sides
+   they both see — such as a mint into a contract they hold a
+   grant on — on a token their grant gives event access to), the
+   transaction is **keep + `[PRIVATE]`**: every address renders at the viewer's
+   own visibility, so another user's wallet stays `[PRIVATE]` and
+   calldata and nonce are cleared beside it. Value is cleared too,
+   except under `ORG_ADMIN_VIEW_USER_TXS` (counted in the audit log)
+   or a disclosure grant's lens. That transfer follows the normal
+   rules; other transfers and the transaction's internal calls are
+   not kept by it.
+   Only a `visibleTo` share by the sender, a disclosure grant
+   (through its lens) or the viewer's own participation reveals those
+   addresses. A contract grant alone does not keep another user's
+   transaction for members who are not admins when its transfer has a
+   side they cannot see.
 
 ---
 

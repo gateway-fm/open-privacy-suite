@@ -6991,10 +6991,12 @@ paths:
       - 'Admin: RBAC'
   /api/v1/admin/orgs/{org_id}/contracts/{address}/visibleto-unlock:
     put:
-      description: Enables or disables the RD-874 per-contract opt-in that lets a
-        tx sender grant per-event visibility to DIDs listed in the transaction's visibleTo.
-        Enabling it widens who can see events on this contract, so review grants first.
-        Scoped to {org_id}; the restricted operator token is rejected.
+      description: Enables or disables the per-contract opt-in that lets a tx sender
+        share full event payloads, including embedded addresses, with eligible DIDs
+        listed in that transaction's visibleTo. Eligibility requires an in-org contract
+        grant through a non-default, non-system group, or org-admin membership without
+        a grant. Cross-org and anonymous viewers remain denied. Review grants before
+        enabling. Scoped to {org_id}; the restricted operator token is rejected.
       parameters:
       - description: Organization ID
         in: path
@@ -8801,8 +8803,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
-          description: invalid request body, invalid JWT, or unsupported trace method
-            (an invalid call shape refused by the trace returns a TestRequestResponse)
+          description: invalid request body, invalid JWT, or a trace method (debug_traceCall
+            / debug_traceTransaction are not supported here; send them to /rpc or
+            /rpc/{org_id}); an invalid call shape refused by the nested-call trace
+            returns a TestRequestResponse
         "401":
           content:
             application/json:
@@ -10736,9 +10740,11 @@ paths:
     get:
       description: 'Returns the transactions contained in a block. Private network
         only (serves the explorer backend); not reachable through the public ingress.
-        The response is privacy-filtered for the resolved viewer: transactions fully
-        hidden from the viewer are dropped and surviving rows are redacted per the
-        viewer''s visibility.'
+        The response is privacy-filtered for the resolved viewer: transactions the
+        viewer cannot see are dropped and surviving rows are redacted per the viewer''s
+        visibility. A transaction may also be kept because of one of its token transfers
+        (for example a transfer into a contract the viewer manages); such a row shows
+        no address the viewer could not already see.'
       parameters:
       - description: Block number
         in: path
@@ -11579,9 +11585,12 @@ paths:
     get:
       description: 'Returns a page of transactions, newest first. Private network
         only (serves the explorer backend); not reachable through the public ingress.
-        The response is privacy-filtered for the resolved viewer: transactions where
-        every participant is hidden are dropped, and surviving rows have addresses
-        and values redacted per the viewer''s visibility.'
+        The response is privacy-filtered for the resolved viewer: transactions the
+        viewer cannot see are dropped, and surviving rows have addresses and values
+        redacted per the viewer''s visibility. A transaction may also be kept because
+        of one of its token transfers (for example a transfer into a contract the
+        viewer manages); such a row shows no address the viewer could not already
+        see.'
       parameters:
       - description: Max rows to return (1-100)
         in: query
@@ -11714,11 +11723,14 @@ paths:
       - Explorer
   /api/v1/explorer/transactions/{hash}/logs:
     get:
-      description: 'Returns the event logs emitted by a transaction. Private network
+      description: Returns the event logs emitted by a transaction. Private network
         only (serves the explorer backend); not reachable through the public ingress.
-        The response is privacy-filtered for the resolved viewer: logs are redacted
-        per the viewer''s visibility, with logs of the parent transaction revealed
-        to a viewer who is the transaction''s sender or recipient.'
+        Logs follow each emitting contract's event access rules. A sender or recipient
+        can see permitted parent-transaction logs. Where a contract enables visibleTo
+        unlock, an eligible viewer listed on this transaction receives its matching
+        logs with full event payloads, including embedded addresses; eligibility requires
+        an in-org grant through a non-default, non-system group, or org-admin membership
+        without a grant. Other contracts and transactions remain separately filtered.
       parameters:
       - description: Transaction hash (0x-prefixed)
         in: path
@@ -11815,9 +11827,11 @@ paths:
       description: 'Returns a page of transactions plus a total count, using page/pageSize
         pagination. Private network only (serves the explorer backend); not reachable
         through the public ingress. The response is privacy-filtered for the resolved
-        viewer: rows fully hidden from the viewer are dropped and surviving rows are
-        redacted. Note the total is a SQL-level count that may slightly overcount
-        relative to the redacted rows in data.'
+        viewer: rows the viewer cannot see are dropped and surviving rows are redacted.
+        A transaction may also be kept because of one of its token transfers (for
+        example a transfer into a contract the viewer manages); such a row shows no
+        address the viewer could not already see. Note the total is a SQL-level count
+        that may slightly overcount relative to the redacted rows in data.'
       parameters:
       - description: 1-based page number
         in: query
@@ -12913,7 +12927,7 @@ paths:
 
         Ordinary upstream JSON-RPC errors retain their JSON-RPC error member. Transport, access and rate-limit failures use the non-200 statuses below. `POST /` and `POST /rpc` are the same operation.
 
-        Client traces return only validated call-tree frames. The viewer's contract, function and argument permissions apply to returned calls, including delegated storage contexts. Trace or upstream failures return opaque non-200 errors.
+        Client traces return only validated call-tree frames. The viewer's contract, function and argument permissions apply to returned calls, including delegated storage contexts. Internal-call values (a nested call's input, value, output and revert reason) are returned only to a viewer who may read the storage of the contract that produced them; otherwise they are omitted and named in the call's `redacted` array. Trace or upstream failures return opaque non-200 errors.
       parameters:
       - description: Organization the access decision resolves against (only on /rpc/{org_id})
         in: path
@@ -13011,7 +13025,7 @@ paths:
 
         Ordinary upstream JSON-RPC errors retain their JSON-RPC error member. Transport, access and rate-limit failures use the non-200 statuses below. `POST /` and `POST /rpc` are the same operation.
 
-        Client traces return only validated call-tree frames. The viewer's contract, function and argument permissions apply to returned calls, including delegated storage contexts. Trace or upstream failures return opaque non-200 errors.
+        Client traces return only validated call-tree frames. The viewer's contract, function and argument permissions apply to returned calls, including delegated storage contexts. Internal-call values (a nested call's input, value, output and revert reason) are returned only to a viewer who may read the storage of the contract that produced them; otherwise they are omitted and named in the call's `redacted` array. Trace or upstream failures return opaque non-200 errors.
       parameters:
       - description: Organization the access decision resolves against (only on /rpc/{org_id})
         in: path
