@@ -662,6 +662,36 @@ func TestEnvelope_CanonicalWithoutMetadata(t *testing.T) {
 	}
 }
 
+// TestEnvelope_SetMethod: renaming the method rebuilds both canonical bodies
+// with the new name and leaves every other member byte for byte; an envelope
+// without a method member is left unchanged.
+func TestEnvelope_SetMethod(t *testing.T) {
+	env, err := ParseEnvelope([]byte(`{"jsonrpc":"2.0","id":123456789012345678901234567890,"method":"ETH_SENDTRANSACTION","params":[{"value":1.50}],"visibleTo":["did:a:b"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	env.SetMethod("eth_sendTransaction")
+	if env.Method != "eth_sendTransaction" {
+		t.Fatalf("Method = %q", env.Method)
+	}
+	if got, want := string(env.Canonical), `{"jsonrpc":"2.0","id":123456789012345678901234567890,"method":"eth_sendTransaction","params":[{"value":1.50}],"visibleTo":["did:a:b"]}`; got != want {
+		t.Fatalf("Canonical = %s, want %s", got, want)
+	}
+	if got, want := string(env.CanonicalWithoutMetadata()), `{"jsonrpc":"2.0","id":123456789012345678901234567890,"method":"eth_sendTransaction","params":[{"value":1.50}]}`; got != want {
+		t.Fatalf("CanonicalWithoutMetadata = %s, want %s", got, want)
+	}
+
+	noMethod, err := ParseEnvelope([]byte(`{"jsonrpc":"2.0","id":1,"params":[]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := string(noMethod.Canonical)
+	noMethod.SetMethod("eth_chainId")
+	if noMethod.Method != "" || string(noMethod.Canonical) != before {
+		t.Fatalf("an envelope without a method member must stay unchanged: Method=%q Canonical=%s", noMethod.Method, noMethod.Canonical)
+	}
+}
+
 // TestCheckDecodedRequest covers params that an admin endpoint decoded itself.
 func TestCheckDecodedRequest(t *testing.T) {
 	for name, params := range map[string][]any{
