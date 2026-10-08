@@ -362,11 +362,9 @@ func sendTraceDenyMessage(reason string) string {
 //     would never reach as themselves. Reject mismatched user-supplied
 //     `from` with 400 invalid request rather than silently rebinding,
 //     because silent rebinding would mask spoofing attempts in the logs.
-//   - Distinct timeout (default 5s) caps individual trace duration. Note
-//     this is NOT a quota cap — the concurrency limiter is acquired at
-//     line ~460, AFTER this function runs, so a single JWT can issue many
-//     concurrent eth_calls that each pin a tracer goroutine for up to the
-//     timeout. Per-user gating before the tracer is tracked in RD-923.
+//   - Distinct timeout (default 5s) caps individual trace duration. The
+//     per-user concurrency limiter is acquired in Process BEFORE this runs
+//     (RD-915 F5), so it also caps how many traces one JWT can pin.
 //   - Distinct deny messages (the four constants above) — never %v the
 //     upstream error and never echo the denied contract address.
 //
@@ -381,29 +379,60 @@ func (p *JSONRPCProcessor) validateEthCallWithTracing(ctx context.Context, req *
 // impersonated user belongs to. This prevents an Org A administrator from
 // receiving an Org B trace merely because the target user is a member of both.
 func (p *JSONRPCProcessor) validateEthCallWithTracingInOrg(ctx context.Context, req *ProcessRequest, targetAddr, orgID string) *ProcessError {
-	// Lock-free atomic load of the (env + runtime-override) state. The
-	// super-admin endpoint can replace this between any two invocations;
-	// each call reads a self-consistent snapshot.
-	if state := p.ethCallTracing.Load(); state == nil || !state.Enabled {
+	// Resolve operator aliases before selecting the read-tracing policy.
+	// Creation simulations always require tracing; the rollback knob only
+	// governs targeted reads. Named passthrough methods keep their policy.
+	resolved := rbac.ResolveMethodAlias(req.Method)
+	if resolved != "eth_call" && resolved != "eth_estimateGas" && resolved != "eth_createAccessList" {
 		return nil
+	}
+
+	// No target means a creation-shaped call (no `to`, null, "" or "0x"):
+	// the node runs `data` as contract-creation code, which can call any
+	// contract and return what it reads. CheckAccess classifies it as a
+	// deployment (deploy claim required); past that gate it is traced here
+	// with an empty `to`, and every internal frame is validated. Any other
+	// call without a target is refused rather than forwarded — including one
+	// without a call object at all: "no params" is only how the proxy parsed
+	// the body, and the node receives the original bytes, which a parser
+	// with different rules for repeated or case-variant keys may read as a
+	// call object.
+	creation := targetAddr == ""
+	if !creation {
+		// Targeted eth_createAccessList keeps its entry-point gate only.
+		if resolved == "eth_createAccessList" {
+			return nil
+		}
+		// The RUNTIME_TRACING_ETH_CALL_ENABLED rollback knob covers targeted
+		// reads, whose entry-point address gate remains when it is off. A
+		// creation-shaped call has no entry point: like a send-side
+		// deployment (validateDeployWithTracing) it is traced whenever the
+		// runtime tracer is wired, regardless of the knob. Lock-free atomic
+		// load of the (env + runtime-override) state; the super-admin
+		// endpoint can replace it between any two invocations.
+		if state := p.ethCallTracing.Load(); state == nil || !state.Enabled {
+			return nil
+		}
+	} else if rbac.ClassifyCallShape(req.Params) != rbac.CallShapeCreation {
+		return &ProcessError{StatusCode: http.StatusBadRequest, Message: ethCallDenyInvalidRequest, Reason: ReasonInvalidRequestShape}
 	}
 	if p.runtimeTracer == nil || p.traceValidator == nil || !p.runtimeTracer.IsEnabled() {
-		return nil
-	}
-	// Resolve operator aliases before selecting the read-tracing policy.
-	// eth_call and eth_estimateGas share this validation. Named passthrough
-	// methods retain their configured behavior; send aliases are unsupported.
-	resolved := rbac.ResolveMethodAlias(req.Method)
-	if resolved != "eth_call" && resolved != "eth_estimateGas" {
-		return nil
-	}
-	if targetAddr == "" {
-		// No target — nothing to trace. The entry-point access check
-		// would have already rejected this if RBAC required a target.
+		if creation {
+			return &ProcessError{StatusCode: http.StatusForbidden, Message: ethCallDenyTracerError, Reason: ReasonTracingUnavailable}
+		}
 		return nil
 	}
 
 	from, to, data, value := extractTxParams(req.Params)
+	if creation {
+		// "" / "0x" mean "no recipient"; the trace must replay a creation.
+		to = ""
+		// CheckAccess already requires creation bytecode; the admin dry-run
+		// also calls this helper directly.
+		if d := strings.TrimSpace(data); d == "" || strings.EqualFold(d, "0x") {
+			return &ProcessError{StatusCode: http.StatusBadRequest, Message: ethCallDenyInvalidRequest, Reason: ReasonInvalidRequestShape}
+		}
+	}
 
 	// Extract the block param (params[1]) the same way the upstream
 	// eth_call will receive it; if the trace runs at a different block
@@ -421,7 +450,7 @@ func (p *JSONRPCProcessor) validateEthCallWithTracingInOrg(ctx context.Context, 
 	// allowed to burn a concurrency slot or emit a metric labeled with
 	// junk. gethcommon.IsHexAddress accepts mixed-case checksummed and
 	// uppercase forms.
-	if to == "" || !gethcommon.IsHexAddress(to) {
+	if !creation && (to == "" || !gethcommon.IsHexAddress(to)) {
 		return &ProcessError{StatusCode: http.StatusBadRequest, Message: ethCallDenyInvalidRequest, Reason: ReasonInvalidRequestShape}
 	}
 	if from != "" && !gethcommon.IsHexAddress(from) {
@@ -487,12 +516,30 @@ func (p *JSONRPCProcessor) validateEthCallWithTracingInOrg(ctx context.Context, 
 				slog.String("user_uuid", user.ID), slog.Any("err", membershipErr))
 			return &ProcessError{StatusCode: http.StatusForbidden, Message: ethCallDenyTracerError, Reason: ReasonTracingUnavailable}
 		}
+		// Expired memberships grant nothing: neither an org for the
+		// cross-org rule nor a deploy claim.
+		memberships = liveMemberships(memberships)
 		for _, m := range memberships {
 			if m.Group != nil {
 				userOrgIDs[m.Group.OrgID] = true
 			}
 		}
-		userHasDeploy = p.userHasDeployClaim(ctx, memberships)
+		// Runtime contract creation needs the deploy claim in the org the
+		// request was authorised in, exactly as CheckAccess decides it
+		// (EffectivePermissions: org-admin groups get every claim, expired
+		// memberships none). Without a resolved org (direct callers), fall
+		// back to the stored group claims of live memberships.
+		if req.resolvedOrgID != "" {
+			perms, permErr := p.rbacAccessCtrl.GetEffectivePermissionsByIDs(ctx, user.ID, req.resolvedOrgID)
+			if permErr != nil || perms == nil {
+				slog.Warn("eth_call trace: resolved-org permission lookup failed",
+					slog.String("user_uuid", user.ID), slog.String("org_id", req.resolvedOrgID), slog.Any("err", permErr))
+				return &ProcessError{StatusCode: http.StatusForbidden, Message: ethCallDenyTracerError, Reason: ReasonTracingUnavailable}
+			}
+			userHasDeploy = effectivePermissionsHasDeployClaim(perms)
+		} else {
+			userHasDeploy = p.userHasDeployClaim(ctx, memberships)
+		}
 	}
 
 	// Per-call timeout. Distinct from the 30s send-side TraceTimeout.
@@ -502,7 +549,21 @@ func (p *JSONRPCProcessor) validateEthCallWithTracingInOrg(ctx context.Context, 
 	// Uncached trace — see function-level docstring. blockParam mirrors
 	// the param the forwarded eth_call will use so trace and actual call
 	// run against the same chain state.
-	traceResult, err := p.runtimeTracer.TraceTransactionUncached(traceCtx, from, to, data, value, blockParam)
+	var traceResult *tracer.TraceResult
+	if creation {
+		// The forwarded simulation receives the complete object. Preserve its
+		// execution inputs (including gas, fees, access lists and nonce) so
+		// the trace cannot authorize a different constructor branch. Only the
+		// recognized empty recipient spellings are represented as absent.
+		callObj := make(map[string]any, len(req.Params[0].(map[string]any)))
+		for key, val := range req.Params[0].(map[string]any) {
+			callObj[key] = val
+		}
+		delete(callObj, "to")
+		traceResult, err = p.runtimeTracer.TraceCallObjectUncached(traceCtx, callObj, blockParam)
+	} else {
+		traceResult, err = p.runtimeTracer.TraceTransactionUncached(traceCtx, from, to, data, value, blockParam)
+	}
 	if err != nil {
 		// Distinguish depth-exceeded from upstream-node errors. Both
 		// are 403 from the user's POV (tracing-incomplete = deny), but
@@ -533,6 +594,11 @@ func (p *JSONRPCProcessor) validateEthCallWithTracingInOrg(ctx context.Context, 
 			slog.String("user", req.UserID), slog.Any("err", optErr))
 		return &ProcessError{StatusCode: http.StatusForbidden, Message: ethCallDenyTracerError, Reason: ReasonTracingUnavailable}
 	}
+	if creation {
+		// Contracts the creation code deploys and then calls run the
+		// caller's own code; their frames are validated in turn.
+		traceOpts = append(traceOpts, rbac.WithCreatedContractsAsOwn())
+	}
 
 	validationResult, err := p.traceValidator.ValidateTrace(ctx, userOrgIDs, traceResult, userHasDeploy, traceOpts...)
 	if err != nil {
@@ -555,7 +621,15 @@ func (p *JSONRPCProcessor) validateEthCallWithTracingInOrg(ctx context.Context, 
 			slog.String("kind", kind),
 			slog.String("reason", validationResult.Reason),
 			slog.String("denied_target", validationResult.DeniedTarget))
-		return &ProcessError{StatusCode: http.StatusForbidden, Message: ethCallDenyCrossOrg, Reason: ReasonCrossOrg}
+		// The client sees one uniform message, so this read path does not
+		// reveal whether a CREATE ran somewhere in the trace (a caller can
+		// steer internal code paths). The precise reason goes to the access
+		// log only.
+		reason := ReasonCrossOrg
+		if validationResult.DenialKind == rbac.DenialKindDeployClaim {
+			reason = ReasonDeployClaimRequired
+		}
+		return &ProcessError{StatusCode: http.StatusForbidden, Message: ethCallDenyCrossOrg, Reason: reason}
 	}
 
 	return nil
@@ -1657,6 +1731,24 @@ func (p *JSONRPCProcessor) userHasDeployClaim(ctx context.Context, memberships [
 		}
 	}
 	return false
+}
+
+// liveMemberships drops expired (time-boxed) memberships, which grant nothing
+// — the same rule CheckAccess applies (ListUserMembershipsInOrg filters
+// `expires_at > NOW()`).
+func liveMemberships(memberships []*rbac.MembershipWithDetails) []*rbac.MembershipWithDetails {
+	now := time.Now()
+	live := make([]*rbac.MembershipWithDetails, 0, len(memberships))
+	for _, m := range memberships {
+		if m == nil || m.Membership == nil {
+			continue
+		}
+		if m.Membership.ExpiresAt != nil && !m.Membership.ExpiresAt.After(now) {
+			continue
+		}
+		live = append(live, m)
+	}
+	return live
 }
 
 func effectivePermissionsHasDeployClaim(perms *rbac.EffectivePermissions) bool {

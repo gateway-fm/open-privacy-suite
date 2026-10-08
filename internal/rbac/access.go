@@ -424,7 +424,8 @@ func NewAccessControllerWithCache(store Store, cacheTTL time.Duration, cache Per
 // The decomposition was a pure structural refactor of the original monolithic
 // method (order of checks, conditions, reason strings, errors and result fields
 // preserved); later changes (RD-1301) added denies and made some checks judge
-// the alias target as well as the raw method, without reordering the phases.
+// the alias target as well as the raw method, and RD-1323 moved the no-target
+// storage-read deny and the deployment decision ahead of the carve-outs.
 func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequest) (*AccessCheckResult, error) {
 	// Global blocklist + Multicall bypass detection — before any RBAC evaluation.
 	if res, handled := c.checkGlobalBlocks(req); handled {
@@ -489,7 +490,8 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 // validation, carve-outs, contract-access/claim checks, and the final allow.
 // Extracted from CheckAccess (RD-1199) without changing the order of checks,
 // conditions, reason strings, errors, or result fields; RD-1301 later added
-// the deny for a storage read with no target address. The caller stamps
+// the deny for a storage read with no target address, and RD-1323 moved that
+// deny and the deployment decision ahead of the carve-outs. The caller stamps
 // OrgID/UserID onto every result.
 func (c *AccessController) checkWithResolvedOrg(ctx context.Context, req *AccessCheckRequest, user *User, org *Organization, orgCtx *OrgContext) (*AccessCheckResult, error) {
 	// Resolve effective permissions (in-memory cache, DB cache, or compute).
@@ -511,6 +513,25 @@ func (c *AccessController) checkWithResolvedOrg(ctx context.Context, req *Access
 	// Determine required claim based on the operation
 	requiredClaim := ClassifyOperation(req.EffectiveMethod(), req.Params)
 
+	// Preserve the raw storage-method floor even if a caller supplies a
+	// different effective method. A storage-shaped object must not become a
+	// deployment merely because the effective method expects a call object.
+	if req.TargetAddress == "" && req.anyMethodToJudge(isStorageReadMethod) {
+		slog.Debug("access denied: storage read without a target address", "method", req.Method, "user", req.UserExternalID)
+		return &AccessCheckResult{Allowed: false, Reason: ErrContractAccessDenied}, nil
+	}
+
+	// A deployment has no target: the node runs the call's `data` as
+	// contract-creation code. That covers eth_sendTransaction and the
+	// simulations of it (eth_estimateGas, eth_call, eth_createAccessList)
+	// whose call object has no `to`, and malformed call objects. It is decided by the deploy claim here and by the runtime trace on
+	// the request path, never by a TargetAddress the caller supplied (the
+	// admin access-check endpoint accepts one) or by the target-based
+	// carve-outs below.
+	if requiredClaim == ClaimDeploy {
+		return c.validateDeploymentWithoutTarget(req, user, org, perms)
+	}
+
 	// Simple value transfers (no calldata) to unregistered addresses carve-out.
 	if res, handled, err := c.classifyValueTransferCarveout(ctx, req, user, org, orgCtx, perms, requiredClaim); handled {
 		return res, err
@@ -521,24 +542,13 @@ func (c *AccessController) checkWithResolvedOrg(ctx context.Context, req *Access
 		return res, err
 	}
 
-	// Check contract access if target address is specified.
+	// Check contract access if target address is specified. Without a
+	// target (and without a deployment, handled above) the method allowlist
+	// is the only gate.
 	if req.TargetAddress != "" {
 		if res, handled, err := c.validateContractAccess(ctx, req, user, org, orgCtx, perms, requiredClaim); handled {
 			return res, err
 		}
-	} else if requiredClaim == ClaimDeploy {
-		if res, handled, err := c.validateDeploymentWithoutTarget(req, user, org, perms, requiredClaim); handled {
-			return res, err
-		}
-	} else if req.anyMethodToJudge(isStorageReadMethod) {
-		// A storage read with no parseable target address (missing or
-		// non-string params[0]) would skip the contract and storage-slot
-		// checks above; deny rather than rely on the node rejecting it.
-		slog.Debug("access denied: storage read without a target address", "method", req.Method, "user", req.UserExternalID)
-		return &AccessCheckResult{
-			Allowed: false,
-			Reason:  ErrContractAccessDenied,
-		}, nil
 	}
 
 	// Check additional required claims from the request.
@@ -686,9 +696,9 @@ func (c *AccessController) checkAnonymousAccess(ctx context.Context, req *Access
 
 	// Defense in depth: deployment payloads always require an authenticated
 	// principal with the deploy claim. The anonymous group has empty Claims
-	// by default; even if a super admin allowlists eth_sendTransaction, a
-	// CREATE-shaped payload still requires auth. Judged on the alias target and
-	// the raw method, so an allowlisted alias cannot skip it.
+	// by default; even if a super admin allowlists eth_sendTransaction (or a
+	// simulation of it, or an alias of one), a CREATE-shaped or malformed
+	// payload still requires auth.
 	if req.anyMethodToJudge(func(m string) bool { return IsContractDeployment(m, req.Params) }) {
 		return &AccessCheckResult{
 			Allowed:      false,
@@ -1422,54 +1432,53 @@ func (c *AccessController) validateProxyUpgrade(ctx context.Context, req *Access
 	return nil, false, nil
 }
 
-// validateDeploymentWithoutTarget handles a request with no target address that
-// requires the 'deploy' claim (contract deployment).
+// validateDeploymentWithoutTarget decides a contract deployment: a request
+// the node executes as contract-creation code (see IsContractDeployment). It
+// always terminates the check.
 //
-// No claim check for deploy-less methods without a target address;
-// the method allowlist is the only gate for non-deploy operations.
-//
-// handled=true means the check terminated with the returned result/err;
-// handled=false falls through to the additional-required-claims phase (the
-// deploy-claim gate passed but the request is not a contract deployment).
-func (c *AccessController) validateDeploymentWithoutTarget(req *AccessCheckRequest, user *User, org *Organization, perms *EffectivePermissions, requiredClaim Claim) (*AccessCheckResult, bool, error) {
-	// No target address but operation requires 'deploy' claim (contract deployment)
-	// Check if user has the deploy claim via default claims
+// The caller must hold the 'deploy' claim (group default claims), the call
+// object must be well-formed, and it must carry creation bytecode. For
+// contract deployments, runtime tracing (jsonrpc_processor's deploy trace and,
+// for the eth_call / eth_estimateGas / eth_createAccessList simulations, the
+// eth_call trace — debug_traceCall against an empty `to`) is the
+// authoritative cross-org isolation gate: every executed
+// frame is checked at the trace layer against the caller's organizations. The
+// pre-M10 static bytecode analyzer covered only constant CALL targets; M10
+// wired the trace gate and the static analyzer was removed.
+func (c *AccessController) validateDeploymentWithoutTarget(req *AccessCheckRequest, user *User, org *Organization, perms *EffectivePermissions) (*AccessCheckResult, error) {
 	if !hasClaim(perms.Claims, ClaimDeploy) {
 		return &AccessCheckResult{
 			Allowed: false,
 			Reason:  "access denied",
-		}, true, nil
+		}, nil
 	}
 
-	// For contract deployments, runtime tracing
-	// (jsonrpc_processor.validateDeployWithTracing — debug_traceCall
-	// against empty `to`) is the authoritative cross-org isolation
-	// gate. We just confirm the bytecode is present (404 helps the
-	// client distinguish missing-payload from access-denied) and
-	// pass — every executed frame is checked at the trace layer
-	// against userOrgIDs. The pre-M10 static bytecode analyzer
-	// covered only constant CALL targets; the dynamic ones it
-	// claimed to delegate to runtime tracing weren't actually
-	// wired. M10 wired the trace gate and the static analyzer was
-	// removed.
-	if requiredClaim == ClaimDeploy && IsContractDeployment(req.EffectiveMethod(), req.Params) {
-		bytecodeHex := extractDeploymentBytecode(req.EffectiveMethod(), req.Params)
-		if bytecodeHex == "" {
-			return &AccessCheckResult{
-				Allowed: false,
-				Reason:  "contract deployment missing bytecode",
-			}, true, nil
-		}
-		allClaims := collectAllClaims(perms)
+	// A malformed call object (see ClassifyCallShape) has no single meaning:
+	// the node rejects or reinterprets it, so the creation code checked here
+	// would not be the code that runs. Never forward it.
+	if ClassifyCallShape(req.Params) == CallShapeMalformed {
 		return &AccessCheckResult{
-			Allowed:   true,
-			OrgID:     org.ID,
-			UserID:    user.ID,
-			RPCAPIKey: perms.RPCAPIKey,
-			Claims:    allClaims,
-		}, true, nil
+			Allowed: false,
+			Reason:  "malformed transaction object",
+		}, nil
 	}
-	return nil, false, nil
+
+	// The bytecode check gives the client a distinct operator-side reason for
+	// a missing payload versus an access denial.
+	if extractDeploymentBytecode(req.EffectiveMethod(), req.Params) == "" {
+		return &AccessCheckResult{
+			Allowed: false,
+			Reason:  "contract deployment missing bytecode",
+		}, nil
+	}
+
+	return &AccessCheckResult{
+		Allowed:   true,
+		OrgID:     org.ID,
+		UserID:    user.ID,
+		RPCAPIKey: perms.RPCAPIKey,
+		Claims:    collectAllClaims(perms),
+	}, nil
 }
 
 // checkAdditionalRequiredClaims enforces the request's explicit RequiredClaims.
@@ -1607,67 +1616,138 @@ func ClassifyOperation(method string, params []any) Claim {
 	return ""
 }
 
-// IsContractDeployment checks if the method+params represent a contract deployment.
-// Contract deployments are eth_sendTransaction calls with no 'to' address.
-// Also detects eth_estimateGas for deployment (estimating gas for contract creation).
-// NOTE: eth_sendRawTransaction is globally blocked because it cannot be validated
-// without RLP decoding, which would bypass all RBAC security controls.
-func IsContractDeployment(method string, params []any) bool {
-	// Normalize to lowercase so both direct callers and ClassifyOperation work correctly.
-	method = strings.ToLower(strings.TrimSpace(method))
-	// Only eth_sendtransaction and eth_estimategas can be validated for deployment.
-	if method != "eth_sendtransaction" && method != "eth_estimategas" {
-		return false
-	}
+// CallShape classifies the call object (params[0]) of a call-like method
+// (eth_call, eth_estimateGas, eth_createAccessList, eth_sendTransaction).
+type CallShape int
 
+const (
+	// CallShapeAbsent: no params at all. There is no call object for the node
+	// to execute; it rejects the request.
+	CallShapeAbsent CallShape = iota
+	// CallShapeTargeted: `to` is a non-empty address string.
+	CallShapeTargeted
+	// CallShapeCreation: `to` is missing, null, "" or "0x" (case- and
+	// whitespace-insensitive). The node runs `data` as contract-creation code.
+	CallShapeCreation
+	// CallShapeMalformed: the call object is not an object, `to` is neither
+	// absent, null nor a string, a key is a case variant of a field the proxy
+	// reads (to / from / data / input / value), or `data` and `input` differ.
+	CallShapeMalformed
+)
+
+// ClassifyCallShape returns the shape of params[0] for a call-like method.
+// IsContractDeployment and the request-path eth_call trace use it, and
+// GetTargetAddress shares its notion of an empty `to` (isCreationTo), so
+// classification, target extraction and tracing agree on every input.
+func ClassifyCallShape(params []any) CallShape {
 	if len(params) == 0 {
-		// No params means we can't determine if it's a deployment.
-		// Return false and let the method-level permissions handle access.
-		// The caller can still require specific claims via required_claims.
-		return false
+		return CallShapeAbsent
 	}
-
-	txObj, ok := params[0].(map[string]any)
+	callObj, ok := params[0].(map[string]any)
 	if !ok {
-		// Malformed params, treat as deployment to be safe
-		return true
+		return CallShapeMalformed
 	}
-
-	// Check if 'to' field exists and is non-empty
-	to, exists := txObj["to"]
-	if !exists {
-		// No 'to' field = contract deployment
-		return true
+	// Geth matches call-object field names case-insensitively (the last
+	// match wins), so `To`, `DATA` or `From` reach the node as `to` / `data`
+	// / `from` while the proxy reads them as unknown keys: a targeted call
+	// could run as a creation (or the reverse), or the executed code and
+	// sender would not be the checked ones. Likewise `data` and `input` that
+	// disagree: Anvil executes `input`, Geth rejects the pair.
+	for key := range callObj {
+		for _, field := range callShapeFields {
+			if key != field && strings.EqualFold(key, field) {
+				return CallShapeMalformed
+			}
+		}
 	}
-
-	// Handle various forms of empty 'to':
-	// - nil/null
-	// - empty string ""
-	// - "0x" (some clients send this for deployment)
-	if to == nil {
-		return true
+	if callDataAndInputDiffer(callObj) {
+		return CallShapeMalformed
 	}
-
+	to, exists := callObj["to"]
+	if !exists || to == nil {
+		return CallShapeCreation
+	}
 	toStr, ok := to.(string)
 	if !ok {
-		// 'to' is not a string (e.g., number or object), treat as deployment to be safe
+		return CallShapeMalformed
+	}
+	if isCreationTo(toStr) {
+		return CallShapeCreation
+	}
+	return CallShapeTargeted
+}
+
+// callShapeFields are the call-object fields the proxy reads (classification,
+// target, sender, executed code, value). A key that differs from one of them
+// only in letter case makes the call object malformed.
+var callShapeFields = []string{"to", "from", "data", "input", "value"}
+
+// callDataAndInputDiffer reports whether the call object carries both `data`
+// and `input` with different contents. Nodes disagree on which of the two they
+// execute, so the code a check or trace reads from one of them need not be
+// the code the node runs. A null field counts as absent; hex is compared
+// case-insensitively and "0x" equals "".
+func callDataAndInputDiffer(callObj map[string]any) bool {
+	data, hasData := callObj["data"]
+	input, hasInput := callObj["input"]
+	if !hasData || !hasInput || data == nil || input == nil {
+		return false
+	}
+	dataStr, ok1 := data.(string)
+	inputStr, ok2 := input.(string)
+	if !ok1 || !ok2 {
 		return true
 	}
+	return normalizeCallHex(dataStr) != normalizeCallHex(inputStr)
+}
 
-	// Empty string or just "0x" means deployment
-	if toStr == "" || toStr == "0x" {
-		return true
+func normalizeCallHex(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if s == "0x" {
+		return ""
 	}
+	return s
+}
 
-	// Has a valid 'to' address, not a deployment
-	return false
+// isCreationTo reports whether a string `to` means "no recipient": "" or
+// "0x" (some clients send this for deployments), ignoring case and
+// surrounding whitespace.
+func isCreationTo(to string) bool {
+	to = strings.ToLower(strings.TrimSpace(to))
+	return to == "" || to == "0x"
+}
+
+// IsContractDeployment reports whether method+params make the node execute
+// the call's `data` as contract-creation code: eth_sendTransaction,
+// eth_estimateGas, eth_call or eth_createAccessList whose call object has no
+// `to` (see ClassifyCallShape). The simulations run the same creation code as
+// the deployment they simulate, so they need the same deploy claim.
+// A malformed call object is treated as a deployment to be safe; a request
+// without params is not (the node has nothing to execute).
+// NOTE: eth_sendRawTransaction is decoded and checked as eth_sendTransaction
+// by the request path; it is not classified here.
+func IsContractDeployment(method string, params []any) bool {
+	switch strings.ToLower(strings.TrimSpace(method)) {
+	case "eth_sendtransaction", "eth_estimategas", "eth_call", "eth_createaccesslist":
+	default:
+		return false
+	}
+	switch ClassifyCallShape(params) {
+	case CallShapeCreation, CallShapeMalformed:
+		return true
+	default:
+		return false
+	}
 }
 
 // extractDeploymentBytecode extracts the bytecode from contract deployment params.
-// For eth_sendTransaction and eth_estimateGas, the bytecode is in the "data" or "input" field.
+// For eth_sendTransaction and its simulations (eth_estimateGas, eth_call,
+// eth_createAccessList), the bytecode is in the "data" or "input" field.
 // Returns empty string if bytecode cannot be extracted.
 func extractDeploymentBytecode(method string, params []any) string {
-	if method != "eth_sendTransaction" && method != "eth_estimateGas" {
+	switch strings.ToLower(method) {
+	case "eth_sendtransaction", "eth_estimategas", "eth_call", "eth_createaccesslist":
+	default:
 		return ""
 	}
 
@@ -1681,10 +1761,10 @@ func extractDeploymentBytecode(method string, params []any) string {
 	}
 
 	// Try "data" field first (standard), then "input" field (some clients use this)
-	if data, ok := txObj["data"].(string); ok && data != "" && data != "0x" {
+	if data, ok := txObj["data"].(string); ok && normalizeCallHex(data) != "" {
 		return data
 	}
-	if input, ok := txObj["input"].(string); ok && input != "" && input != "0x" {
+	if input, ok := txObj["input"].(string); ok && normalizeCallHex(input) != "" {
 		return input
 	}
 
@@ -1925,6 +2005,11 @@ func GetTargetAddress(method string, params []any) string {
 		// must be gated per-address like eth_call.
 		if callObj, ok := params[0].(map[string]any); ok {
 			if to, ok := callObj["to"].(string); ok {
+				// A creation-shaped call ("" or "0x") has no target: it is a
+				// deployment (IsContractDeployment).
+				if isCreationTo(to) {
+					return ""
+				}
 				return strings.ToLower(to)
 			}
 		}

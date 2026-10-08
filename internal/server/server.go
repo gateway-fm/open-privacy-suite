@@ -2020,17 +2020,17 @@ func (s *Server) getStatus(c *gin.Context) {
 // result plus latency.
 //
 // @Summary      Test a JSON-RPC request
-// @Description  Dashboard diagnostic: runs one method through RBAC, travel-rule compliance, and upstream forwarding, using a synthetic identity ("test:dashboard") or the subject of a supplied jwt_token. On an upstream JSON-RPC-level error the call still returns HTTP 200 with the error in the response body. Requires the private-network source gate (403 otherwise).
+// @Description  Dashboard diagnostic: runs one method through RBAC, the same nested-call trace as /rpc (eth_call, eth_estimateGas, and eth_createAccessList without `to`), travel-rule compliance, and upstream forwarding, using a synthetic identity ("test:dashboard") or the subject of a supplied jwt_token. On an upstream JSON-RPC-level error the call still returns HTTP 200 with the error in the response body. Requires the private-network source gate (403 otherwise).
 // @Description  Client state/block override options follow the RPC policy for every caller, including admins.
 // @Tags         Admin: ops
 // @Accept       json
 // @Produce      json
 // @Param        request body apimodels.TestRequestInput true "method, params, and optional jwt_token / org_id"
 // @Success      200 {object} apimodels.TestRequestResponse "forwarded result (or an upstream JSON-RPC error message) plus latency"
-// @Failure      400 {object} apimodels.APIError "invalid request body, invalid JWT, or a trace method (debug_traceCall / debug_traceTransaction are not supported here; send them to /rpc or /rpc/{org_id})"
+// @Failure      400 {object} apimodels.APIError "invalid request body, invalid JWT, or a trace method (debug_traceCall / debug_traceTransaction are not supported here; send them to /rpc or /rpc/{org_id}); an invalid call shape refused by the nested-call trace returns a TestRequestResponse"
 // @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
-// @Failure      403 {object} apimodels.TestRequestResponse "RBAC or compliance denied (network-gate rejections return the generic error envelope)"
-// @Failure      500 {object} apimodels.TestRequestResponse "access-check error"
+// @Failure      403 {object} apimodels.TestRequestResponse "RBAC, nested-call trace or compliance denied (network-gate rejections return the generic error envelope)"
+// @Failure      500 {object} apimodels.TestRequestResponse "access-check or trace-validation error"
 // @Failure      502 {object} apimodels.TestRequestResponse "failed to reach the upstream node"
 // @Security     AdminToken
 // @Router       /api/v1/admin/test-request [post]
@@ -2132,6 +2132,26 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 			Identity: testIdentity,
 		})
 		return
+	}
+
+	// The request is forwarded to the node below, so run the same nested-call
+	// trace as /rpc (eth_call, eth_estimateGas and creation-shaped
+	// eth_createAccessList, aliases included). Deny messages are the opaque
+	// eth_call trace constants.
+	if s.jsonrpcProcessor != nil {
+		traceReq := &ProcessRequest{
+			UserID: testIdentity, OrgID: input.OrgID, Method: input.Method, Params: input.Params,
+			resolvedOrgID: result.OrgID,
+		}
+		if traceErr := s.jsonrpcProcessor.validateEthCallWithTracing(c.Request.Context(), traceReq, accessReq.TargetAddress); traceErr != nil {
+			auditDB.LogAccess(c.Request.Context(), testIdentity, input.Method, traceErr.StatusCode, c.ClientIP())
+			slog.Info("test-request: trace denied", "identity", testIdentity, "method", input.Method, "reason", traceErr.Reason)
+			c.JSON(traceErr.StatusCode, apimodels.TestRequestResponse{
+				Error:    traceErr.Message,
+				Identity: testIdentity,
+			})
+			return
+		}
 	}
 
 	// Travel rule compliance check for eth_sendTransaction and eth_sendRawTransaction

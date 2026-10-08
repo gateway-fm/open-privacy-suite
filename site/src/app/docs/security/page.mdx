@@ -103,8 +103,15 @@ Contract deployments require the `deploy` claim:
 
 | Method | Deployment Detection | Validation |
 |--------|---------------------|------------|
-| `eth_sendTransaction` | Missing/empty/null `to` field | Requires `deploy` claim + pre-registers address |
-| `eth_estimateGas` | Missing/empty/null `to` field | Requires `deploy` claim |
+| `eth_sendTransaction` | No `to` (missing, `null`, `""` or `"0x"`) | Requires `deploy` claim + pre-registers address |
+| `eth_estimateGas` | No `to` (missing, `null`, `""` or `"0x"`) | Requires `deploy` claim; the creation code is traced |
+| `eth_call` | No `to` (missing, `null`, `""` or `"0x"`) | Requires `deploy` claim; the creation code is traced |
+| `eth_createAccessList` | No `to` (missing, `null`, `""` or `"0x"`) | Requires `deploy` claim; the creation code is traced |
+| `debug_traceCall` | No `to` (missing, `null`, `""` or `"0x"`) | Requires `deploy` claim; the returned call tree is checked like any client trace |
+
+A call without `to` makes the node run its `data` as contract-creation code, and that code can call any contract and return what it reads. That is why `eth_call`, `eth_estimateGas` and `eth_createAccessList` without `to` (deployment simulation, as Hardhat, Foundry and wallets do before deploying) are treated as deployments: anonymous callers and callers without the `deploy` claim are refused before the node is reached, and the creation code must be traced before the request is forwarded. If tracing is missing, disabled or unavailable, the request is refused. A `from`, if given, must be one of the caller's linked addresses. Libraries that run "deployless" reads this way — for example ERC-6492 signature checks for smart accounts that are not deployed yet — need the `deploy` claim too.
+
+Call objects the node could read differently from the proxy are refused for every caller on `eth_call`, `eth_estimateGas`, `eth_createAccessList` and `eth_sendTransaction`: a call object that is not an object, a `to` that is neither a string nor `null`, a field name that differs from `to`, `from`, `data`, `input` or `value` only in letter case, or `data` and `input` with different contents.
 
 Deployments are protected by three mechanisms — there is **no** static bytecode/opcode analysis (the deploy path does not scan for CREATE opcodes or inspect CALL targets in the bytecode):
 
@@ -143,7 +150,7 @@ graph TD
 - Provides comprehensive cross-org isolation
 - Defense-in-depth: the authoritative cross-org gate on every internal call target
 
-**Read-side coverage.** The same trace-and-validate flow is applied to `eth_call`. Without it, a same-org wrapper contract could STATICCALL/DELEGATECALL into another organization's private contract and bubble up state through the return value, defeating cross-org isolation on the read path. Tracing on `eth_call` is uncached because proxy contracts (EIP-1967, Diamond, Beacon, transparent upgradeable) can re-target their internal calls by rewriting a storage slot. See [Configuration](/docs/configuration#runtime-tracing) for the rollback knob and the per-call timeout. `eth_estimateGas` is gated at the entry-point address.
+**Read-side coverage.** The same trace-and-validate flow is applied to `eth_call`. Without it, a same-org wrapper contract could STATICCALL/DELEGATECALL into another organization's private contract and bubble up state through the return value, defeating cross-org isolation on the read path. Tracing on `eth_call` is uncached because proxy contracts (EIP-1967, Diamond, Beacon, transparent upgradeable) can re-target their internal calls by rewriting a storage slot. See [Configuration](/docs/configuration#runtime-tracing) for the rollback knob and the per-call timeout. `eth_estimateGas` is traced the same way. An `eth_call`, `eth_estimateGas` or `eth_createAccessList` without `to` is traced too: the trace runs the creation code and checks every contract it reaches through `CALL`, `STATICCALL` or `DELEGATECALL`. Contracts the creation code deploys itself may be called by it; their own calls are checked in turn.
 
 **Performance:** approximately 50--200 ms additional latency per transaction. Tiered validation skips tracing for calls to known org-owned addresses.
 
