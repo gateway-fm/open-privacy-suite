@@ -28,12 +28,27 @@ Dangerous JSON-RPC methods are blocked regardless of user permissions:
 | `les_*` | Light client protocol |
 | `eth_sign` | Arbitrary message signing |
 | `eth_signTransaction` | Transaction signing |
+| `eth_signTypedData`, `eth_signTypedData_v4` | Typed-data signing with node keys (e.g. token permits) |
 | `eth_subscribe` | WebSocket subscriptions (bypasses filtering) |
 | `eth_unsubscribe` | WebSocket subscriptions |
 
 **Exception:** `debug_traceCall` and `debug_traceTransaction` are *not* blocked by the `debug_*` rule. They are gated by the group method allowlist, then checked like the method each one mirrors: `debug_traceCall` like `eth_call` for its target contract, and `debug_traceTransaction` like `eth_getTransactionByHash` (sender, recipient, admin of the called contract, or a shared recipient only). The proxy returns only the call tree (`callTracer`), and only when the caller has access to every contract the trace passes through, in the organization the request is for. Requests for storage-, memory- or log-revealing output are rejected: `prestateTracer`, JavaScript tracers, struct-logger options, `callTracer` with `withLog`, and state or block overrides. A request with no tracer configured gets the call tree. See [RBAC](/docs/rbac). All other `debug_*` methods are blocked.
 
-**`eth_getStorageAt`** is not globally blocked but uses **tiered access based on claims**: admin users get unrestricted access to all storage slots, non-admin users can query only EIP-1967 proxy infrastructure slots, and users with no claim are blocked. See [Response Filtering](/docs/security/response-filtering#eth_getstorageat----tiered-access) for the full list of allowed slots.
+### Unsupported Methods Are Never Forwarded
+
+Beyond the blocklist, the proxy forwards only methods it knows how to protect: the built-in methods, each with its access check and response filtering, plus the chain-specific methods the operator declares by exact name (see [Extra RPC Namespaces](/docs/configuration#extra-rpc-namespaces)). Any other method is refused with `method not found` before it reaches the node. A group's allowed methods cannot override this. Examples of refused methods:
+
+| Refused method | What it would expose unfiltered |
+|----------------|---------------------------------|
+| `eth_getRawTransactionByHash`, `eth_getRawTransactionByBlock*AndIndex` | Raw signed transaction: sender, recipient, value, calldata, nonce |
+| `eth_getTransactionBySenderAndNonce`, `ots_*`, `erigon_*` | Transaction lookups and history outside the participant filter |
+| `trace_*`, `parity_*` | Full call traces and storage of any transaction or contract |
+| `eth_getAccount`, `eth_simulateV1`, `eth_callMany` | Account state and simulated calls without the per-contract check |
+| `eth_sendRawTransactionSync` | A transaction submitted without sender linking, runtime tracing or travel-rule checks. Use `eth_sendRawTransaction`. |
+
+The admin API rejects an unsupported method in a group's allowed methods with `400`. Operator **passthrough** methods are the one deliberate exception. They are forwarded unfiltered, only to groups that list them by name, and never to anonymous callers. Only an admin-tier token can grant one.
+
+**`eth_getStorageAt`** and **`eth_getProof`** are not globally blocked but use **tiered access based on claims**: admin users get unrestricted access to all storage slots, non-admin users can read or prove only EIP-1967 / EIP-2535 proxy infrastructure slots, and users without access to the contract are blocked. See [Response Filtering](/docs/security/response-filtering#eth_getstorageat----tiered-access) for the full list of allowed slots.
 
 ### eth\_sendRawTransaction Support
 
@@ -52,6 +67,25 @@ JSON-RPC batch requests (`[{...},{...}]`) are rejected outright. This prevents:
 - Bypassing per-method access control
 - Amplification attacks
 - Hidden dangerous method calls within a batch
+
+### Request Envelope Validation
+
+JSON parsers disagree about member names that repeat or differ only in letter case. One parser reads `{"method":"A","Method":"B"}` as method `B`, while another executes `A`. If the proxy and the node read a request differently, the access decision would apply to a different call from the one the node runs. To prevent this, the proxy refuses requests that it and a node could read differently. It returns `400 {"error":"invalid JSON-RPC request"}`, the same response as for malformed JSON, and nothing is sent to the node.
+
+A request is refused when:
+
+- it is not exactly one JSON object. A byte-order mark, or anything after the object, is refused too. (An array is a batch, refused as described above with its own message.)
+- it is not valid UTF-8, or a string holds an unpaired `\uD800`–`\uDFFF` escape;
+- `id` is not a string, a number or `null`;
+- a member name appears twice in the same object, at any depth, including names written with escape sequences;
+- two member names in the same object differ only in letter case, at any depth (for example `data` and `Data` inside a transaction object);
+- a top-level member is a case variant of `jsonrpc`, `id`, `method`, `params`, `visibleTo` or `privateFor`, such as `Method` or `PARAMS`;
+- inside `params`, a member name is a case variant of a standard request field, such as `To` for `to`, `Address` for `address` or `BlockHash` for `blockHash`. The fields covered are those of transaction and call objects, log filters, block selectors, tracer options, and state and block overrides.
+- inside `params`, an object carries both `data` and `input` with different values. Some nodes execute one and some the other. Equal values are accepted.
+
+The two `params` rules apply to every method whose parameters the proxy checks. They do not apply to typed-data signing (`eth_signTypedData*`), whose type and field names belong to the application, or to named passthrough methods, which are forwarded without parameter checks. The case-variant rules also catch look-alike letters that some platforms match case-insensitively, such as the dotless `ı`. The same rules apply to the `rpc` block of the admin dry-run and to the dashboard test request.
+
+The node receives a request rebuilt from the members the proxy read. It contains only `jsonrpc`, `id`, `method` and `params`. The proxy's own `visibleTo`/`privateFor` members are consumed on transaction sends and are never forwarded. `id` and `params` are passed through as sent, with number precision unchanged, except where the proxy itself rewrites a request; for example, block queries are always fetched with full transaction objects. Other top-level members are not forwarded. Standard clients (ethers, viem, web3.py, Hardhat, Foundry and wallets) always send exact-case, unique member names, so they are unaffected.
 
 ### Multicall Detection
 
@@ -342,7 +376,7 @@ Do not increase `AccessTokenTTL` without adding a per-request revocation check
 
 ```mermaid
 graph TD
-    A["1. Validate JWT"] --> B["2. Check global method blocklist"]
+    A["1. Validate JWT"] --> B["2. Check global method blocklist + supported-method gate"]
     B --> C["3. Check Multicall blocklist"]
     C --> D["4. Load user"]
     D --> E["5. Resolve permissions"]
@@ -571,6 +605,6 @@ A standalone verifier CLI is planned.
 | Parameter validation | Only method/contract validated | Upstream node validation |
 | Token revocation | Database lookup per request | Consider Redis for high volume |
 | Multicall | Only 3 hardcoded addresses blocked | Mitigated by runtime tracing (all calls validated regardless of target) |
-| Method case handling | Method names are canonicalized to their standard spelling before access checks and dispatch | Built-in methods match case-insensitively; unknown/vendor methods pass through unchanged and are rejected by the upstream node if mis-cased |
-| Historical state | Historical block queries blocked for anonymous users only | Authenticated users go through full RBAC which gates address access; blocking by block number is redundant and breaks wallets like MetaMask |
-| Response filtering gaps | `eth_getBlockByNumber`/`eth_getBlockByHash` (with full tx objects), `eth_getTransactionByBlockHashAndIndex`/`eth_getTransactionByBlockNumberAndIndex`, and `eth_getBlockReceipts` are not yet response-filtered | See [Response Filtering known gaps](/docs/security/response-filtering) |
+| Method case handling | Method names are canonicalized to their standard spelling before access checks and dispatch | Built-in methods match case-insensitively; any other method must match an operator-declared name exactly, or it is refused |
+| Historical state | `eth_call`, `eth_getBalance`, `eth_getCode`, `eth_getStorageAt`, `eth_getTransactionCount` and `eth_getProof` at a block number or block hash are blocked for anonymous users and for authenticated users who are not org admins; chain-specific methods aliased to one of them are blocked the same way | Access checks use current contract ownership, so these methods are not served at a specific block number or hash to anyone who is not an org admin. Named tags such as `latest`, `pending`, `safe` and `finalized` are not affected; wallets that pin concrete block numbers (e.g. MetaMask) can hit this denial |
+| Response filtering gaps | `eth_getBlockReceipts` keeps only the caller's own receipts and filters their logs by address match; per-contract event rules and embedded-address redaction apply to `eth_getTransactionReceipt` and `eth_getLogs` only | Granted only by exact name, never through `*`; prefer `eth_getTransactionReceipt`. See [Response Filtering](/docs/security/response-filtering) |

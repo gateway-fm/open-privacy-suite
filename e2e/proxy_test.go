@@ -110,6 +110,21 @@ func setupE2E(t *testing.T) (*server.Server, string, func()) {
 }
 
 func setupE2EWithVerifier(t *testing.T, verifier server.PrivadoVerifier) (*server.Server, string, func()) {
+	return setupE2EWithVerifierAndNode(t, verifier, e2eNodeURL())
+}
+
+// e2eNodeURL is the upstream node the E2E server forwards to.
+func e2eNodeURL() string {
+	if nodeURL := os.Getenv("E2E_NODE_URL"); nodeURL != "" {
+		return nodeURL
+	}
+	return "http://localhost:8545"
+}
+
+// setupE2EWithVerifierAndNode is setupE2EWithVerifier with an explicit
+// upstream node URL, for tests that interpose a recording relay between the
+// proxy and the node.
+func setupE2EWithVerifierAndNode(t *testing.T, verifier server.PrivadoVerifier, nodeURL string) (*server.Server, string, func()) {
 	// The server harness provides a run-owned database. TEST_DATABASE_URL remains
 	// an explicit developer/CI override; otherwise testcontainers owns the DB.
 	dbURL := os.Getenv("E2E_DATABASE_URL")
@@ -146,11 +161,6 @@ func setupE2EWithVerifier(t *testing.T, verifier server.PrivadoVerifier) (*serve
 	database.Close()
 
 	listenerAddresses := make(chan string, 1)
-
-	nodeURL := os.Getenv("E2E_NODE_URL")
-	if nodeURL == "" {
-		nodeURL = "http://localhost:8545"
-	}
 
 	cfg := &config.Config{
 		ReadProfile: rbac.ReadProfileStandard,

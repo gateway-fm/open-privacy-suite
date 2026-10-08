@@ -76,10 +76,10 @@ func TestReadProfile_Strict_SendWithVisibleToRejected(t *testing.T) {
 		}
 		body, err := json.Marshal(env)
 		require.NoError(t, err)
-		method, params, perr := ParseAndValidateBody(body)
+		method, params, canonicalBody, perr := ParseAndValidateBody(body)
 		require.Nil(t, perr)
 		before := forwarded.Load()
-		res := p.Process(ctx, &ProcessRequest{UserID: senderDID, OrgID: orgID, Method: method, Params: params, Body: body})
+		res := p.Process(ctx, &ProcessRequest{UserID: senderDID, OrgID: orgID, Method: method, Params: params, Body: canonicalBody})
 		return res, forwarded.Load() - before
 	}
 	send := func(profile rbac.ReadProfile, withVisibleTo bool) (*ProcessResult, int32) {
