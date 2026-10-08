@@ -33,6 +33,7 @@ func TestWireReason_ClosedAllowlist(t *testing.T) {
 		ReasonTracingUnavailable,
 		ReasonTraceDepthExceeded,
 		ReasonDeployClaimRequired,
+		ReasonTraceAccessDenied,
 		ReasonComplianceBlocked,
 		ReasonInternalError,
 	}

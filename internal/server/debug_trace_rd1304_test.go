@@ -1182,6 +1182,64 @@ func TestRD1304_DeployClaimDenialLoggedPrecisely(t *testing.T) {
 	}
 }
 
+// A caller can steer which internal calls run, so the response must not tell
+// "an internal call reached a contract I cannot access" apart from "an
+// internal call used a function or argument my grant does not allow". Both
+// return the same status and message; the access log keeps the precise
+// reason.
+func TestRD1304_InternalFrameDenialsIndistinguishable(t *testing.T) {
+	const getSel = "0x6d4ce63c"
+	setCall := "0x60fe47b1" + strings.Repeat("00", 32)
+	for _, method := range []string{"debug_traceCall", "debug_traceTransaction"} {
+		t.Run(method, func(t *testing.T) {
+			c := newTraceCanary(t)
+			proc, ts := setupTraceProcessor(t, c)
+			ctx := context.Background()
+			me := fixedAddr(0x38)
+			entry, ungranted, restricted := fixedAddr(0xa8), fixedAddr(0xa9), fixedAddr(0xaa)
+			u := newTraceUser(t, ctx, ts, "", nil, traceMethods, me)
+			addContract(t, ctx, ts, u.orgID, entry, u.groupID)
+			addContract(t, ctx, ts, u.orgID, ungranted, "") // same org, no grant
+			cid := uuid.New().String()
+			require.NoError(t, ts.db.CreateContract(ctx, &rbac.Contract{ID: cid, OrgID: u.orgID, Address: restricted, Name: "Restricted"}))
+			require.NoError(t, ts.db.CreateContractGrant(ctx, &rbac.ContractGrant{
+				ID: uuid.New().String(), ContractID: cid, GroupID: u.groupID,
+				Functions: []rbac.FunctionRule{{Selector: getSel}},
+			}))
+
+			run := func(inner, input string) (*ProcessResult, *ProcessRequest) {
+				c.mu.Lock()
+				c.txFrom, c.txTo, c.txIn = me, entry, "0x"
+				c.callTracerBody = map[string]any{
+					"type": "CALL", "from": me, "to": entry, "input": "0x", "output": "0x",
+					"calls": []any{map[string]any{"type": "CALL", "from": entry, "to": inner, "input": input, "output": "0x"}},
+				}
+				c.mu.Unlock()
+				params := []any{map[string]any{"from": me, "to": entry}, "latest"}
+				if method == "debug_traceTransaction" {
+					params = []any{traceHash}
+				}
+				req := traceReq(u.did, u.orgID, method, params...)
+				return proc.Process(ctx, req), req
+			}
+
+			allowed, _ := run(restricted, getSel)
+			require.Nil(t, allowed.Error, "control: a granted function on the restricted contract is served: %+v", allowed.Error)
+
+			noGrant, noGrantReq := run(ungranted, getSel)
+			badFunction, badFunctionReq := run(restricted, setCall)
+			require.True(t, denied(noGrant))
+			require.True(t, denied(badFunction))
+			assert.Equal(t, noGrant.Error.StatusCode, badFunction.Error.StatusCode)
+			assert.Equal(t, noGrant.Error.Message, badFunction.Error.Message, "the two causes must be indistinguishable to the caller")
+			assert.Equal(t, traceDenyCrossOrg, badFunction.Error.Message)
+			assert.Equal(t, wireReason(noGrantReq.denialReason), wireReason(badFunctionReq.denialReason))
+			assert.Equal(t, ReasonCrossOrg, noGrantReq.denialReason, "the access log keeps the precise reason")
+			assert.Equal(t, ReasonTraceAccessDenied, badFunctionReq.denialReason, "the access log keeps the precise reason")
+		})
+	}
+}
+
 // An EIP-1898 block object is rebuilt from its known keys before forwarding.
 func TestRD1304_TraceCall_BlockObjectRebuilt(t *testing.T) {
 	c := newTraceCanary(t)

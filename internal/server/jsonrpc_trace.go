@@ -578,7 +578,10 @@ func (p *JSONRPCProcessor) validateEthCallWithTracingInOrg(ctx context.Context, 
 // posture as the eth_call constants above: never interpolate the upstream
 // error, the validator Reason, or a contract address into the response body.
 // A single traceDenyAccess covers a non-participant replay AND a non-existent
-// tx so the wire cannot be used as a tx-existence oracle.
+// tx so the wire cannot be used as a tx-existence oracle. A single
+// traceDenyCrossOrg covers every denial raised by an internal frame of the
+// returned trace (ownership, grant, deploy claim, depth, function and
+// argument rules), because the caller can steer which frames run.
 const (
 	traceDenyAccess       = "trace access denied"
 	traceDenyUnsafeTracer = "trace denied: unsupported tracer or trace option"
@@ -1060,7 +1063,7 @@ func (p *JSONRPCProcessor) forwardAndValidateTrace(ctx context.Context, req *Pro
 	if !validationResult.Allowed {
 		// Opaque constant; DenialKind/DeniedTarget to slog only (KD-3). The
 		// client sees one uniform message, so a trace does not reveal whether
-		// a CREATE ran somewhere inside it; the precise reason goes to the
+		// a CREATE ran somewhere inside it; the reason code goes to the
 		// access log only.
 		slog.Info("jsonrpc: trace denied by validator", "method", req.Method, "kind", string(validationResult.DenialKind))
 		reason := ReasonCrossOrg
@@ -1113,7 +1116,12 @@ func (p *JSONRPCProcessor) validateClientTraceFrameAccess(ctx context.Context, r
 			return &ProcessError{StatusCode: http.StatusInternalServerError, Message: traceDenyTracerError, Reason: ReasonInternalError}
 		}
 		if !result.Allowed || result.OrgID != orgID {
-			return &ProcessError{StatusCode: http.StatusForbidden, Message: traceDenyAccess, Reason: ReasonTraceAccessDenied}
+			// Same message as a validator denial: the caller must not learn
+			// whether an internal call hit an inaccessible contract or a
+			// function/argument rule on an accessible one. The reason code
+			// goes to the access log only.
+			slog.Info("jsonrpc: trace denied by frame function rules", "method", req.Method)
+			return &ProcessError{StatusCode: http.StatusForbidden, Message: traceDenyCrossOrg, Reason: ReasonTraceAccessDenied}
 		}
 	}
 	return nil
