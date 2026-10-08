@@ -12,7 +12,7 @@ def besuVersion = '26.8.1-d97cbd6'
 // Besu 26.8.1 ships grpc-api, grpc-core, grpc-netty and grpc-util at this version and Netty 4.2.17
 // on its classpath, and loads plugins parent-first: the plugin compiles against exactly these and
 // never bundles them.
-def grpcVersion = '1.79.0'
+def grpcVersion = '1.84.0'
 def nettyVersion = '4.2.17.Final'
 // The verifier uses Besu's existing crypto library; do not bundle or relocate another copy.
 def bouncycastleVersion = '1.84'
