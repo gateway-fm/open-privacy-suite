@@ -604,21 +604,14 @@ type debugTracePlan struct {
 	upstreamReq   []byte             // proxy-built callTracer JSON-RPC request
 	orgIDs        map[string]bool    // orgs to validate the trace tree against
 	userHasDeploy bool               // real deploy-claim status (CREATE gate)
-	traceOpts     []rbac.TraceOption // RD-1053 intra-org grant scoping (traceCall only)
+	traceOpts     []rbac.TraceOption // client trace grant scoping
 }
 
-// processDebugTrace handles debug_traceTransaction and debug_traceCall safely
-// (RD-1304). The proxy runs the SAME request-boundary access checks as the
-// method's read twin (debug_traceCall ≈ eth_call: CheckAccess grant/selector/
-// historical/ban-KYC/org + RD-915 cross-org frame validation; debug_trace-
-// Transaction ≈ eth_getTransactionByHash: participant/admin-on-to/visibleTo),
-// then builds and forwards a callTracer request ITSELF, validates the exact
-// payload the node returns, and returns that. The caller's tracer config and
-// any state/block overrides are never forwarded (rejected earlier) so a
-// storage/JS tracer cannot read slots the RD-805 tier or cross-org isolation
-// would deny, and there is no validate-one-trace / return-a-different-trace
-// TOCTOU. The internal proxy trace paths (eth_call / send / deploy / dry-run)
-// do NOT go through here and are unaffected.
+// processDebugTrace applies the corresponding read method's access checks,
+// constructs a supported callTracer request and validates the returned tree
+// against the resolved organization and grants. The client receives the
+// strictly parsed and validated tree. Internal proxy simulations use their
+// dedicated tracer paths.
 func (p *JSONRPCProcessor) processDebugTrace(ctx context.Context, req *ProcessRequest) *ProcessResult {
 	start := time.Now()
 
@@ -1025,6 +1018,13 @@ func (p *JSONRPCProcessor) forwardAndValidateTrace(ctx context.Context, req *Pro
 		slog.Warn("jsonrpc: trace forward failed", "method", req.Method, "err", err)
 		return nil, &ProcessError{StatusCode: http.StatusBadGateway, Message: "failed to forward trace request", Reason: ReasonUpstreamError}
 	}
+	if statusCode == http.StatusTooManyRequests {
+		return nil, &ProcessError{StatusCode: http.StatusTooManyRequests, Message: "upstream rate limited, retry in 1s", Reason: ReasonRateLimited}
+	}
+	if statusCode != http.StatusOK {
+		slog.Warn("jsonrpc: trace upstream returned unsuccessful status", "method", req.Method, "status", statusCode)
+		return nil, &ProcessError{StatusCode: http.StatusBadGateway, Message: traceDenyTracerError, Reason: ReasonUpstreamError}
+	}
 
 	var rpcResp struct {
 		Result json.RawMessage `json:"result"`
@@ -1062,7 +1062,54 @@ func (p *JSONRPCProcessor) forwardAndValidateTrace(ctx context.Context, req *Pro
 		slog.Info("jsonrpc: trace denied by validator", "method", req.Method, "kind", string(validationResult.DenialKind))
 		return nil, &ProcessError{StatusCode: http.StatusForbidden, Message: traceDenyCrossOrg, Reason: ReasonCrossOrg}
 	}
+	if perr := p.validateClientTraceFrameAccess(ctx, req, plan.orgIDs, validationResult.ClientAccessTargets); perr != nil {
+		return nil, perr
+	}
 	return sanitized, nil
+}
+
+// validateClientTraceFrameAccess applies the viewer's existing function and
+// argument rules to organization-owned nested frames. The strict parser's
+// storage context selects delegated permissions; the trace validator has
+// already checked the implementation's ownership separately.
+func (p *JSONRPCProcessor) validateClientTraceFrameAccess(ctx context.Context, req *ProcessRequest, orgIDs map[string]bool, targets []tracer.CallTarget) *ProcessError {
+	if len(orgIDs) != 1 {
+		return &ProcessError{StatusCode: http.StatusForbidden, Message: traceDenyTracerError, Reason: ReasonTracingUnavailable}
+	}
+	orgID := ""
+	for id, allowed := range orgIDs {
+		if allowed {
+			orgID = id
+		}
+	}
+	if orgID == "" {
+		return &ProcessError{StatusCode: http.StatusForbidden, Message: traceDenyTracerError, Reason: ReasonTracingUnavailable}
+	}
+	for _, target := range targets {
+		address := strings.ToLower(target.StorageAddress)
+		if address == "" {
+			return &ProcessError{StatusCode: http.StatusForbidden, Message: traceDenyTracerError, Reason: ReasonTracingUnavailable}
+		}
+		params := []any{map[string]any{"to": address, "data": target.Input}, "latest"}
+		result, err := p.rbacAccessCtrl.CheckAccess(ctx, &rbac.AccessCheckRequest{
+			UserExternalID:   req.UserID,
+			OrgID:            orgID,
+			Method:           req.Method,
+			AccessMethod:     "eth_call",
+			Params:           params,
+			TargetAddress:    address,
+			FunctionSelector: rbac.GetFunctionSelector("eth_call", params),
+			BypassCache:      req.BypassPermsCache,
+		})
+		if err != nil || result == nil {
+			slog.Warn("jsonrpc: trace frame permission check failed", "method", req.Method, "err", err)
+			return &ProcessError{StatusCode: http.StatusInternalServerError, Message: traceDenyTracerError, Reason: ReasonInternalError}
+		}
+		if !result.Allowed || result.OrgID != orgID {
+			return &ProcessError{StatusCode: http.StatusForbidden, Message: traceDenyAccess, Reason: ReasonTraceAccessDenied}
+		}
+	}
+	return nil
 }
 
 // vetDebugTraceConfig validates the positional arity, the call object or tx
@@ -1133,8 +1180,7 @@ func vetDebugTraceConfig(method string, params []any) *ProcessError {
 			return unsafe
 		}
 	} else {
-		// No tracer name → node default is the struct logger (storage-
-		// exposing). Any struct-logger flag is an explicit request for it.
+		// Struct-logger flags request an unsupported response format.
 		for _, k := range []string{"enablememory", "disablestorage", "disablestack", "enablereturndata", "debug", "limit"} {
 			if _, has := cfgMap[k]; has {
 				return unsafe
@@ -1147,7 +1193,11 @@ func vetDebugTraceConfig(method string, params []any) *ProcessError {
 			return invalid
 		}
 		if wl, has := tcm["withlog"]; has {
-			if b, _ := wl.(bool); b {
+			b, isBool := wl.(bool)
+			if !isBool {
+				return invalid
+			}
+			if b {
 				return unsafe
 			}
 		}

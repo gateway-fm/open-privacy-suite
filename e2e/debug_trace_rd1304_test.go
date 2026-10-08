@@ -17,17 +17,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// RD-1304 end-to-end against a real Anvil (--steps-tracing) and the real
-// proxy server. The contract under test stores an ordinary (non-EIP-1967)
-// secret in slot 1; a non-admin with a grant on it is denied that slot by the
-// RD-805 tier on eth_getStorageAt, so no trace may reveal it either.
-//
-//	contract S {
-//	    uint256 public a = 42;             // slot 0
-//	    uint256 private secret = 0x5ec2e7; // slot 1
-//	    function get() view returns (uint256) { ... }
-//	    function set(uint256 v) { a = v; emit E(msg.sender, v); }
-//	}
+// RD-1304 checks the supported call-tree format and scoped access through a
+// real proxy server and Anvil. The fixture includes ordinary storage slots
+// so the storage-read and trace response contracts can be checked together.
 const rd1304StorageBytecode = "0x6080604052602a5f55625ec2e76001553480156019575f5ffd5b5061031e806100275f395ff3fe608060405234801561000f575f5ffd5b506004361061004a575f3560e01c80630dbe671f1461004e57806360fe47b11461006c5780636d4ce63c14610088578063acefafae146100a6575b5f5ffd5b6100566100d6565b6040516100639190610191565b60405180910390f35b610086600480360381019061008191906101d8565b6100db565b005b610090610132565b60405161009d9190610191565b60405180910390f35b6100c060048036038101906100bb919061025d565b610159565b6040516100cd9190610191565b60405180910390f35b5f5481565b805f819055503373ffffffffffffffffffffffffffffffffffffffff167fbdd4be579984a3856cd1022b131de0a9912cd0f746e727f0d0a56ef44cab8cc2826040516101279190610191565b60405180910390a250565b5f5f60015411610142575f610145565b60015b60ff165f5461015491906102b5565b905090565b5f8173ffffffffffffffffffffffffffffffffffffffff16319050919050565b5f819050919050565b61018b81610179565b82525050565b5f6020820190506101a45f830184610182565b92915050565b5f5ffd5b6101b781610179565b81146101c1575f5ffd5b50565b5f813590506101d2816101ae565b92915050565b5f602082840312156101ed576101ec6101aa565b5b5f6101fa848285016101c4565b91505092915050565b5f73ffffffffffffffffffffffffffffffffffffffff82169050919050565b5f61022c82610203565b9050919050565b61023c81610222565b8114610246575f5ffd5b50565b5f8135905061025781610233565b92915050565b5f60208284031215610272576102716101aa565b5b5f61027f84828501610249565b91505092915050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52601160045260245ffd5b5f6102bf82610179565b91506102ca83610179565b92508282019050808211156102e2576102e1610288565b5b9291505056fea26469706673582212209ef3e4f11a664a869fdb4ce3cf25e9c8a27aa06abd41c8746c2d2392966ded0064736f6c634300081c0033"
 
 const (
@@ -92,17 +84,17 @@ func TestRD1304_E2E_UnsupportedPrestateTracerDenied(t *testing.T) {
 	require.GreaterOrEqual(t, st, 400, "control: the RD-805 tier must deny slot 1 to a non-admin")
 
 	call := map[string]any{"from": anvilAccount0, "to": s, "data": rd1304GetSel}
-	status, body := jsonRPCCallRaw(t, env.serverURL, orgID, token, "debug_traceCall",
+	status, body := traceRPCCallRaw(t, env.serverURL, orgID, token, "debug_traceCall",
 		[]any{call, "latest", map[string]any{"tracer": "prestateTracer"}})
 	assert.GreaterOrEqual(t, status, 400, "prestateTracer must be denied; body=%s", string(body))
 	assert.NotContains(t, strings.ToLower(string(body)), rd1304Secret, "the slot-1 secret must be absent via prestateTracer")
 
-	status, body = jsonRPCCallRaw(t, env.serverURL, orgID, token, "debug_traceTransaction",
+	status, body = traceRPCCallRaw(t, env.serverURL, orgID, token, "debug_traceTransaction",
 		[]any{"0x" + strings.Repeat("00", 32)})
 	_ = status // a replay of a non-existent tx is denied; asserted in unit tests
 	assert.NotContains(t, strings.ToLower(string(body)), rd1304Secret)
 
-	status, body = jsonRPCCallRaw(t, env.serverURL, orgID, token, "debug_traceCall",
+	status, body = traceRPCCallRaw(t, env.serverURL, orgID, token, "debug_traceCall",
 		[]any{call, "latest", map[string]any{"tracer": "callTracer"}})
 	require.Equal(t, http.StatusOK, status, "plain callTracer to a granted contract is allowed; body=%s", string(body))
 	var out struct {
@@ -115,9 +107,7 @@ func TestRD1304_E2E_UnsupportedPrestateTracerDenied(t *testing.T) {
 	assert.NotContains(t, strings.ToLower(string(body)), rd1304Secret, "callTracer must carry no storage")
 }
 
-// Default struct logger: a participant replaying their OWN tx without naming
-// a tracer used to get every SLOAD/SSTORE value. Now the proxy serves the
-// call tree only; storage never appears.
+// A participant replay without a tracer preset returns the call tree only.
 func TestRD1304_E2E_DefaultStructLoggerServesCallTreeOnly(t *testing.T) {
 	env := setupCreate2Env(t)
 	defer env.cleanup()
@@ -136,12 +126,12 @@ func TestRD1304_E2E_DefaultStructLoggerServesCallTreeOnly(t *testing.T) {
 	waitForReceipt(t, env.serverURL, orgID, token, txHash)
 
 	// Explicit struct-logger options are refused.
-	status, body := jsonRPCCallRaw(t, env.serverURL, orgID, token, "debug_traceTransaction",
+	status, body := traceRPCCallRaw(t, env.serverURL, orgID, token, "debug_traceTransaction",
 		[]any{txHash, map[string]any{"enableMemory": true}})
 	assert.GreaterOrEqual(t, status, 400, "struct-logger options must be refused; body=%s", string(body))
 
 	// No config: the participant gets the call tree, not struct logs.
-	status, body = jsonRPCCallRaw(t, env.serverURL, orgID, token, "debug_traceTransaction", []any{txHash})
+	status, body = traceRPCCallRaw(t, env.serverURL, orgID, token, "debug_traceTransaction", []any{txHash})
 	require.Equal(t, http.StatusOK, status, "the sender may trace their own tx; body=%s", string(body))
 	assert.NotContains(t, string(body), "structLogs")
 	assert.NotContains(t, strings.ToLower(string(body)), rd1304Secret)
@@ -171,12 +161,12 @@ func TestRD1304_E2E_NonParticipantTraceTransactionDenied(t *testing.T) {
 	addUserToOrg(t, env.srv.DB(), orgID, "rd1304-n-other", otherDID, nil, rd1304Methods, anvilAccount1)
 	otherToken := getJWTTokenForCreate2(t, env.serverURL, otherDID)
 
-	status, body := jsonRPCCallRaw(t, env.serverURL, orgID, otherToken, "debug_traceTransaction",
+	status, body := traceRPCCallRaw(t, env.serverURL, orgID, otherToken, "debug_traceTransaction",
 		[]any{txHash, map[string]any{"tracer": "callTracer"}})
 	assert.GreaterOrEqual(t, status, 400, "a same-org non-participant must not replay the tx; body=%s", string(body))
 	assert.NotContains(t, strings.ToLower(string(body)), strings.ToLower(anvilAccount0), "the sender must not be revealed")
 
-	status, body = jsonRPCCallRaw(t, env.serverURL, orgID, ownerToken, "debug_traceTransaction",
+	status, body = traceRPCCallRaw(t, env.serverURL, orgID, ownerToken, "debug_traceTransaction",
 		[]any{txHash, map[string]any{"tracer": "callTracer"}})
 	assert.Equal(t, http.StatusOK, status, "the sender may replay their own tx; body=%s", string(body))
 }
@@ -213,7 +203,7 @@ func deployFrom(t *testing.T, serverURL, orgID, token, from, bytecode string) st
 // it. Denied on the trace path (and on eth_call, the read twin). Positive
 // control: the same facade path with a same-org inner frame is served.
 func TestRD1304_E2E_CrossOrgInternalFrameDenied(t *testing.T) {
-	env := setupCreate2Env(t)
+	env := setupCreate2EnvWithReadTracing(t, true)
 	defer env.cleanup()
 
 	ownerDID := "did:test:rd1304_xorg_owner"
@@ -229,7 +219,7 @@ func TestRD1304_E2E_CrossOrgInternalFrameDenied(t *testing.T) {
 	facade := deployFrom(t, env.serverURL, orgB, tracerToken, anvilAccount1, rd1304FacadeBytecode)
 
 	call := map[string]any{"from": anvilAccount1, "to": facade, "data": rd1304PeekCall(foreign)}
-	status, body := jsonRPCCallRaw(t, env.serverURL, orgB, tracerToken, "debug_traceCall",
+	status, body := traceRPCCallRaw(t, env.serverURL, orgB, tracerToken, "debug_traceCall",
 		[]any{call, "latest", map[string]any{"tracer": "callTracer"}})
 	require.GreaterOrEqual(t, status, 400, "a cross-org internal frame must be denied; body=%s", string(body))
 	assert.NotContains(t, strings.ToLower(string(body)), strings.TrimPrefix(foreign, "0x"), "the foreign address must not be echoed")
@@ -243,7 +233,7 @@ func TestRD1304_E2E_CrossOrgInternalFrameDenied(t *testing.T) {
 	// (same org, the authorized target) is served — so the denial above is the
 	// cross-org frame, not the facade path.
 	self := map[string]any{"from": anvilAccount1, "to": facade, "data": rd1304PeekCall(facade)}
-	status, body = jsonRPCCallRaw(t, env.serverURL, orgB, tracerToken, "debug_traceCall",
+	status, body = traceRPCCallRaw(t, env.serverURL, orgB, tracerToken, "debug_traceCall",
 		[]any{self, "latest", map[string]any{"tracer": "callTracer"}})
 	require.Equal(t, http.StatusOK, status, "a same-org internal frame is served; body=%s", string(body))
 	assert.Contains(t, strings.ToLower(string(body)), "staticcall")

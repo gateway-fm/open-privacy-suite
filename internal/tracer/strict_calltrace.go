@@ -118,6 +118,7 @@ func collectStrictTargets(f *strictFrame, result *TraceResult, depth int, parent
 		return ErrUntrustedTrace
 	}
 	result.CallTargets[len(result.CallTargets)-1].StorageAddress = storageAddress
+	result.CallTargets[len(result.CallTargets)-1].Input = f.Input
 	for i := range f.Calls {
 		if err := collectStrictTargets(&f.Calls[i], result, depth+1, storageAddress); err != nil {
 			return err

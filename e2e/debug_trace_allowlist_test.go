@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+	"time"
 
 	"privacy-proxy/internal/rbac"
 
@@ -25,6 +26,14 @@ func rpcErrorString(t *testing.T, body []byte) string {
 		return e
 	}
 	return ""
+}
+
+// traceRPCCallRaw keeps successive requests outside the trace rate window.
+// Setup and ordinary RPC requests use the same per-user counter.
+func traceRPCCallRaw(t *testing.T, serverURL, orgID, token, method string, params []any) (int, []byte) {
+	t.Helper()
+	time.Sleep(time.Second + 10*time.Millisecond)
+	return jsonRPCCallRaw(t, serverURL, orgID, token, method, params)
 }
 
 // RD-1121: debug_trace* must be gated by the group method allowlist exactly
@@ -156,7 +165,7 @@ func TestDebugTrace_CrossOrgTargetDenied(t *testing.T) {
 
 	// org-b tries to debug_traceCall INTO org-a's registered contract: denied,
 	// and no trace data comes back.
-	status, body := jsonRPCCallRaw(t, env.serverURL, "", tracerToken, "debug_traceCall",
+	status, body := traceRPCCallRaw(t, env.serverURL, "", tracerToken, "debug_traceCall",
 		traceCallParams(anvilAccount1, orgAContract))
 	require.GreaterOrEqual(t, status, 400, "cross-org trace must be denied; body: %s", string(body))
 	assert.NotContains(t, string(body), `"result"`, "a denied cross-org trace must return no trace; body: %s", string(body))
@@ -164,7 +173,7 @@ func TestDebugTrace_CrossOrgTargetDenied(t *testing.T) {
 	// Positive control: the same user, same allowlist, traces its OWN org's
 	// contract successfully — so the denial above is target-specific (cross-
 	// org), not a blanket allowlist deny.
-	status, body = jsonRPCCallRaw(t, env.serverURL, "", tracerToken, "debug_traceCall",
+	status, body = traceRPCCallRaw(t, env.serverURL, "", tracerToken, "debug_traceCall",
 		traceCallParams(anvilAccount1, orgBContract))
 	require.Equal(t, http.StatusOK, status,
 		"the same user must be able to trace its own org's contract; body: %s", string(body))

@@ -186,6 +186,10 @@ The proxy returns only the **call tree** (the `callTracer` output), and only whe
 caller has access to **every** contract the trace passes through, in the organization the
 request is for. A trace into a contract the caller has no access to is denied, even if the
 entry contract is accessible, because a trace shows every internal call's input and output.
+Function and argument restrictions apply to those internal calls as well. A proxy's delegated
+calls use the caller's permissions on the proxy, and the implementation must still pass the
+organization check. Validated precompiles, shared infrastructure and contract creation retain
+their existing access rules.
 
 A request with no tracer configured gets the call tree. Explicit requests for any other output
 are rejected:

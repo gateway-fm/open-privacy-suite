@@ -1320,7 +1320,9 @@ const MaxRequestBodySize = 1 << 20 // 1MB
 // @Description
 // @Description  The transaction-sending methods (eth_sendTransaction / eth_sendRawTransaction) additionally accept a top-level `visibleTo` array (alias `privateFor`) of DIDs and/or linked ETH addresses, granting those viewers per-transaction visibility of the emitted event logs (RD-1163). It is accepted only for log-emitting contract calls.
 // @Description
-// @Description  A JSON-RPC-level error (bad params, node error, or a masked authorization denial) is returned with HTTP 200 in the JSON-RPC error member. The non-200 statuses below are transport / access / rate-limit failures that never reach the node. `POST /` and `POST /rpc` are the same operation.
+// @Description  Ordinary upstream JSON-RPC errors retain their JSON-RPC error member. Transport, access and rate-limit failures use the non-200 statuses below. `POST /` and `POST /rpc` are the same operation.
+// @Description
+// @Description  Client traces return only validated call-tree frames. The viewer's contract, function and argument permissions apply to returned calls, including delegated storage contexts. Trace or upstream failures return opaque non-200 errors.
 // @Tags         JSON-RPC
 // @Accept       json
 // @Produce      json
