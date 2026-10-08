@@ -130,6 +130,14 @@ var GlobalBlockedMethods = map[string]bool{
 	// in CheckAccess: admin-claim users get all slots, non-admin users get only
 	// well-known infrastructure slots (EIP-1967, EIP-2535). See storage_slots.go.
 
+	// Bundled simulation methods are unsupported (RD-1305). Single-call
+	// simulation options are checked separately by DetectStateOverride.
+	"eth_simulatev1":  true,
+	"eth_simulate":    true,
+	"eth_multicallv1": true,
+	"eth_callmany":    true,
+	"eth_callbundle":  true,
+
 	// Node signing methods are unavailable through the proxied RPC endpoint.
 	"eth_sign":             true,
 	"eth_signtransaction":  true,
@@ -417,6 +425,12 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		return res, nil
 	}
 
+	// RD-1305: simulation overrides are unsupported for all callers, including
+	// admins. Apply the same rule to direct access checks and admin diagnostics.
+	if res, handled := c.checkStateOverrides(req); handled {
+		return res, nil
+	}
+
 	// Handle anonymous access (no JWT provided).
 	if req.UserExternalID == "" {
 		return c.checkAnonymousAccess(ctx, req)
@@ -571,6 +585,24 @@ func (c *AccessController) checkGlobalBlocks(req *AccessCheckRequest) (*AccessCh
 		}, true
 	}
 
+	return nil, false
+}
+
+// checkStateOverrides denies any request that carries a state/code or block
+// override on an EVM read/simulation method (RD-1305). Returns handled=true
+// with a deny result when an override is present or malformed. Method is
+// checked for both raw and effective methods, including operator aliases.
+func (c *AccessController) checkStateOverrides(req *AccessCheckRequest) (*AccessCheckResult, bool) {
+	for _, method := range []string{req.Method, req.EffectiveMethod()} {
+		if denied, kind := DetectStateOverride(method, req.Params); denied {
+			slog.Info("access denied: state/block override not permitted",
+				"method", req.Method, "user", req.UserExternalID, "kind", kind)
+			return &AccessCheckResult{
+				Allowed: false,
+				Reason:  StateOverrideDeniedReason,
+			}, true
+		}
+	}
 	return nil, false
 }
 

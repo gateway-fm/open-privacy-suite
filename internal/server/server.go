@@ -1325,6 +1325,8 @@ const MaxRequestBodySize = 1 << 20 // 1MB
 // @Description
 // @Description  `Authorization: Bearer <token>` is OPTIONAL: anonymous callers are restricted to the anonymous method allowlist; authenticated callers get per-method RBAC and response redaction based on their identity.
 // @Description
+// @Description  Client state/block override options on call, gas-estimation, access-list, and trace methods are unsupported for all callers, including admins. Positional null/empty-object placeholders remain allowed; debug_traceCall override and replay-position config keys must be omitted. Ordinary calls remain subject to the normal access and node validation rules.
+// @Description
 // @Description  The transaction-sending methods (eth_sendTransaction / eth_sendRawTransaction) additionally accept a top-level `visibleTo` array (alias `privateFor`) of DIDs and/or linked ETH addresses, granting those viewers per-transaction visibility of the emitted event logs (RD-1163). It is accepted only for log-emitting contract calls.
 // @Description
 // @Description  Ordinary upstream JSON-RPC errors retain their JSON-RPC error member. Transport, access and rate-limit failures use the non-200 statuses below. `POST /` and `POST /rpc` are the same operation.
@@ -1336,7 +1338,7 @@ const MaxRequestBodySize = 1 << 20 // 1MB
 // @Param        org_id path string false "Organization the access decision resolves against (only on /rpc/{org_id})"
 // @Param        request body apimodels.JSONRPCRequestEnvelope true "JSON-RPC 2.0 request"
 // @Success      200 {object} apimodels.JSONRPCResponseEnvelope "JSON-RPC response; may carry a JSON-RPC-level error member"
-// @Failure      400 {object} apimodels.APIError "unreadable body, malformed, ambiguous (duplicate or case-variant member names) or batch JSON-RPC, invalid visibleTo, or unsupported/malformed trace options"
+// @Failure      400 {object} apimodels.APIError "unreadable body, malformed, ambiguous (duplicate or case-variant members) or batch JSON-RPC, invalid visibleTo, or an unsupported tracer/config (a tracer other than callTracer, withLog or malformed trace params)"
 // @Failure      401 {object} apimodels.APIError "identity required but unresolved on a trace method (debug_traceCall / debug_traceTransaction)"
 // @Failure      403 {object} apimodels.APIError "runtime-trace, standard-profile mined-trace access, or compliance denial"
 // @Failure      404 {object} apimodels.APIError "method not allowed for the caller, or a strict-profile mined trace unavailable to the caller"
@@ -2039,6 +2041,7 @@ func (s *Server) getStatus(c *gin.Context) {
 //
 // @Summary      Test a JSON-RPC request
 // @Description  Dashboard diagnostic: runs one method through RBAC, travel-rule compliance, and upstream forwarding, using a synthetic identity ("test:dashboard") or the subject of a supplied jwt_token. On an upstream JSON-RPC-level error the call still returns HTTP 200 with the error in the response body. Requires the private-network source gate (403 otherwise).
+// @Description  Client state/block override options follow the RPC policy for every caller, including admins.
 // @Tags         Admin: ops
 // @Accept       json
 // @Produce      json

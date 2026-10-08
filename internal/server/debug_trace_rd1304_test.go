@@ -731,10 +731,15 @@ func TestRD1304_MixedCaseMethodTakesSameGate(t *testing.T) {
 	assert.False(t, c.callerTracerReachedNode())
 }
 
-// Operator aliases must apply the trace access policy.
-func TestRD1304_OperatorAliasToTraceMethodTakesSameGate(t *testing.T) {
+// Operator trace aliases are outside the exact catalog registration contract.
+func TestRD1304_OperatorTraceAliasRegistrationRejected(t *testing.T) {
 	defer rbac.SnapshotMethodRegistriesForTest()()
-	rbac.RegisterExtraNamespaces(map[string][]string{"X": {"x_traceCall"}}, map[string]string{"x_traceCall": "debug_traceCall"}, nil)
+	require.False(t, rbac.ExtraMethods["x_traceCall"])
+	require.Empty(t, rbac.MethodAliases["x_traceCall"])
+	err := rbac.RegisterExtraNamespaces(map[string][]string{"X": {"x_traceCall"}}, map[string]string{"x_traceCall": "debug_traceCall"}, nil)
+	require.Error(t, err)
+	assert.False(t, rbac.ExtraMethods["x_traceCall"], "failed registration must leave the method registry unchanged")
+	assert.Empty(t, rbac.MethodAliases["x_traceCall"], "failed registration must leave the alias registry unchanged")
 
 	c := newTraceCanary(t)
 	proc, ts := setupTraceProcessor(t, c)
@@ -744,10 +749,15 @@ func TestRD1304_OperatorAliasToTraceMethodTakesSameGate(t *testing.T) {
 	u := newTraceUser(t, ctx, ts, "", nil, []string{"x_traceCall", "debug_traceCall", "eth_call"}, "")
 	addContract(t, ctx, ts, u.orgID, addr, u.groupID)
 
-	res := proc.Process(ctx, traceReq(u.did, "", "x_traceCall",
-		map[string]any{"to": addr}, "latest", map[string]any{"tracer": "prestateTracer"}))
-	require.True(t, denied(res), "an alias to debug_traceCall must take the trace gate")
-	assert.False(t, c.callerTracerReachedNode(), "the aliased caller tracer must not reach the node")
+	res := proc.Process(ctx, traceReq(u.did, "", "x_traceCall", map[string]any{"to": addr}, "latest"))
+	require.NotNil(t, res.Error)
+	assert.Equal(t, http.StatusNotFound, res.Error.StatusCode)
+	assert.Equal(t, "method not found", res.Error.Message)
+	assert.Empty(t, c.snapshot(), "an unregistered method must not reach the node")
+
+	res = proc.Process(ctx, traceReq(u.did, "", "debug_traceCall", map[string]any{"to": addr}, "latest"))
+	require.Nil(t, res.Error, "the canonical trace method remains available")
+	assert.Equal(t, 1, c.traceRequests(), "the canonical trace uses one upstream request")
 }
 
 // The internal RD-915 eth_call trace keeps working (it does not go through

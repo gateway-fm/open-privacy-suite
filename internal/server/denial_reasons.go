@@ -28,6 +28,11 @@ const (
 	// ReasonInvalidRequestShape: malformed params the proxy validates before
 	// tracing (bad block tag, non-hex to/from, etc.).
 	ReasonInvalidRequestShape = "invalid_request_shape"
+	// ReasonStateOverrideNotAllowed: the request carried a state/code or block
+	// override (eth_call/eth_estimateGas params[2]/[3], or debug_traceCall
+	// stateOverrides/blockOverrides). Rejected fail-closed (RD-1305). A fact
+	// about the caller's OWN request (they sent the override) — safe to surface.
+	ReasonStateOverrideNotAllowed = "state_override_not_allowed"
 	// ReasonCrossOrg: a traced call touched a contract owned by another org or
 	// an unregistered (private-by-default) address. ORACLE-SENSITIVE — reveals
 	// that some address is/ isn't registered elsewhere; the wire path collapses
@@ -96,6 +101,7 @@ func wireReason(code string) string {
 		ReasonMethodNotAllowed, // safe only while RBAC denials stay a uniform 404 (see TestWireReason… / RBAC deny site)
 		ReasonSenderNotLinked,
 		ReasonInvalidRequestShape,
+		ReasonStateOverrideNotAllowed,
 		ReasonRateLimited,
 		ReasonConcurrencyLimited,
 		ReasonUpstreamError:

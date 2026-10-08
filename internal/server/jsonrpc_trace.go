@@ -616,15 +616,33 @@ type debugTracePlan struct {
 func (p *JSONRPCProcessor) processDebugTrace(ctx context.Context, req *ProcessRequest) *ProcessResult {
 	start := time.Now()
 
-	// Feature gate: tracing configured AND the forward path wired.
+	// Apply the exact method catalog before the trace-specific path.
+	if !rbac.IsForwardableMethod(req.Method) {
+		req.denialReason = ReasonMethodNotAllowed
+		p.recordRPCOutcome(req.Method, "rbac_denied", start)
+		p.recordRBACDecision("denied")
+		p.logAccess(ctx, req, http.StatusForbidden, http.StatusNotFound)
+		return &ProcessResult{Error: &ProcessError{StatusCode: http.StatusNotFound, Message: "method not found"}}
+	}
+
+	// RD-1305: refuse unsupported debug_traceCall options before tracing or
+	// forwarding. The response is opaque; the reason remains in the access log.
+	if denied, kind := rbac.DetectStateOverride(req.Method, req.Params); denied {
+		req.denialReason = ReasonStateOverrideNotAllowed
+		slog.Info("debug_trace state/block override denied", "method", req.Method, "user", req.UserID, "ip", req.ClientIP, "kind", kind)
+		p.recordRPCOutcome(req.Method, "override_denied", start)
+		p.recordRBACDecision("denied")
+		p.logAccess(ctx, req, http.StatusForbidden, http.StatusNotFound)
+		return &ProcessResult{Error: &ProcessError{StatusCode: http.StatusNotFound, Message: "method not found"}}
+	}
+
+	// Feature gate: tracing configured and the forwarding path wired.
 	if p.runtimeTracer == nil || p.traceValidator == nil || !p.runtimeTracer.IsEnabled() || p.proxy == nil {
 		p.logAccess(ctx, req, http.StatusForbidden)
 		return &ProcessResult{Error: &ProcessError{StatusCode: http.StatusForbidden, Message: "runtime tracing is not supported or enabled on this proxy"}}
 	}
 
-	// Canonical trace method. Defends an operator alias whose target is a trace
-	// method (RegisterExtraNamespaces does not forbid that); Process already
-	// canonicalizes case (RD-1180).
+	// Process canonicalizes built-in method spelling before trace dispatch.
 	traceMethod := req.Method
 	if a := rbac.ResolveMethodAlias(req.Method); a == "debug_traceCall" || a == "debug_traceTransaction" {
 		traceMethod = a

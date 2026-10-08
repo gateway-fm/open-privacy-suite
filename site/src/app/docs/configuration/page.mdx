@@ -226,6 +226,8 @@ The eth_call trace validation runs **only** when the method resolves to `eth_cal
 
 A passthrough method has no defined `to`/`from`/`data` shape, so the proxy has nothing to extract for the trace and no way to know whether the method even runs the EVM. To apply organization scope checks to a chain-specific method, declare it with an `alias` instead.
 
+The [simulation-option policy](/docs/security/response-filtering#state-and-block-overrides) follows standard methods and explicit method mappings. Map a chain-specific method only when its parameters match the standard method's layout. Client-supplied state and block overrides are unsupported for every caller, including admins. Details: RD-1305.
+
 </Callout>
 
 **Intra-org contract-grant scoping:**

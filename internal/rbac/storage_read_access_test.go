@@ -379,7 +379,7 @@ func TestCheckAccess_BuiltinAliasKeyKeepsRawMethodChecks(t *testing.T) {
 	}{
 		// Target extracted per the alias (eth_call reads params[0].to) is empty.
 		{"remapped to a call-shaped method", "eth_call", ErrContractAccessDenied, true,
-			[]any{rd1301Contract, rd1301Ordinary, "latest"}},
+			[]any{rd1301Contract, rd1301Ordinary}},
 		// Target resolves, but the alias target is not a storage read.
 		{"remapped to another address query", "eth_getBalance", ErrContractAccessDenied, true,
 			[]any{rd1301Contract, rd1301Ordinary, "latest"}},
