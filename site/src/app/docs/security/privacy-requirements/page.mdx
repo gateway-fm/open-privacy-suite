@@ -236,11 +236,13 @@ This is a contract for handler authors: **do not roll your own**
 `RedactOpts`. The current call surface, and the only shape we support
 going forward:
 
-- **List handlers** (`/transactions`, `/transfers`, …): call
-  `s.buildVisibilityFilter(ctx, viewerDID)` to get a `VisibilityFilter`
-  (used by the SQL allowlist), then derive `RedactOpts` via
-  `redactOptsFromFilter(filter)`. Set `ViewerIsAdmin` and apply the
-  `applyAdminTxView` wiring on the returned opts.
+- **List handlers** (`/transactions`, `/transfers`, …): resolve
+  `isViewerAdmin` once, call
+  `s.buildVisibilityFilter(ctx, viewerDID, isAdmin)` to get a
+  `VisibilityFilter` (used by the SQL allowlist), then derive
+  `RedactOpts` via `redactOptsFromFilter(filter)`. Set `ViewerIsAdmin`
+  to the same value and apply the `applyAdminTxView` wiring on the
+  returned opts.
 - **Single-item handlers** (`/transactions/:hash`,
   `/transactions/:hash/internal`, …): call
   `s.buildRedactOptsForViewer(ctx, viewerDID)`. This helper internally
