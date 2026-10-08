@@ -23,9 +23,9 @@ import (
 const rd1304StorageBytecode = "0x6080604052602a5f55625ec2e76001553480156019575f5ffd5b5061031e806100275f395ff3fe608060405234801561000f575f5ffd5b506004361061004a575f3560e01c80630dbe671f1461004e57806360fe47b11461006c5780636d4ce63c14610088578063acefafae146100a6575b5f5ffd5b6100566100d6565b6040516100639190610191565b60405180910390f35b610086600480360381019061008191906101d8565b6100db565b005b610090610132565b60405161009d9190610191565b60405180910390f35b6100c060048036038101906100bb919061025d565b610159565b6040516100cd9190610191565b60405180910390f35b5f5481565b805f819055503373ffffffffffffffffffffffffffffffffffffffff167fbdd4be579984a3856cd1022b131de0a9912cd0f746e727f0d0a56ef44cab8cc2826040516101279190610191565b60405180910390a250565b5f5f60015411610142575f610145565b60015b60ff165f5461015491906102b5565b905090565b5f8173ffffffffffffffffffffffffffffffffffffffff16319050919050565b5f819050919050565b61018b81610179565b82525050565b5f6020820190506101a45f830184610182565b92915050565b5f5ffd5b6101b781610179565b81146101c1575f5ffd5b50565b5f813590506101d2816101ae565b92915050565b5f602082840312156101ed576101ec6101aa565b5b5f6101fa848285016101c4565b91505092915050565b5f73ffffffffffffffffffffffffffffffffffffffff82169050919050565b5f61022c82610203565b9050919050565b61023c81610222565b8114610246575f5ffd5b50565b5f8135905061025781610233565b92915050565b5f60208284031215610272576102716101aa565b5b5f61027f84828501610249565b91505092915050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52601160045260245ffd5b5f6102bf82610179565b91506102ca83610179565b92508282019050808211156102e2576102e1610288565b5b9291505056fea26469706673582212209ef3e4f11a664a869fdb4ce3cf25e9c8a27aa06abd41c8746c2d2392966ded0064736f6c634300081c0033"
 
 const (
-	rd1304Secret  = "5ec2e7" // slot-1 value, as it appears in any storage dump
-	rd1304GetSel  = "0x6d4ce63c"
-	rd1304SetCall = "0x60fe47b10000000000000000000000000000000000000000000000000000000000000005"
+	rd1304StorageMarker = "5ec2e7" // slot-1 value, as it appears in any storage dump
+	rd1304GetSel        = "0x6d4ce63c"
+	rd1304SetCall       = "0x60fe47b10000000000000000000000000000000000000000000000000000000000000005"
 )
 
 // addUserToOrg adds a second user (own group, given claims/methods, linked
@@ -87,12 +87,12 @@ func TestRD1304_E2E_UnsupportedPrestateTracerDenied(t *testing.T) {
 	status, body := traceRPCCallRaw(t, env.serverURL, orgID, token, "debug_traceCall",
 		[]any{call, "latest", map[string]any{"tracer": "prestateTracer"}})
 	assert.GreaterOrEqual(t, status, 400, "prestateTracer must be denied; body=%s", string(body))
-	assert.NotContains(t, strings.ToLower(string(body)), rd1304Secret, "the slot-1 secret must be absent via prestateTracer")
+	assert.NotContains(t, strings.ToLower(string(body)), rd1304StorageMarker, "the slot-1 storage value must be absent via prestateTracer")
 
 	status, body = traceRPCCallRaw(t, env.serverURL, orgID, token, "debug_traceTransaction",
 		[]any{"0x" + strings.Repeat("00", 32)})
 	_ = status // a replay of a non-existent tx is denied; asserted in unit tests
-	assert.NotContains(t, strings.ToLower(string(body)), rd1304Secret)
+	assert.NotContains(t, strings.ToLower(string(body)), rd1304StorageMarker)
 
 	status, body = traceRPCCallRaw(t, env.serverURL, orgID, token, "debug_traceCall",
 		[]any{call, "latest", map[string]any{"tracer": "callTracer"}})
@@ -104,7 +104,7 @@ func TestRD1304_E2E_UnsupportedPrestateTracerDenied(t *testing.T) {
 	require.NoError(t, json.Unmarshal(body, &out))
 	require.Nil(t, out.Error, "callTracer returned an error: %v", out.Error)
 	assert.Equal(t, s, strings.ToLower(out.Result["to"].(string)))
-	assert.NotContains(t, strings.ToLower(string(body)), rd1304Secret, "callTracer must carry no storage")
+	assert.NotContains(t, strings.ToLower(string(body)), rd1304StorageMarker, "callTracer must carry no storage")
 }
 
 // A participant replay without a tracer preset returns the call tree only.
@@ -134,7 +134,7 @@ func TestRD1304_E2E_DefaultStructLoggerServesCallTreeOnly(t *testing.T) {
 	status, body = traceRPCCallRaw(t, env.serverURL, orgID, token, "debug_traceTransaction", []any{txHash})
 	require.Equal(t, http.StatusOK, status, "the sender may trace their own tx; body=%s", string(body))
 	assert.NotContains(t, string(body), "structLogs")
-	assert.NotContains(t, strings.ToLower(string(body)), rd1304Secret)
+	assert.NotContains(t, strings.ToLower(string(body)), rd1304StorageMarker)
 	assert.Contains(t, strings.ToLower(string(body)), s)
 }
 
@@ -223,7 +223,7 @@ func TestRD1304_E2E_CrossOrgInternalFrameDenied(t *testing.T) {
 		[]any{call, "latest", map[string]any{"tracer": "callTracer"}})
 	require.GreaterOrEqual(t, status, 400, "a cross-org internal frame must be denied; body=%s", string(body))
 	assert.NotContains(t, strings.ToLower(string(body)), strings.TrimPrefix(foreign, "0x"), "the foreign address must not be echoed")
-	assert.NotContains(t, strings.ToLower(string(body)), rd1304Secret)
+	assert.NotContains(t, strings.ToLower(string(body)), rd1304StorageMarker)
 
 	// The read twin agrees.
 	status, body = jsonRPCCallRaw(t, env.serverURL, orgB, tracerToken, "eth_call", []any{call, "latest"})

@@ -25,7 +25,7 @@ import (
 // RD-1304 request-path coverage for trace configuration, access checks,
 // upstream request construction, output shape and organization scope.
 
-const secretStorageMarker = "0x00000000000000000000000000000000000000000000000000000000005ec2e7"
+const storageMarker = "0x00000000000000000000000000000000000000000000000000000000005ec2e7"
 
 type canaryReq struct {
 	Method string
@@ -110,7 +110,7 @@ func newTraceCanary(t *testing.T) *traceCanary {
 			switch tr {
 			case "prestateTracer":
 				reply(map[string]any{topTo: map[string]any{"balance": "0x0", "storage": map[string]any{
-					"0x0000000000000000000000000000000000000000000000000000000000000001": secretStorageMarker,
+					"0x0000000000000000000000000000000000000000000000000000000000000001": storageMarker,
 				}}})
 			case "callTracer":
 				if override != nil {
@@ -119,7 +119,7 @@ func newTraceCanary(t *testing.T) *traceCanary {
 				}
 				reply(traceFrame{Type: "CALL", From: txFrom, To: topTo, Calls: calls})
 			default: // absent tracer = default struct logger, or a JS / unknown tracer
-				reply(map[string]any{"structLogs": []any{map[string]any{"op": "SLOAD", "storage": map[string]any{"01": secretStorageMarker}}}})
+				reply(map[string]any{"structLogs": []any{map[string]any{"op": "SLOAD", "storage": map[string]any{"01": storageMarker}}}})
 			}
 		default:
 			reply(nil)
@@ -162,6 +162,13 @@ func (c *traceCanary) traceRequests() int {
 func setupTraceProcessor(t *testing.T, c *traceCanary) (*JSONRPCProcessor, *testServerRBAC) {
 	t.Helper()
 	ts := setupTestServerForRBAC(t)
+	return newTraceProcessor(t, ts, c), ts
+}
+
+// newTraceProcessor wires a trace-enabled processor onto an existing test
+// server's database and access controller.
+func newTraceProcessor(t *testing.T, ts *testServerRBAC, c *traceCanary) *JSONRPCProcessor {
+	t.Helper()
 	rt := tracer.NewRuntimeTracer(tracer.RuntimeTracerConfig{NodeURL: c.srv.URL, Enabled: true, Timeout: 5 * time.Second})
 	t.Cleanup(rt.Stop)
 	proc := NewJSONRPCProcessor(JSONRPCProcessorConfig{
@@ -176,7 +183,7 @@ func setupTraceProcessor(t *testing.T, c *traceCanary) (*JSONRPCProcessor, *test
 		ConcurrencyLimiter: middleware.NewConcurrencyLimiter(50, 0),
 		EthCallTracing:     &EthCallTracingConfig{Enabled: true, Timeout: 5 * time.Second},
 	})
-	return proc, ts
+	return proc
 }
 
 type traceUser struct {
@@ -251,7 +258,7 @@ func TestRD1304_TraceCall_PrestateTracerDeniedAndNotForwarded(t *testing.T) {
 
 	require.True(t, denied(res), "prestateTracer must be denied for a non-admin; body=%s", string(res.ResponseBody))
 	assert.False(t, c.callerTracerReachedNode(), "the caller's prestateTracer must never be forwarded to the node")
-	assert.NotContains(t, string(res.ResponseBody), secretStorageMarker)
+	assert.NotContains(t, string(res.ResponseBody), storageMarker)
 }
 
 // Struct-logger configuration is not part of the client trace format.
@@ -270,7 +277,7 @@ func TestRD1304_TraceTransaction_DefaultStructLoggerNotForwarded(t *testing.T) {
 
 	require.True(t, denied(res), "struct-logger request must be denied; body=%s", string(res.ResponseBody))
 	assert.False(t, c.callerTracerReachedNode(), "a struct-logger request must never reach the node")
-	assert.NotContains(t, string(res.ResponseBody), secretStorageMarker)
+	assert.NotContains(t, string(res.ResponseBody), storageMarker)
 }
 
 // JavaScript tracers are unsupported, including for a target's admin.
@@ -343,8 +350,9 @@ func TestRD1304_TraceCall_UngrantedSameOrgTargetDenied(t *testing.T) {
 	assert.Equal(t, 0, c.traceRequests(), "denied trace must not reach the node")
 }
 
-// Historical block for a non-admin: denied exactly like eth_call.
-func TestRD1304_TraceCall_HistoricalBlockDeniedForNonAdmin(t *testing.T) {
+// Historical block: denied for a non-admin and served for an org admin,
+// exactly like eth_call.
+func TestRD1304_TraceCall_HistoricalBlockAdminOnly(t *testing.T) {
 	c := newTraceCanary(t)
 	proc, ts := setupTraceProcessor(t, c)
 	ctx := context.Background()
@@ -353,10 +361,31 @@ func TestRD1304_TraceCall_HistoricalBlockDeniedForNonAdmin(t *testing.T) {
 	u := newTraceUser(t, ctx, ts, "", nil, traceMethods, "")
 	addContract(t, ctx, ts, u.orgID, addr, u.groupID)
 
+	// Control: the same non-admin may trace this call at the latest block, so
+	// the denial below comes from the historical-block rule.
+	latest := proc.Process(ctx, traceReq(u.did, "", "debug_traceCall",
+		map[string]any{"to": addr}, "latest", map[string]any{"tracer": "callTracer"}))
+	require.Nil(t, latest.Error, "control: the latest-block trace is allowed: %+v", latest.Error)
+	require.Equal(t, 1, c.traceRequests())
+
 	res := proc.Process(ctx, traceReq(u.did, "", "debug_traceCall",
 		map[string]any{"to": addr}, "0x1", map[string]any{"tracer": "callTracer"}))
 	require.True(t, denied(res), "historical-block trace must be denied for a non-admin")
-	assert.Equal(t, 0, c.traceRequests(), "denied trace must not reach the node")
+	assert.Equal(t, 1, c.traceRequests(), "the denied trace adds no upstream call")
+
+	// Positive control: the same request from an org admin is traced at the
+	// requested block.
+	_, err := ts.db.Conn().ExecContext(ctx, `UPDATE groups SET is_org_admin = true WHERE id = $1`, u.groupID)
+	require.NoError(t, err)
+	require.NoError(t, ts.rbacAccessCtrl.InvalidateGroup(ctx, u.groupID))
+	res = proc.Process(ctx, traceReq(u.did, "", "debug_traceCall",
+		map[string]any{"to": addr}, "0x1", map[string]any{"tracer": "callTracer"}))
+	require.Nil(t, res.Error, "an org admin may trace at a historical block: %+v", res.Error)
+	assert.Equal(t, 2, c.traceRequests())
+	c.mu.Lock()
+	block := c.lastCallBlock
+	c.mu.Unlock()
+	assert.Equal(t, "0x1", block, "the trace runs at the requested block")
 }
 
 // Banned user: CheckAccess's blanket ban gate must apply to the trace path.
@@ -438,7 +467,7 @@ func TestRD1304_TraceCall_GrantedCallTracerAllowed(t *testing.T) {
 	require.NoError(t, json.Unmarshal(res.ResponseBody, &out))
 	assert.Equal(t, 7, out.ID, "response must echo the caller's JSON-RPC id")
 	assert.Contains(t, string(out.Result), strings.ToLower(addr))
-	assert.NotContains(t, string(res.ResponseBody), secretStorageMarker)
+	assert.NotContains(t, string(res.ResponseBody), storageMarker)
 	assert.False(t, c.callerTracerReachedNode())
 }
 
@@ -680,7 +709,7 @@ func TestRD1304_TraceTransaction_ParticipantAllowed(t *testing.T) {
 
 	res := proc.Process(ctx, traceReq(u.did, "", "debug_traceTransaction", "0x"+strings.Repeat("ab", 32)))
 	require.Nil(t, res.Error, "the tx sender must be able to trace their own tx: %+v", res.Error)
-	assert.NotContains(t, string(res.ResponseBody), secretStorageMarker)
+	assert.NotContains(t, string(res.ResponseBody), storageMarker)
 	assert.False(t, c.callerTracerReachedNode())
 }
 
@@ -819,7 +848,7 @@ func TestRD1304_TestRequestRefusesTraceMethods(t *testing.T) {
 			assert.NotContains(t, refusal.Error, "dry-run")
 			assert.NotContains(t, refusal.Error, "token")
 			assert.Empty(t, c.snapshot(), "a refused test-request trace must never reach the node")
-			assert.NotContains(t, w.Body.String(), secretStorageMarker)
+			assert.NotContains(t, w.Body.String(), storageMarker)
 		})
 	}
 }
@@ -870,6 +899,46 @@ func TestRD1304_TraceTransaction_PathOrgPinned(t *testing.T) {
 	require.Nil(t, resB.Error, "the sender may replay it in the tx's own org: %+v", resB.Error)
 }
 
+// The same pinning through the View-as RPC surface over HTTP: the org named
+// in the View-as URL scopes the replay. A user in orgs A and B sent a tx into
+// an org-B contract; viewed as that user in org A it is not replayed, viewed
+// in org B it is.
+func TestRD1304_ViewAsTraceTransactionPinnedToNamedOrg(t *testing.T) {
+	srv := setupImpersonationTestServer(t)
+	c := newTraceCanary(t)
+	srv.jsonrpcProcessor = newTraceProcessor(t, srv.testServerRBAC, c)
+	ctx := context.Background()
+	me := fixedAddr(0x39)
+	u := newTraceUser(t, ctx, srv.testServerRBAC, "", nil, traceMethods, me) // org A
+	orgB, gB := addMembershipInNewOrg(t, ctx, srv.testServerRBAC, u.userID, traceMethods)
+	bAddr := fixedAddr(0xb2)
+	addContract(t, ctx, srv.testServerRBAC, orgB, bAddr, gB)
+	c.txFrom, c.txTo, c.topTo = me, bAddr, bAddr // the user's own tx into an org-B contract
+
+	viewAs := func(orgID string) *httptest.ResponseRecorder {
+		body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 9, "method": "debug_traceTransaction", "params": []any{traceHash}})
+		require.NoError(t, err)
+		req := httptest.NewRequest(http.MethodGet, impersonatePath(u.did, orgID, "/rpc"), strings.NewReader(string(body)))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Test-Auth-Method", "jwt_admin")
+		req.Header.Set("X-Test-Admin-Subject", "did:privado:tr-viewas-admin")
+		req.Header.Set("X-Test-Admin-Org-IDs", u.orgID+","+orgB)
+		w := httptest.NewRecorder()
+		srv.router.ServeHTTP(w, req)
+		return w
+	}
+
+	inA := viewAs(u.orgID)
+	assert.Equal(t, http.StatusForbidden, inA.Code, "viewed in org A, the org-B tx must not be replayed; body=%s", inA.Body.String())
+	assert.Contains(t, inA.Body.String(), traceDenyAccess, "refused by the replay rule, not by the View-as gate")
+	assert.Equal(t, 0, c.traceRequests(), "the org-A view must not reach the node's tracer")
+
+	inB := viewAs(orgB)
+	require.Equal(t, http.StatusOK, inB.Code, "viewed in org B, the sender's own tx is replayed; body=%s", inB.Body.String())
+	assert.Contains(t, inB.Body.String(), bAddr)
+	assert.Equal(t, 1, c.traceRequests())
+}
+
 // Ban and KYC apply to the replay path too: a ban revokes refresh tokens
 // only, so a still-valid access token must be refused here.
 func TestRD1304_TraceTransaction_BannedOrNonKYCDenied(t *testing.T) {
@@ -907,8 +976,8 @@ func TestRD1304_TraceCall_NodeNonCallTracerBodyRefused(t *testing.T) {
 	cases := map[string]any{
 		"null":            json.RawMessage("null"),
 		"empty object":    map[string]any{},
-		"prestate shape":  map[string]any{addr: map[string]any{"storage": map[string]any{"0x01": secretStorageMarker}}},
-		"lowercase type":  map[string]any{"type": "call", "from": fixedAddr(0xee), "to": addr, "output": secretStorageMarker},
+		"prestate shape":  map[string]any{addr: map[string]any{"storage": map[string]any{"0x01": storageMarker}}},
+		"lowercase type":  map[string]any{"type": "call", "from": fixedAddr(0xee), "to": addr, "output": storageMarker},
 		"unknown subtype": map[string]any{"type": "CALL", "from": fixedAddr(0xee), "to": addr, "calls": []any{map[string]any{"type": "SLOAD", "to": addr}}},
 	}
 	for name, body := range cases {
@@ -923,7 +992,7 @@ func TestRD1304_TraceCall_NodeNonCallTracerBodyRefused(t *testing.T) {
 
 			res := proc.Process(ctx, traceReq(u.did, "", "debug_traceCall", map[string]any{"to": addr}, "latest"))
 			require.True(t, denied(res), "%s must be refused", name)
-			assert.NotContains(t, string(res.ResponseBody), secretStorageMarker)
+			assert.NotContains(t, string(res.ResponseBody), storageMarker)
 		})
 	}
 }
@@ -937,8 +1006,8 @@ func TestRD1304_TraceCall_UnknownFrameFieldsStripped(t *testing.T) {
 	c.topTo = addr
 	c.callTracerBody = map[string]any{
 		"type": "CALL", "from": fixedAddr(0xee), "to": addr, "output": "0x01",
-		"logs":        []any{map[string]any{"address": addr, "data": secretStorageMarker}},
-		"vendorExtra": secretStorageMarker,
+		"logs":        []any{map[string]any{"address": addr, "data": storageMarker}},
+		"vendorExtra": storageMarker,
 	}
 	u := newTraceUser(t, ctx, ts, "", nil, traceMethods, "")
 	addContract(t, ctx, ts, u.orgID, addr, u.groupID)
@@ -946,7 +1015,7 @@ func TestRD1304_TraceCall_UnknownFrameFieldsStripped(t *testing.T) {
 	res := proc.Process(ctx, traceReq(u.did, "", "debug_traceCall", map[string]any{"to": addr}, "latest"))
 	require.Nil(t, res.Error, "a well-formed frame is served: %+v", res.Error)
 	body := string(res.ResponseBody)
-	assert.NotContains(t, body, secretStorageMarker, "unknown fields must not pass through")
+	assert.NotContains(t, body, storageMarker, "unknown fields must not pass through")
 	assert.NotContains(t, body, `"logs"`)
 	assert.Contains(t, body, `"output":"0x01"`)
 }

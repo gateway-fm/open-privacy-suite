@@ -258,10 +258,11 @@ func TestDebugTrace_DeniedForUnknownUser(t *testing.T) {
 	assert.Contains(t, result.Error.Message, "failed to get user")
 }
 
-func TestDebugTrace_AllowlistedReachesTracer(t *testing.T) {
+func TestDebugTrace_AllowlistedPassesMethodGate(t *testing.T) {
 	// A group with debug_traceTransaction in its allowed_methods passes the
 	// allowlist gate and is evaluated by the next stage (the malformed hash is
-	// refused by the request-shape check). Deploy claim also present.
+	// refused by the request-shape check, so the tracer is never reached).
+	// Deploy claim also present.
 	proc, ts := setupProcessorWithTracing(t)
 	ctx := context.Background()
 
@@ -283,9 +284,10 @@ func TestDebugTrace_AllowlistedReachesTracer(t *testing.T) {
 	assert.Equal(t, ReasonInvalidRequestShape, result.Error.Reason)
 }
 
-func TestDebugTrace_WildcardAllowlistReachesTracer(t *testing.T) {
+func TestDebugTrace_WildcardAllowlistPassesMethodGate(t *testing.T) {
 	// A group whose allowlist is "*" (all methods) permits tracing too. Admin
 	// claim present, but it's the "*" allowlist entry that grants the method.
+	// The malformed hash is then refused by the request-shape check.
 	proc, ts := setupProcessorWithTracing(t)
 	ctx := context.Background()
 
