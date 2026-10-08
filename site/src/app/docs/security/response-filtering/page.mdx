@@ -84,16 +84,16 @@ The policy applies to every caller, including contract and organization admins. 
 
 | Method | Rejected | Passes the option check |
 |--------|----------|----------|
-| `eth_call`, `eth_estimateGas`, `eth_createAccessList` | non-empty or malformed overrides in the third or fourth parameter; objects with unsupported keys in the block-parameter position; more than four parameters | omitted, `null`, or `{}` positional overrides; supported block references; a boolean third parameter for `eth_createAccessList` optimization |
+| `eth_call`, `eth_estimateGas`, `eth_createAccessList` | non-empty or malformed overrides in the third or fourth parameter; anything in the block-parameter position other than a block tag or number, `null`, or a block object with only `blockNumber`, `blockHash` and `requireCanonical`; more than four parameters | omitted, `null`, or `{}` positional overrides; supported block references; a boolean third parameter for `eth_createAccessList` optimization |
 | `debug_traceCall` | any `stateOverrides`, `stateOverride`, `blockOverrides`, `blockOverride`, or `txIndex` config key, including case-equivalent spellings, regardless of its value | a config omitting those keys, subject to normal trace checks |
 
-A client emitting trace override keys with empty values must omit the keys. Passing the option check does not guarantee node support for a particular optional argument; normal RBAC, block-reference validation, and node validation still apply. Explicitly mapped chain-specific methods follow their mapped method's policy and require a compatible parameter layout.
+A client emitting trace override keys with empty values must omit the keys. Passing the option check does not guarantee node support for a particular optional argument; normal RBAC, block-reference validation, and node validation still apply.
+
+A chain-specific method declared with an `alias` is checked under its own name and under its alias target. For example, `linea_estimateGas` aliased to `eth_estimateGas` is refused when it carries an override set, whether in the second parameter or in the standard override positions. A **passthrough** method gets no option check: its arguments, overrides included, are forwarded as sent. Do not declare a simulation method as passthrough; see [Passthrough methods](/docs/configuration#passthrough-methods).
 
 Bundled methods `eth_simulateV1`, `eth_simulate`, `eth_multicallV1`, `eth_callMany`, and `eth_callBundle` are unsupported.
 
-Rejected override requests are recorded with `state_override_not_allowed`. These early access-log entries have no resolved organization and appear in the fleet-wide Access Logs view. Admin dry-run and test-request diagnostics apply the same policy. OPS's internally constructed node requests for approval preparation remain available with their own simulation options.
-
-Details: RD-1305.
+Rejected override requests are recorded with the reason `state_override_not_allowed`. The check runs before the request's organization is resolved, so these entries carry no organization: they appear only in the fleet-wide Access Logs view, not in an organization admin's view. Admin dry-run and test-request diagnostics apply the same policy.
 
 ---
 

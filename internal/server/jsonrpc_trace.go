@@ -672,9 +672,10 @@ func (p *JSONRPCProcessor) processDebugTrace(ctx context.Context, req *ProcessRe
 
 	// 2. Vet the trace config/params. The caller's tracer is NEVER forwarded;
 	//    anything other than an absent config or an explicit plain callTracer
-	//    (no withLog), and any state/block override or malformed shape, is
-	//    rejected fail-closed. (Override params are RD-1305's broader surface;
-	//    on the trace path they are refused so this gate stays sound.)
+	//    (no withLog), and any malformed shape, is rejected fail-closed.
+	//    debug_traceCall override keys were already refused above with the
+	//    opaque 404; this check also refuses them (400) in a
+	//    debug_traceTransaction config.
 	if perr := vetDebugTraceConfig(traceMethod, req.Params); perr != nil {
 		req.denialReason = perr.Reason
 		p.logAccess(ctx, req, perr.StatusCode)
@@ -1187,8 +1188,11 @@ func vetDebugTraceConfig(method string, params []any) *ProcessError {
 		return invalid // not an object, or keys that collide by case
 	}
 	// Override / positional-replay keys (singular and plural), matched
-	// case-insensitively. The same set is refused by the override check at
-	// the top of the trace path; a reject in either denies.
+	// case-insensitively. For debug_traceCall, processDebugTrace has already
+	// refused these keys (rbac.DetectStateOverride, opaque 404, which matches
+	// every spelling this lowercase lookup would), so this branch is defence
+	// in depth there. For debug_traceTransaction, which the simulation-option
+	// check does not classify, this is the only check and answers 400.
 	for _, k := range []string{"stateoverrides", "stateoverride", "blockoverrides", "blockoverride", "txindex"} {
 		if _, has := cfgMap[k]; has {
 			return override

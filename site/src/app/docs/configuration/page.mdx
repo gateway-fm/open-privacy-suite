@@ -226,7 +226,7 @@ The eth_call trace validation runs **only** when the method resolves to `eth_cal
 
 A passthrough method has no defined `to`/`from`/`data` shape, so the proxy has nothing to extract for the trace and no way to know whether the method even runs the EVM. To apply organization scope checks to a chain-specific method, declare it with an `alias` instead.
 
-The [simulation-option policy](/docs/security/response-filtering#state-and-block-overrides) follows standard methods and explicit method mappings. Map a chain-specific method only when its parameters match the standard method's layout. Client-supplied state and block overrides are unsupported for every caller, including admins. Details: RD-1305.
+Client-supplied state and block overrides are refused for every caller, including admins, on built-in and aliased methods (see the [simulation-option policy](/docs/security/response-filtering#state-and-block-overrides)). Passthrough methods get no such check. Declare a chain-specific call or gas-estimation method such as `linea_estimateGas` with an `alias` (here `eth_estimateGas`), not as passthrough: an aliased method's override argument is refused, while a passthrough method's arguments, overrides included, are forwarded as sent.
 
 </Callout>
 
@@ -314,7 +314,10 @@ A passthrough method is forwarded to the node **as-is**:
 
 - no contract access check (the proxy does not know whether the method takes an address);
 - no response filtering (the proxy does not know the response shape);
-- no eth_call tracing.
+- no eth_call tracing;
+- no simulation-option check: state and block override arguments are forwarded as sent.
+
+Do not declare a method that executes caller-supplied calls as passthrough. Methods such as `trace_call` and `trace_callMany` would run those calls against any contract, with whatever override arguments the node accepts, and return traces the proxy cannot filter. Declare a chain's own call or gas-estimation method, such as `linea_estimateGas`, with an `alias` instead (see [Aliased methods](#aliased-methods)).
 
 **You are responsible for what a passthrough method returns.** Declare one only if you run a node that serves it and its responses cannot expose data your tenants must not see. The proxy lists the passthrough methods in a startup warning. Each call is tagged `matched_via: "passthrough"` in the SIEM audit stream.
 
