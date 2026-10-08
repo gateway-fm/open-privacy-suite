@@ -823,6 +823,7 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 		visibleHashes = nil
 		viewerIsAdmin = false
 		adminAuditView = false
+		ropts.ListedTxHashes = nil
 		ropts.ParticipantTxHashes = nil
 	}
 
@@ -1309,6 +1310,7 @@ func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []Token
 		visibleHashes = nil
 		viewerIsAdminT = false
 		adminAuditView = false
+		ropts.ListedTxHashes = nil
 		ropts.ParticipantTxHashes = nil
 		strictAdmitted, err = r.strictAdmittedTransferLogs(ctx, transfers, viewerDID)
 		if err != nil {
@@ -1648,6 +1650,7 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 	if strict {
 		visibleHashes = nil
 		adminAuditView = false
+		ropts.ListedTxHashes = nil
 		ropts.ParticipantTxHashes = nil
 	}
 	var parents map[string]*Transaction
