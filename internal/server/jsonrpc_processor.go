@@ -683,8 +683,9 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 
 	// Resolve method alias for access control (e.g. linea_estimateGas → eth_estimateGas).
 	// The alias determines which access control rules apply (contract checks, storage tiering, etc.)
-	// while the requested method name (the alias itself, or a catalog method in its built-in
-	// spelling) is kept for the RBAC allowlist check and node forwarding.
+	// while the requested method name (an alias or passthrough name as configured, or a
+	// catalog method in its built-in spelling) is kept for the RBAC allowlist check and node
+	// forwarding.
 	accessMethod := rbac.ResolveMethodAlias(req.Method)
 
 	// Build RBAC access check request using the alias for target/selector extraction

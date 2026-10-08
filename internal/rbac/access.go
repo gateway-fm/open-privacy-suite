@@ -301,8 +301,8 @@ func DetectMulticall(method string, params []any) (bool, string) {
 
 	// Check if the calldata is a Multicall function. Calldata is read from
 	// `data`, or from `input` when `data` is absent or empty, the same order
-	// as selector extraction; envelope validation refuses an object whose
-	// two differ.
+	// as extractCalldata; envelope validation refuses an object whose two
+	// differ.
 	data, ok := callObj["data"].(string)
 	if !ok || data == "" || data == "0x" {
 		data, ok = callObj["input"].(string)
