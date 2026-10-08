@@ -86,6 +86,14 @@ func TestAccessVisibilitySymmetry(t *testing.T) {
 	_ = orgAdminUser
 	_ = crossOrgUser
 
+	// Another user's wallet (an orgB member). Org admins manage contracts, not
+	// user wallets: this EOA is private to the orgA admin on both layers, and
+	// stays [PRIVATE] on an explorer row kept by the transfer-participant union
+	// (RD-1316, checked after the table).
+	foreignEOA := "0x5555555555555555555555555555555555555555"
+	createUserInGroup(t, database, "did:sym:orgb-wallet", readerBGID)
+	require.NoError(t, database.SystemLinkEthAddress(ctx, "did:sym:orgb-wallet", foreignEOA))
+
 	// Add eth_call to every group's AllowedMethods so method allowlist never blocks.
 	for _, gid := range []string{grantedGID, adminGID, deployGID, orgAdminGID, readerBGID} {
 		attachAllowedMethods(t, database, gid, []string{"eth_call", "eth_getBalance", "eth_getCode"})
@@ -119,6 +127,8 @@ func TestAccessVisibilitySymmetry(t *testing.T) {
 		{"orgB user → orgA non-granted contract", "did:sym:crossorg", contractA2, false},
 		{"orgA tier 3 admin → orgB contract", "did:sym:t3admin", contractB1, false},
 		{"orgA tier 3 admin → orgB non-granted contract", "did:sym:t3admin", contractB2, false},
+		// Org admin vs another user's wallet: both deny + non-Full (§2.1).
+		{"org admin → another user's EOA", "did:sym:orgadmin", foreignEOA, false},
 	}
 
 	for _, c := range cases {
@@ -150,6 +160,22 @@ func TestAccessVisibilitySymmetry(t *testing.T) {
 				"access/visibility mismatch: access.Allowed=%v, visibilityFull=%v", accessResult.Allowed, visFull)
 		})
 	}
+
+	// RD-1316: a tx from that wallet (here to an orgB contract the admin cannot
+	// see) that the transfer-participant union keeps for the org admin — passed
+	// in directly as VisibleTxHashes — still renders the wallet [PRIVATE],
+	// matching the RPC denial above. Only a genuine visibleTo listing reveals.
+	t.Run("org admin → another user's EOA on a transfer-linked row", func(t *testing.T) {
+		const hash = "0x5555000000000000000000000000000000000000000000000000000000000001"
+		to := contractB2
+		engine := explorer.NewRedactionEngine(nil, database)
+		got, err := engine.RedactTransactions(ctx, []explorer.Transaction{{Hash: hash, From: foreignEOA, To: &to, Value: "5"}},
+			"did:sym:orgadmin", explorer.RedactOpts{VisibleTxHashes: map[string]bool{hash: true}, ViewerIsAdmin: true})
+		require.NoError(t, err)
+		require.Len(t, got, 1, "the union keeps the row")
+		require.Equal(t, "[PRIVATE]", got[0].From, "the explorer must not reveal what the RPC layer denies")
+		require.NotContains(t, got[0].AddressMetadata, foreignEOA, "no addressMetadata key for the private wallet")
+	})
 }
 
 // --- Helpers (keep local to this file — small and clear) ---

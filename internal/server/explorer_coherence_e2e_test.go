@@ -122,7 +122,7 @@ func setupCoherenceRouter(srv *Server) *gin.Engine {
 //   - /transactions (list)             — RedactTransactions w/ buildVisibilityFilter
 //   - /transactions/:hash (by-hash)    — RedactTransactions w/ buildRedactOptsForViewer
 //   - /transactions/:hash/transfers    — RedactTransfers w/ buildRedactOptsForViewer
-//   - /transactions/:hash/internal     — RedactInternalTransactions w/ buildRedactOptsForViewer (NEW: this PR)
+//   - /transactions/:hash/internal     — RedactInternalTransactions w/ buildRedactOptsForViewer
 //   - /transactions/:hash/logs         — RedactLogs w/ buildRedactOptsForViewer
 //     (logs already inherit VisibleTxHashes; covered for completeness so the
 //     coherence invariant has the full surface set pinned in one test, not
@@ -132,13 +132,14 @@ func setupCoherenceRouter(srv *Server) *gin.Engine {
 //   if /transfers returns a row with tx_hash=X, then
 //     - /transactions list contains X, AND
 //     - /transactions/:hash=X returns 200 (not 404), AND
-//     - /transactions/:hash=X/internal returns the internal-tx row, AND
+//     - /transactions/:hash=X/internal returns the frames that have a side the
+//       viewer can see — and only those (RD-1316: the union keeps the parent
+//       row, not the parent's private frames), AND
 //     - /transactions/:hash=X/logs returns the Transfer log
 //
-// MUTATION CHECK: see the in-test note plus PR description. Reverting either
-// PR #285's `FindTransferParticipantTxs` union in buildVisibilityFilter OR
-// this PR's VisibleTxHashes plumbing in RedactInternalTransactions causes
-// the matching assertion below to fail with a meaningful message.
+// MUTATION CHECK: reverting PR #285's `FindTransferParticipantTxs` union in
+// buildVisibilityFilter fails steps 2-3; letting the union keep frames again
+// fails step 4's both-private-frame assertion.
 func TestExplorerCoherence_RD1009_AllSurfacesAgree(t *testing.T) {
 	srv, _, conn := setupTestServerForExplorerTransactions(t)
 
@@ -220,14 +221,13 @@ func TestExplorerCoherence_RD1009_AllSurfacesAgree(t *testing.T) {
 		reproducerTxHash, privateTokenContract, privateWalletEOA, orgVaultContract, blockNum)
 	require.NoError(t, err)
 
-	// Internal tx: the token contract makes an internal call back to itself
-	// (representative of e.g. a fee transfer or settlement hop). Both
-	// from/to are Hidden — this is exactly the RD-1009 internal-tx gap
-	// closed in this PR.
+	// Internal txs: the wallet's call into the token (both sides private to
+	// the admin) and the token's call into the admin's vault (one side the
+	// admin sees, e.g. a settlement hop).
 	_, err = conn.ExecContext(ctx, `
 		INSERT INTO internal_transactions (tx_hash, block_number, trace_address, from_address, to_address, value, call_type)
-		VALUES ($1, $2, '0', $3, $4, 50, 'CALL')`,
-		reproducerTxHash, blockNum, privateWalletEOA, privateTokenContract)
+		VALUES ($1, $2, '0', $3, $4, 50, 'CALL'), ($1, $2, '0,0', $4, $5, 0, 'CALL')`,
+		reproducerTxHash, blockNum, privateWalletEOA, privateTokenContract, orgVaultContract)
 	require.NoError(t, err)
 
 	// Transfer event log: emitter = privateTokenContract (Hidden).
@@ -315,13 +315,12 @@ func TestExplorerCoherence_RD1009_AllSurfacesAgree(t *testing.T) {
 			transferTxHash, rr.Code)
 	}
 
-	// 4. /transactions/:hash/internal — must surface the internal-tx row.
-	// This is the gap closed in THIS PR. Without the fix, even though
-	// buildRedactOptsForViewer populates opts.VisibleTxHashes,
-	// RedactInternalTransactions ignored it and dropped the both-hidden row.
+	// 4. /transactions/:hash/internal — surfaces the frame into the admin's
+	// vault and drops the frame with both sides private (RD-1316).
 	type internalTxRow struct {
-		ID     int64  `json:"id"`
-		TxHash string `json:"txHash"`
+		ID           int64  `json:"id"`
+		TxHash       string `json:"txHash"`
+		TraceAddress string `json:"traceAddress"`
 	}
 	{
 		req, _ := http.NewRequest(http.MethodGet,
@@ -333,12 +332,13 @@ func TestExplorerCoherence_RD1009_AllSurfacesAgree(t *testing.T) {
 		var rows []internalTxRow
 		require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &rows))
 		require.NotEmptyf(t, rows,
-			"COHERENCE VIOLATION (/transfers vs /transactions/:hash/internal): /transfers exposed tx %q with internal-tx activity in the fixture, "+
-				"but /internal returned no rows. This is the follow-up gap closed by this PR — RedactInternalTransactions must honour RedactOpts.VisibleTxHashes "+
-				"so internal-tx lists agree with the parent tx's row-survival decision.",
+			"COHERENCE VIOLATION (/transfers vs /transactions/:hash/internal): /transfers exposed tx %q, "+
+				"but /internal returned no rows although the fixture has a frame into the admin's vault (a side the admin sees).",
 			transferTxHash)
 		require.Equal(t, transferTxHash, rows[0].TxHash,
 			"internal-tx row points at the wrong parent tx hash: got %q want %q", rows[0].TxHash, transferTxHash)
+		require.Lenf(t, rows, 1, "RD-1316: the frame with both sides private must not surface: %s", rr.Body.String())
+		require.Equal(t, "0,0", rows[0].TraceAddress, "the surviving frame is the call into the admin's vault")
 	}
 
 	// 5. /transactions/:hash/logs — the raw event log is emitted by a
