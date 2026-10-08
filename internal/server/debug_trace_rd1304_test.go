@@ -48,6 +48,8 @@ type traceCanary struct {
 	traceStatus    int
 	// lastCallBlock is params[1] of the last debug_traceCall the node saw.
 	lastCallBlock any
+	// lastCallObject is params[0] of the last debug_traceCall the node saw.
+	lastCallObject any
 }
 
 type traceContractLookupStore struct {
@@ -84,6 +86,7 @@ func newTraceCanary(t *testing.T) *traceCanary {
 		c.mu.Lock()
 		c.reqs = append(c.reqs, canaryReq{Method: env.Method, Tracer: tr})
 		if env.Method == "debug_traceCall" && len(env.Params) > 1 {
+			c.lastCallObject = env.Params[0]
 			c.lastCallBlock = env.Params[1]
 		}
 		txFrom, txTo, txIn, topTo, calls, override, traceStatus := c.txFrom, c.txTo, c.txIn, c.topTo, c.calls, c.callTracerBody, c.traceStatus
@@ -959,6 +962,14 @@ func TestRD1304_TraceCall_AmbiguousCallObjectRefused(t *testing.T) {
 		"to as array":           {"to": []any{addr}},
 		"non-string data":       {"to": addr, "data": 5},
 		"non-string value":      {"to": addr, "value": 1},
+		"decimal value":         {"to": addr, "value": "100"},
+		"non-hex value":         {"to": addr, "value": "0xzz"},
+		"empty hex value":       {"to": addr, "value": "0x"},
+		"value over 256 bits":   {"to": addr, "value": "0x1" + strings.Repeat("0", 64)},
+		"data without 0x":       {"to": addr, "data": "6d4ce63c"},
+		"non-hex data":          {"to": addr, "data": "0x6d4ce63g"},
+		"odd-length data":       {"to": addr, "data": "0x6d4ce63"},
+		"non-hex input":         {"to": addr, "input": "0xzz"},
 	}
 	for name, callObj := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -971,7 +982,50 @@ func TestRD1304_TraceCall_AmbiguousCallObjectRefused(t *testing.T) {
 
 			res := proc.Process(ctx, traceReq(u.did, "", "debug_traceCall", callObj, "latest"))
 			require.True(t, denied(res), "%s must be refused", name)
+			assert.Equal(t, http.StatusBadRequest, res.Error.StatusCode, "%s is a malformed request", name)
+			assert.Equal(t, ReasonInvalidRequestShape, res.Error.Reason)
 			assert.Empty(t, c.snapshot(), "%s: nothing may reach the node", name)
+		})
+	}
+}
+
+// Well-formed hex values and calldata are accepted in any letter case or
+// zero padding, and forwarded in canonical form (lowercase, 0x prefix, no
+// leading zeros in the value) so every node parses them the same way.
+func TestRD1304_TraceCall_HexValueAndDataAccepted(t *testing.T) {
+	addr := fixedAddr(0xc8)
+	cases := map[string]struct {
+		call      map[string]any
+		forwarded map[string]any
+	}{
+		"zero value":            {map[string]any{"to": addr, "value": "0x0"}, map[string]any{"to": addr, "value": "0x0"}},
+		"zero-padded value":     {map[string]any{"to": addr, "value": "0x01"}, map[string]any{"to": addr, "value": "0x1"}},
+		"all-zero value":        {map[string]any{"to": addr, "value": "0x000"}, map[string]any{"to": addr, "value": "0x0"}},
+		"upper-case value":      {map[string]any{"to": addr, "value": "0X1F"}, map[string]any{"to": addr, "value": "0x1f"}},
+		"256-bit value":         {map[string]any{"to": addr, "value": "0x" + strings.Repeat("f", 64)}, map[string]any{"to": addr, "value": "0x" + strings.Repeat("f", 64)}},
+		"64-digit padded value": {map[string]any{"to": addr, "value": "0x" + strings.Repeat("0", 63) + "1"}, map[string]any{"to": addr, "value": "0x1"}},
+		"empty data string":     {map[string]any{"to": addr, "data": ""}, map[string]any{"to": addr}},
+		"upper-case calldata":   {map[string]any{"to": addr, "data": "0X6D4CE63C"}, map[string]any{"to": addr, "data": "0x6d4ce63c"}},
+		"empty calldata":        {map[string]any{"to": addr, "data": "0x"}, map[string]any{"to": addr, "data": "0x"}},
+		"matching input alias":  {map[string]any{"to": addr, "data": "0x6d4ce63c", "input": "0x6D4CE63C"}, map[string]any{"to": addr, "data": "0x6d4ce63c"}},
+		"input without data":    {map[string]any{"to": addr, "input": "0x6D4CE63C"}, map[string]any{"to": addr, "data": "0x6d4ce63c"}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			c := newTraceCanary(t)
+			proc, ts := setupTraceProcessor(t, c)
+			ctx := context.Background()
+			c.topTo = addr
+			u := newTraceUser(t, ctx, ts, "", nil, traceMethods, "")
+			addContract(t, ctx, ts, u.orgID, addr, u.groupID)
+
+			res := proc.Process(ctx, traceReq(u.did, "", "debug_traceCall", tc.call, "latest"))
+			require.Nil(t, res.Error, "%s must be accepted: %+v", name, res.Error)
+			assert.Equal(t, 1, c.traceRequests())
+			c.mu.Lock()
+			forwarded := c.lastCallObject
+			c.mu.Unlock()
+			assert.Equal(t, tc.forwarded, forwarded, "%s: the node receives the canonical call object", name)
 		})
 	}
 }
