@@ -10920,7 +10920,9 @@ paths:
         replaces addresses with stable pseudonyms and hides values and hashes; "redacted"
         (or any unknown level) shows only direction, gas, status and timing with "[PRIVATE]"
         counterparties. Fail-closed: a revoked or expired grant, or an address_id
-        that does not belong to the grant, yields 403/404.'
+        that does not belong to the grant, yields 403/404. Under the View-as mirror
+        it always returns 404: the target''s grants are not available to the admin
+        viewing as them.'
       parameters:
       - description: Disclosure grant ID
         in: path
@@ -11004,7 +11006,9 @@ paths:
         grant''s requester, the grant scope must include activity_logs or full_disclosure,
         and only entries inside the grant''s validity window are returned. Fail-closed:
         anonymous callers are rejected, and "grant missing"/"not your grant"/"expired"
-        all return the same 404 to prevent enumeration.'
+        all return the same 404 to prevent enumeration. Under the View-as mirror it
+        always returns 404: the target''s grants are not available to the admin viewing
+        as them.'
       parameters:
       - description: Disclosure grant ID
         in: path
@@ -11074,7 +11078,8 @@ paths:
         is returned ONLY for a "full" grant; a "pseudonymous" grant returns a stable
         pseudonym and no real address; other levels return neither. Fail-closed: a
         revoked or expired grant, or an address_id that does not belong to the grant,
-        yields 403/404.'
+        yields 403/404. Under the View-as mirror it always returns 404: the target''s
+        grants are not available to the admin viewing as them.'
       parameters:
       - description: Disclosure grant ID
         in: path
@@ -11986,7 +11991,9 @@ paths:
         for the resolved viewer: the viewer DID comes from a validated JWT (or the
         impersonation override) — never from a query param — and for non-full grants
         the disclosed address is a pseudonym or "[PRIVATE]", never the real address.
-        Fail-closed: with no resolvable viewer, only empty lists are returned.'
+        Fail-closed: with no resolvable viewer, only empty lists are returned. Under
+        the View-as mirror no disclosed addresses are listed: the target''s grants
+        are not available to the admin viewing as them.'
       parameters:
       - description: 'Viewer wallet address (0x-prefixed hex), echoed back for display
           only. The viewer identity is resolved solely from the JWT — a wallet value

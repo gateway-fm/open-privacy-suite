@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 
+	"privacy-proxy/internal/disclosure"
 	"privacy-proxy/internal/rbac"
 	"privacy-proxy/internal/server/middleware"
 
@@ -60,6 +61,9 @@ import (
 //   c.Set(viewerDIDOverrideContextKey, target_did)
 //   c.Set(impersonationActorDIDContextKey, admin_did)
 //   c.Set(impersonationOrgIDContextKey, org_id)   // the explicit :org_id
+//   c.Request ctx marked disclosure.WithoutViewerGrants  // RD-1318
+//
+// (all through setImpersonationContext).
 //
 // Downstream:
 //
@@ -80,7 +84,8 @@ import (
 
 // Context keys for the impersonation override. Strings, not custom types,
 // so the explorer handlers (which already read string keys like "subject")
-// stay readable. The keys are only written by impersonationGateMiddleware;
+// stay readable. The keys are only written by impersonationGateMiddleware
+// (through setImpersonationContext);
 // see the SECURITY: comment in getViewerDIDFromRequest for the invariant.
 const (
 	viewerDIDOverrideContextKey     = "rd928_viewer_did_override"
@@ -326,9 +331,7 @@ func (s *Server) impersonationGateMiddleware() gin.HandlerFunc {
 		// downstream code (getViewerDIDFromRequest, handleJSONRPC) sees
 		// them. Audit log fires after dispatch so it captures the
 		// downstream decision in `reason` (allow / deny / error).
-		c.Set(viewerDIDOverrideContextKey, targetDID)
-		c.Set(impersonationActorDIDContextKey, adminDID)
-		c.Set(impersonationOrgIDContextKey, orgID)
+		setImpersonationContext(c, targetDID, adminDID, orgID)
 
 		c.Next()
 
@@ -365,6 +368,26 @@ func (s *Server) impersonationGateMiddleware() gin.HandlerFunc {
 				"admin_did", adminDID, "target_did", targetDID, "path", c.Request.URL.Path, "err", logErr)
 		}
 	}
+}
+
+// setImpersonationContext installs the impersonation override for one request:
+// the target as the resolved viewer, the acting admin and the explicit org, and
+// — on the request context, so it reaches every layer below the handlers
+// (visibility resolution, the RPC processor) — the mark that the target's
+// disclosure grants do not apply (RD-1318). A grant is approved by its
+// subject for the grantee only; an admin viewing as the grantee must not read
+// through it. impersonationGateMiddleware is the only production caller.
+func setImpersonationContext(c *gin.Context, targetDID, actorDID, orgID string) {
+	c.Set(viewerDIDOverrideContextKey, targetDID)
+	c.Set(impersonationActorDIDContextKey, actorDID)
+	c.Set(impersonationOrgIDContextKey, orgID)
+	c.Request = c.Request.WithContext(disclosure.WithoutViewerGrants(c.Request.Context()))
+}
+
+// disclosureGrantsApply reports whether the resolved viewer's disclosure grants
+// may be used for this request: never under impersonation (RD-1318).
+func disclosureGrantsApply(c *gin.Context) bool {
+	return !isImpersonating(c) && !disclosure.ViewerGrantsSuppressed(c.Request.Context())
 }
 
 // verifyImpersonationTargetInOrg returns nil iff the target user exists AND

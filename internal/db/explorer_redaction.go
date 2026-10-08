@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"privacy-proxy/internal/disclosure"
 	"privacy-proxy/internal/evm/precompile"
 	"privacy-proxy/internal/explorer"
 	"privacy-proxy/internal/viewscope"
@@ -525,8 +526,11 @@ type disclosedGrantedAddress struct {
 // grant with empty scope and one new grant with `disclosure_level=full`), the
 // caller-side merge in GetBatchVisibility / GetBatchVisibilityDetailed picks
 // the MAX level via visibilityRank — more permissive grants win.
+//
+// Under an impersonation (disclosure.WithoutViewerGrants) it returns nothing:
+// the grants belong to the viewer, not to the admin viewing as them (RD-1318).
 func (d *DB) getDisclosedAddressesWithLevels(ctx context.Context, viewerDID string) ([]disclosedGrantedAddress, error) {
-	if viewerDID == "" {
+	if viewerDID == "" || disclosure.ViewerGrantsSuppressed(ctx) {
 		return nil, nil
 	}
 

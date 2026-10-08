@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,28 +17,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestImpersonation_DisclosureCounterparty_NoAdminBleed_RD1079 is the end-to-end
-// proof that View-as (RD-1028) does NOT mix the signed-in admin's visibility
-// with the impersonated user's, for the disclosed-account counterparty case
-// (RD-1079).
-//
-// Fixture: Charlie (private EOA) sends a token transfer to Eve (private EOA).
-//   - Dave holds a *pseudonymous* disclosure grant on Eve.
-//   - The signed-in Admin holds a *full* disclosure grant on Eve — i.e. broader
-//     visibility: as Admin, Eve drives the row-survival union and the redactor
-//     reveals Eve's counterparty (Charlie) in full hex.
-//   - Both Dave and Admin are in a group with a token contract grant (event
-//     access) so the transfer survives RedactTransfers' event-access strip.
-//
-// Assertions:
-//   - Admin viewing DIRECTLY → Charlie is revealed in full hex (broad view).
-//   - Admin viewing-as Dave (subject=admin, override=Dave) → Charlie is
-//     rendered as a PSEUDONYM, never the real hex, and is NOT labeled
-//     `visible_to_grant`/"Shared". The admin's full-grant visibility does not
-//     bleed into the impersonated session — the impersonated viewer governs.
-//
-// This is the RD-1079 leak under impersonation; it composes the RD-1028
-// viewer-resolution (override governs) with the RD-1079 Full-only union.
+// TestImpersonation_DisclosureCounterparty_NoAdminBleed_RD1079 verifies
+// the disclosure rendering policy for direct and impersonated viewers.
+// Disclosure grants apply only to their grantee's direct session.
 func TestImpersonation_DisclosureCounterparty_NoAdminBleed_RD1079(t *testing.T) {
 	srv, database, conn := setupTestServerForExplorerTransactions(t)
 	ctx := context.Background()
@@ -56,7 +38,9 @@ func TestImpersonation_DisclosureCounterparty_NoAdminBleed_RD1079(t *testing.T) 
 			c.Set("subject", sub)
 		}
 		if ov := c.GetHeader("X-Test-Override"); ov != "" {
-			c.Set(viewerDIDOverrideContextKey, ov)
+			// Same context the impersonation gate installs (RD-1318: it
+			// also marks the target's disclosure grants as unavailable).
+			setImpersonationContext(c, ov, c.GetHeader("X-Test-Subject"), "rd1079-imp-org")
 		}
 		c.Next()
 	})
@@ -134,7 +118,7 @@ func TestImpersonation_DisclosureCounterparty_NoAdminBleed_RD1079(t *testing.T) 
 		txHash, token, charlieEOA, eveEOA, blockNum)
 	require.NoError(t, err)
 
-	getTransfers := func(subject, override string) []explorer.TokenTransfer {
+	fetch := func(subject, override string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/explorer/addresses/"+eveEOA+"/transfers", nil)
 		if subject != "" {
 			req.Header.Set("X-Test-Subject", subject)
@@ -144,6 +128,10 @@ func TestImpersonation_DisclosureCounterparty_NoAdminBleed_RD1079(t *testing.T) 
 		}
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
+		return w
+	}
+	getTransfers := func(subject, override string) []explorer.TokenTransfer {
+		w := fetch(subject, override)
 		require.Equal(t, http.StatusOK, w.Code, "transfers endpoint should return 200")
 		var resp apimodels.AddressTransfersResponse
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
@@ -159,26 +147,33 @@ func TestImpersonation_DisclosureCounterparty_NoAdminBleed_RD1079(t *testing.T) 
 	require.Equalf(t, charlieEOA, adminView[0].From,
 		"control: admin's full grant must reveal the counterparty in full hex (got %q)", adminView[0].From)
 
-	// The actual test — Admin views-AS Dave (subject=admin, override=Dave).
-	// Dave's PSEUDONYMOUS grant must govern: counterparty pseudonymised, never
-	// the real hex, never the "Shared" (visible_to_grant) label. The admin's
-	// full-grant visibility must NOT bleed in.
-	asDave := getTransfers(adminDID, daveDID)
-	require.Len(t, asDave, 1, "View-as Dave should still surface Eve's transfer (Eve is in VisibleAddresses)")
-
-	gotFrom := asDave[0].From
-	require.NotEqualf(t, charlieEOA, gotFrom,
-		"RD-1079 / View-as bleed: counterparty leaked in full hex under impersonation (got %q)", gotFrom)
-	require.Equalf(t, explorer.GeneratePseudonym(charlieEOA, nil), gotFrom,
-		"counterparty must render as Dave's pseudonymous lens, got %q", gotFrom)
-	require.Equalf(t, explorer.GeneratePseudonym(eveEOA, nil), asDave[0].To,
-		"disclosed subject must render at her pseudonym, got %q", asDave[0].To)
-
-	// Label check (the frontend-visible symptom): the counterparty must NOT be
-	// tagged visible_to_grant/"Shared" — Dave holds no per-tx visibleTo share.
-	require.NotEqualf(t, explorer.ReasonVisibleToGrant, asDave[0].AddressMetadata[charlieEOA],
+	// Control — Dave views DIRECTLY: his PSEUDONYMOUS grant governs, the
+	// counterparty is pseudonymised, never the real hex, never "Shared".
+	asDaveHimself := getTransfers(daveDID, "")
+	require.Len(t, asDaveHimself, 1, "Dave sees Eve's transfer through his own grant")
+	require.Equalf(t, explorer.GeneratePseudonym(charlieEOA, nil), asDaveHimself[0].From,
+		"counterparty must render as Dave's pseudonymous lens, got %q", asDaveHimself[0].From)
+	require.Equalf(t, explorer.GeneratePseudonym(eveEOA, nil), asDaveHimself[0].To,
+		"disclosed subject must render at her pseudonym, got %q", asDaveHimself[0].To)
+	require.NotEqualf(t, explorer.ReasonVisibleToGrant, asDaveHimself[0].AddressMetadata[charlieEOA],
 		"counterparty must not carry the visible_to_grant/\"Shared\" label under a pseudonymous grant")
-	// The disclosed subject herself is correctly tagged disclosure_grant.
-	require.Equal(t, explorer.ReasonDisclosureGrant, asDave[0].AddressMetadata[eveEOA],
+	require.Equal(t, explorer.ReasonDisclosureGrant, asDaveHimself[0].AddressMetadata[eveEOA],
 		"disclosed subject should be tagged disclosure_grant")
+
+	// The actual test — Admin views-AS Dave (subject=admin, override=Dave).
+	// Neither the admin's own FULL grant nor Dave's grant applies: grants
+	// belong to their grantee, never to an admin viewing as them (RD-1318).
+	// Without a grant Eve is hidden from Dave's view, so her address page is
+	// not found — and no form of Charlie or Eve (hex, pseudonym, grant label)
+	// reaches the admin.
+	w := fetch(adminDID, daveDID)
+	require.Equal(t, http.StatusNotFound, w.Code, "View-as Dave without his grant: %s", w.Body.String())
+	body := strings.ToLower(w.Body.String())
+	for _, hiddenValue := range []string{
+		strings.TrimPrefix(charlieEOA, "0x"), strings.TrimPrefix(eveEOA, "0x"),
+		strings.ToLower(explorer.GeneratePseudonym(charlieEOA, nil)), strings.ToLower(explorer.GeneratePseudonym(eveEOA, nil)),
+		string(explorer.ReasonDisclosureGrant),
+	} {
+		require.NotContainsf(t, body, hiddenValue, "View-as returned %q: %s", hiddenValue, w.Body.String())
+	}
 }
