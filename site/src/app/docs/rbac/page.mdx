@@ -164,8 +164,62 @@ group's allowed methods. The `deploy` claim does **not**
 grant tracing — a group that holds `deploy` but does not list `debug_trace*` in its allowed
 methods cannot trace. This includes **org-admin groups**: an org-admin group that should be
 able to trace must include `debug_traceTransaction` / `debug_traceCall` in its
-allowed methods. Cross-organization isolation on trace results is always enforced separately,
-regardless of the allowlist.
+allowed methods.
+
+Being on the allowlist is necessary but not sufficient. Each trace is also checked the same
+way as the method it mirrors:
+
+- **`debug_traceCall`** gets the same checks as `eth_call` for the target contract:
+  - the caller needs access to the contract;
+  - function restrictions apply;
+  - Multicall batches are refused;
+  - a historical block is refused for non-admins;
+  - a banned or unverified user is refused;
+  - a `from` that is not one of the caller's linked addresses is refused.
+- **`debug_traceTransaction`** follows the same access checks as `eth_getTransactionByHash`.
+  A user in more than one organization must use `/rpc/:org_id`, and a banned or unverified user
+  is refused. A transaction is replayed only for its sender or recipient, an admin of the
+  contract it called, or a recipient it was shared with. Anyone else is denied, and a
+  transaction that does not exist is denied in exactly the same way.
+
+The proxy returns only the **call tree** (the `callTracer` output), and only when the
+caller has access to **every** contract the trace passes through, in the organization the
+request is for. A trace into a contract the caller has no access to is denied, even if the
+entry contract is accessible. Function and argument restrictions apply to internal calls as
+well. A proxy's delegated
+calls use the caller's permissions on the proxy, and the implementation must still pass the
+organization check. Validated precompiles, shared infrastructure and contract creation retain
+their existing access rules.
+
+A request with no tracer configured gets the call tree. Explicit requests for any other output
+are rejected:
+
+- `prestateTracer`;
+- JavaScript tracers;
+- struct-logger options such as `enableMemory`;
+- `callTracer` with `withLog`;
+- state or block overrides.
+
+These would expose contract storage, memory or raw event logs, which the storage and event
+rules withhold from other read methods.
+
+**Internal-call values.** The top-level call's input and output are always returned. The
+values carried by internal calls are returned only to a caller who could read the storage of
+the contract that produced them, by the same rule as `eth_getStorageAt` for private slots:
+
+- an internal call's input and value come from the calling contract (for a call made inside a
+  proxy's delegated code, the proxy);
+- its output and revert data come from the called contract (for a delegated call, the proxy).
+
+A caller who may not read that contract's storage gets the call tree (call type, addresses,
+gas and error) with those fields removed and named in the call's `redacted` field, for
+example `"redacted": ["input", "value"]`. In practice, an org admin, or a member of a group
+with the `admin` claim on that contract, sees the values if `eth_getStorageAt` is in their
+allowed methods. A contract grant without the `admin` claim lets a caller call a contract, not
+read the private data it passes to other contracts.
+
+The decision uses the caller's current access, also when replaying an older transaction. The
+output of a precompiled contract inside a trace is never returned.
 
 </Callout>
 
@@ -314,6 +368,8 @@ This prevents an admin from configuring event rules that target users or contrac
 
 </Callout>
 
+**Client state and block overrides are unsupported for every caller, including admins.** Ordinary calls and simulations remain available against the configured node's state. OPS checks optional override arguments on call, gas-estimation, access-list, and trace methods, including aliased equivalents; bundled simulation methods are unsupported. Passthrough methods are forwarded without this check (see [Passthrough methods](/docs/configuration#passthrough-methods)). See [Response filtering](/docs/security/response-filtering#state-and-block-overrides) for the accepted argument forms.
+
 ### Multi-Organization Users
 
 Users can be members of groups in multiple organizations. The system resolves organization context
@@ -418,7 +474,7 @@ Enable **Verbose error reasons** on a group's access settings (admin dashboard, 
 ```
 
 - **Default off.** With the flag off, responses are byte-for-byte identical to today (opaque).
-- **Stable codes** for automation to switch on: `sender_not_linked`, `method_not_allowed`, `auth_required`, `invalid_request_shape`, `rate_limited`, `concurrency_limited`, `upstream_error`.
+- **Stable codes** for automation to switch on: `sender_not_linked`, `method_not_allowed`, `auth_required`, `invalid_request_shape`, `state_override_not_allowed`, `rate_limited`, `concurrency_limited`, `upstream_error`. `state_override_not_allowed` is sent only on `/rpc/:org_id`, and its Access Logs entry appears in the fleet-wide view, not in your org's (see [State and block overrides](/docs/security/response-filtering#state-and-block-overrides)).
 - **Cross-org and trace-related causes always collapse to `access_denied`** — verbose mode never reveals another tenant's contracts, ownership, or whether an address exists. Only facts about the caller's own request are exposed.
 - The raw internal error is **never** sent on the wire, flag or not — it stays in server logs.
 - Toggling the flag is recorded in the admin audit log.

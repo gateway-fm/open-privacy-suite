@@ -78,6 +78,10 @@ type TraceValidationResult struct {
 	DenialKind    DenialKind     // Structured denial classification for audit/logging — never reaches the response body
 	DeniedTarget  string         // Address that caused denial (if any) — never reaches the response body
 	CreateTargets []CreateTarget // Contract addresses created during trace execution
+	// ClientAccessTargets contains granted organization-owned nested frames.
+	// Precompile, shared-infrastructure and creation frames use their existing
+	// validation rules and are excluded from these function checks.
+	ClientAccessTargets []tracer.CallTarget
 }
 
 // DenialKind classifies why a trace was denied so audit logs and SIEM events
@@ -107,6 +111,18 @@ type TraceOption func(*traceOptions)
 type traceOptions struct {
 	intraOrgGrantScoping bool
 	grantedContracts     map[string]bool
+	clientTraceGrants    bool
+}
+
+// WithClientTraceGrantScoping checks client trace frames against their storage
+// context and requires grants on registered created contracts. Code ownership
+// and organization checks still apply to every delegated implementation.
+func WithClientTraceGrantScoping(grantedContracts map[string]bool) TraceOption {
+	return func(o *traceOptions) {
+		o.intraOrgGrantScoping = true
+		o.grantedContracts = grantedContracts
+		o.clientTraceGrants = true
+	}
 }
 
 // WithIntraOrgGrantScoping enables the RD-1053 intra-org pass: an internal
@@ -240,6 +256,13 @@ func (v *TraceValidator) ValidateTrace(
 				}, nil
 			}
 
+			if o.clientTraceGrants && ownerOrgID != "" && !o.grantedContracts[addr] {
+				return &TraceValidationResult{
+					Allowed: false, Reason: "contract access denied",
+					DenialKind: DenialKindIntraOrgUngranted, DeniedTarget: addr,
+				}, nil
+			}
+
 			createTargets = append(createTargets, CreateTarget{
 				Type:    target.Type,
 				Address: addr,
@@ -249,6 +272,7 @@ func (v *TraceValidator) ValidateTrace(
 	}
 
 	// Rule 2: Validate each call target
+	var clientAccessTargets []tracer.CallTarget
 	for _, target := range trace.CallTargets {
 		// Skip CREATE/CREATE2 targets — handled above
 		if target.Type == "CREATE" || target.Type == "CREATE2" {
@@ -353,7 +377,11 @@ func (v *TraceValidator) ValidateTrace(
 			// same-org-but-ungranted contract through an internal call
 			// rather than as the direct `to`. Cross-org isolation (2d/2e)
 			// is independent of this and always enforced.
-			if o.intraOrgGrantScoping && !o.grantedContracts[addr] {
+			grantAddress := addr
+			if o.clientTraceGrants && target.Type == "DELEGATECALL" {
+				grantAddress = normalizeTraceAddr(target.StorageAddress)
+			}
+			if o.intraOrgGrantScoping && !o.grantedContracts[grantAddress] {
 				// Pre-registration fallback: an in-flight deployment
 				// (precomputed CREATE/CREATE2/CREATE3 address) is owned by
 				// the org but has no grant row until it is mined and
@@ -366,7 +394,7 @@ func (v *TraceValidator) ValidateTrace(
 				// address has no code yet, so a non-deployer reaching it is
 				// both exotic and safe to deny — fail-closed).
 				if userHasDeploy {
-					prereg, err := v.isPreregisteredForAnyOrg(ctx, addr, userOrgIDs)
+					prereg, err := v.isPreregisteredForAnyOrg(ctx, grantAddress, userOrgIDs)
 					if err != nil {
 						return nil, fmt.Errorf("failed to check preregistration: %w", err)
 					}
@@ -381,6 +409,9 @@ func (v *TraceValidator) ValidateTrace(
 					DenialKind:   DenialKindIntraOrgUngranted,
 					DeniedTarget: addr,
 				}, nil
+			}
+			if o.clientTraceGrants && target.Depth > 0 {
+				clientAccessTargets = append(clientAccessTargets, target)
 			}
 			continue
 		}
@@ -413,8 +444,9 @@ func (v *TraceValidator) ValidateTrace(
 	}
 
 	return &TraceValidationResult{
-		Allowed:       true,
-		CreateTargets: createTargets,
+		Allowed:             true,
+		CreateTargets:       createTargets,
+		ClientAccessTargets: clientAccessTargets,
 	}, nil
 }
 

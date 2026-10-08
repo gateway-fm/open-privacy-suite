@@ -1319,18 +1319,22 @@ const MaxRequestBodySize = 1 << 20 // 1MB
 // @Description
 // @Description  `Authorization: Bearer <token>` is OPTIONAL: anonymous callers are restricted to the anonymous method allowlist; authenticated callers get per-method RBAC and response redaction based on their identity.
 // @Description
+// @Description  Client state/block override options on call, gas-estimation, access-list, and trace methods are unsupported for all callers, including admins. Positional null/empty-object placeholders remain allowed; debug_traceCall override and replay-position config keys must be omitted. Ordinary calls remain subject to the normal access and node validation rules.
+// @Description
 // @Description  The transaction-sending methods (eth_sendTransaction / eth_sendRawTransaction) additionally accept a top-level `visibleTo` array (alias `privateFor`) of DIDs and/or linked ETH addresses, granting those viewers per-transaction visibility of the emitted event logs (RD-1163). It is accepted only for log-emitting contract calls.
 // @Description
-// @Description  A JSON-RPC-level error (bad params, node error, or a masked authorization denial) is returned with HTTP 200 in the JSON-RPC error member. The non-200 statuses below are transport / access / rate-limit failures that never reach the node. `POST /` and `POST /rpc` are the same operation.
+// @Description  Ordinary upstream JSON-RPC errors retain their JSON-RPC error member. Transport, access and rate-limit failures use the non-200 statuses below. `POST /` and `POST /rpc` are the same operation.
+// @Description
+// @Description  Client traces return only validated call-tree frames. The viewer's contract, function and argument permissions apply to returned calls, including delegated storage contexts. Internal-call values (a nested call's input, value, output and revert reason) are returned only to a viewer who may read the storage of the contract that produced them; otherwise they are omitted and named in the call's `redacted` array. Trace or upstream failures return opaque non-200 errors.
 // @Tags         JSON-RPC
 // @Accept       json
 // @Produce      json
 // @Param        org_id path string false "Organization the access decision resolves against (only on /rpc/{org_id})"
 // @Param        request body apimodels.JSONRPCRequestEnvelope true "JSON-RPC 2.0 request"
 // @Success      200 {object} apimodels.JSONRPCResponseEnvelope "JSON-RPC response; may carry a JSON-RPC-level error member"
-// @Failure      400 {object} apimodels.APIError "unreadable body, malformed, ambiguous (duplicate or case-variant member names) or batch JSON-RPC, or invalid visibleTo"
+// @Failure      400 {object} apimodels.APIError "unreadable body, malformed, ambiguous (duplicate or case-variant members) or batch JSON-RPC, invalid visibleTo, or an unsupported tracer/config (a tracer other than callTracer, withLog or malformed trace params)"
 // @Failure      401 {object} apimodels.APIError "identity required but unresolved on a trace method (debug_traceCall / debug_traceTransaction)"
-// @Failure      403 {object} apimodels.APIError "runtime-trace or compliance denial"
+// @Failure      403 {object} apimodels.APIError "runtime-trace, trace-access (debug_traceTransaction for a non-participant or a missing transaction) or compliance denial"
 // @Failure      404 {object} apimodels.APIError "method not allowed for the caller (denials are masked as method not found)"
 // @Failure      413 {object} apimodels.APIError "request body too large"
 // @Failure      429 {object} apimodels.APIError "concurrency limit or upstream rate limit"
@@ -2017,12 +2021,13 @@ func (s *Server) getStatus(c *gin.Context) {
 //
 // @Summary      Test a JSON-RPC request
 // @Description  Dashboard diagnostic: runs one method through RBAC, travel-rule compliance, and upstream forwarding, using a synthetic identity ("test:dashboard") or the subject of a supplied jwt_token. On an upstream JSON-RPC-level error the call still returns HTTP 200 with the error in the response body. Requires the private-network source gate (403 otherwise).
+// @Description  Client state/block override options follow the RPC policy for every caller, including admins.
 // @Tags         Admin: ops
 // @Accept       json
 // @Produce      json
 // @Param        request body apimodels.TestRequestInput true "method, params, and optional jwt_token / org_id"
 // @Success      200 {object} apimodels.TestRequestResponse "forwarded result (or an upstream JSON-RPC error message) plus latency"
-// @Failure      400 {object} apimodels.APIError "invalid request body or invalid JWT"
+// @Failure      400 {object} apimodels.APIError "invalid request body, invalid JWT, or a trace method (debug_traceCall / debug_traceTransaction are not supported here; send them to /rpc or /rpc/{org_id})"
 // @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
 // @Failure      403 {object} apimodels.TestRequestResponse "RBAC or compliance denied (network-gate rejections return the generic error envelope)"
 // @Failure      500 {object} apimodels.TestRequestResponse "access-check error"
@@ -2056,6 +2061,14 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 	// /rpc dispatch (which canonicalizes at ingress). Without this, a mixed-case
 	// method would report a different target/selector/verdict here than in prod.
 	input.Method = rbac.CanonicalizeMethod(input.Method)
+
+	// RD-1304: the test-request diagnostic does not support client trace
+	// methods. Use the RPC trace endpoint with its access and output checks.
+	if tm := rbac.ResolveMethodAlias(input.Method); tm == "debug_traceCall" || tm == "debug_traceTransaction" ||
+		input.Method == "debug_traceCall" || input.Method == "debug_traceTransaction" {
+		respondBadRequest(c, "trace methods are not supported via test-request; send them to /rpc or /rpc/{org_id}")
+		return
+	}
 
 	// Use synthetic identity for test requests or extract from JWT token
 	testIdentity := "test:dashboard"

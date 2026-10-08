@@ -226,6 +226,8 @@ The eth_call trace validation runs **only** when the method resolves to `eth_cal
 
 A passthrough method has no defined `to`/`from`/`data` shape, so the proxy has nothing to extract for the trace and no way to know whether the method even runs the EVM. To apply organization scope checks to a chain-specific method, declare it with an `alias` instead.
 
+Client-supplied state and block overrides are refused for every caller, including admins, on built-in and aliased methods (see the [simulation-option policy](/docs/security/response-filtering#state-and-block-overrides)). Passthrough methods get no such check. Declare a chain-specific call or gas-estimation method such as `linea_estimateGas` with an `alias` (here `eth_estimateGas`), not as passthrough: an aliased method's override argument is refused, while a passthrough method's arguments, overrides included, are forwarded as sent.
+
 </Callout>
 
 **Intra-org contract-grant scoping:**
@@ -236,7 +238,7 @@ Set `RUNTIME_TRACING_INTRA_ORG_GRANTS_ENABLED=true` to tighten this: when on, an
 
 - **Default OFF.** Org ownership remains the boundary unless you opt in.
 - **Cross-org isolation is unaffected** by this flag — calls into another org's contracts (and into unregistered addresses) are always denied regardless.
-- Governs both reads (`eth_call`, `debug_traceCall`) and writes (`eth_sendTransaction`, `eth_sendRawTransaction`, and contract-deploy constructor calls).
+- Governs both reads (`eth_call`) and writes (`eth_sendTransaction`, `eth_sendRawTransaction`, and contract-deploy constructor calls). Trace requests (`debug_traceCall`, `debug_traceTransaction`) always apply this check, whatever this flag says, because a trace names every contract its internal calls reach.
 - **In-flight deploys are not blocked.** Multi-contract or factory deploys (CREATE2/CREATE3) that reference a precomputed sibling address before it is mined still work — pre-registered deployment addresses are allowed for deploy-claim callers, the same as the direct-call access check.
 - Has no effect when runtime tracing is globally unavailable.
 
@@ -312,7 +314,10 @@ A passthrough method is forwarded to the node **as-is**:
 
 - no contract access check (the proxy does not know whether the method takes an address);
 - no response filtering (the proxy does not know the response shape);
-- no eth_call tracing.
+- no eth_call tracing;
+- no simulation-option check: state and block override arguments are forwarded as sent.
+
+Do not declare a method that executes caller-supplied calls as passthrough. Methods such as `trace_call` and `trace_callMany` would run those calls against any contract, with whatever override arguments the node accepts, and return traces the proxy cannot filter. Declare a chain's own call or gas-estimation method, such as `linea_estimateGas`, with an `alias` instead (see [Aliased methods](#aliased-methods)).
 
 **You are responsible for what a passthrough method returns.** Declare one only if you run a node that serves it and its responses cannot expose data your tenants must not see. The proxy lists the passthrough methods in a startup warning. Each call is tagged `matched_via: "passthrough"` in the SIEM audit stream.
 
@@ -347,6 +352,7 @@ FROM group_access ga
 JOIN groups g ON g.id = ga.group_id
 WHERE EXISTS (SELECT 1 FROM unnest(ga.allowed_methods) AS e WHERE strpos(e, '*') > 0);
 ```
+
 
 A ready-to-use example is provided in `rpc-namespaces.example.json` — copy and customize it:
 

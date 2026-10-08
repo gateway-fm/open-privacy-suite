@@ -676,9 +676,32 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 		return p.processRawTransaction(ctx, req)
 	}
 
-	// Handle debug traces specially - requires strict deep tree validation
+	// Handle debug traces specially - requires strict deep tree validation.
+	// Route any registry-resolved trace name through the guarded trace path.
+	// Dedicated trace aliases are rejected by exact catalog admission before
+	// trace-specific work.
 	if req.Method == "debug_traceTransaction" || req.Method == "debug_traceCall" {
 		return p.processDebugTrace(ctx, req)
+	}
+	if aliased := rbac.ResolveMethodAlias(req.Method); aliased == "debug_traceTransaction" || aliased == "debug_traceCall" {
+		return p.processDebugTrace(ctx, req)
+	}
+
+	// RD-1305: refuse unsupported simulation options before RBAC, tracing and
+	// forwarding. Use an opaque response and retain the reason in the access log.
+	// Org resolution has not run yet, so this audit row has no resolved org.
+	if denied, kind := rbac.DetectStateOverride(req.Method, req.Params); denied {
+		req.denialReason = ReasonStateOverrideNotAllowed
+		slog.Info("state/block override denied", "method", req.Method, "user", req.UserID, "ip", req.ClientIP, "kind", kind)
+		p.recordRPCOutcome(req.Method, "override_denied", start)
+		p.recordRBACDecision("denied")
+		p.logAccess(ctx, req, http.StatusForbidden, http.StatusNotFound)
+		return &ProcessResult{
+			Error: &ProcessError{
+				StatusCode: http.StatusNotFound,
+				Message:    "method not found",
+			},
+		}
 	}
 
 	// Resolve method alias for access control (e.g. linea_estimateGas → eth_estimateGas).

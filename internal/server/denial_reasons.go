@@ -28,6 +28,13 @@ const (
 	// ReasonInvalidRequestShape: malformed params the proxy validates before
 	// tracing (bad block tag, non-hex to/from, etc.).
 	ReasonInvalidRequestShape = "invalid_request_shape"
+	// ReasonStateOverrideNotAllowed: the request carried a state/code or block
+	// override or another unsupported simulation option (eth_call /
+	// eth_estimateGas / eth_createAccessList: a non-block value at params[1],
+	// an override at params[2]/[3] or too many params; debug_traceCall: an
+	// override or txIndex config key). Rejected fail-closed (RD-1305). A fact
+	// about the caller's OWN request (they sent the option) — safe to surface.
+	ReasonStateOverrideNotAllowed = "state_override_not_allowed"
 	// ReasonCrossOrg: a traced call touched a contract owned by another org or
 	// an unregistered (private-by-default) address. ORACLE-SENSITIVE — reveals
 	// that some address is/ isn't registered elsewhere; the wire path collapses
@@ -42,6 +49,14 @@ const (
 	// ReasonDeployClaimRequired: a debug_trace* / runtime-create path that
 	// requires the deploy (or admin) claim.
 	ReasonDeployClaimRequired = "deploy_claim_required"
+	// ReasonTraceAccessDenied: a debug_traceTransaction replay denied because
+	// the viewer is not a participant / admin-on-to / visibleTo recipient of
+	// the tx, or a client trace whose internal frame fails the viewer's
+	// function or argument rules (RD-1304). Deliberately NOT on the
+	// wireReason allowlist — it collapses to the generic "access_denied" so a
+	// non-participant cannot distinguish a non-existent tx from one they may
+	// not see, nor a function-rule denial from a cross-org one (no oracle).
+	ReasonTraceAccessDenied = "trace_access_denied"
 	// ReasonComplianceBlocked: a travel-rule / sanctions check blocked the tx.
 	ReasonComplianceBlocked = "compliance_blocked"
 	// ReasonRateLimited: request- or daily-rate limit hit (429).
@@ -85,6 +100,7 @@ func wireReason(code string) string {
 		ReasonMethodNotAllowed, // safe only while RBAC denials stay a uniform 404 (see TestWireReason… / RBAC deny site)
 		ReasonSenderNotLinked,
 		ReasonInvalidRequestShape,
+		ReasonStateOverrideNotAllowed,
 		ReasonRateLimited,
 		ReasonConcurrencyLimited,
 		ReasonUpstreamError:

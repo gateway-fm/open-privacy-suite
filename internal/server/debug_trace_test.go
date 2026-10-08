@@ -2,9 +2,12 @@ package server
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"privacy-proxy/internal/db"
+	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
 	"privacy-proxy/internal/server/middleware"
 	"privacy-proxy/internal/tracer"
@@ -42,6 +45,15 @@ func setupProcessorWithoutTracing(t *testing.T) (*JSONRPCProcessor, *testServerR
 // setupProcessorWithTracing creates a JSONRPCProcessor with an enabled runtime tracer.
 // The tracer points to an unreachable URL, which is fine because the tests exercise
 // paths that fail before reaching the actual trace call.
+//
+// RD-1304: the client debug_trace* path now forwards a proxy-built trace
+// itself (it no longer forwards the caller's body), so its feature gate needs
+// a forward path. A null-answering node is wired as the proxy: it answers
+// eth_getTransactionByHash with null, so a debug_traceTransaction that passes
+// the allowlist is denied at the participant gate rather than reaching a
+// trace. The runtime tracer stays unreachable so the eth_call tests that share
+// this helper keep exercising their upstream-error paths (they use the
+// runtime tracer, never the proxy).
 func setupProcessorWithTracing(t *testing.T) (*JSONRPCProcessor, *testServerRBAC) {
 	t.Helper()
 	ts := setupTestServerForRBAC(t)
@@ -52,12 +64,18 @@ func setupProcessorWithTracing(t *testing.T) (*JSONRPCProcessor, *testServerRBAC
 	})
 	t.Cleanup(rt.Stop)
 
+	nullNode := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":null}`))
+	}))
+	t.Cleanup(nullNode.Close)
+
 	tv := rbac.NewTraceValidator(ts.db)
 
 	proc := NewJSONRPCProcessor(JSONRPCProcessorConfig{
 		RBACAccessCtrl:     ts.rbacAccessCtrl,
 		RateLimiter:        &noopRateLimiter{},
-		Proxy:              nil, // no proxy needed
+		Proxy:              proxy.New(nullNode.URL),
 		AccessLogger:       ts.db,
 		RuntimeTracer:      rt,
 		TraceValidator:     tv,
@@ -198,8 +216,8 @@ func TestDebugTrace_DeniedWithDeployClaimButMethodNotAllowed(t *testing.T) {
 
 // TestDebugTrace_AllowedByAllowlistWithoutDeployClaim proves the Option B
 // decoupling: a group WITHOUT the deploy/admin claim but WITH debug_trace* in
-// its allowed_methods passes the allowlist gate and reaches the tracer (the
-// cross-org ValidateTrace content gate still applies downstream).
+// its allowed_methods passes the allowlist gate and is evaluated by the stages
+// after it (shape, access, participant and cross-org checks still apply).
 func TestDebugTrace_AllowedByAllowlistWithoutDeployClaim(t *testing.T) {
 	proc, ts := setupProcessorWithTracing(t)
 	ctx := context.Background()
@@ -215,10 +233,13 @@ func TestDebugTrace_AllowedByAllowlistWithoutDeployClaim(t *testing.T) {
 	}
 
 	result := proc.processDebugTrace(ctx, req)
-	require.NotNil(t, result.Error, "expected an error (tracer unreachable)")
-	// Passed the allowlist gate; failed only at the (unreachable) tracer. The
-	// gate did NOT return the uniform 404 deny.
+	require.NotNil(t, result.Error, "expected a denial downstream of the allowlist")
+	// Passed the allowlist gate: the request was evaluated by the next stage —
+	// the malformed hash "0xdeadbeef" is refused by the request-shape check —
+	// not by the uniform 404 allowlist deny (RD-1304: asserted directly, not by
+	// elimination).
 	assert.NotEqual(t, "method not found", result.Error.Message)
+	assert.Equal(t, ReasonInvalidRequestShape, result.Error.Reason)
 }
 
 func TestDebugTrace_DeniedForUnknownUser(t *testing.T) {
@@ -237,10 +258,11 @@ func TestDebugTrace_DeniedForUnknownUser(t *testing.T) {
 	assert.Contains(t, result.Error.Message, "failed to get user")
 }
 
-func TestDebugTrace_AllowlistedReachesTracer(t *testing.T) {
+func TestDebugTrace_AllowlistedPassesMethodGate(t *testing.T) {
 	// A group with debug_traceTransaction in its allowed_methods passes the
-	// allowlist gate but fails at the tracer level because the tracer points to
-	// an unreachable node. (Deploy claim also present — both gates would pass.)
+	// allowlist gate and is evaluated by the next stage (the malformed hash is
+	// refused by the request-shape check, so the tracer is never reached).
+	// Deploy claim also present.
 	proc, ts := setupProcessorWithTracing(t)
 	ctx := context.Background()
 
@@ -254,17 +276,19 @@ func TestDebugTrace_AllowlistedReachesTracer(t *testing.T) {
 	}
 
 	result := proc.processDebugTrace(ctx, req)
-	require.NotNil(t, result.Error, "expected an error (tracer unreachable)")
-	// The error should be from the trace execution, not from the allowlist gate.
-	// This proves the gate passed and we reached the tracer.
+	require.NotNil(t, result.Error, "expected a denial downstream of the allowlist")
+	// The denial comes from the stage after the allowlist gate, which proves
+	// the gate passed.
 	assert.NotEqual(t, "method not found", result.Error.Message)
 	assert.NotContains(t, result.Error.Message, "not supported or enabled")
+	assert.Equal(t, ReasonInvalidRequestShape, result.Error.Reason)
 }
 
-func TestDebugTrace_WildcardAllowlistReachesTracer(t *testing.T) {
+func TestDebugTrace_WildcardAllowlistPassesMethodGate(t *testing.T) {
 	// A legacy "*" allowlist entry permits tracing too: its explicit expansion
 	// includes the trace methods. Admin claim present, but it's the "*"
-	// allowlist entry that grants the method.
+	// allowlist entry that grants the method. The malformed hash is then
+	// refused by the request-shape check.
 	proc, ts := setupProcessorWithTracing(t)
 	ctx := context.Background()
 
@@ -278,34 +302,28 @@ func TestDebugTrace_WildcardAllowlistReachesTracer(t *testing.T) {
 	}
 
 	result := proc.processDebugTrace(ctx, req)
-	require.NotNil(t, result.Error, "expected an error (tracer unreachable)")
+	require.NotNil(t, result.Error, "expected a denial downstream of the allowlist")
 	assert.NotEqual(t, "method not found", result.Error.Message)
+	assert.Equal(t, ReasonInvalidRequestShape, result.Error.Reason, "the \"*\" allowlist let it past the method gate")
 }
 
 func TestDebugTrace_DebugTraceCallAlsoHandled(t *testing.T) {
-	// debug_traceCall goes through the same code path; gated by its own
-	// allowlist entry.
-	proc, ts := setupProcessorWithTracing(t)
+	// debug_traceCall is allowlist-gated and runs the client trace path against
+	// a granted target with a valid sender.
+	c := newTraceCanary(t)
+	proc, ts := setupTraceProcessor(t, c)
 	ctx := context.Background()
 
-	externalID := createOrgGroupUserMembership(t, ctx, ts.db,
-		[]rbac.Claim{rbac.ClaimDeploy}, "debug_traceCall")
+	addr := fixedAddr(0x22)
+	c.topTo = addr
+	u := newTraceUser(t, ctx, ts, "", []rbac.Claim{rbac.ClaimDeploy}, []string{"debug_traceCall"}, "")
+	addContract(t, ctx, ts, u.orgID, addr, u.groupID)
 
-	req := &ProcessRequest{
-		UserID: externalID,
-		Method: "debug_traceCall",
-		Params: []any{map[string]any{
-			"from":  "0x1111111111111111111111111111111111111111",
-			"to":    "0x2222222222222222222222222222222222222222",
-			"data":  "0x",
-			"value": "0x0",
-		}},
-	}
-
-	result := proc.processDebugTrace(ctx, req)
-	require.NotNil(t, result.Error, "expected an error (tracer unreachable)")
-	// Should pass the allowlist gate for debug_traceCall as well.
-	assert.NotEqual(t, "method not found", result.Error.Message)
+	result := proc.processDebugTrace(ctx, traceReq(u.did, "", "debug_traceCall",
+		map[string]any{"to": addr, "data": "0x", "value": "0x0"}))
+	require.Nil(t, result.Error, "an allowlisted debug_traceCall to a granted target must be allowed: %+v", result.Error)
+	assert.Equal(t, 1, c.traceRequests(), "the trace ran once, with the proxy's callTracer")
+	assert.False(t, c.callerTracerReachedNode())
 }
 
 func TestDebugTrace_DebugTraceCallDeniedWhenOnlyTransactionAllowlisted(t *testing.T) {
