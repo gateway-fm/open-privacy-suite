@@ -150,7 +150,7 @@ graph TD
 
 | Claim | Purpose | Required For |
 |-------|---------|--------------|
-| `deploy` | Deploy new contracts | `eth_sendTransaction` without `to`, and `eth_estimateGas` / `eth_call` / `eth_createAccessList` without `to` (deployment simulation) |
+| `deploy` | Deploy new contracts | `eth_sendTransaction` without `to`, and `eth_estimateGas` / `eth_call` / `eth_createAccessList` / `debug_traceCall` without `to` (deployment simulation) |
 | `admin` | Full administrative access | All operations including deployment; implies `deploy` + `upgrade` |
 | `upgrade` | Upgrade proxy contracts | `upgradeTo()`, `upgradeToAndCall()` on proxy contracts |
 

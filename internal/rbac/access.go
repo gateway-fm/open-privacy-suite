@@ -424,7 +424,8 @@ func NewAccessControllerWithCache(store Store, cacheTTL time.Duration, cache Per
 // The decomposition was a pure structural refactor of the original monolithic
 // method (order of checks, conditions, reason strings, errors and result fields
 // preserved); later changes (RD-1301) added denies and made some checks judge
-// the alias target as well as the raw method, without reordering the phases.
+// the alias target as well as the raw method, and RD-1323 moved the no-target
+// storage-read deny and the deployment decision ahead of the carve-outs.
 func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequest) (*AccessCheckResult, error) {
 	// Global blocklist + Multicall bypass detection — before any RBAC evaluation.
 	if res, handled := c.checkGlobalBlocks(req); handled {
@@ -489,7 +490,8 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 // validation, carve-outs, contract-access/claim checks, and the final allow.
 // Extracted from CheckAccess (RD-1199) without changing the order of checks,
 // conditions, reason strings, errors, or result fields; RD-1301 later added
-// the deny for a storage read with no target address. The caller stamps
+// the deny for a storage read with no target address, and RD-1323 moved that
+// deny and the deployment decision ahead of the carve-outs. The caller stamps
 // OrgID/UserID onto every result.
 func (c *AccessController) checkWithResolvedOrg(ctx context.Context, req *AccessCheckRequest, user *User, org *Organization, orgCtx *OrgContext) (*AccessCheckResult, error) {
 	// Resolve effective permissions (in-memory cache, DB cache, or compute).

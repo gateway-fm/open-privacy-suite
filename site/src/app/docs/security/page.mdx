@@ -107,6 +107,7 @@ Contract deployments require the `deploy` claim:
 | `eth_estimateGas` | No `to` (missing, `null`, `""` or `"0x"`) | Requires `deploy` claim; the creation code is traced |
 | `eth_call` | No `to` (missing, `null`, `""` or `"0x"`) | Requires `deploy` claim; the creation code is traced |
 | `eth_createAccessList` | No `to` (missing, `null`, `""` or `"0x"`) | Requires `deploy` claim; the creation code is traced |
+| `debug_traceCall` | No `to` (missing, `null`, `""` or `"0x"`) | Requires `deploy` claim; the returned call tree is checked like any client trace |
 
 A call without `to` makes the node run its `data` as contract-creation code, and that code can call any contract and return what it reads. That is why `eth_call`, `eth_estimateGas` and `eth_createAccessList` without `to` (deployment simulation, as Hardhat, Foundry and wallets do before deploying) are treated as deployments: anonymous callers and callers without the `deploy` claim are refused before the node is reached, and the creation code must be traced before the request is forwarded. If tracing is missing, disabled or unavailable, the request is refused. A `from`, if given, must be one of the caller's linked addresses. Libraries that run "deployless" reads this way — for example ERC-6492 signature checks for smart accounts that are not deployed yet — need the `deploy` claim too.
 

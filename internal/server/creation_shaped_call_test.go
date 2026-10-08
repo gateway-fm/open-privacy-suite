@@ -774,3 +774,40 @@ func TestCreationShapedCall_NoCallObjectNeverReachesNode(t *testing.T) {
 	assert.Zero(t, f.canary.forwards.Load())
 	assert.Empty(t, f.canary.tracedCalls())
 }
+
+// debug_traceCall is access-checked as its eth_call twin, so a trace of a
+// call without `to` is a deployment too: without the deploy claim, or without
+// creation code, it is refused with the masked 404 before any trace reaches
+// the node. A deploy holder's creation trace is built and validated.
+func TestCreationShapedCall_DebugTraceCallIsDeployGated(t *testing.T) {
+	const creationCode = "0x6080604052348015600f57600080fd5b50"
+	cases := []struct {
+		name       string
+		claims     []rbac.Claim
+		call       map[string]any
+		wantTraced int
+	}{
+		{"no deploy claim, no to", nil, map[string]any{"data": creationCode}, 0},
+		{"no deploy claim, null to", nil, map[string]any{"to": nil, "data": creationCode}, 0},
+		{"no deploy claim, 0x to", nil, map[string]any{"to": "0x", "data": creationCode}, 0},
+		{"deploy holder, no creation code", []rbac.Claim{rbac.ClaimDeploy}, map[string]any{"value": "0x0"}, 0},
+		{"deploy holder, creation code", []rbac.Claim{rbac.ClaimDeploy}, map[string]any{"data": creationCode}, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newTraceCanary(t)
+			proc, ts := setupTraceProcessor(t, c)
+			ctx := context.Background()
+			u := newTraceUser(t, ctx, ts, "", tc.claims, traceMethods, "")
+
+			res := proc.Process(ctx, traceReq(u.did, u.orgID, "debug_traceCall", tc.call, "latest"))
+
+			assert.Equal(t, tc.wantTraced, c.traceRequests(), "trace requests that reached the node")
+			if tc.wantTraced == 0 {
+				require.True(t, denied(res), "body=%s", string(res.ResponseBody))
+				assert.Equal(t, http.StatusNotFound, res.Error.StatusCode)
+				assert.Equal(t, "method not found", res.Error.Message, "direct RBAC denials stay masked")
+			}
+		})
+	}
+}
