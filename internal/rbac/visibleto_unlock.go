@@ -5,52 +5,161 @@ import (
 	"strings"
 )
 
+// UnlockableContracts returns the lowercase addresses among contractAddrs for
+// which the RD-874 per-contract visibleTo unlock can fire for viewerDID: the
+// contract is registered with `allow_visibleto_unlock` set AND the viewer is
+// unlock-eligible on it (see IsViewerEligibleForVisibleToUnlock for the
+// boundary). The caller still has to check, per log, that the viewer is
+// listed in that log's own transaction's visibleTo.
+//
+// This is the single helper both layers use — the RPC's
+// buildVisibleToUnlockableMap and the explorer's dbVisibleToUnlockResolver —
+// so the unlock set per (viewer, contract) cannot drift between them, and a
+// policy profile that must restrict the unlock has one place to do it.
+//
+// Cost per request: one contract lookup per unique address; the user and its
+// memberships/grants are loaded only if some contract is flagged, once per
+// owning org. Every lookup error fails closed (the contract is omitted).
+func UnlockableContracts(ctx context.Context, access *AccessController, viewerDID string, contractAddrs []string) map[string]bool {
+	out := make(map[string]bool)
+	if access == nil || viewerDID == "" || len(contractAddrs) == 0 {
+		return out
+	}
+	store := access.Store()
+	if store == nil {
+		return out
+	}
+
+	flagged := make(map[string]*Contract)
+	seen := make(map[string]struct{}, len(contractAddrs))
+	for _, a := range contractAddrs {
+		addr := strings.ToLower(a)
+		if addr == "" {
+			continue
+		}
+		if _, dup := seen[addr]; dup {
+			continue
+		}
+		seen[addr] = struct{}{}
+		c, err := store.GetContractByAddressGlobal(ctx, addr)
+		if err != nil || c == nil || !c.AllowVisibleToUnlock || c.OrgID == "" {
+			continue
+		}
+		flagged[addr] = c
+	}
+	if len(flagged) == 0 {
+		return out
+	}
+
+	user, err := store.GetUserByExternalID(ctx, viewerDID)
+	if err != nil || user == nil {
+		return out
+	}
+	byOrg := make(map[string]unlockEligibility)
+	for addr, c := range flagged {
+		e, ok := byOrg[c.OrgID]
+		if !ok {
+			e = loadUnlockEligibility(ctx, store, user.ID, c.OrgID)
+			byOrg[c.OrgID] = e
+		}
+		if e.covers(c) {
+			out[addr] = true
+		}
+	}
+	return out
+}
+
 // IsViewerEligibleForVisibleToUnlock implements the eligibility gate for
-// the RD-874 per-contract visibleTo unlock semantic.
+// the RD-874 per-contract visibleTo unlock semantic, independent of the
+// contract's flag.
 //
 // Returns true if and only if:
 //
 //  1. viewerDID resolves to a real user record (anonymous viewers — no
-//     `users` row — are denied here, mirroring the spec's "anonymous /
-//     default-group access excluded" rule).
-//  2. The contract is registered (the address has an owning org).
-//  3. The viewer holds a `contract_grant` on this specific contract via
-//     at least one of their group memberships in the contract's owning
-//     org. This is the "group added to the contract without event-level
-//     rights" gate from the CTO call notes — having a grant is enough,
-//     even if the grant's event_rules say deny-all.
+//     `users` row — are denied).
+//  2. The contract is registered (it has an owning org).
+//  3. In the contract's owning org, the viewer is EITHER
+//     a. a member of an org-admin group (`is_org_admin`) — the contract
+//     owner's own authority, which already reaches every org contract; OR
+//     b. a member of an ELIGIBLE group that holds a `contract_grant` on this
+//     contract. Having the grant is enough, even if its event_rules say
+//     deny-all. A group is eligible unless it is a system group
+//     (`is_system`) or the seeded default group (`DefaultGroupID`), which
+//     auto-provisioned users join (REDACTION_SPEC §3.7.1; RD-1306).
+//     A group an operator
+//     configures as an identity provider's automatic group is treated like
+//     any other group: granting it a flagged contract is the operator's
+//     choice.
 //
-// Returning true does NOT by itself grant the unlock. The two other
-// preconditions — `contract.AllowVisibleToUnlock` AND viewer listed in
-// the tx's `visibleTo` set — must also hold. Callers are expected to
-// pre-compute this map per request and pass it down to the filter
-// layers so the per-log check stays O(1).
-//
-// Cross-org isolation: `GetEffectivePermissionsByIDs` only resolves
-// grants in the supplied owning-org. Even if the viewer has unrelated
-// access in another org, a contract whose owning org the viewer has no
-// grant in returns false here. The check therefore re-uses the same
-// org-scoping defence that `dbAdminContractsResolver` and
-// `dbEventRuleChecker` apply.
+// Memberships (expired ones excluded) and grants are read per request from
+// the store, so a revoked membership or grant stops the unlock on the next
+// read. Only memberships in the contract's owning org count, so access in
+// another org never makes a viewer eligible. Any lookup error fails closed.
 func IsViewerEligibleForVisibleToUnlock(ctx context.Context, access *AccessController, viewerDID, contractAddress string) bool {
 	if access == nil || viewerDID == "" || contractAddress == "" {
 		return false
 	}
-	addr := strings.ToLower(contractAddress)
-
-	user, err := access.Store().GetUserByExternalID(ctx, viewerDID)
+	store := access.Store()
+	if store == nil {
+		return false
+	}
+	c, err := store.GetContractByAddressGlobal(ctx, strings.ToLower(contractAddress))
+	if err != nil || c == nil || c.OrgID == "" {
+		return false
+	}
+	user, err := store.GetUserByExternalID(ctx, viewerDID)
 	if err != nil || user == nil {
 		return false
 	}
+	return loadUnlockEligibility(ctx, store, user.ID, c.OrgID).covers(c)
+}
 
-	ownerOrgID, err := access.Store().GetContractOwnerOrgID(ctx, addr)
-	if err != nil || ownerOrgID == "" {
-		return false
-	}
+// unlockEligibility is a viewer's unlock eligibility within one owning org.
+// The zero value is "not eligible for anything".
+type unlockEligibility struct {
+	orgAdmin           bool
+	grantedContractIDs map[string]bool
+}
 
-	perms, err := access.GetEffectivePermissionsByIDs(ctx, user.ID, ownerOrgID)
-	if err != nil || perms == nil {
-		return false
+func (e unlockEligibility) covers(c *Contract) bool {
+	return e.orgAdmin || e.grantedContractIDs[c.ID]
+}
+
+// loadUnlockEligibility resolves the viewer's eligibility in orgID from their
+// memberships there (see IsViewerEligibleForVisibleToUnlock). Errors yield the
+// zero value (fail-closed).
+func loadUnlockEligibility(ctx context.Context, store Store, userID, orgID string) unlockEligibility {
+	memberships, err := store.ListUserMembershipsInOrg(ctx, userID, orgID)
+	if err != nil {
+		return unlockEligibility{}
 	}
-	return perms.HasContractAccess(addr)
+	var groupIDs []string
+	for _, m := range memberships {
+		if m == nil || m.Group == nil || m.Group.OrgID != orgID {
+			continue
+		}
+		if m.Group.IsOrgAdmin {
+			return unlockEligibility{orgAdmin: true}
+		}
+		if m.Group.IsSystem || m.Group.ID == DefaultGroupID {
+			continue
+		}
+		groupIDs = append(groupIDs, m.Group.ID)
+	}
+	if len(groupIDs) == 0 {
+		return unlockEligibility{}
+	}
+	grants, err := store.ListContractGrantsBatch(ctx, groupIDs)
+	if err != nil {
+		return unlockEligibility{}
+	}
+	ids := make(map[string]bool)
+	for _, gid := range groupIDs {
+		for _, g := range grants[gid] {
+			if g != nil && g.ContractID != "" {
+				ids[g.ContractID] = true
+			}
+		}
+	}
+	return unlockEligibility{grantedContractIDs: ids}
 }

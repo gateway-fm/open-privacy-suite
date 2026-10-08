@@ -240,6 +240,6 @@ When a transaction is submitted with the `visibleTo` parameter (renamed from `lo
 1. A transaction sender includes `visibleTo: ["did:example:bob"]` in their transaction metadata.
 2. The proxy strips the field and stores the mapping before forwarding the transaction to the node.
 3. When Bob views the Transactions or Token Transfers pages, the visibility filter includes these shared tx hashes, so they appear alongside Bob's own transactions.
-4. Event logs from these transactions are also visible to Bob via `eth_getLogs` (the `visibleTo` fallback extends param rule checks).
+4. Each event log from these transactions is checked against the grant and event rules of the **contract that emitted it**. On a contract Bob holds a grant for, `visibleTo` lets an allowlisted event pass a failed `must_be=self` or other parameter rule; embedded addresses Bob may not see are still zeroed.
 
-This is purely additive -- it never restricts existing event rule access. If Bob already has access to the logs via RBAC event rules, `visibleTo` simply provides an additional discovery path.
+This is purely additive -- it never restricts existing event rule access. If an emitting contract opts in to `allow_visibleto_unlock`, an eligible listed Bob instead sees every log that contract emitted in that one transaction on the transaction's log view, with its full event payload -- the same result as through `eth_getLogs` and the receipt. Other contracts in the same transaction, and later transactions, are evaluated under their own settings. See [Response-Level Privacy Filtering](/docs/security/response-filtering) for the full rules and eligibility requirements.
