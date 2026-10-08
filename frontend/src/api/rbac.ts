@@ -198,10 +198,11 @@ export const rbacApi = {
         security: { travel_rule_enabled: boolean };
         methods: {
           extra_namespaces?: Record<string, string[]>;
-          // Namespaces opted into prefix-wildcard mode. The frontend renders a
-          // single "Allow all <prefix>* methods" toggle per entry; the deny list
-          // is shown read-only.
-          extra_wildcards?: Record<string, { prefix: string; deny?: string[] }>;
+          // Operator methods forwarded unfiltered (no per-address access
+          // check, no response filtering, no tracing); flagged in the picker.
+          extra_passthrough?: string[];
+          // Every method a group may hold; anything else stored is refused.
+          supported_methods?: string[];
         };
       }>('/status'),
   },

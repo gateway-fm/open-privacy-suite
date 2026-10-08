@@ -757,8 +757,13 @@ func TestCreationShapedCall_NoCallObjectNeverReachesNode(t *testing.T) {
 		`{"jsonrpc":"2.0","id":1,"method":"eth_estimateGas","params":[{"data":"` + creationCode + `"}],"params":[]}`,
 	}
 	for _, body := range bodies {
-		method, params, perr := ParseAndValidateBody([]byte(body))
-		require.Nil(t, perr, body)
+		method, params, _, perr := ParseAndValidateBody([]byte(body))
+		if perr != nil {
+			// The canonical envelope guard refuses duplicate/case-colliding
+			// fields before RBAC or tracing, with no upstream request.
+			assert.Equal(t, http.StatusBadRequest, perr.StatusCode, body)
+			continue
+		}
 		require.Equal(t, rbac.CallShapeAbsent, rbac.ClassifyCallShape(params), "the proxy reads no call object: %s", body)
 		res := f.proc.Process(context.Background(), &ProcessRequest{
 			UserID: f.callerDID, OrgID: f.orgA, Method: method, Params: params, Body: []byte(body),

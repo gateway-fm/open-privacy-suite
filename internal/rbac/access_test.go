@@ -215,9 +215,9 @@ func TestIsContractDeployment(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:   "eth_sendTransaction with malformed params (not map) - deployment (safe default)",
-			method: "eth_sendTransaction",
-			params: []any{"not a map"},
+			name:     "eth_sendTransaction with malformed params (not map) - deployment (safe default)",
+			method:   "eth_sendTransaction",
+			params:   []any{"not a map"},
 			expected: true,
 		},
 		{
@@ -1079,8 +1079,8 @@ func TestReadWriteOpsMaps(t *testing.T) {
 func TestCrossOrgIsolationComprehensive(t *testing.T) {
 	// Contract addresses for testing
 	const (
-		contractOrgA = "0xaaaa000000000000000000000000000000000001" // OrgA's contract
-		contractOrgB = "0xbbbb000000000000000000000000000000000002" // OrgB's contract
+		contractOrgA   = "0xaaaa000000000000000000000000000000000001" // OrgA's contract
+		contractOrgB   = "0xbbbb000000000000000000000000000000000002" // OrgB's contract
 		publicContract = "0xcccc000000000000000000000000000000000003" // Public (no org)
 	)
 
@@ -1793,9 +1793,9 @@ func TestExtractDeploymentBytecode(t *testing.T) {
 			expected: "",
 		},
 		{
-			name:   "Malformed params - not a map",
-			method: "eth_sendTransaction",
-			params: []any{"not a map"},
+			name:     "Malformed params - not a map",
+			method:   "eth_sendTransaction",
+			params:   []any{"not a map"},
 			expected: "",
 		},
 		{
@@ -2772,7 +2772,7 @@ func TestEmptySelectorDeniedWithFunctionRestrictions(t *testing.T) {
 	tests := []struct {
 		name          string
 		functionRules []FunctionRule // function rules on the contract grant
-		selector      string        // function selector in request
+		selector      string         // function selector in request
 		expectAllowed bool
 		expectReason  string // substring that must appear in denial reason
 	}{
@@ -2994,12 +2994,15 @@ func TestAnonymousAccess(t *testing.T) {
 			}
 
 			if !tt.expectAllowed {
-				// Methods that are globally blocked get rejected before the anonymous
-				// access check, so their reason says "globally blocked" instead of
-				// "authentication required". Both are correct denials.
+				// Methods that are globally blocked, or that the proxy does not
+				// model at all (the eth_getUncle* family), get rejected before the
+				// anonymous access check, so their reason says "globally blocked" /
+				// "not supported" instead of "authentication required". All are
+				// correct denials.
 				if !strings.Contains(result.Reason, "authentication required") &&
-					!strings.Contains(result.Reason, "globally blocked") {
-					t.Errorf("expected reason to contain 'authentication required' or 'globally blocked', got: %s", result.Reason)
+					!strings.Contains(result.Reason, "globally blocked") &&
+					!strings.Contains(result.Reason, "not supported") {
+					t.Errorf("expected reason to contain 'authentication required', 'globally blocked' or 'not supported', got: %s", result.Reason)
 				}
 			}
 			// Note: RateLimit{RPS,Daily} are no longer set on the AccessCheckResult

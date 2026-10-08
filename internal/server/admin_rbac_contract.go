@@ -1830,12 +1830,14 @@ func (s *Server) batchMoveContracts(c *gin.Context) {
 				}
 				return fmt.Errorf("failed to create group: %w", err)
 			}
-			// Create group access with deploy claims
+			// Create group access with deploy claims. The method list is the
+			// explicit "*" expansion, never a literal "*" (the stored row must
+			// say exactly what the group can call).
 			claims := rbac.ExpandClaims([]rbac.Claim{rbac.ClaimDeploy})
 			if err := tx.CreateGroupAccess(ctx, &rbac.GroupAccess{
 				ID:             uuid.New().String(),
 				GroupID:        newGroup.ID,
-				AllowedMethods: []string{"*"},
+				AllowedMethods: rbac.AllAllowedMethods(),
 				Claims:         claims,
 			}); err != nil {
 				return fmt.Errorf("failed to create group access: %w", err)
