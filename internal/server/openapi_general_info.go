@@ -41,7 +41,7 @@ package server
 // @tag.name Admin: compliance
 // @tag.description Travel-rule compliance configuration, sanctions lists, and token prices.
 // @tag.name Admin: impersonation
-// @tag.description Read-only "view as user" mirror: the explorer and JSON-RPC surfaces re-mounted under /api/v1/admin/impersonate/{target_did}/in/{org_id}/..., GET-only, tier-2 admin gated, per-request audited. The mirrored operations are documented once, under their canonical /api/v1/explorer and /rpc paths.
+// @tag.description Read-only "view as user" mirror: the explorer and JSON-RPC surfaces re-mounted under /api/v1/admin/impersonate/{target_did}/in/{org_id}/..., GET-only, tier-2 admin gated, per-request audited. The mirrored operations are documented once, under their canonical /api/v1/explorer and /rpc paths. The JSON-RPC mirror serves only the dry-run read methods and the org-free metadata methods (any other method in the body returns 400), and answers the dry-run read methods as the dry-run does.
 // @tag.name Admin: shared infrastructure
 // @tag.description Fleet-level shared contract infrastructure and Azure tenant administration.
 // @tag.name Admin: system

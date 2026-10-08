@@ -14,6 +14,10 @@ import (
 // logs may reference contracts from any org the user belongs to — the RBAC
 // access check resolves a single org from the request target, but receipt
 // logs can contain events from contracts in different orgs.
+//
+// Under an impersonation scope (RD-1308, withViewerOrgScope) only the scope
+// org's permissions are resolved, and nil is returned when the viewer is not a
+// member of it (fail closed).
 func (p *JSONRPCProcessor) resolvePermsForFilter(ctx context.Context, result *rbac.AccessCheckResult) *rbac.EffectivePermissions {
 	if result == nil || result.UserID == "" {
 		return nil
@@ -21,7 +25,11 @@ func (p *JSONRPCProcessor) resolvePermsForFilter(ctx context.Context, result *rb
 
 	// Get all org IDs the user belongs to
 	orgIDs, err := p.rbacAccessCtrl.GetUserOrgIDs(ctx, result.UserID)
-	if err != nil || len(orgIDs) == 0 {
+	if err != nil {
+		return nil
+	}
+	orgIDs = restrictToViewerOrgScope(ctx, orgIDs)
+	if len(orgIDs) == 0 {
 		return nil
 	}
 
@@ -103,7 +111,13 @@ func (p *JSONRPCProcessor) viewerAdminContracts(ctx context.Context, userID stri
 	}
 
 	userOrgIDs, err := p.rbacAccessCtrl.GetUserOrgIDs(ctx, userID)
-	if err != nil || len(userOrgIDs) == 0 {
+	if err != nil {
+		return result
+	}
+	// RD-1308: under an impersonation scope, only contracts owned by the
+	// scope org can confer the admin exemption.
+	userOrgIDs = restrictToViewerOrgScope(ctx, userOrgIDs)
+	if len(userOrgIDs) == 0 {
 		return result
 	}
 	userOrgSet := make(map[string]struct{}, len(userOrgIDs))
@@ -150,7 +164,7 @@ func (p *JSONRPCProcessor) isResponseTxVisibleTo(ctx context.Context, viewerDID 
 	if len(txHashes) == 0 {
 		return false
 	}
-	visibility, err := p.txVisibilityStore.GetBatchTxVisibility(ctx, txHashes)
+	visibility, err := p.txVisibilityForViewer(ctx, txHashes)
 	if err != nil || len(visibility) == 0 {
 		return false
 	}
@@ -190,7 +204,7 @@ func (p *JSONRPCProcessor) buildTxVisibilityContext(ctx context.Context, userDID
 		return nil
 	}
 
-	visibility, err := p.txVisibilityStore.GetBatchTxVisibility(ctx, txHashes)
+	visibility, err := p.txVisibilityForViewer(ctx, txHashes)
 	if err != nil {
 		slog.Warn("failed to query visibleTo rules", "error", err)
 		return nil
@@ -201,7 +215,7 @@ func (p *JSONRPCProcessor) buildTxVisibilityContext(ctx context.Context, userDID
 
 	// RD-874: pre-resolve the per-contract unlock map so the filter pass
 	// stays O(1) per log. Both `allow_visibleto_unlock` (DB) and viewer
-	// eligibility (rbac.IsViewerEligibleForVisibleToUnlock) must hold.
+	// eligibility must hold (rbac.UnlockableContracts).
 	contractAddrs := extractContractAddressesFromResponse(responseBody)
 	unlockable := p.buildVisibleToUnlockableMap(ctx, userDID, contractAddrs)
 
@@ -214,40 +228,19 @@ func (p *JSONRPCProcessor) buildTxVisibilityContext(ctx context.Context, userDID
 
 // buildVisibleToUnlockableMap returns the (lowercased address → true) map
 // of contracts where the per-contract `allow_visibleto_unlock` flag is
-// set AND the viewer holds an eligible group membership on the contract
-// (rbac.IsViewerEligibleForVisibleToUnlock). Both gates are required;
-// missing either omits the contract from the map. The caller is expected
-// to combine the result with a per-tx visibleTo membership check before
-// granting access — see TxVisibilityContext doc for the full sequence.
+// set AND the viewer is unlock-eligible — rbac.UnlockableContracts, the
+// same helper the explorer's dbVisibleToUnlockResolver calls. The caller
+// is expected to combine the result with a per-tx visibleTo membership
+// check before granting access — see TxVisibilityContext doc for the
+// full sequence.
 //
 // Returns an empty (non-nil) map on no-op inputs so callers don't need
 // to nil-check before lookup.
 func (p *JSONRPCProcessor) buildVisibleToUnlockableMap(ctx context.Context, viewerDID string, contractAddrs []string) map[string]bool {
-	out := make(map[string]bool)
-	if p.rbacAccessCtrl == nil || viewerDID == "" || len(contractAddrs) == 0 {
-		return out
+	if p.rbacAccessCtrl == nil {
+		return map[string]bool{}
 	}
-	store := p.rbacAccessCtrl.Store()
-	if store == nil {
-		return out
-	}
-	seen := make(map[string]struct{}, len(contractAddrs))
-	for _, addr := range contractAddrs {
-		addrLower := strings.ToLower(addr)
-		if _, dup := seen[addrLower]; dup || addrLower == "" {
-			continue
-		}
-		seen[addrLower] = struct{}{}
-
-		contract, err := store.GetContractByAddressGlobal(ctx, addrLower)
-		if err != nil || contract == nil || !contract.AllowVisibleToUnlock {
-			continue
-		}
-		if rbac.IsViewerEligibleForVisibleToUnlock(ctx, p.rbacAccessCtrl, viewerDID, addrLower) {
-			out[addrLower] = true
-		}
-	}
-	return out
+	return rbac.UnlockableContracts(ctx, p.rbacAccessCtrl, viewerDID, contractAddrs)
 }
 
 // participantResolveMaxTxs caps how many unique transactions an eth_getLogs

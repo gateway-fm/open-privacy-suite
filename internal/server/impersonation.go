@@ -70,23 +70,20 @@ import (
 //     DB cache may still serve stale up to its TTL — that's RD-956's surface,
 //     not RD-928's.)
 //
-// Why this is safe for tier-2 admin same-org browse-as: by
-// rbac.computeOrgAdminPermissions, the admin has full claims on every
-// contract in their org, so any data exposed through the impersonated viewer
-// is already in the admin's reach via direct calls. Net new data: zero. The
-// surface is an *ergonomics* tool wrapped in audit logging, not a privilege
-// expansion. Cross-org is structurally impossible because (a) :org_id must be
-// one of the admin's own orgs and (b) the target-membership check in :org_id
-// runs before the override is set.
+// Scope: (a) :org_id must be one of the admin's own orgs and (b) the target
+// must be a member of :org_id, both checked before the override is set. Every
+// authorization input of an impersonated RPC call is then pinned to :org_id
+// (withViewerOrgScope, RD-1308) and only the read methods in
+// impersonationRPCMethods are served.
 
 // Context keys for the impersonation override. Strings, not custom types,
 // so the explorer handlers (which already read string keys like "subject")
 // stay readable. The keys are only written by impersonationGateMiddleware;
 // see the SECURITY: comment in getViewerDIDFromRequest for the invariant.
 const (
-	viewerDIDOverrideContextKey   = "rd928_viewer_did_override"
+	viewerDIDOverrideContextKey     = "rd928_viewer_did_override"
 	impersonationActorDIDContextKey = "rd928_impersonation_actor_did"
-	impersonationOrgIDContextKey  = "rd928_impersonation_org_id"
+	impersonationOrgIDContextKey    = "rd928_impersonation_org_id"
 )
 
 // errImpersonationTargetNotFound is the sentinel returned by the same-org

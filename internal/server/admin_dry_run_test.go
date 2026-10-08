@@ -14,6 +14,7 @@ import (
 	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
+	"privacy-proxy/internal/server/middleware"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -41,6 +42,18 @@ type dryRunTestServer struct {
 func setupDryRunTestServer(t *testing.T) *dryRunTestServer {
 	t.Helper()
 	ts := setupTestServerForRBAC(t)
+	// The production processor is always wired (NewWithVerifier); dry-run
+	// runs its response filter as the impersonated user (RD-1308), and
+	// withholds read responses when it is missing.
+	ts.jsonrpcProcessor = NewJSONRPCProcessor(JSONRPCProcessorConfig{
+		RBACAccessCtrl:            ts.rbacAccessCtrl,
+		RateLimiter:               &noopRateLimiter{},
+		AccessLogger:              ts.db,
+		CircuitBreaker:            middleware.NewCircuitBreaker(),
+		ConcurrencyLimiter:        middleware.NewConcurrencyLimiter(50, 0),
+		TxVisibilityStore:         ts.db,
+		AddressVisibilityResolver: ts.db,
+	})
 
 	// Inject a minimal middleware that mirrors what
 	// adminAuthMiddleware sets in production. Real auth is exercised
@@ -354,6 +367,9 @@ func TestDryRunAccessRequest_MatchesEnforcementDerivation(t *testing.T) {
 		assert.Equal(t, rbac.GetTargetAddress("eth_call", params), got.TargetAddress)
 		assert.Equal(t, "0xabc0000000000000000000000000000000000001", got.TargetAddress)
 		assert.Equal(t, rbac.GetFunctionSelector("eth_call", params), got.FunctionSelector)
+		// Same as the View-as RPC mirror (ProcessRequest.BypassPermsCache):
+		// an impersonated check never answers from the in-memory cache.
+		assert.True(t, got.BypassCache, "dry-run must skip the in-memory permission cache")
 	})
 
 	t.Run("eth_sendRawTransaction", func(t *testing.T) {
@@ -372,6 +388,7 @@ func TestDryRunAccessRequest_MatchesEnforcementDerivation(t *testing.T) {
 		assert.Equal(t, wantTo, got.TargetAddress)
 		assert.Equal(t, extractSelector(data), got.FunctionSelector)
 		assert.Equal(t, buildTxParams(from, wantTo, data, value), got.Params)
+		assert.True(t, got.BypassCache, "dry-run must skip the in-memory permission cache")
 	})
 
 	t.Run("undecodable raw tx is an error, not an empty target", func(t *testing.T) {
