@@ -975,8 +975,9 @@ func (p *JSONRPCProcessor) pinnedTraceScope(ctx context.Context, userUUID, orgID
 
 // clientTraceGrantScope returns intra-org grant scoping for the client trace
 // path. Unlike the eth_call/send paths, where the RD-1053 knob decides, it is
-// ALWAYS on here: a trace reveals every same-org frame's input and output,
-// while eth_call returns only the final result and the explorer shows an
+// ALWAYS on here: a trace reveals every same-org frame (and, to a viewer who
+// may read that contract's storage, its values), while eth_call returns only
+// the final result and the explorer shows an
 // ungranted same-org contract as private to the same viewer. authorized is a
 // target already cleared by CheckAccess (empty for a replay). Fail-closed.
 func (p *JSONRPCProcessor) clientTraceGrantScope(ctx context.Context, userUUID string, orgIDs map[string]bool, authorized string) ([]rbac.TraceOption, *ProcessError) {
