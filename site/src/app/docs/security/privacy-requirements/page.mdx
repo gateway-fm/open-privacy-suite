@@ -303,11 +303,11 @@ any one of them is a privacy or UX regression:
    lens — they already know the counterparty via their own wallet.
    Pinned by an integration test.
 6. **A row kept for coherence reveals nothing new.**
-   When a viewer gets a transaction only because they can see one of
-   its token transfers (for an org admin, a transfer involving any org
-   contract; for anyone else, a transfer involving their own wallet or
-   the subject of a full disclosure grant, or a transfer whose two
-   sides they both see — such as a mint into a contract they hold a
+   When a viewer gets a transaction only because of one of its token
+   transfers (for an org admin, a transfer involving any org contract;
+   for anyone else, a transfer involving their own wallet or the
+   subject of a full disclosure grant, or a transfer whose two sides
+   they both see — such as a mint into a contract they hold a
    grant on — on a token their grant gives event access to), the
    transaction is **keep + `[PRIVATE]`**: every address renders at the viewer's
    own visibility, so another user's wallet stays `[PRIVATE]` and

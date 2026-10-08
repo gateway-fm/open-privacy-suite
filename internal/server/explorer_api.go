@@ -818,8 +818,9 @@ func (s *Server) buildVisibilityFilter(ctx context.Context, viewerDID string, vi
 	//     one identifiable side, so /transactions must keep its parent.
 	//   - anyone else, whose /transfers applies G10 (both sides identifiable,
 	//     unless a participant or grant lens applies) and the event-access strip:
-	//     (1) their own addresses and (2) Full disclosure-grant subjects: the
-	//         parent is the viewer's own or the granted party's activity, kept
+	//     (1) their own addresses (the parent is the viewer's own activity)
+	//         and (2) Full disclosure-grant subjects (a Full grant covers the
+	//         subject's transfer-linked txs; G25 limits this to Full): kept
 	//         whether or not the transfer row itself survives the event-access
 	//         strip;
 	//     (3) for coherence only, and so bounded by the transfer rows the
