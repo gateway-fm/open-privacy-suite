@@ -39,6 +39,8 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+      - name: Validate advisory review guards
+        run: python3 -B -m unittest discover -s node-approvals -p test_audit_dependencies.py
       - name: Validate Docker demo lifecycle
         if: matrix.node == 'reth'
         run: |

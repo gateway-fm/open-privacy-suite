@@ -83,6 +83,42 @@ destructor: the pinned alloy-provider 2.3.0 caches use `u64` or `B256` keys, whi
 That is a source-based reachability assessment, not a claim that every use of lru 0.16.4 is safe.
 The other LRU dependency is fixed. New advisories, changed versions or an expired review fail CI.
 
+### Advisory follow-up, 8 October 2026
+
+Reth's locked Hickory resolver, network and protocol crates are updated from 0.26.1 to
+**0.26.2** together; the resolver's fixed APIs require the matching companion crates. This fixes
+the reported [DNSSEC validation failure](https://github.com/advisories/GHSA-5j98-2g5x-46v6),
+[irrelevant CNAME following](https://github.com/advisories/GHSA-6f2x-v7q7-m7m5) and
+[truncated-response retry loop](https://github.com/advisories/GHSA-6w6g-hm98-mhgm).
+The pinned Reth source and its APIs remain unchanged. No exception is added for Hickory.
+
+The Besu scan also reports two advisories in the host-provided Jackson Core **2.21.5**:
+
+| Finding | Scope of this review |
+| --- | --- |
+| [Unbounded malformed-token error message](https://github.com/advisories/GHSA-7hhh-6rmp-j9qf) | Requires `JsonFactory.createParser(DataInput)`. Pinned Besu's IPC parser uses an `InputStream`; its HTTP parser uses Vert.x buffer decoding. The approval plugin receives parsed parameters and does not create a Jackson parser. |
+| [Quadratic numeric-string conversion](https://github.com/advisories/GHSA-p6pp-m3f8-5c89) | Requires `NumberInput.looksLikeValidNumber()`, including floating-point coercion of string values. `ops_prepareApproval` accepts exactly one raw-transaction string, reads `getParams()` without typed numeric conversion, and decodes hex/RLP. It performs no floating-point conversion. |
+
+Source evidence: pinned Besu's
+[`JsonRpcParserHandler`](https://github.com/besu-eth/besu/blob/26.8.1/ethereum/api/src/main/java/org/hyperledger/besu/ethereum/api/handlers/JsonRpcParserHandler.java),
+[`JsonRpcObjectExecutor`](https://github.com/besu-eth/besu/blob/26.8.1/ethereum/api/src/main/java/org/hyperledger/besu/ethereum/api/handlers/JsonRpcObjectExecutor.java)
+and [`JsonRpcRequest`](https://github.com/besu-eth/besu/blob/26.8.1/ethereum/api/src/main/java/org/hyperledger/besu/ethereum/api/jsonrpc/internal/JsonRpcRequest.java),
+plus the plugin's [`PrepareApprovalRpc`](../../node-approvals/besu/src/main/java/ops/approvals/PrepareApprovalRpc.java)
+and [`CanonicalJson`](../../node-approvals/besu/src/main/java/ops/approvals/CanonicalJson.java).
+Approval delivery uses bounded protobuf; fingerprint JSON uses the handwritten output encoder.
+The plugin has no Jackson parser or numeric coercion calls and its verified thin JAR contains
+no Jackson classes. Two exact-version exceptions are recorded with the existing review deadline.
+The gate also checks Besu's version, Maven coordinates and archive checksum against the review:
+changing the host invalidates its exceptions even when the Jackson version stays the same.
+
+These exceptions cover the approval extension's ingress and RPC only. **They do not clear other
+Besu methods, plugins or host uses of Jackson.** Upstream fixes are available in Jackson 2.21.7;
+updating the plugin's compile classpath or bundling another copy would leave Besu's parent-first
+runtime unchanged. A host upgrade requires its own supported distribution and compatibility
+qualification. Reassess these exceptions whenever the host version, RPC parsing, parameter
+conversion or serialization changes. Changed versions, new findings and expired reviews still
+fail the advisory gate.
+
 A broader `npm audit` of the frontend on this same date reports **48 affected package entries**
 (2 critical, 19 high, 25 moderate, 2 low); `--omit=dev` reports **29** (7 high, 21 moderate,
 1 low). These counts include transitive propagation and are not counts of demonstrated exploits.

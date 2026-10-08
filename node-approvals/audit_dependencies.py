@@ -33,6 +33,11 @@ def main():
     findings = []
     review = json.loads((ROOT / "node-approvals/advisory-review.json").read_text())
     review_current = datetime.date.today() <= datetime.date.fromisoformat(review["recheck_by"])
+    expected_host = review.get("required_compatibility", {}).get(args.node, {})
+    if expected_host:
+        actual_host = json.loads((ROOT / "node-approvals/compatibility.json").read_text())[args.node]
+        review_current = review_current and all(actual_host.get(name) == value
+                                               for name, value in expected_host.items())
     if args.node == "reth":
         versions = {p["name"]: p["version"] for p in rows}
         review_current = review_current and all(versions.get(name) == version
