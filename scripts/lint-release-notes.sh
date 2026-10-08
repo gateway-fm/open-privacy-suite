@@ -28,7 +28,7 @@ fi
 
 # Required sections, in canonical order (kept in sync with the skill's §3).
 # Each label is paired with an extended regex matched against a single line.
-# The five "##" sections are anchored to a header line; "Full changelog:" is
+# The six "##" sections are anchored to a header line; "Full changelog:" is
 # validated separately as its own (bold, non-header) line. "## Deprecations"
 # is intentionally NOT required — the skill makes it optional (omit-if-none);
 # every other §3 section, including "## Incompatibilities / breaking", is
@@ -38,6 +38,7 @@ labels=(
   "## ⚠️ Action required on upgrade"
   "## Incompatibilities / breaking"
   "## Docker images"
+  "## Compatible versions"
   "## Verify after deploy"
   "Full changelog: line"
 )
@@ -46,6 +47,7 @@ patterns=(
   '^##[[:space:]].*Action required on upgrade[[:space:]]*$'
   '^##[[:space:]].*Incompatibilities / breaking[[:space:]]*$'
   '^##[[:space:]]+Docker images[[:space:]]*$'
+  '^##[[:space:]]+Compatible versions[[:space:]]*$'
   '^##[[:space:]].*Verify after deploy[[:space:]]*$'
   'Full changelog:'
 )

@@ -130,9 +130,19 @@ var GlobalBlockedMethods = map[string]bool{
 	// in CheckAccess: admin-claim users get all slots, non-admin users get only
 	// well-known infrastructure slots (EIP-1967, EIP-2535). See storage_slots.go.
 
-	// Signing methods - key exposure risk
-	"eth_sign":            true,
-	"eth_signtransaction": true,
+	// Bundled simulation methods are unsupported (RD-1305). Single-call
+	// simulation options are checked separately by DetectStateOverride.
+	"eth_simulatev1":  true,
+	"eth_simulate":    true,
+	"eth_multicallv1": true,
+	"eth_callmany":    true,
+	"eth_callbundle":  true,
+
+	// Node signing methods are unavailable through the proxied RPC endpoint.
+	"eth_sign":             true,
+	"eth_signtransaction":  true,
+	"eth_signtypeddata":    true,
+	"eth_signtypeddata_v4": true,
 
 	// NOTE: eth_sendRawTransaction is handled specially - it's allowed ONLY when
 	// runtime tracing is enabled. The proxy decodes the RLP transaction, extracts
@@ -301,8 +311,14 @@ func DetectMulticall(method string, params []any) (bool, string) {
 		return false, ""
 	}
 
-	// Check if the data is a Multicall function
+	// Check if the calldata is a Multicall function. Calldata is read from
+	// `data`, or from `input` when `data` is absent or empty, the same order
+	// as extractCalldata; envelope validation refuses an object whose two
+	// differ.
 	data, ok := callObj["data"].(string)
+	if !ok || data == "" || data == "0x" {
+		data, ok = callObj["input"].(string)
+	}
 	if !ok || data == "" {
 		return false, ""
 	}
@@ -409,12 +425,19 @@ func NewAccessControllerWithCache(store Store, cacheTTL time.Duration, cache Per
 // handled bool, err error) short-circuits the whole check when handled is true:
 // CheckAccess returns (result, err) immediately. When handled is false the
 // helper's result is ignored and evaluation falls through to the next phase.
-// The decomposition is a pure structural refactor of the original monolithic
-// method — the order of checks, every condition, reason string, error, and
-// AccessCheckResult field are preserved exactly.
+// The decomposition was a pure structural refactor of the original monolithic
+// method (order of checks, conditions, reason strings, errors and result fields
+// preserved); later changes (RD-1301) added denies and made some checks judge
+// the alias target as well as the raw method, without reordering the phases.
 func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequest) (*AccessCheckResult, error) {
 	// Global blocklist + Multicall bypass detection — before any RBAC evaluation.
 	if res, handled := c.checkGlobalBlocks(req); handled {
+		return res, nil
+	}
+
+	// RD-1305: simulation overrides are unsupported for all callers, including
+	// admins. Apply the same rule to direct access checks and admin diagnostics.
+	if res, handled := c.checkStateOverrides(req); handled {
 		return res, nil
 	}
 
@@ -468,9 +491,10 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 // checkWithResolvedOrg runs the post-org-resolution phases of CheckAccess:
 // permission resolution, method allowlist, eth_getLogs multi-address
 // validation, carve-outs, contract-access/claim checks, and the final allow.
-// Pure structural extraction from CheckAccess (RD-1199) — order of checks,
-// conditions, reason strings, errors, and result fields are unchanged; the
-// caller stamps OrgID/UserID onto every result.
+// Extracted from CheckAccess (RD-1199) without changing the order of checks,
+// conditions, reason strings, errors, or result fields; RD-1301 later added
+// the deny for a storage read with no target address. The caller stamps
+// OrgID/UserID onto every result.
 func (c *AccessController) checkWithResolvedOrg(ctx context.Context, req *AccessCheckRequest, user *User, org *Organization, orgCtx *OrgContext) (*AccessCheckResult, error) {
 	// Resolve effective permissions (in-memory cache, DB cache, or compute).
 	perms, err := c.resolvePermissionsForRequest(ctx, req, user, org)
@@ -510,6 +534,15 @@ func (c *AccessController) checkWithResolvedOrg(ctx context.Context, req *Access
 		if res, handled, err := c.validateDeploymentWithoutTarget(req, user, org, perms, requiredClaim); handled {
 			return res, err
 		}
+	} else if req.anyMethodToJudge(isStorageReadMethod) {
+		// A storage read with no parseable target address (missing or
+		// non-string params[0]) would skip the contract and storage-slot
+		// checks above; deny rather than rely on the node rejecting it.
+		slog.Debug("access denied: storage read without a target address", "method", req.Method, "user", req.UserExternalID)
+		return &AccessCheckResult{
+			Allowed: false,
+			Reason:  ErrContractAccessDenied,
+		}, nil
 	}
 
 	// Check additional required claims from the request.
@@ -541,14 +574,54 @@ func (c *AccessController) checkGlobalBlocks(req *AccessCheckRequest) (*AccessCh
 		}, true
 	}
 
-	// Check for Multicall bypass attempts
-	if isMulticall, reason := DetectMulticall(req.Method, req.Params); isMulticall {
+	// Default-deny method gate: a method the proxy has no model for (no
+	// target extraction, no response filter, no tracing) is never forwarded,
+	// whatever a group's allowlist holds. Canonicalized here so a mixed-case
+	// spelling of a catalog method from a caller that passes the raw name
+	// (/access/check) is judged by the allowlist below rather than refused as
+	// unknown; the allowlist itself matches exact names.
+	if !IsForwardableMethod(CanonicalizeMethod(req.Method)) {
 		return &AccessCheckResult{
 			Allowed: false,
-			Reason:  reason,
+			Reason:  fmt.Sprintf("method %s is not supported", req.Method),
 		}, true
 	}
 
+	// Check for Multicall bypass attempts. Judged on the alias target and the
+	// raw method (methodsToJudge), so an operator alias of eth_call or
+	// eth_estimateGas is held to the same check as its target. The blocklist
+	// above needs no such widening: an alias target must be a catalog method
+	// (ValidateAliasTarget), and the catalog excludes blocked methods.
+	var multicallReason string
+	if req.anyMethodToJudge(func(m string) bool {
+		isMulticall, reason := DetectMulticall(m, req.Params)
+		multicallReason = reason
+		return isMulticall
+	}) {
+		return &AccessCheckResult{
+			Allowed: false,
+			Reason:  multicallReason,
+		}, true
+	}
+
+	return nil, false
+}
+
+// checkStateOverrides denies any request that carries a state/code or block
+// override on an EVM read/simulation method (RD-1305). Returns handled=true
+// with a deny result when an override is present or malformed. Method is
+// checked for both raw and effective methods, including operator aliases.
+func (c *AccessController) checkStateOverrides(req *AccessCheckRequest) (*AccessCheckResult, bool) {
+	for _, method := range []string{req.Method, req.EffectiveMethod()} {
+		if denied, kind := DetectStateOverride(method, req.Params); denied {
+			slog.Info("access denied: state/block override not permitted",
+				"method", req.Method, "user", req.UserExternalID, "kind", kind)
+			return &AccessCheckResult{
+				Allowed: false,
+				Reason:  StateOverrideDeniedReason,
+			}, true
+		}
+	}
 	return nil, false
 }
 
@@ -558,17 +631,31 @@ func (c *AccessController) checkGlobalBlocks(req *AccessCheckRequest) (*AccessCh
 //
 // Anonymous permissions live in the `anonymous` group's group_access row
 // (seeded by migration 044, RD-870). Edits restricted to super admin
-// (X-Admin-Token) so the auditable rules are explicit and configurable
-// rather than hardcoded here.
+// (X-Admin-Token) so the auditable rules are explicit and configurable.
+// Besides the historical-state guard, two hardcoded floors apply regardless
+// of that allowlist: deployments and raw storage reads always require
+// authentication.
 func (c *AccessController) checkAnonymousAccess(ctx context.Context, req *AccessCheckRequest) (*AccessCheckResult, error) {
 	// Block historical state queries up-front. These reveal point-in-time
 	// state and aren't safe to expose anonymously even if the method name
-	// is on the allowlist. Authenticated users skip this check because
-	// per-address visibility filters take over.
-	if isHistorical, reason := IsHistoricalStateQuery(req.Method, req.Params); isHistorical {
+	// is on the allowlist (authenticated users get checkHistoricalStateQuery).
+	// Judged on the alias target and the raw method (methodsToJudge): an
+	// operator alias of a state-reading method (e.g. linea_getProof →
+	// eth_getProof) is subject to the same guard as its target.
+	if isHistorical, reason := req.historicalStateQuery(); isHistorical {
 		return &AccessCheckResult{
 			Allowed: false,
 			Reason:  reason,
+		}, nil
+	}
+
+	// Anonymous callers get catalog methods only: operator aliases and
+	// passthrough methods require an authenticated, explicitly granted caller.
+	if !IsCatalogMethod(CanonicalizeMethod(req.Method)) {
+		return &AccessCheckResult{
+			Allowed:      false,
+			AuthRequired: true,
+			Reason:       "authentication required for this operation",
 		}, nil
 	}
 
@@ -604,12 +691,24 @@ func (c *AccessController) checkAnonymousAccess(ctx context.Context, req *Access
 	// Defense in depth: deployment payloads always require an authenticated
 	// principal with the deploy claim. The anonymous group has empty Claims
 	// by default; even if a super admin allowlists eth_sendTransaction, a
-	// CREATE-shaped payload still requires auth.
-	if IsContractDeployment(req.Method, req.Params) {
+	// CREATE-shaped payload still requires auth. Judged on the alias target and
+	// the raw method, so an allowlisted alias cannot skip it.
+	if req.anyMethodToJudge(func(m string) bool { return IsContractDeployment(m, req.Params) }) {
 		return &AccessCheckResult{
 			Allowed:      false,
 			AuthRequired: true,
 			Reason:       "deployment requires authentication",
+		}, nil
+	}
+
+	// Raw storage reads (eth_getStorageAt, eth_getProof and aliases of them)
+	// need a contract grant and the storage-slot tier, neither of which exists
+	// for an anonymous caller. Deny even if a super admin allowlists them.
+	if req.anyMethodToJudge(isStorageReadMethod) {
+		return &AccessCheckResult{
+			Allowed:      false,
+			AuthRequired: true,
+			Reason:       "storage reads require authentication",
 		}, nil
 	}
 
@@ -665,24 +764,26 @@ func (c *AccessController) resolveAndValidateUser(ctx context.Context, req *Acce
 // contract's state at a past block when ownership may have been
 // different. The pre-fix IsHistoricalStateQuery guard only ran for
 // anonymous viewers. Authenticated non-admin viewers are now also
-// denied historical queries — the per-address visibility resolver
-// uses CURRENT ownership, so a contract that was owned by another
-// org at block N could leak past state to today's owner.
+// denied historical queries. The per-address visibility resolver uses
+// current ownership rather than ownership at the requested block.
 //
-// Admin viewers (is_org_admin or admin claim on a specific
-// contract) are exempted by checking the user's group memberships
-// via the optional OrgAdminChecker extension on the store
-// interface. When the extension is not implemented (test fixtures
-// using a minimal mock store) we err on the side of allowing
-// historical queries — those fixtures don't model multi-tenant
-// ownership changes, so the leak isn't reproducible there.
+// Org admins (is_org_admin, in any of the user's orgs) are exempted
+// by checking the user's group memberships via the optional
+// OrgAdminChecker extension on the store interface; a per-contract
+// admin claim (tier 3) is not an exemption. The check is made on the
+// alias target and the raw method (methodsToJudge), so an operator
+// alias of a state-reading method (e.g. linea_getProof → eth_getProof)
+// is subject to the same guard as its target. When the extension is
+// not implemented (test fixtures using a minimal mock store) we err on
+// the side of allowing historical queries. Those legacy fixtures omit
+// organization-admin support and historical ownership changes.
 // The production store (*db.DB) is guaranteed to implement
 // OrgAdminChecker at compile time (see the `var _ rbac.OrgAdminChecker`
 // assertion in internal/db, RD-1164 #14), so this fail-open branch is
 // unreachable in production and cannot be silently disabled by a
 // dropped method.
 func (c *AccessController) checkHistoricalStateQuery(ctx context.Context, req *AccessCheckRequest, user *User) (*AccessCheckResult, bool, error) {
-	if isHistorical, reason := IsHistoricalStateQuery(req.Method, req.Params); isHistorical {
+	if isHistorical, reason := req.historicalStateQuery(); isHistorical {
 		allow := true
 		if adminChk, ok := c.store.(OrgAdminChecker); ok {
 			isAdmin, _, adminErr := adminChk.IsOrgAdmin(ctx, user.ID)
@@ -976,11 +1077,12 @@ func (c *AccessController) classifyValueTransferCarveout(ctx context.Context, re
 //   - eth_getTransactionCount: nonce lookups for tx building (cast send, wallets)
 //   - eth_getBalance: wallet balance display
 //
-// eth_getStorageAt has tiered access (admin=all slots, non-admin=well-known only)
-// enforced below. eth_getProof needs strict contract-level gating since
-// both methods access contract-internal state that could leak sensitive data.
+// eth_getStorageAt and eth_getProof are not carved out: both return raw
+// contract storage, so they need contract-level gating plus the storage-slot
+// tier (admin=all slots, non-admin=well-known only) enforced in
+// validateContractAccess.
 func (c *AccessController) classifyBasicAddressQueryCarveout(ctx context.Context, req *AccessCheckRequest, user *User, org *Organization, orgCtx *OrgContext, perms *EffectivePermissions) (*AccessCheckResult, bool, error) {
-	if req.TargetAddress != "" && isBasicAddressQuery(req.EffectiveMethod()) {
+	if req.TargetAddress != "" && isBasicAddressQuery(req.EffectiveMethod()) && !req.anyMethodToJudge(isStorageReadMethod) {
 		addr := strings.ToLower(req.TargetAddress)
 		if !perms.IsContractRegistered(addr) {
 			ownerOrgID, err := orgCtx.OwnerOrgID(ctx, addr)
@@ -1008,10 +1110,11 @@ func (c *AccessController) classifyBasicAddressQueryCarveout(ctx context.Context
 // request targets a specific address. It resolves the effective ContractAccess
 // (explicit grant, cross-org-filtered default claims, pre-registration, or
 // deployer auto-grant), then enforces the cross-org isolation check, required
-// claim, tiered eth_getStorageAt access, function-selector rules, and proxy
-// upgrade validation. handled=true means the check terminated with the returned
-// result/err; handled=false means all inner gates passed and evaluation falls
-// through to the additional-required-claims phase.
+// claim, tiered raw-storage access (eth_getStorageAt / eth_getProof),
+// function-selector rules, and proxy upgrade validation. handled=true means the
+// check terminated with the returned result/err; handled=false means all inner
+// gates passed and evaluation falls through to the additional-required-claims
+// phase.
 func (c *AccessController) validateContractAccess(ctx context.Context, req *AccessCheckRequest, user *User, org *Organization, orgCtx *OrgContext, perms *EffectivePermissions, requiredClaim Claim) (*AccessCheckResult, bool, error) {
 	addr := strings.ToLower(req.TargetAddress)
 
@@ -1150,16 +1253,13 @@ func (c *AccessController) validateContractAccess(ctx context.Context, req *Acce
 		}, true, nil
 	}
 
-	// Tiered eth_getStorageAt access: admin-claim users get all slots,
-	// non-admin users get only well-known infrastructure slots (EIP-1967, EIP-2535).
-	// This runs AFTER the contract access check (so we know the user has access
-	// to the contract) but BEFORE function selector checks (which don't apply
-	// to storage reads).
-	if req.EffectiveMethod() == MethodGetStorageAt {
-		if res, handled := c.validateStorageSlotAccess(req, access); handled {
-			return res, true, nil
-		}
-		// Admin users pass through — all slots allowed
+	// Tiered raw-storage access (eth_getStorageAt, eth_getProof and their
+	// aliases): admin-claim users get all slots, non-admin users only the
+	// well-known infrastructure slots (EIP-1967, EIP-2535). This runs AFTER the
+	// contract access check (so we know the user has access to the contract)
+	// but BEFORE function selector checks (which don't apply to storage reads).
+	if res, handled := c.validateStorageReadAccess(req, access); handled {
+		return res, true, nil
 	}
 
 	// Check function selector if specified.
@@ -1178,20 +1278,39 @@ func (c *AccessController) validateContractAccess(ctx context.Context, req *Acce
 	return nil, false, nil
 }
 
-// validateStorageSlotAccess enforces tiered eth_getStorageAt access: admin-claim
-// users get all slots, non-admin users get only well-known infrastructure slots
-// (EIP-1967, EIP-2535). Returns handled=true with a deny result when a non-admin
-// requests a non-well-known slot.
-func (c *AccessController) validateStorageSlotAccess(req *AccessCheckRequest, access *ContractAccess) (*AccessCheckResult, bool) {
-	if !hasClaim(access.Claims, ClaimAdmin) {
-		slot := extractStorageSlot(req.Params)
-		if !IsWellKnownStorageSlot(slot) {
-			slog.Debug("access denied: non-admin user accessing non-well-known storage slot",
-				"slot", slot, "contract", req.TargetAddress, "user", req.UserExternalID)
-			return &AccessCheckResult{
-				Allowed: false,
-				Reason:  ErrContractAccessDenied,
-			}, true
+// validateStorageReadAccess enforces the storage-slot tier on every method
+// that returns raw contract storage values (isStorageReadMethod, judged on
+// both the alias target and the raw method — see methodsToJudge):
+// eth_getStorageAt returns one slot's value, and eth_getProof returns
+// storageProof[].value for every requested key (RD-1301). Admin-claim users
+// get all slots. For everyone else each requested slot must be a well-known
+// infrastructure slot (EIP-1967, EIP-2535); an ordinary, mixed or malformed
+// key list is denied. An eth_getProof with an empty key list (account-only
+// proof) requests no slot and passes. Returns handled=true with a deny result.
+func (c *AccessController) validateStorageReadAccess(req *AccessCheckRequest, access *ContractAccess) (*AccessCheckResult, bool) {
+	if !req.anyMethodToJudge(isStorageReadMethod) || hasClaim(access.Claims, ClaimAdmin) {
+		return nil, false
+	}
+	deny := &AccessCheckResult{
+		Allowed: false,
+		Reason:  ErrContractAccessDenied,
+	}
+	for _, method := range req.methodsToJudge() {
+		if !isStorageReadMethod(method) {
+			continue
+		}
+		keys, ok := requestedStorageKeys(method, req.Params)
+		if !ok {
+			slog.Debug("access denied: malformed storage key list from non-admin user",
+				"method", req.Method, "contract", req.TargetAddress, "user", req.UserExternalID)
+			return deny, true
+		}
+		for _, key := range keys {
+			if !IsWellKnownStorageSlot(key) {
+				slog.Debug("access denied: non-admin user accessing non-well-known storage slot",
+					"method", req.Method, "slot", key, "contract", req.TargetAddress, "user", req.UserExternalID)
+				return deny, true
+			}
 		}
 	}
 	return nil, false
@@ -1406,8 +1525,11 @@ func collectAllClaims(perms *EffectivePermissions) []Claim {
 
 // WriteOpsMap classifies state-modifying RPC methods. These methods are no
 // longer gated by a "write" claim — the method allowlist is the source of
-// truth. The map is retained for reference and test completeness checks.
-// All keys must be lowercase.
+// truth. Together with ReadOpsMap it feeds IsStandardMethod, which config
+// loading uses to refuse these names as extra methods / alias keys (RD-1301):
+// every method a gate or response filter keys on by name through the alias
+// target (EffectiveMethod / ResolveMethodAlias) must be in one of the two maps
+// or in the canonical method set. All keys must be lowercase.
 var WriteOpsMap = map[string]bool{
 	"eth_sendtransaction":    true,
 	"eth_sendrawtransaction": true, // Requires auth; processor enforces runtime-tracing gate
@@ -1415,9 +1537,9 @@ var WriteOpsMap = map[string]bool{
 
 // ReadOpsMap classifies read-only RPC methods that access blockchain state.
 // These methods are no longer gated by a "read" claim — the method allowlist
-// is the source of truth. The map is retained for reference, test completeness
-// checks, and documentation of which methods access sensitive data on a
-// private network:
+// is the source of truth. It feeds IsStandardMethod (see WriteOpsMap), so
+// removing an entry may let config loading accept that method as an alias key.
+// It also documents which methods access sensitive data on a private network:
 //   - Contract state (balance, code, storage, logs) reveals private holdings
 //   - Block contents reveal which transactions occurred (sender, receiver, value)
 //   - Transaction details reveal identities and amounts
@@ -1756,8 +1878,8 @@ func (c *AccessController) getOrgContextForTarget(ctx context.Context, userOrgID
 //
 // NOT included:
 //   - eth_getCode: reveals whether an address has deployed code (contract existence oracle)
-//   - eth_getStorageAt: tiered access enforced in CheckAccess (admin=all, read=well-known only)
-//   - eth_getProof: returns balance + storage hash
+//   - eth_getStorageAt / eth_getProof: raw storage, tiered in validateContractAccess
+//     (admin=all slots, non-admin=well-known only)
 func isBasicAddressQuery(method string) bool {
 	switch method {
 	case "eth_getBalance", "eth_getTransactionCount":
@@ -1825,8 +1947,9 @@ func GetTargetAddress(method string, params []any) string {
 		// All address-targeted state queries need per-address access checks.
 		// On a private network, balances, nonces, bytecode, and storage proofs
 		// are sensitive — cross-org queries leak financial and activity data.
-		// eth_getProof returns balance + nonce + storage hash for an address,
-		// equivalent to eth_getBalance + eth_getStorageAt combined.
+		// eth_getProof returns balance + nonce + storage hash for an address
+		// plus the value of every requested storage key, equivalent to
+		// eth_getBalance + eth_getStorageAt combined.
 		if addr, ok := params[0].(string); ok {
 			return strings.ToLower(addr)
 		}
@@ -1870,6 +1993,13 @@ func extractBlockParam(method string, params []any) string {
 		// eth_getStorageAt: [address, slot, block]
 		// eth_getProof: [address, storageKeys[], block]
 		blockParamIndex = 2
+	case "debug_tracecall":
+		// debug_traceCall: [callObj, block, traceConfig] — block is the 2nd
+		// positional arg, same index as eth_call (RD-1304). The debug-trace
+		// access path builds an eth_call-equivalent AccessCheckRequest with
+		// Method="debug_traceCall" so the historical-state guard fires with
+		// the same admin exemption as eth_call.
+		blockParamIndex = 1
 	default:
 		return "latest"
 	}
@@ -1934,6 +2064,11 @@ func IsHistoricalStateQuery(method string, params []any) (bool, string) {
 		"eth_getcode":             true,
 		"eth_gettransactioncount": true,
 		"eth_getproof":            true,
+		// RD-1304: debug_traceCall runs the EVM like eth_call; a historical
+		// block tag lets a non-admin read since-reassigned cross-org state.
+		// Gated with the same admin exemption as eth_call via the debug-trace
+		// access path's eth_call-equivalent AccessCheckRequest.
+		"debug_tracecall": true,
 	}
 
 	if !historicalCheckMethods[method] {

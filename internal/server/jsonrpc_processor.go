@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -166,7 +167,7 @@ type ProcessRequest struct {
 	OrgID         string // Optional: specify which org to use (for users with multiple memberships)
 	Method        string
 	Params        []any
-	Body          []byte
+	Body          []byte // canonical envelope from ParseAndValidateBody, forwarded upstream
 	ClientIP      string
 	CorrelationID string // Request correlation ID for audit trail
 	// BypassPermsCache, when true, forces AccessController.CheckAccess to
@@ -577,11 +578,10 @@ func (p *JSONRPCProcessor) logAccess(ctx context.Context, req *ProcessRequest, s
 				SourceIP:      req.ClientIP,
 				EntryHash:     hash,
 			}
-			// Tag wildcard-resolved methods so SIEM consumers can filter on the
-			// passthrough surface independently from explicitly-listed methods.
-			if w := rbac.MatchWildcard(req.Method); w != nil {
-				event.MatchedVia = "wildcard"
-				event.MatchedPrefix = w.Prefix
+			// Tag operator passthrough methods so SIEM consumers can filter on
+			// the unfiltered surface independently from modelled methods.
+			if rbac.IsPassthroughMethod(req.Method) {
+				event.MatchedVia = "passthrough"
 			}
 			p.siemForwarder.Send(event)
 		}
@@ -593,33 +593,77 @@ func (p *JSONRPCProcessor) logAccess(ctx context.Context, req *ProcessRequest, s
 }
 
 // ParseAndValidateBody parses and validates the JSON-RPC request body.
-// Returns the method, params, and any validation error.
-func ParseAndValidateBody(body []byte) (string, []any, *ProcessError) {
+// Returns the method, params, the canonical body to forward upstream, and any
+// validation error.
+//
+// The canonical body (proxy.Envelope.Canonical) holds exactly the members the
+// access decision is made on; it is what ProcessRequest.Body must carry, never
+// the client's bytes. An envelope whose member names can be read more than one
+// way (duplicate or case-variant names, RD-1303) is refused here, before any
+// access decision, with the same opaque message as malformed JSON.
+func ParseAndValidateBody(body []byte) (string, []any, []byte, *ProcessError) {
 	if len(body) > MaxRequestBodySize {
-		return "", nil, &ProcessError{
+		return "", nil, nil, &ProcessError{
 			StatusCode: http.StatusRequestEntityTooLarge,
 			Message:    "request body too large",
 		}
 	}
 
-	method, params, err := proxy.ParseRequest(body)
+	env, err := proxy.ParseEnvelope(body)
 	if err != nil {
-		if err == proxy.ErrBatchRequest {
-			return "", nil, &ProcessError{
+		if errors.Is(err, proxy.ErrBatchRequest) {
+			return "", nil, nil, &ProcessError{
 				StatusCode: http.StatusBadRequest,
 				Message:    "batch JSON-RPC requests are not supported for security reasons",
 			}
 		}
 		// Opaque client message; raw parse error (echoes offsets / body shape)
 		// stays in slog. (RD-1178 / RD-934)
-		slog.Warn("invalid JSON-RPC request", slog.Any("err", err))
-		return "", nil, &ProcessError{
+		if errors.Is(err, proxy.ErrAmbiguousRequest) {
+			slog.Warn("ambiguous JSON-RPC request refused", slog.Any("err", err))
+		} else {
+			slog.Warn("invalid JSON-RPC request", slog.Any("err", err))
+		}
+		return "", nil, nil, &ProcessError{
+			StatusCode: http.StatusBadRequest,
+			Message:    "invalid JSON-RPC request",
+		}
+	}
+	// Access is decided on the built-in spelling of a catalog method
+	// (CanonicalizeMethod, as Process dispatches), so the forwarded body
+	// carries that spelling rather than the caller's. Operator methods are
+	// matched by exact name and are left unchanged.
+	env.SetMethod(rbac.CanonicalizeMethod(env.Method))
+	if reason := ambiguousParams(env); reason != "" {
+		slog.Warn("ambiguous JSON-RPC request refused", slog.String("reason", reason), slog.String("method", env.Method))
+		return "", nil, nil, &ProcessError{
 			StatusCode: http.StatusBadRequest,
 			Message:    "invalid JSON-RPC request",
 		}
 	}
 
-	return method, params, nil
+	// visibleTo/privateFor are the proxy's own metadata. The two send paths
+	// read them from the body and strip them before forwarding (RD-1163);
+	// for every other method they are dropped here, so they never reach the
+	// node.
+	forward := env.Canonical
+	switch env.Method {
+	case "eth_sendTransaction", "eth_sendRawTransaction":
+	default:
+		forward = env.CanonicalWithoutMetadata()
+	}
+	return env.Method, env.Params, forward, nil
+}
+
+// ambiguousParams returns env.ParamsAmbiguity() for methods whose params the
+// proxy's checks read, and "" for named passthrough methods, whose payloads it
+// never inspects. Aliased chain methods resolve to the standard method they
+// inherit checks from, so they stay covered. RD-1303.
+func ambiguousParams(env *proxy.Envelope) string {
+	if rbac.IsPassthroughMethod(rbac.CanonicalizeMethod(env.Method)) {
+		return ""
+	}
+	return env.ParamsAmbiguity()
 }
 
 // Process handles the core business logic for a JSON-RPC request:
@@ -630,11 +674,10 @@ func ParseAndValidateBody(body []byte) (string, []any, *ProcessError) {
 func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *ProcessResult {
 	start := time.Now()
 
-	// RD-1180: canonicalize the method name ONCE at ingress so the special
-	// validation dispatch below (and target/selector extraction + RBAC gates
-	// downstream) can't be skipped by mixed-case method names. The upstream
-	// node still receives req.Body verbatim; only the internal method string is
-	// normalized. Unknown methods (linea_*, wildcard passthrough) pass through.
+	// Normalize built-in method names for internal dispatch and access checks;
+	// ParseAndValidateBody already wrote the same spelling into the forwarded
+	// body. Operator methods require an explicit registered alias or
+	// passthrough entry.
 	req.Method = rbac.CanonicalizeMethod(req.Method)
 
 	// Handle eth_sendRawTransaction specially - requires runtime tracing
@@ -642,14 +685,39 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 		return p.processRawTransaction(ctx, req)
 	}
 
-	// Handle debug traces specially - requires strict deep tree validation
+	// Handle debug traces specially - requires strict deep tree validation.
+	// Route any registry-resolved trace name through the guarded trace path.
+	// Dedicated trace aliases are rejected by exact catalog admission before
+	// trace-specific work.
 	if req.Method == "debug_traceTransaction" || req.Method == "debug_traceCall" {
 		return p.processDebugTrace(ctx, req)
+	}
+	if aliased := rbac.ResolveMethodAlias(req.Method); aliased == "debug_traceTransaction" || aliased == "debug_traceCall" {
+		return p.processDebugTrace(ctx, req)
+	}
+
+	// RD-1305: refuse unsupported simulation options before RBAC, tracing and
+	// forwarding. Use an opaque response and retain the reason in the access log.
+	// Org resolution has not run yet, so this audit row has no resolved org.
+	if denied, kind := rbac.DetectStateOverride(req.Method, req.Params); denied {
+		req.denialReason = ReasonStateOverrideNotAllowed
+		slog.Info("state/block override denied", "method", req.Method, "user", req.UserID, "ip", req.ClientIP, "kind", kind)
+		p.recordRPCOutcome(req.Method, "override_denied", start)
+		p.recordRBACDecision("denied")
+		p.logAccess(ctx, req, http.StatusForbidden, http.StatusNotFound)
+		return &ProcessResult{
+			Error: &ProcessError{
+				StatusCode: http.StatusNotFound,
+				Message:    "method not found",
+			},
+		}
 	}
 
 	// Resolve method alias for access control (e.g. linea_estimateGas → eth_estimateGas).
 	// The alias determines which access control rules apply (contract checks, storage tiering, etc.)
-	// while the original method name is kept for the RBAC allowlist check and node forwarding.
+	// while the requested method name (an alias or passthrough name as configured, or a
+	// catalog method in its built-in spelling) is kept for the RBAC allowlist check and node
+	// forwarding.
 	accessMethod := rbac.ResolveMethodAlias(req.Method)
 
 	// Build RBAC access check request using the alias for target/selector extraction
@@ -1102,10 +1170,13 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 		// Pass the internal user UUID (result.UserID), not the JWT DID.
 		// viewerUUID() guards against nil result (visibleTo-only path).
 		adminMap := p.viewerAdminContracts(ctx, viewerUUID(result), extractContractAddressesFromResponse(responseBody))
-		filtered := FilterReceiptLogsWithEventRules(responseBody, addrs, perms, p.contractABIProvider(ctx), visCtx, adminMap)
-		// RD-1214: field-redact embedded addresses in the admitted receipt logs
-		// (same resolver + primitive as the explorer, so both hide the same set).
-		return p.redactReceiptResponseFields(ctx, req.UserID, filtered)
+		// Admission and rendering in one pass: each admitted receipt log is
+		// rendered with the payload policy decided for it — RD-1214 masking
+		// (same resolver + primitive as the explorer) or, for an RD-874
+		// visibleTo unlock of this exact (viewer, contract, tx), the full
+		// payload (RD-1300).
+		abiProv := p.contractABIProvider(ctx)
+		return filterReceiptLogsWithEventRules(responseBody, addrs, perms, abiProv, visCtx, adminMap, p.logFieldRenderer(ctx, req.UserID, abiProv))
 
 	case strings.EqualFold(m, rbac.MethodGetLogs):
 		addrs, err := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)
@@ -1135,10 +1206,10 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 		// the JWT DID — viewerAdminContracts queries user_memberships
 		// by UUID FK. viewerUUID() guards against nil result.
 		adminMap := p.viewerAdminContracts(ctx, viewerUUID(result), extractContractAddressesFromResponse(responseBody))
-		filtered := FilterLogsWithEventRules(responseBody, addrs, perms, p.contractABIProvider(ctx), visCtx, adminMap)
-		// RD-1214: field-redact embedded addresses in the admitted logs (same
-		// resolver + primitive as the explorer, so both hide the same set).
-		return p.redactLogsArrayResponseFields(ctx, req.UserID, filtered)
+		// Admission and rendering in one pass (see the receipt case above):
+		// masked per RD-1214 unless the log is an RD-874 unlock (RD-1300).
+		abiProv := p.contractABIProvider(ctx)
+		return filterLogsWithEventRules(responseBody, addrs, perms, abiProv, visCtx, adminMap, p.logFieldRenderer(ctx, req.UserID, abiProv))
 
 	case strings.EqualFold(m, rbac.MethodGetTransactionByBlockHashAndIndex),
 		strings.EqualFold(m, rbac.MethodGetTransactionByBlockNumberAndIndex):

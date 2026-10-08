@@ -998,3 +998,43 @@ func TestValidateTrace_IntraOrgScoping_PreregisteredSibling(t *testing.T) {
 		}
 	})
 }
+
+func TestValidateTrace_ClientDelegatedPreregistrationUsesStorageContext(t *testing.T) {
+	const (
+		storageAddress = "0xa111000000000000000000000000000000000000"
+		implementation = "0xb222000000000000000000000000000000000000"
+	)
+	for _, tc := range []struct {
+		name        string
+		preregister string
+		hasDeploy   bool
+		wantAllowed bool
+	}{
+		{"implementation registration does not authorize storage", implementation, true, false},
+		{"storage registration permits pending deployment", storageAddress, true, true},
+		{"storage registration requires deploy claim", storageAddress, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := NewMockTraceStore()
+			store.AddOwnedAddress("org1", storageAddress)
+			store.AddOwnedAddress("org1", implementation)
+			store.AddPreregisteredAddress("org1", tc.preregister)
+			trace := &tracer.TraceResult{CallTargets: []tracer.CallTarget{{
+				Type: "DELEGATECALL", From: storageAddress, To: implementation,
+				StorageAddress: storageAddress, Depth: 1,
+			}}}
+			result, err := NewTraceValidator(store).ValidateTrace(context.Background(),
+				map[string]bool{"org1": true}, trace, tc.hasDeploy,
+				WithClientTraceGrantScoping(map[string]bool{}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Allowed != tc.wantAllowed {
+				t.Fatalf("Allowed = %v, want %v (denial %q)", result.Allowed, tc.wantAllowed, result.DenialKind)
+			}
+			if !tc.wantAllowed && result.DenialKind != DenialKindIntraOrgUngranted {
+				t.Fatalf("denial = %q, want %q", result.DenialKind, DenialKindIntraOrgUngranted)
+			}
+		})
+	}
+}

@@ -22,6 +22,7 @@ func TestWireReason_ClosedAllowlist(t *testing.T) {
 		ReasonMethodNotAllowed, // safe only while RBAC denials stay a uniform 404 (see TestWireReason_MethodNotAllowedInvariant note)
 		ReasonSenderNotLinked,
 		ReasonInvalidRequestShape,
+		ReasonStateOverrideNotAllowed, // the caller sent the override themselves
 		ReasonRateLimited,
 		ReasonConcurrencyLimited,
 		ReasonUpstreamError,
@@ -33,6 +34,7 @@ func TestWireReason_ClosedAllowlist(t *testing.T) {
 		ReasonTracingUnavailable,
 		ReasonTraceDepthExceeded,
 		ReasonDeployClaimRequired,
+		ReasonTraceAccessDenied,
 		ReasonComplianceBlocked,
 		ReasonInternalError,
 	}

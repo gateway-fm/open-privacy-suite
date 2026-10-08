@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"privacy-proxy/internal/apimodels"
@@ -259,6 +260,55 @@ func TestDryRun_DenyDecisionLoggedAndReturned(t *testing.T) {
 			f.adminDID, f.userDID).Scan(&count),
 	)
 	assert.Equal(t, 1, count, "expected exactly one deny row in impersonation_log")
+}
+
+// TestDryRun_StateOverrideDenied verifies that admin diagnostics apply the
+// same simulation-option policy as the RPC endpoint.
+func TestDryRun_StateOverrideDenied(t *testing.T) {
+	f := setupDryRunFixture(t)
+
+	// The allow baseline forwards upstream, so the fixture needs a node; count
+	// hits so the deny case can prove the override never reached it.
+	var hits atomic.Int64
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":"0x"}`))
+	}))
+	t.Cleanup(stub.Close)
+	f.srv.proxy = proxy.New(stub.URL)
+
+	call := map[string]any{"to": f.contractAddr, "data": "0x"}
+	post := func(params []any) dryRunResponse {
+		t.Helper()
+		w := dryRunPost(t, f.srv, f.orgID, "jwt_admin", f.adminDID, map[string]any{
+			"user_did": f.userDID,
+			"rpc":      map[string]any{"method": "eth_call", "params": params},
+		})
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		var resp dryRunResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		return resp
+	}
+
+	// Baseline: the same call without an override is allowed — so the deny
+	// below is caused by the override, not by the fixture's grants.
+	base := post([]any{call, "latest"})
+	require.Equal(t, "allow", base.Decision, "plain eth_call on the granted contract must be allowed; reason=%q", base.Reason)
+	require.Equal(t, int64(1), hits.Load())
+
+	hits.Store(0)
+	resp := post([]any{call, "latest", map[string]any{f.contractAddr: map[string]any{"code": "0x00"}}})
+	assert.Equal(t, "deny", resp.Decision, "a state override on a granted contract must still be denied")
+	assert.Equal(t, rbac.StateOverrideDeniedReason, resp.Reason, "denied by the override gate")
+	assert.Equal(t, int64(0), hits.Load(), "the override must never reach the node")
+
+	// Audit row carries the curated reason code, not free text.
+	var logged string
+	require.NoError(t, f.srv.db.Conn().QueryRowContext(context.Background(),
+		`SELECT reason FROM impersonation_log
+		 WHERE actor_did = $1 AND impersonated_did = $2 AND decision = 'deny'`,
+		f.adminDID, f.userDID).Scan(&logged))
+	assert.Equal(t, ReasonStateOverrideNotAllowed, logged)
 }
 
 const (

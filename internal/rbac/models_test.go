@@ -6,19 +6,20 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// TestEffectivePermissions_HasMethod_Glob covers the v2 wildcard binding path:
-// a "<prefix>*" entry in allowed_methods matches a method only when a
-// registered global WildcardNamespace covers it (deny list checked there).
-func TestEffectivePermissions_HasMethod_Glob(t *testing.T) {
+// TestEffectivePermissions_HasMethod pins the default-deny allowlist: a method
+// is granted only if the proxy would forward it (catalog, alias to a catalog
+// method, operator passthrough) AND the group lists it by exact name, or holds
+// a legacy "*" entry and the method is in the "*" expansion. Globs grant
+// nothing; passthrough methods are never granted through "*".
+func TestEffectivePermissions_HasMethod(t *testing.T) {
 	defer SnapshotMethodRegistriesForTest()()
-
-	Wildcards = []*WildcardNamespace{
-		{
-			Namespace: "Linea",
-			Prefix:    "linea_",
-			Deny:      []string{"linea_sendTransaction", "linea_sign*"},
-		},
+	ExtraMethods = map[string]bool{"linea_estimateGas": true, "linea_getProof": true, "custom_getRaw": true, "trace_block": true}
+	MethodAliases = map[string]string{
+		"linea_estimateGas": "eth_estimateGas",
+		"linea_getProof":    "eth_getProof",
+		"custom_getRaw":     "eth_getRawTransactionByHash",
 	}
+	PassthroughMethods = map[string]bool{"trace_block": true}
 
 	tests := []struct {
 		name           string
@@ -26,22 +27,31 @@ func TestEffectivePermissions_HasMethod_Glob(t *testing.T) {
 		method         string
 		want           bool
 	}{
-		{"explicit exact match still wins", []string{"linea_estimateGas"}, "linea_estimateGas", true},
-		{"glob covers unknown method via registered wildcard", []string{"linea_*"}, "linea_brandNew", true},
-		{"glob does NOT cover deny-listed method", []string{"linea_*"}, "linea_sendTransaction", false},
-		{"glob does NOT cover deny-glob match", []string{"linea_*"}, "linea_signTypedData", false},
-		{"unrelated prefix glob without registered wildcard is ignored", []string{"zksync_*"}, "zksync_anyMethod", false},
-		{"bare * still allows anything not in any wildcard Deny", []string{"*"}, "linea_anything", true},
-		{"empty glob entry is ignored", []string{""}, "linea_brandNew", false},
-		// M8 (security audit): a wildcard's Deny list is a hard floor —
-		// even bare "*" in allowed_methods cannot override it. Pre-fix
-		// this case returned true, allowing tier-1/2 admins to bypass an
-		// operator-configured per-namespace deny by listing "*" or the
-		// method explicitly.
-		{"wildcard Deny is hard floor even against *", []string{"*"}, "linea_sendTransaction", false},
-		{"glob entry alongside explicits — explicit wins for explicit method", []string{"linea_estimateGas", "linea_*"}, "linea_estimateGas", true},
-		{"glob entry alongside explicits — glob covers other methods", []string{"linea_estimateGas", "linea_*"}, "linea_getProof", true},
-		{"no glob, unknown method denied", []string{"linea_estimateGas"}, "linea_brandNew", false},
+		{"exact catalog method", []string{"eth_call"}, "eth_call", true},
+		{"unlisted catalog method", []string{"eth_call"}, "eth_getLogs", false},
+		{"exact alias to catalog method", []string{"linea_estimateGas"}, "linea_estimateGas", true},
+		{"exact passthrough method", []string{"trace_block"}, "trace_block", true},
+		{"exact-name-only catalog method listed", []string{"eth_getProof"}, "eth_getProof", true},
+
+		{"star grants built-in methods", []string{"*"}, "eth_sendTransaction", true},
+		{"star grants trace methods", []string{"*"}, "debug_traceCall", true},
+		{"star grants alias to a star method", []string{"*"}, "linea_estimateGas", true},
+		{"star does not grant exact-name-only catalog methods", []string{"*"}, "eth_getProof", false},
+		{"star does not grant alias to exact-name-only method", []string{"*"}, "linea_getProof", false},
+		{"star does not grant passthrough", []string{"*"}, "trace_block", false},
+		{"star does not grant unmodelled method", []string{"*"}, "eth_getRawTransactionByHash", false},
+		{"star does not grant unmodelled namespace", []string{"*"}, "trace_transaction", false},
+		{"star does not grant send-sync", []string{"*"}, "eth_sendRawTransactionSync", false},
+		{"star does not grant alias to unmodelled target", []string{"*"}, "custom_getRaw", false},
+		{"star does not grant globally blocked", []string{"*"}, "eth_newFilter", false},
+
+		{"explicit unmodelled name grants nothing", []string{"eth_getRawTransactionByHash"}, "eth_getRawTransactionByHash", false},
+		{"explicit alias to unmodelled target grants nothing", []string{"custom_getRaw"}, "custom_getRaw", false},
+		{"explicit globally blocked grants nothing", []string{"eth_newFilter"}, "eth_newFilter", false},
+		{"glob grants nothing", []string{"linea_*"}, "linea_estimateGas", false},
+		{"glob grants nothing for catalog prefix", []string{"eth_*"}, "eth_call", false},
+		{"non-canonical spelling grants nothing", []string{"ETH_CALL"}, "ETH_CALL", false},
+		{"empty entry grants nothing", []string{""}, "eth_call", false},
 	}
 
 	for _, tt := range tests {
@@ -51,16 +61,4 @@ func TestEffectivePermissions_HasMethod_Glob(t *testing.T) {
 			assert.Equal(t, tt.want, got, "method=%q allowed=%v", tt.method, tt.allowedMethods)
 		})
 	}
-}
-
-// TestEffectivePermissions_HasMethod_NoWildcardsRegistered confirms that v1
-// behavior is identical when no wildcards are configured: glob entries simply
-// don't match anything (no operator opt-in → no surface).
-func TestEffectivePermissions_HasMethod_NoWildcardsRegistered(t *testing.T) {
-	defer SnapshotMethodRegistriesForTest()()
-	Wildcards = nil
-
-	perms := &EffectivePermissions{AllowedMethods: []string{"eth_call", "linea_*"}}
-	assert.True(t, perms.HasMethod("eth_call"), "exact match still works")
-	assert.False(t, perms.HasMethod("linea_estimateGas"), "glob without registered wildcard is inert")
 }

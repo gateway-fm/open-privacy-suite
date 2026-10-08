@@ -23,3 +23,8 @@ rich>=13.0.0
 
 # Async support
 aiofiles>=23.0.0
+
+# Transitive (edge-tts -> aiohttp -> multidict). Floor is 6.9.1: Aikido
+# reports AIKIDO-2026-338732 against 6.8.0, which aiohttp's multidict<7,>=4.5
+# range still allows, and names 6.9.1 as the patched version.
+multidict>=6.9.1
