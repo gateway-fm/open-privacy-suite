@@ -226,6 +226,8 @@ The eth_call cross-org trace fires **only** when the method resolves to `eth_cal
 
 This is correct: a method the proxy has no alias mapping for has no defined `to`/`from`/`data` shape, so the proxy has nothing to extract for the trace and no way to know whether the method even runs the EVM. Operators who enable a wildcard namespace are accepting that **all** of that namespace's methods bypass cross-org isolation. If you need cross-org isolation on a chain-specific method, register it explicitly with an `alias` rather than relying on a wildcard.
 
+The [simulation-option policy](/docs/security/response-filtering#state-and-block-overrides) follows standard methods and explicit method mappings. Map a chain-specific method only when its parameters match the standard method's layout. Client-supplied state and block overrides are unsupported for every caller, including admins. Details: RD-1305.
+
 </Callout>
 
 **Intra-org contract-grant scoping:**

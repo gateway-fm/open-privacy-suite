@@ -7331,19 +7331,9 @@ paths:
       - 'Admin: RBAC'
   /api/v1/admin/orgs/{org_id}/dry-run:
     post:
-      description: 'Evaluates "what would this user see if they made this RPC call?"
-        in the path org, without mutating chain state. Read methods are forwarded
-        and redacted as the impersonated user; write methods (eth_sendTransaction
-        / eth_sendRawTransaction) are translated to debug_traceCall so the RBAC verdict
-        and the events the tx would emit (and the subset visible to the user) can
-        be inspected. Requires a tier-2 org-admin JWT of the path org: X-Admin-Token
-        credentials (both the full super-admin token and the operator token) are explicitly
-        rejected, since impersonation reads tenant data as the user. The impersonated
-        user must exist and be a member of the path org, else an opaque 404 (no cross-org
-        existence leak). Every evaluation is written to the impersonation audit log
-        fail-closed. Supported methods: eth_call, eth_getLogs, eth_getTransactionReceipt,
-        eth_getTransactionByHash, eth_getBalance, eth_getCode, eth_getStorageAt, eth_blockNumber,
-        eth_chainId, eth_sendTransaction, eth_sendRawTransaction.'
+      description: |-
+        Evaluates "what would this user see if they made this RPC call?" in the path org, without mutating chain state. Read methods are forwarded and redacted as the impersonated user; write methods (eth_sendTransaction / eth_sendRawTransaction) are translated to debug_traceCall so the RBAC verdict and the events the tx would emit (and the subset visible to the user) can be inspected. Requires a tier-2 org-admin JWT of the path org: X-Admin-Token credentials (both the full super-admin token and the operator token) are explicitly rejected, since impersonation reads tenant data as the user. The impersonated user must exist and be a member of the path org, else an opaque 404. Every evaluation is written to the impersonation audit log fail-closed. Supported methods: eth_call, eth_getLogs, eth_getTransactionReceipt, eth_getTransactionByHash, eth_getBalance, eth_getCode, eth_getStorageAt, eth_blockNumber, eth_chainId, eth_sendTransaction, eth_sendRawTransaction.
+        Client state/block override options are unsupported regardless of the selected user's role, including admins.
       parameters:
       - description: Organization ID (UUID)
         in: path
@@ -8770,11 +8760,9 @@ paths:
       - 'Admin: system'
   /api/v1/admin/test-request:
     post:
-      description: 'Dashboard diagnostic: runs one method through RBAC, travel-rule
-        compliance, and upstream forwarding, using a synthetic identity ("test:dashboard")
-        or the subject of a supplied jwt_token. On an upstream JSON-RPC-level error
-        the call still returns HTTP 200 with the error in the response body. Requires
-        the private-network source gate (403 otherwise).'
+      description: |-
+        Dashboard diagnostic: runs one method through RBAC, travel-rule compliance, and upstream forwarding, using a synthetic identity ("test:dashboard") or the subject of a supplied jwt_token. On an upstream JSON-RPC-level error the call still returns HTTP 200 with the error in the response body. Requires the private-network source gate (403 otherwise).
+        Client state/block override options follow the RPC policy for every caller, including admins.
       requestBody:
         content:
           application/json:
@@ -12902,6 +12890,8 @@ paths:
 
         `Authorization: Bearer <token>` is OPTIONAL: anonymous callers are restricted to the anonymous method allowlist; authenticated callers get per-method RBAC and response redaction based on their identity.
 
+        Client state/block override options on call, gas-estimation, access-list, and trace methods are unsupported for all callers, including admins. Positional null/empty-object placeholders remain allowed; debug_traceCall override and replay-position config keys must be omitted. Ordinary calls remain subject to the normal access and node validation rules.
+
         The transaction-sending methods (eth_sendTransaction / eth_sendRawTransaction) additionally accept a top-level `visibleTo` array (alias `privateFor`) of DIDs and/or linked ETH addresses, granting those viewers per-transaction visibility of the emitted event logs (RD-1163). It is accepted only for log-emitting contract calls.
 
         A JSON-RPC-level error (bad params, node error, or a masked authorization denial) is returned with HTTP 200 in the JSON-RPC error member. The non-200 statuses below are transport / access / rate-limit failures that never reach the node. `POST /` and `POST /rpc` are the same operation.
@@ -12990,6 +12980,8 @@ paths:
         Single Ethereum JSON-RPC 2.0 request, method-allowlisted and RBAC-checked, with per-method response redaction. Batch (array) requests are rejected.
 
         `Authorization: Bearer <token>` is OPTIONAL: anonymous callers are restricted to the anonymous method allowlist; authenticated callers get per-method RBAC and response redaction based on their identity.
+
+        Client state/block override options on call, gas-estimation, access-list, and trace methods are unsupported for all callers, including admins. Positional null/empty-object placeholders remain allowed; debug_traceCall override and replay-position config keys must be omitted. Ordinary calls remain subject to the normal access and node validation rules.
 
         The transaction-sending methods (eth_sendTransaction / eth_sendRawTransaction) additionally accept a top-level `visibleTo` array (alias `privateFor`) of DIDs and/or linked ETH addresses, granting those viewers per-transaction visibility of the emitted event logs (RD-1163). It is accepted only for log-emitting contract calls.
 

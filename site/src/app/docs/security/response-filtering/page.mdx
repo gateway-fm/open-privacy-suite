@@ -60,6 +60,27 @@ Any other slot returns an error for non-admin users. This allows standard proxy 
 
 ---
 
+## State and block overrides
+
+Some nodes support state or block override sets as optional arguments on existing RPC methods such as `eth_call`. These options select temporary account state or block fields for the simulation; their shape and availability depend on the node implementation. OPS does not accept client-supplied overrides. Ordinary calls and simulations still run against the configured node's state at the requested block, under the normal access and tracing rules.
+
+The policy applies to every caller, including contract and organization admins. Requests with unsupported options are refused before tracing or forwarding and receive the same opaque `method not found` as other RPC access denials.
+
+| Method | Rejected | Passes the option check |
+|--------|----------|----------|
+| `eth_call`, `eth_estimateGas`, `eth_createAccessList` | non-empty or malformed overrides in the third or fourth parameter; objects with unsupported keys in the block-parameter position; more than four parameters | omitted, `null`, or `{}` positional overrides; supported block references; a boolean third parameter for `eth_createAccessList` optimization |
+| `debug_traceCall` | any `stateOverrides`, `stateOverride`, `blockOverrides`, `blockOverride`, or `txIndex` config key, including case-equivalent spellings, regardless of its value | a config omitting those keys, subject to normal trace checks |
+
+A client emitting trace override keys with empty values must omit the keys. Passing the option check does not guarantee node support for a particular optional argument; normal RBAC, block-reference validation, and node validation still apply. Explicitly mapped chain-specific methods follow their mapped method's policy and require a compatible parameter layout.
+
+Bundled methods `eth_simulateV1`, `eth_simulate`, `eth_multicallV1`, `eth_callMany`, and `eth_callBundle` are unsupported.
+
+Rejected override requests are recorded with `state_override_not_allowed`. These early access-log entries have no resolved organization and appear in the fleet-wide Access Logs view. Admin dry-run and test-request diagnostics apply the same policy. OPS's internally constructed node requests for approval preparation remain available with their own simulation options.
+
+Details: RD-1305.
+
+---
+
 ## Transaction Data
 
 Transaction data can be fetched by hash or by block position. All three methods apply the same participant check and return the same filtered result.

@@ -314,6 +314,8 @@ This prevents an admin from configuring event rules that target users or contrac
 
 </Callout>
 
+**Client state and block overrides are unsupported for every caller, including admins.** Ordinary calls and simulations remain available against the configured node's state. OPS checks optional override arguments on call, gas-estimation, access-list, and trace methods, including explicitly mapped equivalents; bundled simulation methods are unsupported. See [Response filtering](/docs/security/response-filtering) for the accepted argument forms. Details: RD-1305.
+
 ### Multi-Organization Users
 
 Users can be members of groups in multiple organizations. The system resolves organization context
