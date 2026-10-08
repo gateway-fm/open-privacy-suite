@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"sort"
 
 	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/audit"
@@ -565,23 +566,22 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		rbacAccessCtrl = rbac.NewAccessController(database, RBACCacheTTL)
 	}
 
-	// Register extra RPC namespaces (chain-specific method extensions, including
-	// any v2 wildcard passthroughs).
+	// Register extra RPC namespaces (chain-specific methods: aliases to
+	// built-in methods and named passthrough methods). An invalid entry fails
+	// startup rather than silently widening or narrowing the forwarded set.
 	if cfg.ExtraRPCNamespaces != nil && len(cfg.ExtraRPCNamespaces.Namespaces) > 0 {
-		wildcardCfgs := cfg.ExtraRPCNamespaces.Wildcards()
-		wildcards := make([]*rbac.WildcardNamespace, 0, len(wildcardCfgs))
-		for ns, w := range wildcardCfgs {
-			wildcards = append(wildcards, &rbac.WildcardNamespace{
-				Namespace: ns,
-				Prefix:    w.Prefix,
-				Deny:      w.Deny,
-			})
+		passthrough := cfg.ExtraRPCNamespaces.Passthrough()
+		if err := rbac.RegisterExtraNamespaces(cfg.ExtraRPCNamespaces.MethodNames(), cfg.ExtraRPCNamespaces.Aliases(), passthrough); err != nil {
+			return nil, fmt.Errorf("EXTRA_RPC_NAMESPACES_FILE: %w", err)
 		}
-		rbac.RegisterExtraNamespaces(cfg.ExtraRPCNamespaces.MethodNames(), cfg.ExtraRPCNamespaces.Aliases(), wildcards)
 		slog.Info("extra RPC namespaces registered",
 			"namespaces", len(cfg.ExtraRPCNamespaces.Namespaces),
 			"aliases", len(cfg.ExtraRPCNamespaces.Aliases()),
-			"wildcards", len(wildcards))
+			"passthrough", len(passthrough))
+		if len(passthrough) > 0 {
+			slog.Warn("RPC passthrough methods enabled: forwarded to the node by exact name with no per-address access check, no response filtering and no tracing; the operator is responsible for what they return",
+				"methods", passthrough)
+		}
 	}
 
 	// Configure RPC API key encryption for decrypting keys from the database
@@ -831,9 +831,8 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 					SourceIP:      rec.IPAddress,
 					EntryHash:     hash,
 				}
-				if w := rbac.MatchWildcard(rec.Method); w != nil {
-					ev.MatchedVia = "wildcard"
-					ev.MatchedPrefix = w.Prefix
+				if rbac.IsPassthroughMethod(rec.Method) {
+					ev.MatchedVia = "passthrough"
 				}
 				siemForwarder.Send(ev)
 			}
@@ -1316,6 +1315,8 @@ const MaxRequestBodySize = 1 << 20 // 1MB
 // @Summary      Proxied Ethereum JSON-RPC
 // @Description  Single Ethereum JSON-RPC 2.0 request, method-allowlisted and RBAC-checked, with per-method response redaction. Batch (array) requests are rejected.
 // @Description
+// @Description  Member names must be exact-case and unique: a request that repeats a member name, holds two names differing only in letter case in one object (at any depth), or uses a case variant of a JSON-RPC member (e.g. `Method`) is rejected with 400 before any access decision and never reaches the node; so is an `id` that is not a string, a number or null. For methods whose params the proxy checks (all but typed-data signing and named passthrough), so are a case variant of a standard request field inside params (e.g. `To`) and an object whose `data` and `input` differ. The node receives a request rebuilt from the members the proxy read (jsonrpc, id, method, params); `visibleTo`/`privateFor` and any other top-level members are never forwarded.
+// @Description
 // @Description  `Authorization: Bearer <token>` is OPTIONAL: anonymous callers are restricted to the anonymous method allowlist; authenticated callers get per-method RBAC and response redaction based on their identity.
 // @Description
 // @Description  The transaction-sending methods (eth_sendTransaction / eth_sendRawTransaction) additionally accept a top-level `visibleTo` array (alias `privateFor`) of DIDs and/or linked ETH addresses, granting those viewers per-transaction visibility of the emitted event logs (RD-1163). It is accepted only for log-emitting contract calls.
@@ -1327,7 +1328,7 @@ const MaxRequestBodySize = 1 << 20 // 1MB
 // @Param        org_id path string false "Organization the access decision resolves against (only on /rpc/{org_id})"
 // @Param        request body apimodels.JSONRPCRequestEnvelope true "JSON-RPC 2.0 request"
 // @Success      200 {object} apimodels.JSONRPCResponseEnvelope "JSON-RPC response; may carry a JSON-RPC-level error member"
-// @Failure      400 {object} apimodels.APIError "unreadable body, malformed/batch JSON-RPC, or invalid visibleTo"
+// @Failure      400 {object} apimodels.APIError "unreadable body, malformed, ambiguous (duplicate or case-variant member names) or batch JSON-RPC, or invalid visibleTo"
 // @Failure      401 {object} apimodels.APIError "identity required but unresolved on a trace method (debug_traceCall / debug_traceTransaction)"
 // @Failure      403 {object} apimodels.APIError "runtime-trace or compliance denial"
 // @Failure      404 {object} apimodels.APIError "method not allowed for the caller (denials are masked as method not found)"
@@ -1353,8 +1354,10 @@ func (s *Server) handleJSONRPC(c *gin.Context) {
 		return
 	}
 
-	// Parse and validate the request body
-	method, params, parseErr := ParseAndValidateBody(body)
+	// Parse and validate the request body. From here on only the canonical
+	// envelope — the members the access decision is made on — travels
+	// towards the node; the client's bytes are never forwarded (RD-1303).
+	method, params, canonical, parseErr := ParseAndValidateBody(body)
 	if parseErr != nil {
 		c.JSON(parseErr.StatusCode, gin.H{"error": parseErr.Message})
 		return
@@ -1384,7 +1387,7 @@ func (s *Server) handleJSONRPC(c *gin.Context) {
 		OrgID:            orgID,
 		Method:           method,
 		Params:           params,
-		Body:             body,
+		Body:             canonical,
 		ClientIP:         c.ClientIP(),
 		CorrelationID:    middleware.GetCorrelationID(c),
 		BypassPermsCache: impersonating,
@@ -1923,21 +1926,19 @@ func (s *Server) localhostOnlyMiddleware() gin.HandlerFunc {
 	}
 }
 
-// buildExtraWildcardsResponse projects the rbac.Wildcards registry into the
-// status response shape (namespace name → prefix + deny list). Returns nil when
-// no wildcards are registered so the JSON omits the field. Deny is cloned:
-// the response must not alias the live registry slice (RD-1262).
-func buildExtraWildcardsResponse() map[string]apimodels.ExtraWildcardInfo {
-	if len(rbac.Wildcards) == 0 {
+// buildExtraPassthroughResponse lists the operator passthrough methods
+// (sorted) so the admin UI can flag them as unfiltered. Returns nil when none
+// are configured so the JSON omits the field. A fresh slice: the response
+// must not alias the live registry (RD-1262).
+func buildExtraPassthroughResponse() []string {
+	if len(rbac.PassthroughMethods) == 0 {
 		return nil
 	}
-	out := make(map[string]apimodels.ExtraWildcardInfo, len(rbac.Wildcards))
-	for _, w := range rbac.Wildcards {
-		out[w.Namespace] = apimodels.ExtraWildcardInfo{
-			Prefix: w.Prefix,
-			Deny:   slices.Clone(w.Deny),
-		}
+	out := make([]string, 0, len(rbac.PassthroughMethods))
+	for m := range rbac.PassthroughMethods {
+		out = append(out, m)
 	}
+	sort.Strings(out)
 	return out
 }
 
@@ -1961,7 +1962,7 @@ func snapshotExtraNamespaces() map[string][]string {
 // status for the admin dashboard.
 //
 // @Summary      Proxy status
-// @Description  Operational status: proxy liveness and port, upstream node health/latency, compliance/travel-rule configuration, and the extra RPC namespaces/wildcards available to the frontend.
+// @Description  Operational status: proxy liveness and port, upstream node health/latency, compliance/travel-rule configuration, and the RPC methods a group may be granted (supported methods, operator namespaces, and the operator passthrough methods forwarded unfiltered).
 // @Tags         Admin: ops
 // @Produce      json
 // @Success      200 {object} apimodels.StatusResponse
@@ -2000,8 +2001,9 @@ func (s *Server) getStatus(c *gin.Context) {
 			ComplianceDefaultMode: complianceMode,
 		},
 		Methods: apimodels.MethodsStatus{
-			ExtraNamespaces: snapshotExtraNamespaces(),
-			ExtraWildcards:  buildExtraWildcardsResponse(),
+			ExtraNamespaces:  snapshotExtraNamespaces(),
+			ExtraPassthrough: buildExtraPassthroughResponse(),
+			SupportedMethods: rbac.SupportedMethods(),
 		},
 	}
 
@@ -2038,6 +2040,14 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 		// not err.Error() verbatim (which would also surface wrapped
 		// chains on custom validators). RD-934.
 		slog.Warn("test-request: invalid body", "err", err, "ip", c.ClientIP())
+		respondBadRequest(c, "invalid request body")
+		return
+	}
+	// The request is forwarded re-encoded from this decode, so a case variant
+	// of a request field (`{"To": X}`) would reach the node as a field the
+	// access check below never saw (RD-1303).
+	if env, err := proxy.CheckDecodedRequest(input.Method, input.Params); err != nil || ambiguousParams(env) != "" {
+		slog.Warn("test-request: ambiguous request refused", "err", err, "ip", c.ClientIP())
 		respondBadRequest(c, "invalid request body")
 		return
 	}

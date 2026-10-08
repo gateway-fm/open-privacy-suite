@@ -248,7 +248,7 @@ func TestExpandWildcardMethods(t *testing.T) {
 			expanded: true,
 		},
 		{
-			name:     "wildcard with other methods",
+			name:     "wildcard with methods already in the expansion",
 			input:    []string{"eth_call", "*", "eth_getBalance"},
 			expanded: true,
 		},
@@ -295,7 +295,7 @@ func TestRegisterExtraNamespaces(t *testing.T) {
 	ExtraMethods = map[string]bool{}
 	ExtraNamespaces = nil
 	MethodAliases = map[string]string{}
-	Wildcards = nil
+	PassthroughMethods = map[string]bool{}
 
 	namespaces := map[string][]string{
 		"Linea": {"linea_estimateGas", "linea_getProof"},
@@ -306,7 +306,7 @@ func TestRegisterExtraNamespaces(t *testing.T) {
 		"linea_getProof":    "eth_getProof",
 	}
 
-	RegisterExtraNamespaces(namespaces, aliases, nil)
+	require.NoError(t, RegisterExtraNamespaces(namespaces, aliases, []string{"trace_block", "trace_transaction"}))
 
 	// Verify ExtraMethods populated
 	assert.True(t, ExtraMethods["linea_estimateGas"])
@@ -321,116 +321,157 @@ func TestRegisterExtraNamespaces(t *testing.T) {
 	// Verify aliases stored and resolved
 	assert.Equal(t, "eth_estimateGas", ResolveMethodAlias("linea_estimateGas"))
 	assert.Equal(t, "eth_getProof", ResolveMethodAlias("linea_getProof"))
-	assert.Equal(t, "trace_block", ResolveMethodAlias("trace_block")) // no alias = returns self
+	assert.Equal(t, "trace_block", ResolveMethodAlias("trace_block")) // passthrough = returns self
 	assert.Equal(t, "eth_call", ResolveMethodAlias("eth_call"))       // standard method = returns self
 
-	// Verify AllAllowedMethods includes extras
-	all := AllAllowedMethods()
-	allSet := make(map[string]bool)
-	for _, m := range all {
-		allSet[m] = true
-	}
-	assert.True(t, allSet["linea_estimateGas"], "extra method should be in AllAllowedMethods")
-	assert.True(t, allSet["trace_block"], "extra method should be in AllAllowedMethods")
-	assert.True(t, allSet["eth_call"], "standard method should still be in AllAllowedMethods")
+	// Passthrough registry
+	assert.True(t, IsPassthroughMethod("trace_block"))
+	assert.False(t, IsPassthroughMethod("linea_estimateGas"))
 
-	// Verify wildcard expansion includes extras
-	expanded := ExpandWildcardMethods([]string{"*"})
-	expandedSet := make(map[string]bool)
-	for _, m := range expanded {
-		expandedSet[m] = true
-	}
-	assert.True(t, expandedSet["linea_estimateGas"], "extra method should be in wildcard expansion")
-	assert.True(t, expandedSet["trace_transaction"], "extra method should be in wildcard expansion")
+	// "*" expansion: built-in methods plus aliases whose target is itself in
+	// the expansion. Passthrough methods and aliases to exact-name-only
+	// catalog methods (eth_getProof) are never granted through "*".
+	all := AllAllowedMethods()
+	assert.Contains(t, all, "linea_estimateGas", "alias to a '*' method joins the expansion")
+	assert.Contains(t, all, "eth_call")
+	assert.NotContains(t, all, "linea_getProof", "alias to an exact-name-only method stays exact-name-only")
+	assert.NotContains(t, all, "trace_block", "passthrough methods are never granted through '*'")
+	assert.NotContains(t, all, "trace_transaction")
+	assert.Equal(t, all, ExpandWildcardMethods([]string{"*"}))
 }
 
-// TestMatchWildcard exercises the prefix-wildcard passthrough matcher: prefix
-// match, deny-glob override, and namespaces with no wildcard.
-func TestMatchWildcard(t *testing.T) {
-	defer SnapshotMethodRegistriesForTest()()
+// An exact-name-only method listed next to "*" stays granted: the expansion
+// is a union with the list's other entries, not a replacement.
+func TestExpandWildcardMethods_KeepsEntriesOutsideTheExpansion(t *testing.T) {
+	got := ExpandWildcardMethods([]string{"*", "eth_getProof", "eth_call"})
+	assert.Contains(t, got, "eth_getProof")
+	assert.NotContains(t, got, "*")
+	assert.Equal(t, len(AllAllowedMethods())+1, len(got), "deduplicated")
+	assert.IsIncreasing(t, got)
+}
 
-	Wildcards = []*WildcardNamespace{
-		{
-			Namespace: "Linea",
-			Prefix:    "linea_",
-			Deny:      []string{"linea_sendTransaction", "linea_sendRawTransaction", "linea_sign*"},
-		},
-		{
-			Namespace: "Trace",
-			Prefix:    "trace_",
-			Deny:      nil,
-		},
-	}
-
+// TestRegisterExtraNamespaces_RejectsInvalidEntries pins the operator-config
+// rules: exact names only, no shadowing of built-in methods, no passthrough in
+// the reserved standard namespaces or for globally blocked names, and every
+// entry is either aliased or passthrough. A rejected config registers nothing.
+func TestRegisterExtraNamespaces_RejectsInvalidEntries(t *testing.T) {
 	tests := []struct {
-		name     string
-		method   string
-		expectNS string // empty = expect nil match
+		name        string
+		namespaces  map[string][]string
+		aliases     map[string]string
+		passthrough []string
 	}{
-		{"linea unknown method matches", "linea_brandNewMethod", "Linea"},
-		{"linea explicit also matches", "linea_estimateGas", "Linea"},
-		{"linea deny exact match", "linea_sendTransaction", ""},
-		{"linea deny suffix glob", "linea_signTypedData", ""},
-		{"linea deny suffix glob exact", "linea_sign", ""},
-		{"unrelated prefix", "eth_call", ""},
-		{"trace any method passes (no deny list)", "trace_anything", "Trace"},
-		{"empty method", "", ""},
+		{"glob passthrough", map[string][]string{"L": {"linea_*"}}, nil, []string{"linea_*"}},
+		{"glob alias", map[string][]string{"L": {"linea_*"}}, map[string]string{"linea_*": "eth_call"}, nil},
+		{"passthrough shadows catalog", map[string][]string{"X": {"eth_getLogs"}}, nil, []string{"eth_getLogs"}},
+		{"passthrough shadows catalog in another case", map[string][]string{"X": {"ETH_GETLOGS"}}, nil, []string{"ETH_GETLOGS"}},
+		{"alias shadows catalog", map[string][]string{"X": {"eth_getLogs"}}, map[string]string{"eth_getLogs": "eth_blockNumber"}, nil},
+		{"alias shadows catalog in another case", map[string][]string{"X": {"Eth_Call"}}, map[string]string{"Eth_Call": "eth_blockNumber"}, nil},
+		{"passthrough in eth_ namespace", map[string][]string{"X": {"eth_getRawTransactionByHash"}}, nil, []string{"eth_getRawTransactionByHash"}},
+		{"passthrough send-sync", map[string][]string{"X": {"eth_sendRawTransactionSync"}}, nil, []string{"eth_sendRawTransactionSync"}},
+		{"passthrough in net_ namespace", map[string][]string{"X": {"net_foo"}}, nil, []string{"net_foo"}},
+		{"passthrough in web3_ namespace", map[string][]string{"X": {"WEB3_foo"}}, nil, []string{"WEB3_foo"}},
+		{"passthrough globally blocked", map[string][]string{"X": {"debug_getRawBlock"}}, nil, []string{"debug_getRawBlock"}},
+		{"passthrough blocked prefix", map[string][]string{"X": {"admin_nodeInfo"}}, nil, []string{"admin_nodeInfo"}},
+		{"passthrough engine API", map[string][]string{"X": {"engine_forkchoiceUpdatedV3"}}, nil, []string{"engine_forkchoiceUpdatedV3"}},
+		// Alias names are held to the same namespace rules: an eth_ alias
+		// would dress an unmodelled standard method as a modelled one whose
+		// response filter does not match its shape.
+		{"alias in eth_ namespace", map[string][]string{"X": {"eth_getRawTransactionByHash"}}, map[string]string{"eth_getRawTransactionByHash": "eth_getTransactionByHash"}, nil},
+		{"alias blocked name", map[string][]string{"X": {"txpool_contentFrom"}}, map[string]string{"txpool_contentFrom": "eth_getTransactionByHash"}, nil},
+		// Alias targets must be catalog methods with no dedicated request
+		// path: anything else would leave the alias without its target's
+		// protection.
+		{"alias to unmodelled target", map[string][]string{"L": {"linea_raw"}}, map[string]string{"linea_raw": "eth_getRawTransactionByHash"}, nil},
+		{"alias to mis-cased target", map[string][]string{"L": {"linea_call"}}, map[string]string{"linea_call": "ETH_CALL"}, nil},
+		{"alias to blocked target", map[string][]string{"L": {"linea_filter"}}, map[string]string{"linea_filter": "eth_newFilter"}, nil},
+		{"alias to eth_sendRawTransaction", map[string][]string{"L": {"linea_sendRawTransaction"}}, map[string]string{"linea_sendRawTransaction": "eth_sendRawTransaction"}, nil},
+		{"alias to eth_sendTransaction", map[string][]string{"L": {"linea_sendTransaction"}}, map[string]string{"linea_sendTransaction": "eth_sendTransaction"}, nil},
+		{"alias to debug_traceCall", map[string][]string{"L": {"linea_traceCall"}}, map[string]string{"linea_traceCall": "debug_traceCall"}, nil},
+		{"alias to debug_traceTransaction", map[string][]string{"L": {"linea_traceTx"}}, map[string]string{"linea_traceTx": "debug_traceTransaction"}, nil},
+		// Block readers whose forwarded body is rewritten by literal name
+		// (full tx objects for the participant filter, count → block fetch).
+		{"alias to eth_getBlockByNumber", map[string][]string{"L": {"linea_block"}}, map[string]string{"linea_block": "eth_getBlockByNumber"}, nil},
+		{"alias to eth_getBlockByHash", map[string][]string{"L": {"linea_blockByHash"}}, map[string]string{"linea_blockByHash": "eth_getBlockByHash"}, nil},
+		{"alias to eth_getBlockTransactionCountByNumber", map[string][]string{"L": {"linea_count"}}, map[string]string{"linea_count": "eth_getBlockTransactionCountByNumber"}, nil},
+		{"alias to eth_getBlockTransactionCountByHash", map[string][]string{"L": {"linea_countByHash"}}, map[string]string{"linea_countByHash": "eth_getBlockTransactionCountByHash"}, nil},
+		// Typed-data signing with node keys is globally blocked, so it is
+		// neither a valid alias target nor a passthrough name.
+		{"alias to eth_signTypedData_v4", map[string][]string{"L": {"linea_signTyped"}}, map[string]string{"linea_signTyped": "eth_signTypedData_v4"}, nil},
+		{"both alias and passthrough", map[string][]string{"L": {"linea_x"}}, map[string]string{"linea_x": "eth_call"}, []string{"linea_x"}},
+		{"neither alias nor passthrough", map[string][]string{"L": {"linea_x"}}, nil, nil},
+		{"empty name", map[string][]string{"L": {""}}, nil, []string{""}},
+		{"surrounding whitespace", map[string][]string{"L": {" linea_x"}}, nil, []string{" linea_x"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := MatchWildcard(tt.method)
-			if tt.expectNS == "" {
-				assert.Nil(t, got, "expected no wildcard match for %q", tt.method)
-				return
-			}
-			require.NotNil(t, got, "expected wildcard match for %q", tt.method)
-			assert.Equal(t, tt.expectNS, got.Namespace)
+			defer SnapshotMethodRegistriesForTest()()
+			ExtraMethods = map[string]bool{}
+			ExtraNamespaces = nil
+			MethodAliases = map[string]string{}
+			PassthroughMethods = map[string]bool{}
+
+			err := RegisterExtraNamespaces(tt.namespaces, tt.aliases, tt.passthrough)
+			require.Error(t, err)
+			assert.Empty(t, ExtraMethods, "a rejected config must register nothing")
+			assert.Empty(t, MethodAliases)
+			assert.Empty(t, PassthroughMethods)
+			assert.Nil(t, ExtraNamespaces)
 		})
 	}
 }
 
-// TestHasWildcardForPrefix is the lookup that GroupAccess.HasMethod uses to
-// validate that a "<prefix>*" entry in a group's allowed_methods binds to a
-// real registered wildcard. Groups can't invent prefixes the operator hasn't
-// enabled globally.
-func TestHasWildcardForPrefix(t *testing.T) {
+// TestIsForwardableMethod pins the default-deny method gate: only catalog
+// methods, operator aliases whose target is a catalog method, and operator
+// passthrough methods are forwarded. Exact match — callers canonicalize.
+func TestIsForwardableMethod(t *testing.T) {
 	defer SnapshotMethodRegistriesForTest()()
-
-	Wildcards = []*WildcardNamespace{
-		{Namespace: "Linea", Prefix: "linea_"},
+	ExtraMethods = map[string]bool{"linea_estimateGas": true, "custom_getRaw": true, "trace_block": true, "linea_sendRaw": true, "linea_trace": true}
+	MethodAliases = map[string]string{
+		"linea_estimateGas": "eth_estimateGas",
+		"custom_getRaw":     "eth_getRawTransactionByHash",
+		"linea_sendRaw":     "eth_sendRawTransaction",
+		"linea_trace":       "debug_traceCall",
 	}
+	PassthroughMethods = map[string]bool{"trace_block": true}
 
-	assert.True(t, HasWildcardForPrefix("linea_"))
-	assert.False(t, HasWildcardForPrefix("zksync_"))
-	assert.False(t, HasWildcardForPrefix(""))
+	forwardable := []string{
+		"eth_call", "eth_getLogs", "eth_sendTransaction", "eth_sendRawTransaction", "debug_traceCall",
+		"eth_getProof", "eth_createAccessList", "eth_getBlockReceipts", "eth_feeHistory", "net_peerCount",
+		"linea_estimateGas", "trace_block",
+	}
+	for _, m := range forwardable {
+		assert.Truef(t, IsForwardableMethod(m), "%s must be forwardable", m)
+	}
+	refused := []string{
+		"eth_getRawTransactionByHash", "eth_getRawTransactionByBlockHashAndIndex", "eth_getRawTransactionByBlockNumberAndIndex",
+		"eth_getTransactionBySenderAndNonce", "eth_getAccount", "eth_simulateV1", "eth_callMany", "eth_sendRawTransactionSync",
+		"eth_getUncleByBlockNumberAndIndex", "eth_protocolVersion",
+		"trace_transaction", "trace_call", "ots_getTransactionBySenderAndNonce", "erigon_getLogs", "parity_listStorageKeys",
+		"custom_getRaw",                // alias to an unmodelled target
+		"linea_sendRaw", "linea_trace", // aliases to special-dispatch methods
+		"ETH_CALL", "Eth_GetLogs", // non-canonical spelling (callers canonicalize first)
+		"eth_newFilter", "personal_sign", // catalog-listed but globally blocked
+		"debug_getRawBlock", "admin_peers",
+		"*", "linea_*", "eth_*", "",
+	}
+	for _, m := range refused {
+		assert.Falsef(t, IsForwardableMethod(m), "%s must not be forwardable", m)
+	}
 }
 
-// TestRegisterExtraNamespaces_WithWildcards verifies that wildcards passed to
-// RegisterExtraNamespaces are stored alongside the explicit-method registry,
-// and that explicit methods continue to win for alias resolution (a method can
-// be both explicit and covered by a wildcard prefix).
-func TestRegisterExtraNamespaces_WithWildcards(t *testing.T) {
+func TestIsCatalogMethod(t *testing.T) {
 	defer SnapshotMethodRegistriesForTest()()
-	ExtraMethods = map[string]bool{}
-	ExtraNamespaces = nil
-	MethodAliases = map[string]string{}
-	Wildcards = nil
+	PassthroughMethods = map[string]bool{"trace_block": true}
+	MethodAliases = map[string]string{"linea_estimateGas": "eth_estimateGas"}
 
-	RegisterExtraNamespaces(
-		map[string][]string{"Linea": {"linea_estimateGas"}},
-		map[string]string{"linea_estimateGas": "eth_estimateGas"},
-		[]*WildcardNamespace{{Namespace: "Linea", Prefix: "linea_", Deny: []string{"linea_sign*"}}},
-	)
-
-	// Explicit method has its alias.
-	assert.Equal(t, "eth_estimateGas", ResolveMethodAlias("linea_estimateGas"))
-	// Wildcard-only method passes through (no alias).
-	assert.Equal(t, "linea_brandNew", ResolveMethodAlias("linea_brandNew"))
-	// Wildcard match returns the namespace for both explicit-also-matched and unknown methods.
-	require.NotNil(t, MatchWildcard("linea_estimateGas"))
-	require.NotNil(t, MatchWildcard("linea_brandNew"))
-	// Deny still wins.
-	assert.Nil(t, MatchWildcard("linea_signFoo"))
+	assert.True(t, IsCatalogMethod("eth_call"))
+	assert.True(t, IsCatalogMethod("eth_getBlockReceipts"))
+	assert.False(t, IsCatalogMethod("ETH_CALL"), "exact canonical spelling only")
+	assert.False(t, IsCatalogMethod("trace_block"), "passthrough is not catalog")
+	assert.False(t, IsCatalogMethod("linea_estimateGas"), "an alias is not catalog")
+	assert.False(t, IsCatalogMethod("eth_uninstallFilter"), "globally blocked")
+	assert.False(t, IsCatalogMethod("eth_sendRawTransactionSync"))
 }
 
 func TestAccessCheckRequest_EffectiveMethod(t *testing.T) {
@@ -459,20 +500,20 @@ func TestRegisterExtraNamespaces_PanicsAfterArm(t *testing.T) {
 	defer SnapshotMethodRegistriesForTest()()
 
 	// Pre-arm registration is the normal startup path and must work.
-	RegisterExtraNamespaces(
+	require.NoError(t, RegisterExtraNamespaces(
 		map[string][]string{"Linea": {"linea_estimateGas"}},
 		map[string]string{"linea_estimateGas": "eth_estimateGas"},
 		nil,
-	)
+	))
 	assert.True(t, ExtraMethods["linea_estimateGas"], "pre-arm registration must succeed")
 
 	ArmMethodRegistries()
 
 	assert.Panics(t, func() {
-		RegisterExtraNamespaces(
+		_ = RegisterExtraNamespaces(
 			map[string][]string{"Late": {"late_method"}},
 			nil,
-			nil,
+			[]string{"late_method"},
 		)
 	}, "post-arm registration must panic, not race hot-path readers")
 }
@@ -485,39 +526,32 @@ func TestSnapshotMethodRegistriesForTest(t *testing.T) {
 	// Outer snapshot so this test itself leaves no trace.
 	defer SnapshotMethodRegistriesForTest()()
 
-	ExtraMethods = map[string]bool{"keep_me": true}
-	ExtraNamespaces = map[string][]string{"NS": {"keep_me"}}
+	ExtraMethods = map[string]bool{"keep_me": true, "pass_me": true}
+	ExtraNamespaces = map[string][]string{"NS": {"keep_me", "pass_me"}}
 	MethodAliases = map[string]string{"keep_me": "eth_call"}
-	Wildcards = []*WildcardNamespace{{Namespace: "NS", Prefix: "ns_", Deny: []string{"ns_deny"}}}
+	PassthroughMethods = map[string]bool{"pass_me": true}
 
 	restore := SnapshotMethodRegistriesForTest()
 
-	// Mutate in place AND reassign — both must be undone. Wildcard elements
-	// are pointers, so in-place struct/deny mutation is the sharpest case.
+	// Mutate in place AND reassign — both must be undone.
 	ExtraMethods["intruder"] = true
 	ExtraNamespaces["NS"] = append(ExtraNamespaces["NS"], "intruder")
 	MethodAliases["intruder"] = "eth_call"
-	Wildcards[0].Prefix = "mutated_"
-	Wildcards[0].Deny[0] = "mutated_deny"
+	PassthroughMethods["intruder"] = true
 	ArmMethodRegistries()
 
 	restore()
 
-	assert.Equal(t, map[string]bool{"keep_me": true}, ExtraMethods)
-	assert.Equal(t, map[string][]string{"NS": {"keep_me"}}, ExtraNamespaces)
+	assert.Equal(t, map[string]bool{"keep_me": true, "pass_me": true}, ExtraMethods)
+	assert.Equal(t, map[string][]string{"NS": {"keep_me", "pass_me"}}, ExtraNamespaces)
 	assert.Equal(t, map[string]string{"keep_me": "eth_call"}, MethodAliases)
-	if assert.Len(t, Wildcards, 1) {
-		assert.Equal(t, "ns_", Wildcards[0].Prefix)
-		assert.Equal(t, []string{"ns_deny"}, Wildcards[0].Deny)
-	}
+	assert.Equal(t, map[string]bool{"pass_me": true}, PassthroughMethods)
 	assert.NotPanics(t, func() {
-		RegisterExtraNamespaces(map[string][]string{"Again": {"again_m"}}, nil, nil)
+		_ = RegisterExtraNamespaces(map[string][]string{"Again": {"again_m"}}, nil, []string{"again_m"})
 	}, "restore must disarm (this test started un-armed)")
 }
 
-// TestIsStandardMethod pins the set config loading refuses as chain-specific
-// methods / alias keys (config.parseExplicitMethods): remapping a standard
-// method would strip the checks and response filters keyed on its name.
+// TestIsStandardMethod covers reserved names used by config loading.
 func TestIsStandardMethod(t *testing.T) {
 	for m, want := range map[string]bool{
 		"eth_getStorageAt":                true,
@@ -572,4 +606,37 @@ func TestIsStandardMethod_CoversNameKeyedMethods(t *testing.T) {
 			t.Errorf("%q is checked or filtered by name but not reserved from alias keys", m)
 		}
 	}
+}
+
+// TestSupportedMethods is the assignable set the admin UI receives: the catalog
+// plus forwardable operator methods, never unmodelled or blocked names.
+func TestSupportedMethods(t *testing.T) {
+	defer SnapshotMethodRegistriesForTest()()
+	ExtraMethods = map[string]bool{"linea_estimateGas": true, "custom_getRaw": true, "trace_block": true}
+	MethodAliases = map[string]string{"linea_estimateGas": "eth_estimateGas", "custom_getRaw": "eth_getRawTransactionByHash"}
+	PassthroughMethods = map[string]bool{"trace_block": true}
+
+	got := SupportedMethods()
+	assert.IsIncreasing(t, got)
+	for _, m := range []string{"eth_call", "eth_getProof", "eth_getBlockReceipts", "debug_traceCall", "linea_estimateGas", "trace_block"} {
+		assert.Contains(t, got, m)
+	}
+	for _, m := range []string{"custom_getRaw", "eth_newFilter", "personal_sign", "eth_sign", "eth_sendRawTransactionSync"} {
+		assert.NotContains(t, got, m)
+	}
+	for _, m := range got {
+		assert.True(t, IsAssignableMethod(m), m)
+	}
+}
+
+// Typed-data signing asks the node to sign with one of its own keys: no
+// signer-vs-caller check, nothing to filter. It is blocked like eth_sign and
+// eth_signTransaction, so it is never forwarded and never part of "*".
+func TestSignTypedData_IsBlocked(t *testing.T) {
+	for _, m := range []string{"eth_signTypedData", "eth_signTypedData_v4", "ETH_SIGNTYPEDDATA_V4"} {
+		assert.Truef(t, IsMethodBlocked(m), "%s must be globally blocked", m)
+		assert.Falsef(t, IsForwardableMethod(CanonicalizeMethod(m)), "%s must not be forwardable", m)
+	}
+	assert.NotContains(t, AllAllowedMethods(), "eth_signTypedData")
+	assert.NotContains(t, AllAllowedMethods(), "eth_signTypedData_v4")
 }

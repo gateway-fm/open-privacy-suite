@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"privacy-proxy/internal/apimodels"
+	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
 	"privacy-proxy/internal/tracer"
 
@@ -137,6 +138,14 @@ func (s *Server) handleDryRun(c *gin.Context) {
 	// Parse body.
 	var req apimodels.DryRunRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+	// The rpc block is forwarded re-encoded from this decode, so a case
+	// variant of a request field (`{"To": X}`) would reach the node as a
+	// field the access check below never saw (RD-1303).
+	if env, err := proxy.CheckDecodedRequest(req.RPC.Method, req.RPC.Params); err != nil || ambiguousParams(env) != "" {
+		slog.Warn("dry-run: ambiguous rpc block refused", slog.Any("err", err))
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 		return
 	}

@@ -1,6 +1,7 @@
 package rbac
 
 import (
+	"fmt"
 	"maps"
 	"slices"
 	"sort"
@@ -87,9 +88,8 @@ var TraceMethods = map[string]bool{
 }
 
 // DeployMethods is the legacy name for the trace-method set, retained as an
-// alias because external references (and the "*" expansion in AllAllowedMethods)
-// use it. Tracing no longer requires the deploy claim — see TraceMethods and
-// RD-1121.
+// alias because external references use it. Tracing no longer requires the
+// deploy claim — see TraceMethods and RD-1121.
 var DeployMethods = TraceMethods
 
 // canonicalMethodByLower maps the lowercased form of every built-in standard
@@ -110,34 +110,18 @@ var canonicalMethodByLower = func() map[string]string {
 	return m
 }()
 
-// canonicalExtraMethods are methods NOT in the Read/Write/Trace sets that are
-// still consumed case-sensitively downstream — GetTargetAddress /
-// GetFunctionSelector switch on them (access.go), and they are per-address
-// cross-org gated (ReadOpsMap). Without canonicalizing them, a mixed-case
-// eth_getProof / eth_createAccessList would pass through unchanged, yield an
-// empty TargetAddress, and skip the per-address isolation check — the same
-// bypass CanonicalizeMethod closes for eth_call / eth_getLogs.
+// canonicalExtraMethods are built-in methods granted only by exact name.
+// They use the same method-name normalization as the Read/Write/Trace sets.
+// eth_getProof and eth_createAccessList have per-address access checks;
+// eth_getBlockReceipts has a response filter (REDACTION_SPEC section 3.8).
 var canonicalExtraMethods = []string{
 	"eth_getProof",
 	"eth_createAccessList",
 	"eth_getBlockReceipts",
-	"eth_getUncleByBlockHashAndIndex",
-	"eth_getUncleByBlockNumberAndIndex",
-	"eth_getUncleCountByBlockHash",
-	"eth_getUncleCountByBlockNumber",
 }
 
-// CanonicalizeMethod normalizes a JSON-RPC method name to its canonical
-// camelCase spelling for internal dispatch and access-control decisions
-// (RD-1180). It is a case-insensitive match against the built-in standard
-// method set; unknown methods (operator linea_* aliases, wildcard passthrough,
-// anything else) are returned UNCHANGED so a mis-cased unknown method still
-// fails closed downstream. This closes the case-normalization skew where a
-// mixed-case eth_sendRawTransaction / debug_trace* would skip the special
-// validation dispatch, and a mixed-case eth_call / eth_getLogs would skip
-// target/selector extraction (bypassing per-contract cross-org isolation for a
-// "*"-allowlist group). The upstream node still receives the request body
-// verbatim — only the internal method string is normalized.
+// CanonicalizeMethod normalizes built-in method names for internal dispatch
+// and access checks (RD-1180). Operator method names retain their spelling.
 func CanonicalizeMethod(method string) string {
 	if canon, ok := canonicalMethodByLower[strings.ToLower(method)]; ok {
 		return canon
@@ -236,47 +220,37 @@ func GetAllDeployMethods() []string {
 	return methods
 }
 
-// ExtraMethods holds operator-configured explicit chain-specific methods (e.g. linea_*).
-// Populated at startup via RegisterExtraNamespaces from the explicit list only —
-// wildcard-matched methods are open-ended and not enumerated here.
+// ExtraMethods holds every operator-configured method name (e.g. linea_*),
+// both aliased and passthrough entries. Populated at startup via
+// RegisterExtraNamespaces.
 var ExtraMethods = map[string]bool{}
 
-// ExtraNamespaces holds the structured namespace→explicit method names mapping
-// from config. Used by the status API to expose available methods to the frontend.
+// ExtraNamespaces holds the structured namespace→method names mapping from
+// config. Used by the status API to expose available methods to the frontend.
 var ExtraNamespaces map[string][]string
 
 // MethodAliases maps chain-specific methods to their standard equivalents
 // for access control purposes (e.g. "linea_estimateGas" → "eth_estimateGas").
 // Methods with aliases inherit the same contract access checks, storage slot
 // tiering, historical-state guard, deployment detection, and function selector
-// extraction as their target. Targets are stored canonicalized
-// (RegisterExtraNamespaces).
-//
-// Wildcard-matched methods do NOT populate this map — they pass through to the
-// upstream node without alias-based redaction (see WildcardNamespace).
+// extraction as their target. Targets are canonicalized at config load.
+// An alias whose target is not a catalog method inherits nothing, so
+// it is not forwardable (IsForwardableMethod).
 var MethodAliases = map[string]string{}
 
-// WildcardNamespace describes a chain namespace that opts into prefix-wildcard
-// passthrough. Methods that start with Prefix and don't match any Deny glob are
-// allowed to pass through to the upstream node verbatim — no contract access
-// check, no field-level redaction. Operators take responsibility for what may
-// appear under the prefix; safety floor is GlobalBlockedMethods + Deny.
-type WildcardNamespace struct {
-	Namespace string   // human-readable namespace name, e.g. "Linea"
-	Prefix    string   // method-name prefix, e.g. "linea_"
-	Deny      []string // glob patterns: "linea_sendTransaction", "linea_sign*"
-}
-
-// Wildcards lists all namespaces that have wildcard mode enabled. Populated at
-// startup via RegisterExtraNamespaces. Iteration order is deterministic for
-// reproducible audit logs.
-var Wildcards []*WildcardNamespace
+// PassthroughMethods holds the operator-configured methods that are forwarded
+// to the node by exact name WITHOUT any proxy model: no per-address gate, no
+// response filter, no tracing. The operator takes responsibility for what they
+// return (logged at startup). They are reachable only by a group that lists
+// them explicitly — never through "*" and never anonymously.
+var PassthroughMethods = map[string]bool{}
 
 // methodRegistriesArmed flips to true once server startup finishes registering
 // namespaces (ArmMethodRegistries). The registries above are read lock-free on
-// the request hot path (ResolveMethodAlias, MatchWildcard, AllAllowedMethods),
-// so mutating them after the server starts serving would be a data race. The
-// flag turns that startup-only convention into an enforced invariant (RD-1262).
+// the request hot path (ResolveMethodAlias, IsForwardableMethod,
+// AllAllowedMethods), so mutating them after the server starts serving would
+// be a data race. The flag turns that startup-only convention into an enforced
+// invariant (RD-1262).
 var methodRegistriesArmed atomic.Bool
 
 // ArmMethodRegistries marks startup registration as complete: any subsequent
@@ -289,13 +263,14 @@ func ArmMethodRegistries() {
 // SnapshotMethodRegistriesForTest deep-copies the four method registries and
 // the armed flag, and returns a function that restores all of them. Test-only:
 // production registers namespaces once at startup and never restores. Tests
-// that mutate ExtraMethods/ExtraNamespaces/MethodAliases/Wildcards should
-// `defer SnapshotMethodRegistriesForTest()()` instead of hand-rolling the
-// save/restore (the hand-rolled version restores map *pointers*, which does
-// not undo in-place mutations of the original maps).
+// that mutate ExtraMethods/ExtraNamespaces/MethodAliases/PassthroughMethods
+// should `defer SnapshotMethodRegistriesForTest()()` instead of hand-rolling
+// the save/restore (the hand-rolled version restores map *pointers*, which
+// does not undo in-place mutations of the original maps).
 func SnapshotMethodRegistriesForTest() (restore func()) {
 	extraMethods := maps.Clone(ExtraMethods)
 	aliases := maps.Clone(MethodAliases)
+	passthrough := maps.Clone(PassthroughMethods)
 	var namespaces map[string][]string
 	if ExtraNamespaces != nil {
 		namespaces = make(map[string][]string, len(ExtraNamespaces))
@@ -303,32 +278,19 @@ func SnapshotMethodRegistriesForTest() (restore func()) {
 			namespaces[ns] = slices.Clone(methods)
 		}
 	}
-	var wildcards []*WildcardNamespace
-	if Wildcards != nil {
-		wildcards = make([]*WildcardNamespace, len(Wildcards))
-		for i, w := range Wildcards {
-			cp := *w
-			cp.Deny = slices.Clone(w.Deny)
-			wildcards[i] = &cp
-		}
-	}
 	armed := methodRegistriesArmed.Load()
 	return func() {
 		ExtraMethods = extraMethods
 		MethodAliases = aliases
+		PassthroughMethods = passthrough
 		ExtraNamespaces = namespaces
-		Wildcards = wildcards
 		methodRegistriesArmed.Store(armed)
 	}
 }
 
-// IsStandardMethod reports whether method is one of the built-in standard RPC
-// methods (case-insensitive): one CanonicalizeMethod knows or one the proxy
-// classifies in ReadOpsMap / WriteOpsMap. Config loading uses it to refuse a
-// standard method as a chain-specific method or alias key: the node executes
-// the raw method (the request body is forwarded verbatim) while many access
-// decisions key on the alias target, so remapping a standard method would
-// strip it of its own checks.
+// IsStandardMethod identifies reserved built-in RPC names independently of
+// the supported method catalog. Config and registration use it to keep those
+// names separate from operator-defined methods. The match is case-insensitive.
 func IsStandardMethod(method string) bool {
 	lower := strings.ToLower(strings.TrimSpace(method))
 	if _, ok := canonicalMethodByLower[lower]; ok {
@@ -339,15 +301,108 @@ func IsStandardMethod(method string) bool {
 	return ReadOpsMap[lower] || WriteOpsMap[lower]
 }
 
-// RegisterExtraNamespaces registers operator-configured chain-specific methods,
-// their access control aliases, and any prefix-wildcard configurations. Called
-// once at startup from server initialization, strictly before
-// ArmMethodRegistries; calling it afterwards panics. The wildcards parameter
-// may be nil for v1 configs that don't use wildcard mode.
-func RegisterExtraNamespaces(methodNames map[string][]string, aliases map[string]string, wildcards []*WildcardNamespace) {
+// reservedExtraPrefixes are owned by the built-in catalog or the node's
+// consensus API and cannot contain operator-defined extra methods.
+var reservedExtraPrefixes = []string{"eth_", "net_", "web3_", "engine_"}
+
+// specialDispatchMethods are the catalog methods whose protection is selected
+// by the literal method name: a dedicated request path (raw-transaction
+// decode + sender link + trace, send-side trace + travel rule + visibleTo +
+// CREATE pre-registration, trace validation) or a rewrite of the forwarded
+// body (full transaction objects for the block participant filter, a block
+// fetch in place of a transaction count). An alias to one of them would be
+// dispatched by its own name and skip that protection, so they cannot be
+// alias targets.
+var specialDispatchMethods = map[string]bool{
+	"eth_sendTransaction":                  true,
+	"eth_sendRawTransaction":               true,
+	"debug_traceTransaction":               true,
+	"debug_traceCall":                      true,
+	"eth_getBlockByHash":                   true,
+	"eth_getBlockByNumber":                 true,
+	"eth_getBlockTransactionCountByHash":   true,
+	"eth_getBlockTransactionCountByNumber": true,
+}
+
+// ValidateExtraMethod checks the name of one operator-configured method entry
+// (aliased or passthrough). Names are exact (no wildcard characters), must not
+// shadow a catalog method under any casing (a shadowing alias would re-route
+// the catalog method's own gate, a shadowing passthrough would strip it), must
+// not sit in a reserved namespace, and must not be globally blocked.
+func ValidateExtraMethod(method string) error {
+	if strings.TrimSpace(method) != method || method == "" {
+		return fmt.Errorf("method %q: name must be non-empty with no surrounding whitespace", method)
+	}
+	if strings.Contains(method, "*") {
+		return fmt.Errorf("method %q: wildcards are not supported; list each method by its exact name", method)
+	}
+	if IsStandardMethod(method) {
+		return fmt.Errorf("method %q: shadows a built-in RPC method", method)
+	}
+	lower := strings.ToLower(method)
+	for _, prefix := range reservedExtraPrefixes {
+		if strings.HasPrefix(lower, prefix) {
+			return fmt.Errorf("method %q: the %s namespace is reserved; only built-in methods are served there", method, prefix)
+		}
+	}
+	if IsMethodBlocked(method) {
+		return fmt.Errorf("method %q: globally blocked", method)
+	}
+	return nil
+}
+
+// ValidateAliasTarget checks an alias target: it must be a catalog method in
+// its canonical spelling (the alias inherits that method's gate and response
+// filter; any other target leaves the alias with no protection) and must not
+// be a special-dispatch method (see specialDispatchMethods).
+func ValidateAliasTarget(method, target string) error {
+	if !IsCatalogMethod(target) {
+		return fmt.Errorf("method %q: alias %q is not a built-in RPC method (check the exact spelling)", method, target)
+	}
+	if specialDispatchMethods[target] {
+		return fmt.Errorf("method %q: %q cannot be an alias target — its protection runs in a dedicated request path an alias would skip", method, target)
+	}
+	return nil
+}
+
+// RegisterExtraNamespaces registers operator-configured chain-specific methods:
+// methodNames is the namespace→method display mapping (aliased and passthrough
+// entries alike), aliases maps aliased methods to their catalog target, and
+// passthrough lists the methods forwarded unfiltered by exact name. Every
+// entry is validated (ValidateExtraMethod, ValidateAliasTarget); an invalid
+// entry fails startup and registers nothing. Called once at startup from
+// server initialization, strictly before ArmMethodRegistries; calling it
+// afterwards panics.
+func RegisterExtraNamespaces(methodNames map[string][]string, aliases map[string]string, passthrough []string) error {
 	if methodRegistriesArmed.Load() {
 		panic("rbac: RegisterExtraNamespaces called after startup — the method registries are read lock-free on the request hot path, so runtime registration is a data race; register all namespaces before ArmMethodRegistries (RD-1262)")
 	}
+	isPassthrough := make(map[string]bool, len(passthrough))
+	for _, m := range passthrough {
+		if _, aliased := aliases[m]; aliased {
+			return fmt.Errorf("method %q: an entry is either aliased or passthrough, not both", m)
+		}
+		if err := ValidateExtraMethod(m); err != nil {
+			return err
+		}
+		isPassthrough[m] = true
+	}
+	for method, target := range aliases {
+		if err := ValidateExtraMethod(method); err != nil {
+			return err
+		}
+		if err := ValidateAliasTarget(method, target); err != nil {
+			return err
+		}
+	}
+	for _, methods := range methodNames {
+		for _, m := range methods {
+			if _, aliased := aliases[m]; !aliased && !isPassthrough[m] {
+				return fmt.Errorf("method %q: needs an alias to a built-in method or \"passthrough\": true", m)
+			}
+		}
+	}
+
 	ExtraNamespaces = methodNames
 	for _, methods := range methodNames {
 		for _, m := range methods {
@@ -355,20 +410,18 @@ func RegisterExtraNamespaces(methodNames map[string][]string, aliases map[string
 		}
 	}
 	for method, alias := range aliases {
-		// Store the target in its canonical spelling: the case-sensitive
-		// decisions keyed on the alias target (e.g. GetTargetAddress and
-		// GetFunctionSelector, function and proxy-upgrade rules, the
-		// storage-slot tier, eth_getLogs validation, eth_call tracing) match
-		// canonical names, so a mis-cased target would silently skip them.
-		MethodAliases[method] = CanonicalizeMethod(alias)
+		MethodAliases[method] = alias
 	}
-	Wildcards = wildcards
+	for m := range isPassthrough {
+		ExtraMethods[m] = true
+		PassthroughMethods[m] = true
+	}
+	return nil
 }
 
 // ResolveMethodAlias returns the standard method name that a chain-specific method
 // should be treated as for access control. Returns the method itself if no alias
-// is registered (which is the case for wildcard-matched methods — they pass
-// through without alias inheritance).
+// is registered (which is the case for catalog and passthrough methods).
 func ResolveMethodAlias(method string) string {
 	if alias, ok := MethodAliases[method]; ok {
 		return alias
@@ -376,125 +429,132 @@ func ResolveMethodAlias(method string) string {
 	return method
 }
 
-// MatchWildcard returns the WildcardNamespace that allows the given method,
-// or nil if no wildcard covers it (or a deny glob matches first). The check
-// is case-sensitive — method names are normalized upstream of this call.
-func MatchWildcard(method string) *WildcardNamespace {
-	for _, w := range Wildcards {
-		if !strings.HasPrefix(method, w.Prefix) {
-			continue
-		}
-		if matchAnyDenyGlob(method, w.Deny) {
-			// Deny wins even when prefix matches; do not fall through to
-			// other wildcards (they would only match if their prefix is a
-			// subset, which is operator misconfiguration).
-			return nil
-		}
-		return w
-	}
-	return nil
+// IsCatalogMethod reports whether method is a built-in RPC method the proxy
+// models — one with a defined access gate and response story — in its
+// canonical spelling, and not globally blocked. The catalog is ReadMethods ∪
+// WriteMethods ∪ TraceMethods ∪ canonicalExtraMethods. The match is exact:
+// callers canonicalize first (CanonicalizeMethod).
+func IsCatalogMethod(method string) bool {
+	canon, ok := canonicalMethodByLower[strings.ToLower(method)]
+	return ok && canon == method && !IsMethodBlocked(method)
 }
 
-// matchAnyDenyGlob reports whether method matches any of the deny patterns.
-// Patterns support a single trailing '*' wildcard; otherwise exact match.
-func matchAnyDenyGlob(method string, patterns []string) bool {
-	for _, p := range patterns {
-		if strings.HasSuffix(p, "*") {
-			if strings.HasPrefix(method, strings.TrimSuffix(p, "*")) {
-				return true
-			}
-			continue
-		}
-		if method == p {
-			return true
-		}
+// IsPassthroughMethod reports whether method is an operator-configured
+// passthrough method (exact name).
+func IsPassthroughMethod(method string) bool {
+	return PassthroughMethods[method]
+}
+
+// IsForwardableMethod is the default-deny method gate: the proxy forwards a
+// method to the node only if it is a catalog method, an operator alias whose
+// target is a valid alias target (a catalog method outside the
+// special-dispatch set — the alias then runs under the target's gate and
+// response filter), or an operator passthrough method. Everything else has no
+// gate, no response filter and no tracing, and is never forwarded.
+func IsForwardableMethod(method string) bool {
+	if IsCatalogMethod(method) || PassthroughMethods[method] {
+		return true
+	}
+	if target, ok := MethodAliases[method]; ok {
+		return ValidateAliasTarget(method, target) == nil
 	}
 	return false
 }
 
-// HasWildcardForPrefix reports whether a wildcard namespace is registered with
-// exactly the given prefix. Used by GroupAccess.HasMethod to validate that a
-// "prefix*" glob entry in a group's allowed_methods binds to a real wildcard
-// (groups can't invent prefixes the operator hasn't enabled globally).
-func HasWildcardForPrefix(prefix string) bool {
-	for _, w := range Wildcards {
-		if w.Prefix == prefix {
-			return true
-		}
+// inBuiltinWildcardSet reports whether method is one of the built-in methods a
+// "*" entry expands to: ReadMethods ∪ WriteMethods ∪ TraceMethods.
+// canonicalExtraMethods are grantable by exact name only.
+func inBuiltinWildcardSet(method string) bool {
+	return ReadMethods[method] || WriteMethods[method] || TraceMethods[method]
+}
+
+// InWildcardExpansion reports whether a "*" entry in allowed_methods grants
+// method: the built-in Read/Write/Trace methods and the operator aliases whose
+// target is one of them, minus globally blocked methods. Passthrough methods
+// are never granted through "*" — they must be listed by name. This is exactly
+// the set AllAllowedMethods returns.
+func InWildcardExpansion(method string) bool {
+	if IsMethodBlocked(method) || PassthroughMethods[method] {
+		return false
+	}
+	if inBuiltinWildcardSet(method) {
+		return true
+	}
+	if ExtraMethods[method] {
+		// An alias joins "*" only when it is forwardable and its target is
+		// itself in "*": an alias to an exact-name-only catalog method
+		// (eth_getProof) stays exact-name-only.
+		target, ok := MethodAliases[method]
+		return ok && IsForwardableMethod(method) && inBuiltinWildcardSet(target)
 	}
 	return false
 }
 
-// IsDeniedByWildcard reports whether the method is explicitly denied by any
-// registered wildcard namespace's Deny list. Used by HasMethod as a hard
-// floor that runs BEFORE the explicit-allow short-circuit (security audit
-// M8): pre-fix a tier-1/2 admin could enumerate `linea_sendTransaction`
-// in a group's allowed_methods and bypass a Wildcard{Prefix:"linea_",
-// Deny:["linea_sendTransaction"]} configured by the operator.
-//
-// Returns true only when a wildcard covers the method's prefix AND the
-// Deny list rejects this specific method.
-func IsDeniedByWildcard(method string) bool {
-	for _, w := range Wildcards {
-		if !strings.HasPrefix(method, w.Prefix) {
-			continue
-		}
-		if matchAnyDenyGlob(method, w.Deny) {
-			return true
-		}
-		// Wildcard covers the prefix but doesn't deny — keep iterating
-		// in case a more specific wildcard with deny also applies (the
-		// usual case is a single wildcard per prefix).
-	}
-	return false
-}
-
-// AllAllowedMethods returns every RPC method that can legitimately appear in a
-// group's allowed_methods list. This is the union of ReadMethods, WriteMethods,
-// DeployMethods, and ExtraMethods, minus any method that is globally blocked.
-// Used to expand a wildcard "*" into an explicit method list.
+// AllAllowedMethods returns the explicit method list a "*" entry expands to
+// (see InWildcardExpansion), sorted. Used to expand "*" before an
+// allowed_methods list is stored, so the database never holds "*".
 func AllAllowedMethods() []string {
 	seen := make(map[string]bool)
 	var methods []string
+	for _, set := range []map[string]bool{ReadMethods, WriteMethods, TraceMethods, ExtraMethods} {
+		for method := range set {
+			if !seen[method] && InWildcardExpansion(method) {
+				seen[method] = true
+				methods = append(methods, method)
+			}
+		}
+	}
+	sort.Strings(methods)
+	return methods
+}
 
-	for method := range ReadMethods {
-		if !IsMethodBlocked(method) && !seen[method] {
-			seen[method] = true
-			methods = append(methods, method)
-		}
-	}
-	for method := range WriteMethods {
-		if !IsMethodBlocked(method) && !seen[method] {
-			seen[method] = true
-			methods = append(methods, method)
-		}
-	}
-	for method := range DeployMethods {
-		if !IsMethodBlocked(method) && !seen[method] {
-			seen[method] = true
-			methods = append(methods, method)
-		}
-	}
-	for method := range ExtraMethods {
-		if !IsMethodBlocked(method) && !seen[method] {
-			seen[method] = true
-			methods = append(methods, method)
-		}
-	}
+// IsAssignableMethod reports whether method may be stored in a group's
+// allowed_methods: exactly the forwardable methods. Names the proxy would
+// never forward — unknown methods, aliases to invalid targets, globs — are
+// rejected at write time rather than stored as dead or dangerous entries.
+func IsAssignableMethod(method string) bool {
+	return IsForwardableMethod(method)
+}
 
-	// Sort for deterministic output
+// SupportedMethods returns every assignable method, sorted: the catalog plus
+// the forwardable operator methods. The admin UI uses it to tell a stored
+// entry it can keep from one the proxy no longer supports.
+func SupportedMethods() []string {
+	seen := make(map[string]bool)
+	var methods []string
+	add := func(m string) {
+		if !seen[m] && IsAssignableMethod(m) {
+			seen[m] = true
+			methods = append(methods, m)
+		}
+	}
+	for _, m := range canonicalMethodByLower {
+		add(m)
+	}
+	for m := range ExtraMethods {
+		add(m)
+	}
 	sort.Strings(methods)
 	return methods
 }
 
 // ExpandWildcardMethods replaces a wildcard "*" entry in the given method list
-// with the full explicit set from AllAllowedMethods(). If no wildcard is present,
-// the input is returned unchanged.
+// with the explicit set from AllAllowedMethods(), keeping the list's other
+// entries (an exact-name-only or passthrough method listed next to "*" stays
+// granted). Result is deduplicated and sorted. If no "*" is present, the
+// input is returned unchanged.
 func ExpandWildcardMethods(methods []string) []string {
-	for _, m := range methods {
-		if m == "*" {
-			return AllAllowedMethods()
+	if !slices.Contains(methods, "*") {
+		return methods
+	}
+	seen := make(map[string]bool)
+	var out []string
+	for _, m := range append(AllAllowedMethods(), methods...) {
+		if m != "*" && !seen[m] {
+			seen[m] = true
+			out = append(out, m)
 		}
 	}
-	return methods
+	sort.Strings(out)
+	return out
 }

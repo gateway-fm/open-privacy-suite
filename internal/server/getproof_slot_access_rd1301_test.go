@@ -122,7 +122,7 @@ type rd1301Fixture struct {
 	foreignAdminDID  string // tier 2 of org B, no relation to org A
 	deployerDID      string // deployed `deployed`, no grant on it
 	preregDID        string // deploy claim, reaches `prereg` via pre-registration
-	starExpandedDID  string // group saved with "*" while linea_getProof is configured
+	starExpandedDID  string // group saved with "*" plus explicit linea_getProof
 	literalStarDID   string // group stored with a literal "*" (batch-move new-group shape)
 	splitAdminDID    string // admin claim in a group WITHOUT a grant + a plain grant from another group
 }
@@ -182,13 +182,11 @@ func setupRD1301(t *testing.T) *rd1301Fixture {
 	ts := setupTestServerForRBAC(t)
 	up := newCountingUpstream(t)
 
-	// linea_getProof is an operator-configured alias of eth_getProof. Register
-	// it as an extra method too, so a "*" group expands to include it exactly
-	// as it does in a deployment with that namespace configured. The snapshot
-	// taken by withMethodAlias restores both registries.
+	// Declare each proof/storage alias in the startup registry.
 	withMethodAlias(t, "linea_getProof", "eth_getProof")
 	rbac.MethodAliases["linea_getStorageAt"] = "eth_getStorageAt"
 	rbac.ExtraMethods["linea_getProof"] = true
+	rbac.ExtraMethods["linea_getStorageAt"] = true
 
 	proc := NewJSONRPCProcessor(JSONRPCProcessorConfig{
 		RBACAccessCtrl:     ts.rbacAccessCtrl,
@@ -231,8 +229,9 @@ func setupRD1301(t *testing.T) *rd1301Fixture {
 
 	f.preregDID, _, _ = rd1301Group(t, ts, orgA, false, rbac.ExpandClaims([]rbac.Claim{rbac.ClaimDeploy}), rd1301Methods)
 
-	expanded := rbac.ExpandWildcardMethods([]string{"*"})
-	require.Contains(t, expanded, "linea_getProof", "a configured extra method is part of the \"*\" expansion")
+	require.NotContains(t, rbac.ExpandWildcardMethods([]string{"*"}), "linea_getProof", "proof aliases require an explicit grant")
+	expanded := rbac.ExpandWildcardMethods([]string{"*", "linea_getProof"})
+	require.Contains(t, expanded, "linea_getProof", "the explicitly named proof alias is retained")
 	f.starExpandedDID, _, groupID = rd1301Group(t, ts, orgA, false, []rbac.Claim{}, expanded)
 	rd1301Grant(t, ts, contractID, groupID)
 
@@ -391,8 +390,8 @@ func TestGetProofSlotPolicy_RD1301(t *testing.T) {
 			params: []any{c, []any{rd1301ImplSlot}, "latest"}, allowed: true},
 		{name: "literal \"*\" group getProof ordinary key denied", did: f.literalStarDID, method: "eth_getProof",
 			params: []any{c, []any{rd1301OrdinarySlot}, "latest"}},
-		{name: "literal \"*\" group getProof well-known key allowed", did: f.literalStarDID, method: "eth_getProof",
-			params: []any{c, []any{rd1301ImplSlot}, "latest"}, allowed: true},
+		{name: "literal \"*\" group getProof well-known key denied", did: f.literalStarDID, method: "eth_getProof",
+			params: []any{c, []any{rd1301ImplSlot}, "latest"}},
 		{name: "admin claim without a grant + plain grant elsewhere getProof ordinary key denied", did: f.splitAdminDID, method: "eth_getProof",
 			params: []any{c, []any{rd1301OrdinarySlot}, "latest"}},
 		{name: "admin claim without a grant + plain grant elsewhere getProof well-known key allowed", did: f.splitAdminDID, method: "eth_getProof",

@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -29,53 +30,44 @@ import (
 //
 // Schema versions:
 //
-//   - v1: each namespace value is an array of {method, alias} entries (explicit only).
+//   - v1: each namespace value is an array of method entries.
 //   - v2: each namespace value is either an array (same as v1) or an object
-//     {"explicit": [...], "wildcard": {"prefix": "...", "deny": [...]}}. The
-//     wildcard block lets operators allow any method matching the prefix to pass
-//     through without alias-based redaction; see WildcardConfig.
+//     {"explicit": [...]}.
+//
+// Every entry names one method exactly and carries either an `alias` to a
+// built-in method (the method inherits that method's access checks and
+// response filtering) or `"passthrough": true` (forwarded unfiltered, operator
+// responsibility). Prefix wildcards are not supported: the v2 `wildcard` block
+// is rejected at startup, because a prefix admits methods nobody reviewed.
 type ExtraRPCNamespaces struct {
 	Version    int                        `json:"version"`
 	Namespaces map[string]NamespaceConfig `json:"-"` // parsed from mixed JSON shape
 }
 
-// NamespaceConfig holds the explicit and (optional) wildcard configuration for
-// one chain-specific namespace. v1 arrays parse into Explicit only; v2 objects
-// may also set Wildcard.
+// NamespaceConfig holds the method entries of one chain-specific namespace.
 type NamespaceConfig struct {
 	Explicit []ExtraRPCMethod
-	Wildcard *WildcardConfig
 }
 
-// ExtraRPCMethod represents a single explicit chain-specific RPC method entry.
-// Every entry must have an alias to a standard Ethereum method so contract
-// access checks and response redaction inherit a known shape.
+// ExtraRPCMethod represents a single chain-specific RPC method entry, named
+// exactly. It carries exactly one of:
+//   - Alias: a built-in method whose access checks and response filtering the
+//     method inherits (e.g. linea_estimateGas → eth_estimateGas);
+//   - Passthrough: the method is forwarded to the node by exact name with no
+//     per-address gate, no response filtering and no tracing. The operator is
+//     responsible for what it returns; groups must list it by name.
 type ExtraRPCMethod struct {
-	Method string `json:"method"`          // The chain-specific method name (e.g. "linea_estimateGas")
-	Alias  string `json:"alias,omitempty"` // Standard method to inherit access control from (e.g. "eth_estimateGas")
-}
-
-// WildcardConfig opts a namespace into prefix-wildcard mode (v2+). Methods that
-// start with Prefix and don't match any Deny glob are forwarded to the upstream
-// node as-is — no contract access check, no field-level redaction. The proxy
-// trusts the operator's deny list + the global blocklist; the operator owns
-// responsibility for what the upstream may expose under this prefix.
-type WildcardConfig struct {
-	// Prefix is matched verbatim against the start of the method name (e.g. "linea_").
-	// Required; must be non-empty.
-	Prefix string `json:"prefix"`
-
-	// Deny is a list of glob patterns (suffix-* supported) that block specific
-	// methods even when they match Prefix. Evaluated before the prefix allow.
-	// Examples: "linea_sendTransaction", "linea_sign*".
-	Deny []string `json:"deny,omitempty"`
+	Method      string `json:"method"`                // The chain-specific method name (e.g. "linea_estimateGas")
+	Alias       string `json:"alias,omitempty"`       // Standard method to inherit access control from (e.g. "eth_estimateGas")
+	Passthrough bool   `json:"passthrough,omitempty"` // Forward unfiltered by exact name (operator responsibility)
 }
 
 // UnmarshalJSON dispatches on the JSON shape of each namespace value:
 //   - array → v1-style explicit list
-//   - object → v2-style {explicit, wildcard}
+//   - object → v2-style {explicit}
 //
-// The object form is rejected when the file declares Version < 2.
+// The object form is rejected when the file declares Version < 2, and a
+// `wildcard` block is rejected in any version.
 func (e *ExtraRPCNamespaces) UnmarshalJSON(data []byte) error {
 	var raw struct {
 		Version    int                        `json:"version"`
@@ -86,10 +78,19 @@ func (e *ExtraRPCNamespaces) UnmarshalJSON(data []byte) error {
 	}
 	e.Version = raw.Version
 	e.Namespaces = make(map[string]NamespaceConfig, len(raw.Namespaces))
+	declaredIn := make(map[string]string)
 	for ns, entry := range raw.Namespaces {
 		nc, err := parseNamespaceConfig(ns, entry, raw.Version)
 		if err != nil {
 			return err
+		}
+		// One method name, one gate: a method declared twice would resolve
+		// to whichever alias the map merge in Aliases() happened to keep.
+		for _, m := range nc.Explicit {
+			if prev, dup := declaredIn[m.Method]; dup {
+				return fmt.Errorf("method %q is declared more than once (namespaces %q and %q)", m.Method, prev, ns)
+			}
+			declaredIn[m.Method] = ns
 		}
 		e.Namespaces[ns] = nc
 	}
@@ -110,14 +111,17 @@ func parseNamespaceConfig(ns string, raw json.RawMessage, version int) (Namespac
 		return NamespaceConfig{Explicit: entries}, nil
 	case '{':
 		if version < 2 {
-			return NamespaceConfig{}, fmt.Errorf("namespace %q: object form (with wildcard) requires version >= 2 in the EXTRA_RPC_NAMESPACES file", ns)
+			return NamespaceConfig{}, fmt.Errorf("namespace %q: object form requires version >= 2 in the EXTRA_RPC_NAMESPACES file", ns)
 		}
 		var obj struct {
 			Explicit []json.RawMessage `json:"explicit"`
-			Wildcard *WildcardConfig   `json:"wildcard,omitempty"`
+			Wildcard json.RawMessage   `json:"wildcard,omitempty"`
 		}
 		if err := json.Unmarshal(trimmed, &obj); err != nil {
 			return NamespaceConfig{}, fmt.Errorf("namespace %q: invalid object: %w", ns, err)
+		}
+		if len(obj.Wildcard) > 0 {
+			return NamespaceConfig{}, fmt.Errorf("namespace %q: prefix wildcards are not supported; list each method by its exact name with an \"alias\" or \"passthrough\": true", ns)
 		}
 		// Re-marshal explicit entries through parseExplicitMethods so validation
 		// stays in one place. Build a synthetic JSON array for it.
@@ -132,12 +136,7 @@ func parseNamespaceConfig(ns string, raw json.RawMessage, version int) (Namespac
 				return NamespaceConfig{}, err
 			}
 		}
-		if obj.Wildcard != nil {
-			if err := obj.Wildcard.validate(ns); err != nil {
-				return NamespaceConfig{}, err
-			}
-		}
-		return NamespaceConfig{Explicit: explicit, Wildcard: obj.Wildcard}, nil
+		return NamespaceConfig{Explicit: explicit}, nil
 	default:
 		return NamespaceConfig{}, fmt.Errorf("namespace %q: value must be a v1-style array or v2-style object, got: %s", ns, string(trimmed))
 	}
@@ -157,40 +156,29 @@ func parseExplicitMethods(ns string, data []byte) ([]ExtraRPCMethod, error) {
 		if m.Method == "" {
 			return nil, fmt.Errorf("namespace %q: entry missing 'method' field: %s", ns, string(entry))
 		}
-		// The node executes the method as named (the request body is
-		// forwarded verbatim) while many access decisions key on the alias
-		// target, so re-aliasing a standard method would strip it of its own
-		// checks.
 		if rbac.IsStandardMethod(m.Method) {
-			return nil, fmt.Errorf("namespace %q: %q is a standard RPC method and cannot be configured as an extra method; extra methods are chain-specific methods that alias a standard one (to allow a standard method, list it in the group's allowed_methods)", ns, m.Method)
+			return nil, fmt.Errorf("namespace %q: %q is a standard RPC method and cannot be configured as an extra method; list it in the group's allowed_methods", ns, m.Method)
 		}
 		m.Alias = strings.TrimSpace(m.Alias)
-		if m.Alias == "" {
-			return nil, fmt.Errorf("namespace %q: method %q missing 'alias' field — all extra methods must have an alias to a standard Ethereum method for access control and response filtering", ns, m.Method)
+		switch {
+		case m.Alias != "" && m.Passthrough:
+			return nil, fmt.Errorf("namespace %q: method %q has both 'alias' and 'passthrough' — an entry inherits a built-in method's access control or is forwarded unfiltered, not both", ns, m.Method)
+		case m.Alias == "" && !m.Passthrough:
+			return nil, fmt.Errorf("namespace %q: method %q needs an 'alias' to a standard Ethereum method (inherits its access control and response filtering) or \"passthrough\": true (forwarded unfiltered, operator responsibility)", ns, m.Method)
 		}
-		if !rbac.IsStandardMethod(m.Alias) {
-			return nil, fmt.Errorf("namespace %q: method %q alias target %q is not a standard RPC method", ns, m.Method, m.Alias)
+		if m.Alias != "" {
+			if !rbac.IsStandardMethod(m.Alias) {
+				return nil, fmt.Errorf("namespace %q: method %q alias target %q is not a standard RPC method", ns, m.Method, m.Alias)
+			}
+			m.Alias = rbac.CanonicalizeMethod(m.Alias)
 		}
-		m.Alias = rbac.CanonicalizeMethod(m.Alias)
 		methods = append(methods, m)
 	}
 	return methods, nil
 }
 
-func (w *WildcardConfig) validate(ns string) error {
-	if strings.TrimSpace(w.Prefix) == "" {
-		return fmt.Errorf("namespace %q wildcard: 'prefix' is required and must be non-empty (e.g. \"linea_\")", ns)
-	}
-	for _, deny := range w.Deny {
-		if strings.TrimSpace(deny) == "" {
-			return fmt.Errorf("namespace %q wildcard: 'deny' entries must be non-empty", ns)
-		}
-	}
-	return nil
-}
-
-// MethodNames returns a flat list of explicit method names per namespace
-// (for the status API; wildcard methods are not enumerated since they are open-ended).
+// MethodNames returns the method names per namespace (aliased and
+// passthrough entries alike), for registration and the status API.
 func (e *ExtraRPCNamespaces) MethodNames() map[string][]string {
 	result := make(map[string][]string, len(e.Namespaces))
 	for ns, nc := range e.Namespaces {
@@ -203,7 +191,7 @@ func (e *ExtraRPCNamespaces) MethodNames() map[string][]string {
 	return result
 }
 
-// Aliases returns a map of method→alias for every explicit chain-specific method.
+// Aliases returns a map of method→alias for every aliased chain-specific method.
 func (e *ExtraRPCNamespaces) Aliases() map[string]string {
 	aliases := make(map[string]string)
 	for _, nc := range e.Namespaces {
@@ -216,15 +204,18 @@ func (e *ExtraRPCNamespaces) Aliases() map[string]string {
 	return aliases
 }
 
-// Wildcards returns the namespace→wildcard config map for namespaces that opt in.
-// Used by the rbac registration step at startup.
-func (e *ExtraRPCNamespaces) Wildcards() map[string]*WildcardConfig {
-	out := make(map[string]*WildcardConfig)
-	for ns, nc := range e.Namespaces {
-		if nc.Wildcard != nil {
-			out[ns] = nc.Wildcard
+// Passthrough returns the sorted names of the methods configured with
+// "passthrough": true.
+func (e *ExtraRPCNamespaces) Passthrough() []string {
+	var out []string
+	for _, nc := range e.Namespaces {
+		for _, m := range nc.Explicit {
+			if m.Passthrough {
+				out = append(out, m.Method)
+			}
 		}
 	}
+	sort.Strings(out)
 	return out
 }
 
@@ -522,7 +513,7 @@ func Load() *Config {
 		}
 		var parsed ExtraRPCNamespaces
 		if err := json.Unmarshal(raw, &parsed); err != nil {
-			panic(fmt.Sprintf("EXTRA_RPC_NAMESPACES_FILE: invalid JSON in %s: %v", extraRPCNamespacesFile, err))
+			panic(fmt.Sprintf("EXTRA_RPC_NAMESPACES_FILE: invalid config in %s: %v", extraRPCNamespacesFile, err))
 		}
 		if parsed.Version != 1 && parsed.Version != 2 {
 			panic(fmt.Sprintf("EXTRA_RPC_NAMESPACES_FILE: unsupported version %d in %s (expected 1 or 2)", parsed.Version, extraRPCNamespacesFile))

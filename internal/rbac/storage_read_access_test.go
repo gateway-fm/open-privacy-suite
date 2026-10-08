@@ -113,34 +113,52 @@ func TestValidateStorageReadAccess(t *testing.T) {
 	}
 }
 
-// TestCheckAccess_AnonymousAliasHistoricalGuard pins that the anonymous
-// historical-state guard is evaluated on the alias target: an operator who
-// allowlists an alias of a state-reading method for anonymous callers must
-// not open point-in-time reads through it.
+// registerStorageReadAliases prepares the same exact alias registry used at
+// startup, and restores it after the test.
+func registerStorageReadAliases(t *testing.T, aliases map[string]string) {
+	t.Helper()
+	t.Cleanup(SnapshotMethodRegistriesForTest())
+	names := make([]string, 0, len(aliases))
+	for method := range aliases {
+		names = append(names, method)
+	}
+	if err := RegisterExtraNamespaces(map[string][]string{"Storage": names}, aliases, nil); err != nil {
+		t.Fatalf("register test aliases: %v", err)
+	}
+}
+
+// Anonymous aliases at latest require authentication; historical requests
+// retain the state restriction for both the alias and the built-in method.
 func TestCheckAccess_AnonymousAliasHistoricalGuard(t *testing.T) {
+	registerStorageReadAliases(t, map[string]string{"linea_getBalance": MethodGetBalance})
 	store := NewMockCrossOrgStore()
-	store.groupAccess[AnonymousGroupID].AllowedMethods = append(store.groupAccess[AnonymousGroupID].AllowedMethods, "linea_getBalance")
+	store.groupAccess[AnonymousGroupID].AllowedMethods = append(store.groupAccess[AnonymousGroupID].AllowedMethods, "linea_getBalance", MethodGetBalance)
 	ac := NewAccessController(store, time.Minute)
 	defer ac.Stop()
 
-	req := func(block string) *AccessCheckRequest {
-		return &AccessCheckRequest{
-			Method:       "linea_getBalance",
-			AccessMethod: "eth_getBalance",
-			Params:       []any{rd1301Contract, block},
+	check := func(method, alias, block string) *AccessCheckResult {
+		res, err := ac.CheckAccess(context.Background(), &AccessCheckRequest{
+			Method: method, AccessMethod: alias, Params: []any{rd1301Contract, block},
+		})
+		if err != nil {
+			t.Fatalf("CheckAccess: %v", err)
 		}
+		return res
 	}
-
-	res, err := ac.CheckAccess(context.Background(), req("latest"))
-	if err != nil || !res.Allowed {
-		t.Fatalf("precondition: the allowlisted alias at latest is allowed, got %+v err=%v", res, err)
+	if res := check(MethodGetBalance, "", "latest"); !res.Allowed {
+		t.Fatalf("allowlisted catalog method at latest must be allowed: %+v", res)
 	}
-	res, err = ac.CheckAccess(context.Background(), req("0x10"))
-	if err != nil {
-		t.Fatalf("CheckAccess: %v", err)
+	if res := check(MethodGetBalance, "", "0x10"); res.Allowed || res.Reason != "historical state queries not permitted" {
+		t.Fatalf("catalog historical query must be denied: %+v", res)
 	}
-	if res.Allowed {
-		t.Fatalf("an anonymous alias of eth_getBalance at a block number must hit the historical-state guard")
+	for _, block := range []string{"latest", "0x10"} {
+		wantReason, wantAuth := "authentication required for this operation", true
+		if block != "latest" {
+			wantReason, wantAuth = "historical state queries not permitted", false
+		}
+		if res := check("linea_getBalance", MethodGetBalance, block); res.Allowed || res.AuthRequired != wantAuth || res.Reason != wantReason {
+			t.Errorf("anonymous alias at %s must be denied with %q: %+v", block, wantReason, res)
+		}
 	}
 }
 
@@ -148,6 +166,7 @@ func TestCheckAccess_AnonymousAliasHistoricalGuard(t *testing.T) {
 // a non-org-admin reading through an alias at a block number is denied just as
 // the target method would be.
 func TestCheckAccess_AuthenticatedAliasHistoricalGuard(t *testing.T) {
+	registerStorageReadAliases(t, map[string]string{"linea_getProof": MethodGetProof})
 	store := NewMockCrossOrgStore()
 	setupCrossOrgTestScenario(store)
 	perms := store.cachedPermissions["user-a:org-a"]
@@ -194,6 +213,7 @@ func TestCheckAccess_AuthenticatedAliasHistoricalGuard(t *testing.T) {
 // contract and storage-slot checks key on the target address, so without one
 // the request would otherwise be allowed and forwarded unchecked.
 func TestCheckAccess_StorageReadWithoutTargetDenied(t *testing.T) {
+	registerStorageReadAliases(t, map[string]string{"linea_getProof": MethodGetProof})
 	store := NewMockCrossOrgStore()
 	setupCrossOrgTestScenario(store)
 	perms := store.cachedPermissions["user-a:org-a"]
@@ -233,6 +253,7 @@ func TestCheckAccess_StorageReadWithoutTargetDenied(t *testing.T) {
 // method (or an alias of one) for the anonymous group: anonymous requests get
 // no contract-level check, so the slot tier cannot apply there.
 func TestCheckAccess_AnonymousStorageReadDenied(t *testing.T) {
+	registerStorageReadAliases(t, map[string]string{"linea_getProof": MethodGetProof})
 	store := NewMockCrossOrgStore()
 	anon := store.groupAccess[AnonymousGroupID]
 	anon.AllowedMethods = append(anon.AllowedMethods, "eth_getStorageAt", "eth_getProof", "linea_getProof")
@@ -258,49 +279,53 @@ func TestCheckAccess_AnonymousStorageReadDenied(t *testing.T) {
 			if err != nil {
 				t.Fatalf("CheckAccess: %v", err)
 			}
-			if res.Allowed || !res.AuthRequired || res.Reason != "storage reads require authentication" {
-				t.Fatalf("an allowlisted anonymous storage read must get the storage-read denial, got %+v", res)
+			wantReason := "storage reads require authentication"
+			if tc.alias != "" {
+				wantReason = "authentication required for this operation"
+			}
+			if res.Allowed || !res.AuthRequired || res.Reason != wantReason {
+				t.Fatalf("anonymous storage request must be denied with %q, got %+v", wantReason, res)
 			}
 		})
 	}
 }
 
-// TestCheckAccess_AnonymousAliasDeploymentDenied pins that the anonymous
-// deployment floor is judged on the alias target: an allowlisted alias of
-// eth_sendTransaction with a CREATE payload is still a deployment.
+// Anonymous operator aliases require authentication. Catalog calls retain
+// the creation restriction and ordinary-call positive control.
 func TestCheckAccess_AnonymousAliasDeploymentDenied(t *testing.T) {
+	registerStorageReadAliases(t, map[string]string{"linea_call": MethodCall, "linea_estimateGas": MethodEstimateGas})
 	store := NewMockCrossOrgStore()
 	anon := store.groupAccess[AnonymousGroupID]
-	anon.AllowedMethods = append(anon.AllowedMethods, "linea_sendTransaction", "linea_estimateGas")
+	anon.AllowedMethods = append(anon.AllowedMethods, "linea_call", "linea_estimateGas", MethodEstimateGas)
 	ac := NewAccessController(store, time.Minute)
 	defer ac.Stop()
 
 	create := []any{map[string]any{"from": rd1301Contract, "data": "0x6080"}}
 	call := []any{map[string]any{"from": rd1301Contract, "to": rd1301Contract, "data": "0x6080"}}
 	for _, tc := range []struct {
-		name, method, alias string
-		params              []any
-		deployment          bool
+		name, method, alias, reason string
+		params                      []any
+		allowed                     bool
 	}{
-		{"send alias with a CREATE payload", "linea_sendTransaction", "eth_sendTransaction", create, true},
-		{"estimateGas alias with a CREATE payload", "linea_estimateGas", "eth_estimateGas", create, true},
-		{"send alias with a target (control)", "linea_sendTransaction", "eth_sendTransaction", call, false},
+		{"call alias creation", "linea_call", MethodCall, "authentication required for this operation", create, false},
+		{"estimate alias creation", "linea_estimateGas", MethodEstimateGas, "authentication required for this operation", create, false},
+		{"ordinary operator alias", "linea_call", MethodCall, "authentication required for this operation", call, false},
+		{"catalog creation", MethodEstimateGas, "", "deployment requires authentication", create, false},
+		{"ordinary catalog call", MethodEstimateGas, "", "", call, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			res, err := ac.CheckAccess(context.Background(), &AccessCheckRequest{
-				Method: tc.method, AccessMethod: tc.alias, Params: tc.params,
-			})
+			res, err := ac.CheckAccess(context.Background(), &AccessCheckRequest{Method: tc.method, AccessMethod: tc.alias, Params: tc.params})
 			if err != nil {
 				t.Fatalf("CheckAccess: %v", err)
 			}
-			if !tc.deployment {
+			if tc.allowed {
 				if !res.Allowed {
-					t.Fatalf("an allowlisted anonymous non-deployment must stay allowed, got %+v", res)
+					t.Fatalf("ordinary catalog call must be allowed: %+v", res)
 				}
 				return
 			}
-			if res.Allowed || !res.AuthRequired || res.Reason != "deployment requires authentication" {
-				t.Fatalf("an allowlisted anonymous alias of a deployment must get the deployment denial, got %+v", res)
+			if res.Allowed || !res.AuthRequired || res.Reason != tc.reason {
+				t.Fatalf("anonymous request must be denied with %q, got %+v", tc.reason, res)
 			}
 		})
 	}
@@ -388,37 +413,35 @@ func TestCheckAccess_BuiltinAliasKeyKeepsRawMethodChecks(t *testing.T) {
 	}
 }
 
-// TestRegisterExtraNamespaces_CanonicalizesAliasTargets pins that an alias
-// target is stored in its canonical spelling: the case-sensitive decisions
-// keyed on the alias target (e.g. target and selector extraction, function
-// and proxy-upgrade rules, the storage-slot tier, eth_getLogs validation,
-// eth_call tracing) match the canonical name, so a mis-cased target in the
-// operator config would otherwise silently skip those checks.
-func TestRegisterExtraNamespaces_CanonicalizesAliasTargets(t *testing.T) {
+// Registration accepts catalog aliases in their canonical spelling. Config
+// loading normalizes alias targets before passing them to this boundary.
+func TestRegisterExtraNamespaces_RequiresCatalogAliasTargets(t *testing.T) {
 	defer SnapshotMethodRegistriesForTest()()
 	ExtraMethods = map[string]bool{}
 	ExtraNamespaces = nil
 	MethodAliases = map[string]string{}
-	Wildcards = nil
+	PassthroughMethods = map[string]bool{}
 
-	RegisterExtraNamespaces(
-		map[string][]string{"Linea": {"linea_getProof", "linea_getStorageAt", "linea_custom"}},
+	err := RegisterExtraNamespaces(
+		map[string][]string{"Linea": {"linea_getProof", "linea_getStorageAt"}},
 		map[string]string{
-			"linea_getProof":     "eth_getproof",
-			"linea_getStorageAt": "ETH_GETSTORAGEAT",
-			"linea_custom":       "vendor_somethingElse",
+			"linea_getProof":     MethodGetProof,
+			"linea_getStorageAt": MethodGetStorageAt,
 		},
 		nil,
 	)
+	if err != nil {
+		t.Fatalf("canonical catalog aliases must register: %v", err)
+	}
 
 	if got := ResolveMethodAlias("linea_getProof"); got != MethodGetProof {
-		t.Fatalf("mis-cased eth_getProof target resolved to %q", got)
+		t.Fatalf("eth_getProof target resolved to %q", got)
 	}
 	if got := ResolveMethodAlias("linea_getStorageAt"); got != MethodGetStorageAt {
-		t.Fatalf("mis-cased eth_getStorageAt target resolved to %q", got)
+		t.Fatalf("eth_getStorageAt target resolved to %q", got)
 	}
-	if got := ResolveMethodAlias("linea_custom"); got != "vendor_somethingElse" {
-		t.Fatalf("an unknown target must be kept verbatim, got %q", got)
+	if err := RegisterExtraNamespaces(map[string][]string{"Linea": {"linea_custom"}}, map[string]string{"linea_custom": "vendor_somethingElse"}, nil); err == nil {
+		t.Fatal("an unknown target must be refused")
 	}
 }
 
