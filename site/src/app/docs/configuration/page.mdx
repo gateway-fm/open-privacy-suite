@@ -297,14 +297,14 @@ Each entry needs **exactly one** of `alias` or `"passthrough": true`. The proxy 
 - reuses the name of a built-in method (in any letter case);
 - sits in the `eth_`, `net_`, `web3_` or `engine_` namespace. The built-in methods own the standard namespaces, so an unmodelled method there can only be supported by the proxy itself; `engine_` is the consensus-client API and never belongs on this endpoint;
 - is globally blocked (`debug_*`, `admin_*`, `personal_*`, `miner_*`, `txpool_*`, `clique_*`, `les_*`);
-- has an `alias` that is not a built-in method spelled exactly (e.g. `eth_estimateGas`, not `ETH_ESTIMATEGAS`);
+- has an `alias` that is not a supported built-in method; alias targets are trimmed and normalized to the built-in spelling at config load;
 - has an `alias` of `eth_sendTransaction`, `eth_sendRawTransaction`, `debug_traceCall`, `debug_traceTransaction`, `eth_getBlockByHash`, `eth_getBlockByNumber`, `eth_getBlockTransactionCountByHash` or `eth_getBlockTransactionCountByNumber`. These methods are protected by checks that apply only under their own name (sender linking, runtime tracing, travel-rule compliance, trace validation, block participant filtering), so an alias to them would skip those checks.
 
 The proxy also refuses to start on a file that still contains a `wildcard` block. Prefix wildcards are not supported: list each method you need by name.
 
 ### Aliased methods
 
-An aliased method inherits its alias target's contract access checks, storage-slot tiering, deployment detection, eth_call tracing and participant-based response filtering. Pick the alias whose parameters **and response shape** match the method: a response filter that does not recognise the shape cannot filter it. The historical-block check and the Multicall check recognise only the built-in method names, so prefer granting the built-in method itself where the node supports it.
+An aliased method inherits its alias target's contract access checks, storage-slot tiering, deployment detection, eth_call tracing and participant-based response filtering. Pick the alias whose parameters **and response shape** match the method: a response filter that does not recognise the shape cannot filter it. Aliases inherit the target historical-state restriction. For example, a concrete-block `linea_getProof` request is denied to non-org-admin viewers in the same way as `eth_getProof`. The Multicall check also uses the resolved target.
 
 ### Passthrough methods
 

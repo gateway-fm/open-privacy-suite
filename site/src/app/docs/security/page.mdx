@@ -48,7 +48,7 @@ Beyond the blocklist, the proxy forwards only methods it knows how to protect: t
 
 The admin API rejects an unsupported method in a group's allowed methods with `400`. Operator **passthrough** methods are the one deliberate exception. They are forwarded unfiltered, only to groups that list them by name, and never to anonymous callers. Only an admin-tier token can grant one.
 
-**`eth_getStorageAt`** is not globally blocked but uses **tiered access based on claims**: admin users get unrestricted access to all storage slots, non-admin users can query only EIP-1967 proxy infrastructure slots, and users with no claim are blocked. See [Response Filtering](/docs/security/response-filtering#eth_getstorageat----tiered-access) for the full list of allowed slots.
+**`eth_getStorageAt`** and **`eth_getProof`** are not globally blocked but use **tiered access based on claims**: admin users get unrestricted access to all storage slots, non-admin users can read or prove only EIP-1967 / EIP-2535 proxy infrastructure slots, and users without access to the contract are blocked. See [Response Filtering](/docs/security/response-filtering#eth_getstorageat----tiered-access) for the full list of allowed slots.
 
 ### eth\_sendRawTransaction Support
 
@@ -606,5 +606,5 @@ A standalone verifier CLI is planned.
 | Token revocation | Database lookup per request | Consider Redis for high volume |
 | Multicall | Only 3 hardcoded addresses blocked | Mitigated by runtime tracing (all calls validated regardless of target) |
 | Method case handling | Method names are canonicalized to their standard spelling before access checks and dispatch | Built-in methods match case-insensitively; any other method must match an operator-declared name exactly, or it is refused |
-| Historical state | Historical block queries blocked for anonymous users only | Authenticated users go through full RBAC which gates address access; blocking by block number is redundant and breaks wallets like MetaMask |
+| Historical state | `eth_call`, `eth_getBalance`, `eth_getCode`, `eth_getStorageAt`, `eth_getTransactionCount` and `eth_getProof` at a block number or block hash are blocked for anonymous users and for authenticated users who are not org admins; chain-specific methods aliased to one of them are blocked the same way | Access checks use current contract ownership, so these methods are not served at a specific block number or hash to anyone who is not an org admin. Named tags such as `latest`, `pending`, `safe` and `finalized` are not affected; wallets that pin concrete block numbers (e.g. MetaMask) can hit this denial |
 | Response filtering gaps | `eth_getBlockReceipts` keeps only the caller's own receipts and filters their logs by address match; per-contract event rules and embedded-address redaction apply to `eth_getTransactionReceipt` and `eth_getLogs` only | Granted only by exact name, never through `*`; prefer `eth_getTransactionReceipt`. See [Response Filtering](/docs/security/response-filtering) |

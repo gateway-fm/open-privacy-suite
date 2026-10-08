@@ -18,6 +18,7 @@ import (
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/netguard"
 	"privacy-proxy/internal/proxy"
+	"privacy-proxy/internal/rbac"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -155,11 +156,21 @@ func parseExplicitMethods(ns string, data []byte) ([]ExtraRPCMethod, error) {
 		if m.Method == "" {
 			return nil, fmt.Errorf("namespace %q: entry missing 'method' field: %s", ns, string(entry))
 		}
+		if rbac.IsStandardMethod(m.Method) {
+			return nil, fmt.Errorf("namespace %q: %q is a standard RPC method and cannot be configured as an extra method; list it in the group's allowed_methods", ns, m.Method)
+		}
+		m.Alias = strings.TrimSpace(m.Alias)
 		switch {
 		case m.Alias != "" && m.Passthrough:
 			return nil, fmt.Errorf("namespace %q: method %q has both 'alias' and 'passthrough' — an entry inherits a built-in method's access control or is forwarded unfiltered, not both", ns, m.Method)
 		case m.Alias == "" && !m.Passthrough:
 			return nil, fmt.Errorf("namespace %q: method %q needs an 'alias' to a standard Ethereum method (inherits its access control and response filtering) or \"passthrough\": true (forwarded unfiltered, operator responsibility)", ns, m.Method)
+		}
+		if m.Alias != "" {
+			if !rbac.IsStandardMethod(m.Alias) {
+				return nil, fmt.Errorf("namespace %q: method %q alias target %q is not a standard RPC method", ns, m.Method, m.Alias)
+			}
+			m.Alias = rbac.CanonicalizeMethod(m.Alias)
 		}
 		methods = append(methods, m)
 	}

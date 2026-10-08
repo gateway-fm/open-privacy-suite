@@ -232,8 +232,9 @@ var ExtraNamespaces map[string][]string
 // MethodAliases maps chain-specific methods to their standard equivalents
 // for access control purposes (e.g. "linea_estimateGas" → "eth_estimateGas").
 // Methods with aliases inherit the same contract access checks, storage slot
-// tiering, deployment detection, and function selector extraction as their
-// target. An alias whose target is not a catalog method inherits nothing, so
+// tiering, historical-state guard, deployment detection, and function selector
+// extraction as their target. Targets are canonicalized at config load.
+// An alias whose target is not a catalog method inherits nothing, so
 // it is not forwardable (IsForwardableMethod).
 var MethodAliases = map[string]string{}
 
@@ -287,6 +288,19 @@ func SnapshotMethodRegistriesForTest() (restore func()) {
 	}
 }
 
+// IsStandardMethod identifies reserved built-in RPC names independently of
+// the supported method catalog. Config and registration use it to keep those
+// names separate from operator-defined methods. The match is case-insensitive.
+func IsStandardMethod(method string) bool {
+	lower := strings.ToLower(strings.TrimSpace(method))
+	if _, ok := canonicalMethodByLower[lower]; ok {
+		return true
+	}
+	// Methods classified in ReadOpsMap / WriteOpsMap but not in the canonical
+	// set (includes the response-filtered eth_getBlockReceipts).
+	return ReadOpsMap[lower] || WriteOpsMap[lower]
+}
+
 // reservedExtraPrefixes are owned by the built-in catalog or the node's
 // consensus API and cannot contain operator-defined extra methods.
 var reservedExtraPrefixes = []string{"eth_", "net_", "web3_", "engine_"}
@@ -322,7 +336,7 @@ func ValidateExtraMethod(method string) error {
 	if strings.Contains(method, "*") {
 		return fmt.Errorf("method %q: wildcards are not supported; list each method by its exact name", method)
 	}
-	if _, shadows := canonicalMethodByLower[strings.ToLower(method)]; shadows {
+	if IsStandardMethod(method) {
 		return fmt.Errorf("method %q: shadows a built-in RPC method", method)
 	}
 	lower := strings.ToLower(method)

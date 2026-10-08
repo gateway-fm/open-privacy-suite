@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -1120,6 +1121,50 @@ func TestConfig_VerifyFirstPartyClientSecret(t *testing.T) {
 	}
 }
 
+// Standard names remain separate from operator-defined methods in both
+// namespace schema versions.
+func TestExtraRPCNamespaces_RejectsStandardMethodAsExtraMethod(t *testing.T) {
+	for _, input := range []string{
+		`{"version": 1, "namespaces": {"X": [{"method": "eth_getStorageAt", "alias": "eth_call"}]}}`,
+		`{"version": 1, "namespaces": {"X": [{"method": "ETH_SENDTRANSACTION", "alias": "eth_call"}]}}`,
+		`{"version": 2, "namespaces": {"X": {"explicit": [{"method": "eth_getProof", "alias": "eth_getBalance"}]}}}`,
+		`{"version": 2, "namespaces": {"Linea": {"explicit": [{"method": "linea_getProof", "alias": "eth_getProof"}, {"method": "debug_traceCall", "alias": "eth_call"}]}}}`,
+		`{"version": 1, "namespaces": {"X": [{"method": "eth_getBlockReceipts", "alias": "eth_blockNumber"}]}}`,
+	} {
+		var cfg ExtraRPCNamespaces
+		err := cfg.UnmarshalJSON([]byte(input))
+		if err == nil || !strings.Contains(err.Error(), "standard RPC method") {
+			t.Errorf("expected a standard method to be rejected as an extra method, got %v: %s", err, input)
+		}
+	}
+
+	var ok ExtraRPCNamespaces
+	if err := ok.UnmarshalJSON([]byte(`{"version": 1, "namespaces": {"Linea": [{"method": "linea_getProof", "alias": "eth_getProof"}]}}`)); err != nil {
+		t.Fatalf("a chain-specific method must still load: %v", err)
+	}
+}
+
+func TestExtraRPCNamespaces_ValidatesAliasTargets(t *testing.T) {
+	for _, target := range []string{" ", "linea_unknown", "eth_getProoof"} {
+		var cfg ExtraRPCNamespaces
+		input := `{"version": 1, "namespaces": {"Linea": [{"method": "linea_getProof", "alias": ` + strconv.Quote(target) + `}]}}`
+		if err := cfg.UnmarshalJSON([]byte(input)); err == nil {
+			t.Errorf("alias target %q must be rejected", target)
+		}
+	}
+
+	var cfg ExtraRPCNamespaces
+	if err := cfg.UnmarshalJSON([]byte(`{"version": 1, "namespaces": {"Linea": [{"method": "linea_getProof", "alias": " ETH_GETPROOF "}, {"method": "linea_getBlockReceipts", "alias": " ETH_GETBLOCKRECEIPTS "}]}}`)); err != nil {
+		t.Fatalf("a padded standard alias target must be accepted: %v", err)
+	}
+	if got := cfg.Aliases()["linea_getProof"]; got != "eth_getProof" {
+		t.Errorf("alias target = %q, want canonical eth_getProof", got)
+	}
+	if got := cfg.Aliases()["linea_getBlockReceipts"]; got != "eth_getBlockReceipts" {
+		t.Errorf("alias target = %q, want canonical eth_getBlockReceipts", got)
+	}
+}
+
 // TestExtraRPCNamespaces_ShippedExampleRegisters keeps the example operators
 // copy (rpc-namespaces.example.json) valid end to end: it must parse and pass
 // the rbac registration rules, so a copied example never fails startup.
@@ -1144,5 +1189,39 @@ func TestExtraRPCNamespaces_ShippedExampleRegisters(t *testing.T) {
 		if !rbac.IsCatalogMethod(target) {
 			t.Errorf("example alias %s → %s targets a method the proxy does not model", method, target)
 		}
+	}
+}
+
+// Alias normalization at config load satisfies the registry's exact catalog
+// target contract while retaining named passthrough entries.
+func TestExtraRPCNamespaces_NormalizedAliasesRegister(t *testing.T) {
+	entries := `[{"method":"custom_getProof","alias":" ETH_GETPROOF "},{"method":"custom_getBlockReceipts","alias":" ETH_GETBLOCKRECEIPTS "},{"method":"custom_status","passthrough":true}]`
+	for _, version := range []int{1, 2} {
+		t.Run(strconv.Itoa(version), func(t *testing.T) {
+			defer rbac.SnapshotMethodRegistriesForTest()()
+			rbac.ExtraMethods = map[string]bool{}
+			rbac.ExtraNamespaces = nil
+			rbac.MethodAliases = map[string]string{}
+			rbac.PassthroughMethods = map[string]bool{}
+			namespace := entries
+			if version == 2 {
+				namespace = `{"explicit":` + entries + `}`
+			}
+			var cfg ExtraRPCNamespaces
+			if err := cfg.UnmarshalJSON([]byte(`{"version":` + strconv.Itoa(version) + `,"namespaces":{"Custom":` + namespace + `}}`)); err != nil {
+				t.Fatalf("namespace config: %v", err)
+			}
+			if err := rbac.RegisterExtraNamespaces(cfg.MethodNames(), cfg.Aliases(), cfg.Passthrough()); err != nil {
+				t.Fatalf("normalized aliases must register: %v", err)
+			}
+			for method, target := range map[string]string{"custom_getProof": rbac.MethodGetProof, "custom_getBlockReceipts": rbac.MethodGetBlockReceipts} {
+				if got := rbac.ResolveMethodAlias(method); got != target || !rbac.IsForwardableMethod(method) {
+					t.Errorf("%s target = %q, want forwardable %q", method, got, target)
+				}
+			}
+			if !rbac.IsForwardableMethod("custom_status") || !rbac.PassthroughMethods["custom_status"] {
+				t.Fatal("named passthrough entry must retain its registration")
+			}
+		})
 	}
 }

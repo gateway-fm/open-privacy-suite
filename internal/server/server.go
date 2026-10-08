@@ -2071,18 +2071,27 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 		testIdentity = claims.Subject
 	}
 
+	// Resolve the access-control alias exactly as the live /rpc path does
+	// (jsonrpc_processor.Process): a chain-specific method such as
+	// linea_getProof is judged as its standard target, so target extraction
+	// and the contract, cross-org, storage-slot and historical-state checks
+	// apply here too. The original method is still what the allowlist checks
+	// and what is forwarded.
+	accessMethod := rbac.ResolveMethodAlias(input.Method)
+
 	// Check access via RBAC
 	var testRequiredClaims []rbac.Claim
-	if claim := rbac.ClassifyOperation(input.Method, input.Params); claim != "" {
+	if claim := rbac.ClassifyOperation(accessMethod, input.Params); claim != "" {
 		testRequiredClaims = []rbac.Claim{claim}
 	}
 	accessReq := &rbac.AccessCheckRequest{
 		UserExternalID:   testIdentity,
 		OrgID:            input.OrgID,
 		Method:           input.Method,
+		AccessMethod:     accessMethod,
 		Params:           input.Params,
-		TargetAddress:    rbac.GetTargetAddress(input.Method, input.Params),
-		FunctionSelector: rbac.GetFunctionSelector(input.Method, input.Params),
+		TargetAddress:    rbac.GetTargetAddress(accessMethod, input.Params),
+		FunctionSelector: rbac.GetFunctionSelector(accessMethod, input.Params),
 		RequiredClaims:   testRequiredClaims,
 	}
 	result, err := s.rbacAccessCtrl.CheckAccess(c.Request.Context(), accessReq)
