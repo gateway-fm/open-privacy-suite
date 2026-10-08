@@ -11,6 +11,10 @@ import (
 // than with the server's request-handling policy constants.
 const RateLimiterCleanupInterval = 10 * time.Second
 
+// RateLimitExceededPerSecond is the client-facing message for a per-second
+// rate limit, shared by every limiter that refuses on one.
+const RateLimitExceededPerSecond = "rate limit exceeded (requests per second)"
+
 // RateLimiter provides rate limiting based on user-specific limits.
 // It uses a sliding window for per-second limits and a daily counter for daily limits.
 type RateLimiter struct {
@@ -63,7 +67,7 @@ func (rl *RateLimiter) CheckAndIncrement(userID string, rpsLimit, dailyLimit *in
 	// Check RPS limit
 	if rpsLimit != nil && *rpsLimit > 0 {
 		if !rl.checkRPSLocked(userID, *rpsLimit, now) {
-			return false, "rate limit exceeded (requests per second)"
+			return false, RateLimitExceededPerSecond
 		}
 	}
 

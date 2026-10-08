@@ -1,0 +1,209 @@
+>
+_
+GasStorm
+Dashboard
+Load Test
+History
+|
+Privacy
+Docs
+L1
+L2
+LoadGen
+Load Test
+1m 0.0s · 44.6 MGas/s peak · 100.0% conf
+Completed
+Mode
+Direct
+Through Privacy Proxy
+Gasless
+Off
+Gasless network
+
+Skips funding and sends 0-value transactions — for chains with zero gas fees.
+
+Pattern
+Constant
+Ramp
+Spike
+Adaptive
+Mixed
+Realistic
+
+Adaptive rate that finds maximum throughput
+
+Transaction type
+ETH Transfer
+~21k gas
+
+Simple native ETH transfer
+
+Initial (tx/s)
+Step (tx/s)
+Target pending
+Duration
+s (1m 0s)
+Fix nonce gaps
+
+Completed·1m 0.0s·44.6 MGas/s peak·100.0% conf·46,407 txs
+
+Reset
+Throughput Over Time
+Current: 15.00 Mgas/s
+Peak: 44.56 Mgas/s
+TPS: 319 / 905 peak
+Fill %Mgas/stx/s
+0:01
+0:04
+0:06
+0:09
+0:11
+0:13
+0:15
+0:17
+0:20
+0:22
+0:25
+0:27
+0:29
+0:32
+0:34
+0:37
+0:39
+0:41
+0:44
+0:46
+0:49
+0:51
+0:54
+0:56
+0:58
+0
+10
+20
+30
+40
+Mgas/s
+0
+200
+400
+600
+800
+tx/s
+Test Results
+
+THROUGHPUT
+
+Avg
+
+31.7Mgas/s
+
+Peak
+
+44.6Mgas/s
+
+Avg TPS
+
+774
+
+Peak TPS
+
+905
+
+BLOCKS
+
+Block
+
+—
+
+Avg Block
+
+—
+
+Fill
+
+16.1%
+
+Blocks
+
+59
+
+GAS
+
+Base Fee
+
+—
+
+Gas Price
+
+—
+
+Total Gas
+
+1.90 Ggas
+
+Total Txs
+
+46,407
+
+PROVENANCE
+
+Attestation
+
+OFF
+
+HSM Provider
+
+—
+
+HSM Key
+
+—
+
+HSM Failover
+
+OFF
+
+Transaction Verification
+46,428
+Sent
+46,407
+Confirmed
+0
+Failed
+21
+Pending
+Confirmation Rate
+100.0%
+Average TPS
+774 tx/s
+21 transactions still pending
+Preconfirmation Latency
+Avg: -P50: -P95: -P99: -
+Waiting for preconfirmations...
+Confirmation Latency
+Avg: 1374msP50: 986msP95: 1490msP99: 19509ms
+0-250ms
+250-500ms
+500-1s
+1-2s
+2s+
+0
+5500
+11000
+16500
+22000
+46,407 transactions
+Statistics Summary
+Metric	Min	Mean	p50	p75	p90	p95	p99	Max
+TX Latency	375ms	1.37s	986ms	1.25s	1.40s	1.49s	19.51s	20.02s
+Gas Throughput	0.00Mgas/s	0.00Mgas/s	0.00Mgas/s	0.00Mgas/s	0.00Mgas/s	0.00Mgas/s	0.00Mgas/s	0.00Mgas/s
+TX Throughput	0.0tx/s	0.0tx/s	0.0tx/s	0.0tx/s	0.0tx/s	0.0tx/s	0.0tx/s	0.0tx/s
+Block Fill	0.0%	0.0%	0.0%	0.0%	0.0%	0.0%	0.0%	0.0%
+Export Report
+Export JSON
+Export CSV
+>
+GasStorm
+v0.1.0-dev
+0:58

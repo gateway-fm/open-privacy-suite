@@ -1,0 +1,23 @@
+   Compiling ops-reth-approvals-poc v0.1.0 (<repo>/poc/reth-signed-approvals)
+    Finished `test` profile [unoptimized] target(s) in 3.81s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/main.rs (<repo>/.tmp/reth-policy-poc/target/debug/deps/ops_reth_approvals_poc-0dc2b62aa8e7f633)
+
+running 13 tests
+test direct::tests::fee_normalization_handles_sender_beneficiary_alias_at_uint256_limit ... ok
+test direct::tests::fee_normalization_preserves_value_and_deleted_beneficiary_effects ... ok
+test approvals::tests::duplicates_keep_deadline_and_capacity_is_bounded ... ok
+test fingerprint::tests::shared_go_rust_golden ... ok
+test verification::tests::full_queue_rejects_without_waiting ... ok
+test verification::tests::busy_cpu_worker_does_not_block_runtime_or_other_worker ... ok
+test direct::tests::cancun_noop_marker_preserves_parent_context ... ok
+test approvals::tests::signature_binds_every_field ... ok
+test approvals::tests::partial_frame_does_not_block_another_connection_and_coalesced_frames_work ... ok
+test batch::tests::go_signed_batch_and_all_tampering ... ok
+test direct::tests::unsupported_calls_and_bounds_remain_fail_closed ... ok
+test batch::tests::binary_go_signature_rejects_tampering_truncation_and_trailing_data ... ok
+test direct::tests::golden_and_generated_storage_and_call_variants ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.26s
+

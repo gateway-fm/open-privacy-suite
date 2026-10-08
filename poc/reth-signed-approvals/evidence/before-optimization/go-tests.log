@@ -1,0 +1,3 @@
+# privacy-proxy/internal/nodeapproval.test
+ld: warning: '/private/var/folders/d1/t8y3gjsj2db2w0b6t9lnsyx00000gn/T/go-link-3763628527/000016.o' has malformed LC_DYSYMTAB, expected 98 undefined symbols to start at index 1626, found 95 undefined symbols starting at index 1626
+ok  	privacy-proxy/internal/nodeapproval	1.543s

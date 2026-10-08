@@ -1,0 +1,16 @@
+--- FAIL: TestValueAndLifecycleFingerprint (0.00s)
+    --- FAIL: TestValueAndLifecycleFingerprint/CALL (0.00s)
+        lifecycle_test.go:41: native value outside V1 scope
+    --- FAIL: TestValueAndLifecycleFingerprint/CREATE (0.00s)
+        lifecycle_test.go:41: unsupported call "CREATE"
+    --- FAIL: TestValueAndLifecycleFingerprint/CREATE2 (0.00s)
+        lifecycle_test.go:41: unsupported call "CREATE2"
+    --- FAIL: TestValueAndLifecycleFingerprint/SELFDESTRUCT (0.00s)
+        lifecycle_test.go:41: unsupported call "SELFDESTRUCT"
+--- FAIL: TestNativeRecipientAndDeletionAffectFingerprint (0.00s)
+    lifecycle_test.go:67: missed balance change of account without code
+--- FAIL: TestFailedCreateAndCaughtDestructionStayInTrace (0.00s)
+    lifecycle_test.go:86: unsupported call "CREATE2"
+FAIL
+FAIL	privacy-proxy/internal/nodeapproval	0.517s
+FAIL

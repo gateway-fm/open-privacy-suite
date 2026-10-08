@@ -1,5 +1,13 @@
 version: 2
 updates:
+  - package-ecosystem: "gradle"
+    directory: "/node-approvals/besu"
+    schedule:
+      interval: "weekly"
+    # Provided dependencies must stay aligned with the supported Besu distribution.
+    open-pull-requests-limit: 5
+  # Reth resolves path dependencies from a separately pinned upstream checkout.
+  # The scheduled Node approvals workflow audits that Cargo.lock after preparation.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

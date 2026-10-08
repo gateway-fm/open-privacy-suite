@@ -1,0 +1,510 @@
+# Signed approvals: from PoC to production
+
+**Status:** release candidate preparation, updated 29 September 2026. The shared contract,
+versioned integrations, compatibility CI, operator procedures and architecture/security review are
+implemented. Publication depends on passing compatibility CI; deployment qualification remains
+environment-specific. See the [release review](approvals-release-review.md) and §5. **Owner:** Ivan Beliakov.
+**Scope:** the signed-approvals gate (preflight in OPS, fingerprint check in the block producer)
+for the current OPS version. The in-node policy runtime is OPS v2 and is not discussed here.
+
+Numbers are measured unless marked *estimate*. File references are to
+`poc/ops-besu-signed-approvals` unless another worktree is named.
+
+## 0. Decisions this plan needs
+
+1. ~~Transport~~ — **decided (24 September): gRPC over HTTP/2 (TLS postponed, decision 3), one unary call per
+   batch; the call's status is the confirmation; no broker.** OPS dials the sequencer (1c; one
+   inbound port on the sequencer, one channel per OPS instance); the Ed25519 payload signature
+   is kept. OK means the plugin verified and stored the batch; a retryable error means OPS resends
+   it with backoff (§3.6). This replaces the earlier bidirectional stream with its own ack/nack
+   messages: the confirmation comes with the call, so there is no ack protocol to build. Measured (§3.4′ item 2): gRPC is ~20 µs slower at the median than raw TCP and mTLS adds
+   nothing measurable, against a ~500 ms candidate cadence; the baseline (§3.5) shows the race
+   does not occur. So the decision is not about speed — it is whether to build acks, TLS and peer
+   authentication on raw TCP ourselves or take gRPC's. *(Critic: the earlier "node dials OPS" was inconsistent — the
+   sequencer keeps inbound `ops_prepareApproval` and the forward path anyway, and N OPS instances
+   behind one address turn a node-initiated stream into a fan-in problem or put Postgres into the
+   delivery path. §3.3 weighs both directions.)*
+1a. **Forward-after-ack: no, unless a measurement says otherwise.** The race is 0 on both layouts
+   (§3.5); making the request path wait for the sequencer's confirmation would couple request
+   p99 to a stalled call. Confirmations drive redelivery, not forwarding or ordering: OPS forwards
+   the transaction without waiting for them.
+1b. ~~Finality on Lineth~~ — **answered (24 September), from Maru v1.4.0 and Besu 26.8.1 source:**
+   - *What Maru sends as finalized* (`safe` = `finalized`). Without a `[linea]` section, finalized
+     = head in every forkchoice update (instant finality; the zero hash only for the first build
+     after genesis). With `[linea]` configured — as the Lineth-stack template does — finalized is
+     the L2 block the L1 rollup contract reports as finalized, polled every 1–6 s, which lags the
+     head by hours (Linea mainnet: median about 2 h, normally under 16 h). [Maru
+     `FinalizationState.kt`, `LineaFinalizationProvider.kt`, `MaruAppFactory.kt`; Lineth-stack
+     `config.toml.template`; docs.linea.build *transaction finality*.]
+   - *Build window.* `blockTimeSeconds: 1`. In steady state Maru sends the payload attributes for
+     block N+1 when N is imported and asks for the payload when Besu's block timer fires, so Besu
+     has just under 1 s — about two candidate rebuilds at the default 500 ms cadence. After an idle
+     period (and in any round after the first) it builds for a fixed 500 ms
+     (`min-block-build-time`). Lineth's templates leave Besu's `Xpos-*` flags at their defaults and
+     set `block-txs-selection-max-time=800` ms. [Maru `BeaconBlockImporter.kt`,
+     `EagerQbftBlockCreator.kt`, `QbftBlockCreatorFactory.kt`; Besu `MergeCoordinator.java`,
+     `BlockTimer.java`, `MiningOptions.java`.]
+   - *Consequences.* With rollup finality, release-on-finality would hold approvals for hours; the
+     signed expiry (10 minutes by default) is what bounds the store, so capacity is sized for rate ×
+     TTL, and the overflow path evicts approvals of already-included transactions first. The
+     ~500 ms candidate cadence the race analysis (§3.5) assumes holds. The 800 ms selection cap is a
+     budget the plugin's per-transaction selector cost counts against. Still to measure on a private
+     Lineth network: the actual finality lag there.
+1c. ~~Connection direction~~ — **decided (24 September): OPS connects to the node, on Besu and
+   Reth alike.** OPS already opens a connection to the node for preflight on both
+   (`ops_prepareApproval` on Besu, `debug_traceCall` on Reth), so reversing only the approval
+   stream would buy nothing. It would matter only if preflight moved to a replica (decision 6)
+   and transactions went through RPC nodes: the approval stream would then be the only connection
+   OPS opens to the sequencer, and reversing it would leave the sequencer with no inbound
+   connection from OPS. That is a later hardening option, not part of this plan.
+1d. **Durable approval storage is deferred (25 September).** Keep bounded memory retention and
+   automatic redelivery after a producer restart. If all usable copies are lost, recovery can
+   require client resubmission through OPS and fresh approval. Persistence is not a requirement
+   for this release; reconsider it only for a concrete recovery guarantee (§5.1). Any future
+   design must keep storage waits off forwarding, signing and approval delivery and measure
+   resource contention at the target TPS.
+2. ~~Key custody and signature scheme~~ — **decided and implemented (22 September).** Keep Ed25519
+   as a **software key delivered like every other OPS secret** — environment or a Secrets
+   Manager–mounted file (IRSA/CSI), never a config file, exactly the policy `internal/config/file.go`
+   states and the pattern the audit chain already follows (`internal/audit/checkpoint.go`: a
+   `Signer` with a key id and an explicit "KMS later" seam). Not ECDSA via KMS: a KMS signature per
+   batch would put a network call and ~10 ms into the delivery path for no gain over a rotatable
+   software key. What changed: the signed batch names its key (`OPS_APPROVAL_BATCH_V2`,
+   `key_id` — and since 24 September `issued_at`/`expires_at` — inside the signed bytes, `OPS_APPROVAL_KEY_ID` on OPS, default `default`); the plugin
+   holds a **set** of trusted keys (`--plugin-ops-approval-public-keys id=hex,…`; the old single
+   `--public-key` is the `default` id); OPS signs through a `Signer` interface so a KMS/HSM-backed
+   ECDSA signer can be added without touching the wire. Rotation is add-then-switch: add the new
+   key to the plugin, switch OPS's `OPS_APPROVAL_KEY_ID`/seed, remove the old key — no
+   simultaneous restart. Signed `issued_at`/`expires_at` and expiry enforcement are now implemented
+   on both receivers with the shared `.proto` and golden vectors.
+3. ~~TLS termination~~ — **postponed (24 September): plaintext gRPC on the internal network for
+   now**, like the rest of OPS's internal traffic (the OPS → node JSON-RPC path already carries
+   the raw transactions). Nothing secret crosses the channel and the Ed25519 signature protects
+   integrity without TLS: nobody on the network can forge or alter an approval. What TLS would
+   add — confidentiality and peer authentication — is covered meanwhile by (a) a network rule
+   letting only OPS reach the plugin's port (otherwise anyone reachable can make the plugin
+   verify junk), and (b) a recorded risk acceptance (§6). The one privacy-relevant field was the
+   principal, a Keccak hash of the user's identifier — not a pseudonym, since an identifier derived
+   from an address can be enumerated, and read by no receiver. Since 24 September senders write
+   zeros there (wire contract §2); OPS's audit log remains the record of who submitted what.
+   When TLS comes, it is in-process at both ends (no service mesh is known to be in place, and
+   the sequencer may not run in one).
+4. ~~Where the plugin lives and ships~~ — **decided (24 September): in this repository.** One
+   PR changes both ends of the wire format and the shared golden vectors, and CI runs OPS, Besu
+   and the plugin together. The JAR is released from here under its own tag, built for and named
+   after the Besu version it supports; the Lineth operator pulls it into `besu/plugins/`. The code
+   leaves `poc/` when packaging starts (§5 item 7).
+5. ~~Reth~~ — **decided (24 September): both Besu and Reth ship.** Reth is faster and widely used, and it is
+   where the performance story can be told; Besu covers Besu-based stacks such as Lineth. Both targets share the OPS side (`internal/nodeapproval`) and implement the same
+   delivery contract (§3.6) — so every transport change lands in Java and in Rust, and CI runs a
+   lane per target. Both PoCs now use envelope v2, the trusted key set, signed expiry and the
+   gRPC delivery service. Packaging, CI and updated comparative performance measurements remain.
+6. ~~Preflight placement~~ — **decided (24 September): on the sequencer for now.** A dedicated
+   Besu replica running the plugin's RPC stays possible later (with 1c's hardening option); the
+   plugin's preflight is a local simulation on the node's own head state and needs nothing from
+   the block producer. A replica needs a **separate preflight URL** in OPS
+   (today one `NODE_URL` serves preflight and forward) and lags the head by its import latency,
+   which widens strict-V2's mismatch window; calls-V3 is mostly insensitive. The follower run
+   (§3.5) already exercised this layout for plain transfers.
+
+## 1. What ships
+
+OPS receives `eth_sendRawTransaction`, runs RBAC, simulates the transaction on a Besu node
+(`ops_prepareApproval`, the plugin's RPC), validates the observed call tree against policy,
+queues an approval `(chain, tx hash, fingerprint)` for asynchronous signing and delivery to the
+block producer, then forwards the transaction without waiting for delivery. The envelope carries
+the key id and expiry; the former principal field is reserved and sent as zeros. The producer refuses to include a
+transaction without an approval, and refuses one whose actual execution fingerprint differs
+from the approved one — before commit, so a divergent transaction never enters the block.
+
+| Measured (Besu 26.8.1, unmodified; one M2 Max running everything) | |
+|---|---|
+| Gasstorm **Adaptive**, 60 s, ETH transfers (README) | **671 tx/s average with the gate, 727 without, 765 straight to Besu** — the gate costs ~7 %, the remaining ceiling is Besu's |
+| Per OPS request (`demo.py bench`, **constant-rate**, 16 clients; DEMO.md) | 17.5 ms → 21.1 ms with the gate (preflight ~3.5 ms of that); 775 → 657 submissions/s in that harness |
+| Plugin work inside the producer | 7–22 µs per transaction |
+| Scenarios | 21 scenarios, 23 checks, all green, deployments included (strict-V2 encoder ported to Java, verified against the Go golden vector); coexists with Lineth's own sequencer and pool plugins on an Osaka chain |
+
+Not corners: the fingerprint encoders, the selector's veto semantics, the metrics that exist.
+
+## 2. Where the PoC cut corners
+
+This table records the earlier TCP PoC and the findings that motivated the work. Its descriptions
+of missing acknowledgements, expiry, multiple targets and health signals are historical; the
+current implementation and outstanding work are in §5 and the wire contract. The historical
+outbox proposal is superseded by the decision to defer durable storage (§0 1d, §5.1).
+
+| Corner | Where | Consequence | Fix |
+|---|---|---|---|
+| **Delivery is fire-and-forget.** ~~A batch whose write fails is dropped~~ — **fixed in `ca4976b`**: the signed frame is resent on the next connection. Still open: a batch the plugin receives but cannot store (capacity) is logged and dropped, and a batch lost in a peer-closed socket buffer is never noticed. OPS learns nothing either way. | `internal/nodeapproval/transport.go` `deliver()`; plugin `ApprovalListener.accept()` | the transaction was already forwarded (`jsonrpc_processor.go:1684` enqueues, then forwards): it waits `waitMs` = 5 s, is evicted `TIMEOUT`, the client holds a hash and never gets a receipt, nothing is told | acknowledgements per batch (and a negative one for capacity); redelivery; durable outbox (next row) |
+| **Nothing durable.** OPS queue is a channel (4096); plugin store is a `ConcurrentHashMap` | `service.go`; `ApprovalStore` | OPS crash after enqueue, or a Besu restart, loses approvals for forwarded transactions (scenario `restart_drops_approvals…`) | OPS outbox in Postgres; the node asks for redelivery of its pooled hashes on (re)connect |
+| ~~**Approvals deleted on inclusion**~~ — changed in `5c0c609` to **release on finality** (`InclusionTracker`, `BlockchainService.getFinalizedBlock()`). **Open, blocker-grade:** correctness now depends on finality *advancing* on the target network, which is unverified (decision 1b). If finality lags or is absent, every included approval is retained until the 4,096-block cut-off (~68 min at 1 s blocks) or the orphan sweep (5–10 min); at 700 tx/s that is 210k–420k approvals against a 100k capacity | `OpsApprovalPlugin.onBlockAdded`; `ApprovalStore.put` | once full, every `put` iterates the whole pool into a set and sorts all entries under the lock — on the single ingress thread; OPS's 1 s write deadline then fails and transactions go `PENDING`/`TIMEOUT`. The eviction victims are exactly the included-not-final approvals the fix keeps, so reorg protection degrades to zero under load. ~~The suite finalizes every block immediately, so no test exercises a reorg or lagging finality~~ — `reorg_keeps_approvals` now does (finality lags one block, a rival replaces the head, the returned transactions are included again with **no new approval**) | confirm Maru finality; size capacity/TTL to rate × retention; ~~cheap overflow path~~ (`5b134ca`: event-driven liveness, no scan, no sort); **finding from the scenario:** Besu 26.8.1 re-adds a reorganised block's transactions to its pool unreliably (one run returned nonce 1 and dropped nonce 0, another returned neither) — see the new row below |
+| **Nobody resubmits a reorganised transaction.** Besu's pool re-add after a reorg is partial (above); OPS keeps no record of what it forwarded, so it cannot detect that a forwarded transaction vanished from the canonical chain, let alone resubmit it | `jsonrpc_processor.go` forward path; no submission table on this branch | the approval survives (`5c0c609`), the transaction does not: the client sees a receipt disappear and must resubmit the same signed bytes itself — which does work without a new approval | a submissions record with reconciliation (the v2 branch's `node_submissions` + reconciler is the shape); belongs with the decision-feedback row |
+| ~~**One key, no `key_id`**~~ — **fixed (envelope v2)**: the batch names its key inside the signed bytes; the plugin (and the Reth PoC) hold a key set; unknown or swapped id fails closed. **Still open: no expiry** — an approval never expires while pooled, so an RBAC change after approval does not revoke it | `batch.go` `Ed25519Signer`; `ApprovalBatch`/`ApprovalVerifier`/`PluginOptions`; `batch.rs` | — | `issued_at`/`expires_at` with the `.proto` (phase 3) |
+| **Plain TCP, no TLS, no peer authentication** | `dialApproval`; `ApprovalListener` | the signature protects content only; anyone reaching the port can flood the store | §3 |
+| **Single delivery target**, one connection, one goroutine | `Service.address` | no standby sequencer, no second OPS instance | §4 |
+| **`ops_prepareApproval` unauthenticated at the node** | `PrepareApprovalRpc` | simulation only, but compute on the producer; reachable by anyone on the RPC port | network policy or Besu RPC authentication — **documented as a deployment requirement in `bd0a93d`**; enforcement is the operator's network policy until mTLS |
+| **Diagnostics in the live path** | ~~`OPS_APPROVAL_ENCODING=json`~~ removed in `1dcad1b`; `hops.go` remains, opt-in by env (nil when unset) | — | ~~cap~~ `OPS_APPROVAL_HOPS_LIMIT` (`b874c0f`); the load harness records whole runs now |
+| **No health signal** | — | while OPS is disconnected the first ~8k transactions (128 batches + 4,096 queued approvals) are forwarded and time out; after that `Enqueue` fails and requests get 503 without forwarding (`jsonrpc_processor.go:1684`) — fail-closed, but late and unannounced | connected-producers gauge on OPS, OPS-connected gauge on the plugin; the 503 rate as a signal; alerts; readiness reflects delivery connectivity |
+| ~~**Reconnect backs off only on dial failure**~~ — **fixed in `b874c0f`**: every connection loss (dial, write, peer close) is followed by one jittered pause; the test saw 11,023 connections in 700 ms before. Still open: a write that lands in the kernel buffer before the RST is marked written and lost | `deliver()` | — | the kernel-buffer case is only closed by acknowledgements |
+| ~~**Graceful shutdown drops in-flight approvals**~~ — **fixed in `b874c0f`**: the signer drains the queue on stop, the sender delivers until the batch channel closes or 2 s pass, `Enqueue` refuses once closing; 45 of 200 delivered before, 200 after | `Close()`, `deliver()`, `signLoop()` | — | — |
+| **Frame limits hard-coded** | `MaxBatchApprovals` 32, `MaxBatchFrame` 16 KiB | undocumented | limits in the protocol document |
+| **Rate limiting deferred to OPS** | README | any authorised client can fill the store (100 k) for the TTL — and a full store is a **DoS lever**: every further `put` is a full pool scan plus an O(n log n) sort under the lock (see the finality row) | global (Redis) rate limit on preflight per principal; cheap overflow path |
+| **No feedback path for producer decisions** | `ApprovalSelector.reject()` logs `OPS_APPROVAL_DECISION` on the sequencer only | a transaction denied `MISMATCH` or dropped `TIMEOUT` vanishes: the user holds a hash and no receipt, OPS cannot say why, the explorer shows nothing, audit attribution stops at "forwarded" | decided 24 September (§3.3): decisions stay internal — the sequencer's decision log and metrics, shipped by the logging pipeline and recorded for audit; not sent back over the delivery channel and not surfaced to users |
+| **One `NODE_URL` for preflight and forward** | `server.go` → `node_approvals.go:13`; `besu.go` ignores the plugin's `parentBlockHash` | a preflight replica (decision 0.6) is impossible to configure; strict-V2 on a lagging node widens the mismatch window | separate preflight URL; pin the preflight block in the approval and let the producer check freshness |
+| **No CI, `@Unstable` Besu API** | `poc/` trees, Gradle against Cloudsmith | breaks silently on a Besu bump; Lineth pins the commit | per-Besu-version scenario lane (JDK 25 + Besu binary), nightly |
+| **Scope limits, documented** | README | producer-only; legacy + EIP-1559 only; strict-V2 state-exact for lifecycle; no revocation | decisions, not bugs; 2930/4844 trivial, 7702 needs the envelope extension |
+
+## 3. Transport
+
+### 3.1 What latency actually depends on
+
+The transaction and its approval travel on two paths. When the producer evaluates a pooled
+transaction whose approval has not arrived, the selector answers `PENDING` and re-evaluates it
+on the **next candidate build** — on Besu every **~500 ms**: successive `wait` decisions for
+one transaction in `evidence/timeout.log` are 504–508 ms apart, and the mechanism is Besu's
+`DEFAULT_POS_BLOCK_CREATION_REPETITION_MIN_DURATION` = 500 ms (a configurable minimum; Lineth is
+Engine-API-driven by Maru, so it applies); on the Reth PoC, the next payload build, up to one block. After `waitMs`
+(5 s) the transaction is dropped.
+
+The transport's own cost is microseconds. The cost that matters is the **race**: if the
+transaction reaches the producer before its approval, inclusion slips by up to one candidate
+build; if delivery fails, by 5 s to a drop. The PoC instrumented delivery (`hops.go`) but never
+recorded it — §3.5 fixes that.
+
+An **acknowledgement** could remove the race entirely — forward only after the producer has
+stored the approval — but §3.5 shows the race does not occur, and waiting would couple every
+request's p99 to a stalled stream and needs a timeout policy, batch correlation and a
+head-of-line story (§3.6). Decision 1a: confirmations drive **redelivery and refusals**, not
+forwarding or ordering. They remain the strongest argument for a transport with replies: without them a
+batch lost in a peer-closed socket buffer, or refused by a full store, is invisible to OPS.
+
+### 3.2 Options
+
+| | One-way latency | Ack | TLS / mTLS | Schema, versioning | Fan-out | Go / Java / Rust | Operability |
+|---|---|---|---|---|---|---|---|
+| Raw TCP, length prefix (current) | ~0.5 RTT + µs | none — must be built | none — must be built | three hand-written encoders, string domain tag | hand-managed mesh | hand-rolled | bespoke protocol, bespoke runbooks |
+| Raw TCP + ack frame | same | built by us | must be built | same | same | same | same |
+| **gRPC bidi stream, HTTP/2, mTLS** | same ~0.5 RTT; framing + proto ≈ 10 B, µs | native on the stream | native | `.proto`, codegen ×3, field-evolution rules | native: one stream per OPS instance | grpc-go (`go.mod` already has grpc 1.82 + protobuf); grpc-java **at Besu's version** — Besu 26.8.1 ships `grpc-{api,core,netty,util,context}` 1.79.0 and Netty 4.2.17 unshaded, and loads plugins parent-first (`URLClassLoader` in `BesuPluginContextImpl`), so the plugin compiles against those and bundles only `grpc-stub`, `grpc-protobuf`, `protobuf-java`; `grpc-netty-shaded` would *not* help; tonic for Reth | standard: grpcurl, interceptors, tracing, deadlines, health |
+| HTTP/1.1 POST per batch, keep-alive | 1 RTT per batch; approval usable at 0.5 RTT | the response | native | JSON or proto | one connection per target | everywhere | standard |
+| HTTP/2 POST | as above, multiplexed | the response | native | as above | as above | everywhere | standard |
+| WebSocket | ~0.5 RTT | built by us | TLS native, auth ad hoc | none | hand-managed | good | moderate |
+| Broker (NATS JetStream / Kafka) | + one hop: ≥ 1 RTT + persistence, *estimate* 1–3 ms | native | native | registry optional | free | good | a new component in the inclusion path |
+
+Raw TCP is what systems use when they *define* a protocol and own every client for decades —
+devp2p, Bitcoin P2P, the Postgres and MySQL wire protocols, Redis, Kafka. None of that
+describes 120-byte messages between two services we own. What raw TCP costs here is the top of
+§2: no acks, no TLS, no peer authentication, no versioning beyond a string, three encoders kept
+in parity by hand, and a protocol an on-call engineer has never seen.
+
+### 3.3 Recommendation
+
+**Decided (24 September): gRPC over HTTP/2 (mTLS postponed, §0.3); OPS dials the sequencer; one unary call
+per batch, whose status is the confirmation; the Ed25519 payload signature kept; no broker.
+The producer's decisions stay on the sequencer — decision log and metrics — and do not travel
+back over this channel (§2, feedback row: internal, never user-facing).**
+
+- Latency-equivalent to raw TCP: one persistent HTTP/2 connection, one call per batch, calls
+  multiplexed so none waits for another, no batching timer (`takeBatch` snapshot semantics
+  unchanged). §3.4′ measured the streaming shape; the unary shape is re-measured on the same
+  bench before quoting a number for it (§5 item 2).
+- Confirmations make redelivery exact and refusals visible to OPS; they are not used to gate
+  forwarding (decision 1a).
+- **Who dials whom — decided (§0 1c).** *OPS → sequencer*: the sequencer exposes one inbound
+  port — it already exposes `ops_prepareApproval` and the forward path inbound, so this adds no
+  new direction; N OPS instances are N channels with no fan-in; redelivery after a sequencer
+  restart is driven by the plugin's boot id in every response (§3.6). *Sequencer → OPS*: attractive only if the sequencer had no inbound ports at all
+  (decision 0.6 taken *and* forwarding moved off it); with N OPS behind one address a single
+  stream lands on one instance, so either the plugin discovers instances or a shared Postgres
+  outbox sits in every delivery — the component-in-the-inclusion-path this section rejects
+  for a broker. Standby sequencer: one more channel from each OPS instance (§4b).
+- *Postponed (§0.3); kept for when it lands:* mTLS authenticates both ends and gives encryption in transit (ISO/IEC 27001:2022 Annex A
+  8.24, use of cryptography — confirm the mapping with Compliance); the payload signature
+  authenticates the *decision* independently of the channel and remains auditable. Certificate
+  lifecycle (CA, issuance, rotation, private keys in Secrets Manager / CSI) is part of the
+  transport work, not an afterthought (§6).
+- HTTP/1.1 POST is the acceptable fallback: at 700 batches/s it costs a request per batch
+  (*estimate* 100–200 µs) and has no server push, so redelivery-on-connect needs a second
+  endpoint.
+- A broker is not justified: a new component in the inclusion path for an N×M that is small.
+
+### 3.4 Benchmark before committing
+
+Purpose: replace estimates with numbers and test the race claim. Effort *estimate* 1.5–2 days.
+
+1. Transport shim behind `nodeapproval.deliver()` with implementations: raw TCP as-is; raw
+   TCP + ack; gRPC bidi (node dials OPS); HTTP/1.1 POST. Matching ingress in the Besu plugin
+   for each; the Reth PoC for raw TCP and gRPC if decision 0.5 keeps it.
+2. Instrumentation: `OPS_APPROVAL_HOPS_FILE` (exists); add `stored_at` in `ApprovalStore.put`
+   and `first_evaluated_at` in the selector. Report enqueue → stored p50/p99 and the fraction of
+   transactions whose first evaluation is `PENDING` (the race rate).
+3. Load: Gasstorm constant-rate 300 / 500 / 700 tx/s and Adaptive, gate on, per transport;
+   with and without forward-after-ack.
+4. Network: inject 1 ms and 5 ms one-way delay between OPS and the node (macOS `dnctl` +
+   `pfctl`, Linux `tc netem`) to model cross-AZ; repeat 500 tx/s.
+5. Output: one table here — transport × delay → enqueue→stored p50/p99, race rate,
+   submit→inclusion p50/p95, throughput. Decision 0.1 is taken on that table.
+
+### 3.5 Baseline: the current raw-TCP path (measured 22 September)
+
+`gasstorm.py --only-gate` records OPS-side hop marks (`OPS_APPROVAL_HOPS_FILE`) and, from the
+producer's decision log, how many approved transactions were first evaluated *before* their
+approval arrived. `analyze_hops.py` reduces the marks. Gate on, ETH transfers, 20 s per rate,
+1 s blocks, direct topology (OPS forwards to the producer itself). 8,192 approvals sampled for
+hops (the recorder's cap); every transaction counted for the race.
+
+| Layout · requested (achieved avg) | Submitted / confirmed | enqueue → written p50 / p90 / p99 / max | of which signing p50 | approval on the wire before forward began | allowed after ≥1 `wait` | dropped |
+|---|---|---|---|---|---|---|
+| direct · 300 (225) | 6,003 / 6,003 | **62 µs / 184 µs / 1.17 ms / 34 ms** ¹ | 24 µs | 0.01 % (forward starts ~60 µs earlier; the sign loop is asynchronous) | **0 of 6,003** | 0 |
+| direct · 500 (349) | 10,011 / 10,011 | ¹ | | | **0 of 10,011** | 0 |
+| follower · 300 (~225) | 6,011 / 6,002 ² | **64 µs / 164 µs / 0.71 ms / 53 ms** ¹ | | 0 % | **0 of 6,002** | 0 |
+| follower · 500 (~350) | 10,011 / 10,011 | ¹ | | | **0 of 10,011** | 0 |
+
+¹ The hop recorder caps at 8,192 rows per OPS process and both rates run in one process, so the
+delivery sample is the whole 300 run plus the first ~2,200 approvals of the 500 run: **delivery
+latency at 500 tx/s is not yet measured**, only the race count is. Nothing yet shows the race at
+the 671 tx/s of §1. Fix: configurable cap, one sample per rate (§3.4′ item 2).
+² Nine transactions of the follower 300 run were discarded by the generator (`txDiscarded: 9`).
+The OPS log explains it: at 19:59:34.874 `context canceled` hit unrelated operations in the same
+millisecond — preflight `POST`s, address linking, a compliance-config read — so the *client*
+cancelled its requests during a brief OPS latency spike (~80 ms requests just before, against
+~12 ms). OPS answered 403 and forwarded nothing. Fail-closed; not a delivery race. The spike is an
+OPS latency item, outside this plan.
+
+Reading: **the race does not occur, on either layout.** The approval leaves OPS tens of
+microseconds after the forward begins, but the forward is an HTTP round trip to Besu and pool
+admission is followed by a candidate build every ~500 ms, so the approval is in the store long
+before the producer looks. Through a follower RPC node the transaction additionally travels
+~80 ms of gossip (`topology_probe.py`), so the approval's lead only grows. Delivery is not a
+latency cost at the rates measured: 62–64 µs median, ≤ 1.2 ms p99, of which the TCP write is
+6 µs.
+
+Consequences for §3:
+
+- **Wire format is irrelevant to delay.** Comparing raw TCP against gRPC or HTTP on latency
+  would produce indistinguishable microsecond figures. §3.4 is reduced accordingly.
+- **What can still cost 500 ms or 5 s is delivery *failure*** — a dropped batch, a broken
+  connection during a burst, a full store — which is the fire-and-forget row of §2. That is a
+  reliability property (acknowledgements, redelivery, recovery storage), not a transport-speed
+  one, and it argues for a transport with replies for that reason alone.
+- The recommendation in §3.3 stands, on grounds of reliability, TLS, peer authentication,
+  fan-out and operability — not speed.
+
+**24 September, the gRPC delivery end to end** (real OPS with its gRPC client, Postgres, Redis and
+the plugin's gRPC service; gate on; the same Gasstorm workload, 20 s per rate):
+
+| Layout · requested | Submitted / confirmed | Evaluated before its approval arrived | Dropped at the producer | Gate cost per transaction (median) |
+|---|---|---|---|---|
+| direct · 300 | 6,005 / 6,002 | 0 | 0 | 9.1 µs |
+| direct · 500 | 10,012 / 9,984 | **0 of 9,984** | 0 | 7.4 µs |
+| follower · 300 | 6,010 / 5,979 | 0 | 0 | — |
+| follower · 500 | 10,011 / 9,979 | **0 of 9,979** | 0 | 7.6 µs |
+
+No request was refused for want of a ready producer, no batch was refused or dropped, and none
+needed a resend. Every missing receipt is a request the load generator cancelled when a phase
+stopped — the OPS log shows them in exactly two seconds, one at the end of each rate — plus three
+failed database connections; OPS refused all of them before forwarding (fail closed). Evidence:
+`poc/besu-signed-approvals/evidence/gasstorm/summary.json`, `summary-follower.json`.
+
+### 3.4′ Benchmark, reduced
+
+Replacing §3.4. Effort *estimate* 0.5–1 day.
+
+1. **Failure injection on the current gRPC path:** under load, sever the OPS → producer
+   connection for 1 s, and separately fill the store to capacity. Measure retries, refusals,
+   receipt latency and transactions that reach `TIMEOUT`. With OPS alive and retention, expiry
+   and the transaction wait window sufficient, acknowledgements and redelivery should recover
+   transient delivery failures without persistence. Test OPS termination and successive OPS
+   and producer restarts separately: losing all approval copies can require client resubmission
+   and fresh approval (§5.1); zero loss across those failures is not the current guarantee.
+2. ~~One gRPC implementation, measured once~~ — **done** (`bench/`): the same signed frames, the
+   same host, 500 batches/s × 32 approvals for 10,000 batches, sender in Go (grpc-go 1.82),
+   receiver in Java at Besu's grpc 1.79.0 — with Netty 4.1.130, which grpc-netty pulls in, not
+   Besu's 4.2.17 (true of both runs below). The receiver does not verify signatures, so the round
+   trips exclude verification. One-way delivery, sender wall clock to receiver wall clock:
+
+   | Transport | p50 | p90 | p99 | max | ack round trip p50 / p99 |
+   |---|---:|---:|---:|---:|---:|
+   | raw TCP, length prefix (today) | **102 µs** | 224 µs | 568 µs | 18.7 ms | — |
+   | gRPC bidi stream, plaintext | **123 µs** | 262 µs | 615 µs | 29.2 ms | 232 µs / 1.15 ms |
+   | gRPC bidi stream, **mTLS** (TLS 1.3, P-256) | **109 µs** | 245 µs | 645 µs | 28.6 ms | 211 µs / 1.18 ms |
+
+   gRPC costs ~20 µs at the median and ~50–80 µs at p99 over raw TCP; mTLS costs nothing
+   measurable on 3.9 KB frames; an acknowledgement returns in ~0.2 ms. Against a ~500 ms
+   candidate cadence none of this is a factor, which is the measured answer to "is raw TCP
+   faster": yes, by an amount that cannot matter. Reproduce with `bench/run.sh`.
+
+   **24 September, the decided shape (one unary call per batch).** Median of three 10,000-batch
+   runs at 500 batches/s, same host; frames are 3,954 B now (key id and signed expiry), so compare
+   within this table, not with the one above:
+
+   | Transport | one-way p50 | p90 | p99 | max | round trip p50 / p99 |
+   |---|---:|---:|---:|---:|---:|
+   | raw TCP, length prefix | **51 µs** | 79 µs | 216 µs | 8.4 ms | — |
+   | gRPC stream | **74 µs** | 131 µs | 624 µs | 32.1 ms | 140 µs / 1.14 ms |
+   | gRPC stream, mTLS | **79 µs** | 139 µs | 405 µs | 27.7 ms | 147 µs / 0.71 ms |
+   | **gRPC unary (decided)** | **120 µs** | 220 µs | 608 µs | 23.5 ms | 208 µs / 1.03 ms |
+   | gRPC unary, mTLS | **119 µs** | 206 µs | 554 µs | 22.3 ms | 209 µs / 0.96 ms |
+
+   One call per batch costs about 50 µs more than the stream at the median (51–105 µs on the round
+   trip across the six same-run pairs); p99 does not separate on a busy shared host, and every
+   gRPC maximum is the receiver JVM's cold start. Against the ~200 µs a transaction needs to reach
+   the pool and the ~500 ms candidate cadence, the decision stands.
+3. ~~Gossip topology check~~ — **done** (`f41e2ef`, `topology.py`, `--topology follower`): race
+   0 of 16,013; see §3.5. Repeat once with Reth/Erigon as the follower when that stack exists.
+3a. **Capacity red test**: fill the store to capacity under load and count approvals refused and
+   transactions lost; then the same after the cheap-overflow fix and the capacity refusal
+   (`UNAVAILABLE` with the store-full trailer, wire contract §3).
+3b. ~~Reorg with lagging finality~~ — **done**: `reorg_keeps_approvals` (harness gained
+   `finality_lag`, `parent`, `reorg_to_rival`). Finalized lags one block, a rival replaces the head
+   (Besu logs the chain reorg), the orphaned transactions are resubmitted as the same signed bytes
+   and included with no new approval; each transaction is allowed twice in the decision log.
+4. Cross-AZ delay injection is dropped: with a ~60 µs lead and a ~500 ms evaluation cadence,
+   1–5 ms of network delay cannot create a race; it only matters for failure recovery time,
+   which item 1 measures.
+
+### 3.6 What the delivery contract must specify
+
+The byte layout, status codes, redelivery and settings are specified in
+[approvals-wire-contract.md](approvals-wire-contract.md); this section records why.
+
+Forwarding does not wait for confirmations (decision 1a), so these are reliability semantics,
+not request-path ones — written down before the `.proto`:
+
+- **One call per batch.** The call returns only after the plugin has verified the signature and
+  stored the batch, so its status is the confirmation. Calls are independent and multiplexed on
+  one connection: no batch id, no head-of-line blocking, no ack messages.
+- **Status codes.** `OK` — stored. `UNAVAILABLE` with trailer `ops-approval-reason: store-full`
+  means store full; OPS keeps the batch and retries with backoff. Other `UNAVAILABLE` /
+  `DEADLINE_EXCEEDED` failures also retry with backoff. `RESOURCE_EXHAUSTED`, `OUT_OF_RANGE` and
+  `UNIMPLEMENTED` are permanent gRPC failures, not store-capacity signals.
+  `UNAUTHENTICATED` / `PERMISSION_DENIED` / `INVALID_ARGUMENT` — bad signature, untrusted key id,
+  wrong chain or malformed batch: no retry, counted and alerted on OPS (a configuration fault,
+  e.g. a key not yet in the plugin's set).
+- **Redelivery after a sequencer restart.** A confirmed approval can still be lost when the
+  sequencer restarts (the store is RAM). Every response carries the plugin's boot id; when it
+  changes, OPS resends every approval it still retains (not yet final, §2). RPC nodes re-announce
+  pooled transactions after a restart and `waitMs` counts from pool admission (`getAddedAt`), so
+  the resend must land within `waitMs` of the plugin coming up — OPS probes on channel reconnect
+  rather than waiting for the next batch; alternatively `waitMs` counts from plugin readiness.
+- **Ordering** — none required across batches; the store is keyed by transaction hash and keeps
+  the greatest `(issued_at, key id, fingerprint)` tuple, as specified in the wire contract.
+- **Decisions** — `allow`/`deny(reason)`/`timeout` stay on the sequencer (decision log and
+  metrics, shipped by the logging pipeline); they are internal and never reach the user.
+
+## 4. Several nodes
+
+The CTO's PoC topology (18 September) fixes the vocabulary: **one Besu sequencer with the plugin,
+Reth and Erigon RPC nodes as the transaction submission channels.**
+
+**a) Several OPS instances.** Each instance holds its own gRPC channel to the sequencer (OPS dials,
+§3.3), so no fan-in and no shared component in the delivery path. Each instance retains its own
+approvals in bounded memory; durable storage is deferred (§5.1). Per-instance signing keys
+(with `key_id` and a key set on the plugin) give attribution and independent rotation.
+The same transaction reaching two instances (client retry across the LB) yields two approvals
+for one hash; the store keeps the newer —
+harmless at execution, only the audit attribution can flip.
+
+**b) The sequencer, optionally a standby.** Approvals must reach every node that may build the
+next block. With a channel per consumer and redelivery on a boot-id change, a standby is one more channel;
+it must be fed continuously, not on failover. "Multiple producers" means nothing else in this
+topology.
+
+**c) RPC nodes (Reth, Erigon).** They submit transactions "as normal" and do not build blocks, so
+they need no approvals. Two consequences:
+- Forwarding through an RPC node adds gossip latency (*estimate* tens of ms) before the
+  transaction reaches the sequencer's pool, while the approval goes to the sequencer directly —
+  which helps the approval win the race. §3.5 measures the direct case; the gossip case should be
+  measured on the target topology.
+- **Preflight must run on a Besu node.** The fingerprint is computed by the same tracer the
+  producer uses, and Besu and geth-shaped tracers differ in which frames exist (no frame for a
+  CALL with insufficient balance or at depth 1024, nor for a CREATE that fails before its frame),
+  so `ops_prepareApproval` cannot run on Reth or Erigon. Today it runs on the sequencer, ~3.5 ms
+  of simulation per transaction on the block producer. Alternative: a non-producing Besu replica
+  running the plugin's RPC (decision 0.6) — the follower run already did exactly this for plain
+  transfers. Caveats: OPS needs a separate preflight URL, and a replica lags the head by its
+  import latency, which widens strict-V2's state-exact window from "same block" to "lag + same
+  block"; calls-V3 is mostly insensitive.
+
+**d) Several validators importing blocks** — out of scope: enforcement is producer-only; import
+does not consult approvals. Every producer must run the plugin.
+
+## 5. Order of work
+
+The following status supersedes the historical gaps in §2. Changes to the shared protocol must
+continue to pass the Go, Java and Rust tests and both real-node scenario suites.
+
+| Work | Completed on this branch | Remaining |
+|---|---|---|
+| Network facts and measurements | Maru finality/build-window source review (§0.1b); direct and follower TCP baseline; unary gRPC microbenchmark and end-to-end load run (§3.5); [5,000/sec delivery, full-stack load, heap sizing and restart measurements](../../poc/approval-performance/README.md) | Local full-stack comparison accepted for initial release; 5,000 committed TPS is not a release requirement. These machine-specific development numbers are not solution limits. Qualify deployment hardware/transaction mixes and the operator change process |
+| Transport | Shared `.proto`, envelope v2, unary gRPC on both receivers, signature/status checks, all-or-nothing batches, per-producer delivery lanes and backoff | TLS remains explicitly postponed (§0.3) |
+| Restart recovery | OPS retains signed batches in memory and resends on a changed producer boot id; receivers provide a bounded restart wait window; real pending transaction recovered on both nodes amid fresh 5,000/sec approval traffic | Successive sender/producer loss and fresh reapproval exercised on both nodes; bounded graceful drain tested. Full-cache replay can lose older approvals. Exercise receipt retry and shutdown with deployed traffic/termination settings. Persistence is deferred (§5.1); automatic transaction reconciliation remains separate work |
+| Keys and lifetime | Key sets, key ids, signed expiry, deterministic replacement, finality release and bounded stores; TTL floor of 10 s on sender and receivers | Secret deployment and rotation procedure exercised in the target environment; capacity sizing for all OPS instances |
+| Ingress protection | Explicit source list required, connection/call caps, preface and idle limits; OPS preflight limiting with Redis and bounded local fallback | Deployment network rules and authentication for `ops_prepareApproval`; test the controls in the deployed topology |
+| Observability | Delivery/receiver metrics, Reth standard scrape export, no-ready-producer 503 before preflight, audited refusals, alert rules and readiness policy; high-volume diagnostics opt-in | Configure target-missing alerts, routing and private log retention in the deployment |
+| Packaging and CI | Supported source moved to `node-approvals/`; pinned compatibility record, versioned checksum bundles, JAR classpath checks, advisory gate and Besu/Reth CI lanes | Publish only after compatibility jobs pass; qualify each additional node version/fork before adding support |
+| Scope extensions | Protected legacy and EIP-1559 transactions; deployments use strict fingerprints | EIP-2930/4844/7702 support and separate preflight URL remain outside the current implementation |
+
+The review follow-up closes the source-list/idle-connection lockout, minimum-TTL and refusal-audit
+gaps. Restart scenarios must keep OPS's real delivery service alive while restarting the producer,
+then observe its automatic redelivery; a fixture that calls `Deliver` itself does not demonstrate
+that recovery. Each node's README records the tested scenario and how to reproduce it.
+
+### 5.1 Durable approval storage: deferred
+
+**Decided, 25 September:** keep bounded memory retention and automatic producer-restart recovery.
+Do not add approval persistence for this release. Losing all usable approval copies can require
+the client to check the transaction's status and resubmit through OPS for a fresh preflight and
+authorization decision. A returned transaction hash is not evidence of inclusion or finality.
+
+An OPS crash can lose queued or undelivered approvals while approvals already stored by a live
+producer remain usable. A missing acknowledgement does not prove the approval was lost.
+Conversely, even confirmed approvals can be lost if OPS restarts and subsequently the producer
+restarts while the transaction is still pending; the restarts need not be simultaneous. Replay
+only works within the retained capacity and signed lifetime and never bypasses execution checks.
+
+The node removes approvals at expiry or finalized inclusion; OPS removes them at expiry or its
+capacity limit. A delivery acknowledgement is not a reason to discard OPS's recovery copy.
+Capacity and expiry are separate limits: the default 100,000 retained approvals represent about
+20 seconds of history at a sustained 5,000 TPS, even with a 10-minute signed TTL. Size retention
+for the intended recovery window and measure memory use, eviction and recovery behavior under load.
+The [local retention matrix](../../poc/approval-performance/README.md#memory-and-history-sizing)
+measures about 682 live heap bytes per approval at batch size one, before process and GC
+headroom. Paced 5,000/sec traffic formed batches close to one approval. A history duration is
+not a downtime guarantee: fresh arrivals can evict older entries while restart replay is still
+walking the retained set. These measurements do not change the default cap or add persistence.
+
+Graceful drain is tested through real gRPC and bounded when a producer fails. Real-node scenarios
+on both clients exercise successive sender/producer restarts and fresh preflight of the same bytes.
+The operator guide covers abrupt loss and receipt retry; deployment-specific termination and
+receipt-monitoring behavior must still be exercised under the intended traffic. Automatic transaction
+resubmission/reconciliation is not provided by storing approval records alone: transactions must
+also remain available, and their inclusion, nonce and approval validity must be reconciled.
+
+Reconsider persistence only if a concrete availability requirement calls for recovery of pending
+submissions across these failures without client involvement. Asynchronous storage protects only
+committed records and leaves the newest approvals vulnerable. It also adds writes, cleanup and
+resource contention; it cannot be described as free merely because requests do not wait for it.
+Any future design must keep database operations, flush waits and storage batching timers off
+forwarding, signing and delivery, bound its resource use, and preserve signed expiry. Validate
+request and delivery p50/p95/p99, inclusion latency and sustained TPS on both Besu and Reth at the
+target rates, including storage stalls and recovery bursts, before accepting the overhead.
+
+## 6. Compliance notes
+
+- Deliver the software seed from the deployment secret manager as a protected mounted file, as
+  described in the operator guide; do not commit fixture keys or secrets to deployment configuration.
+- **TLS on the approval channel is postponed (§0.3): record it as a risk acceptance** (ISO/IEC
+  27001:2022 Annex A 8.24, use of cryptography — Compliance to confirm how it is recorded), with
+  the network rule restricting the plugin's port to OPS as the compensating control. When mTLS
+  lands: CA, issuance, rotation and where private keys live (Secrets Manager via CSI/IRSA) are
+  part of the design, not deployment detail; IRSA roles scoped to the specific secret ARNs.
+- Phases 3–4 change access control (key rotation; mTLS identities once TLS lands) and 6 adds detective
+  signals and a new log source on the sequencer (A.8.15 logging) — change-management
+  documentation for ISO 27001 / Vanta.
+- Durable approval storage is deferred (§0 1d); no approval-storage migration is required for
+  this release. Any later database design must follow the repository's migration and grant policy.
+- Installing the plugin on the sequencer is a change to the Lineth operator's component and goes
+  through their change process, not only ours.
+- Local machine paths in the evidence logs were replaced with `<repo>` / `~/` placeholders before the
+  branch was first pushed; scrub new evidence the same way before committing it.
+- Nothing here disables an existing control.

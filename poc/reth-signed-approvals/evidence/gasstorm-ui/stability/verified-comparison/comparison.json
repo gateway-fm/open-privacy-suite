@@ -1,0 +1,246 @@
+{
+  "scope": "One local 120-second Adaptive run per mode and workload; ten wallets; 200M gas blocks.",
+  "interpretation": "Live TPS peaks are sampled dashboard measurements. Best 30-second windows count canonical block transactions by local observation time. Neither establishes sustained maximum capacity. Send failures, missing receipts and queue growth remain visible.",
+  "runs": [
+    {
+      "case": "eth-transfer-off",
+      "workload": "eth-transfer",
+      "confirmed": 213872,
+      "successfulReceipts": 213872,
+      "missingReceipts": 109,
+      "failed": 0,
+      "duplicateLogEntries": 0,
+      "confirmedCounterDelta": 0,
+      "peakLiveTps": 2242.091751277405,
+      "dashboardPeakTps": 2254,
+      "adaptive": true,
+      "wallets": 10,
+      "configuration": {
+        "pattern": "adaptive",
+        "durationSec": 120,
+        "numAccounts": 10,
+        "transactionType": "eth-transfer",
+        "adaptiveInitialRate": 500,
+        "adaptiveTargetPending": 2000,
+        "adaptiveRateStep": 50,
+        "privacyMode": true
+      },
+      "dashboardPeakTPS": 2254,
+      "best30SecondWindow": {
+        "from": 1789162242.0481422,
+        "to": 1789162272.0481422,
+        "canonicalTransactions": 61719,
+        "tps": 2057.3,
+        "poolBefore": {
+          "pending": 1151,
+          "queued": 109
+        },
+        "poolAfter": {
+          "pending": 3410,
+          "queued": 5
+        },
+        "poolGrowth": 2155
+      },
+      "poolAtEndOfSending": {
+        "pending": 961,
+        "queued": 1
+      },
+      "best30SecondsWithoutQueueGrowth": {
+        "from": 1789162247.0363579,
+        "to": 1789162277.0363579,
+        "canonicalTransactions": 60575,
+        "tps": 2019.1666666666667,
+        "poolBefore": {
+          "pending": 1138,
+          "queued": 18
+        },
+        "poolAfter": {
+          "pending": 1013,
+          "queued": 0
+        },
+        "poolGrowth": -143
+      },
+      "completedScreenshot": "eth-transfer-off/browser/eth-transfer.png"
+    },
+    {
+      "case": "eth-transfer-on",
+      "workload": "eth-transfer",
+      "confirmed": 197001,
+      "successfulReceipts": 197001,
+      "missingReceipts": 130,
+      "failed": 0,
+      "duplicateLogEntries": 0,
+      "confirmedCounterDelta": 0,
+      "peakLiveTps": 2274.5294619028323,
+      "dashboardPeakTps": 2274,
+      "adaptive": true,
+      "wallets": 10,
+      "configuration": {
+        "pattern": "adaptive",
+        "durationSec": 120,
+        "numAccounts": 10,
+        "transactionType": "eth-transfer",
+        "adaptiveInitialRate": 500,
+        "adaptiveTargetPending": 2000,
+        "adaptiveRateStep": 50,
+        "privacyMode": true
+      },
+      "dashboardPeakTPS": 2274,
+      "best30SecondWindow": {
+        "from": 1789162535.3986912,
+        "to": 1789162565.3986912,
+        "canonicalTransactions": 59337,
+        "tps": 1977.9,
+        "poolBefore": {
+          "pending": 1849,
+          "queued": 91
+        },
+        "poolAfter": {
+          "pending": 2227,
+          "queued": 24
+        },
+        "poolGrowth": 311
+      },
+      "poolAtEndOfSending": {
+        "pending": 0,
+        "queued": 17
+      },
+      "best30SecondsWithoutQueueGrowth": {
+        "from": 1789162534.351868,
+        "to": 1789162564.351868,
+        "canonicalTransactions": 59111,
+        "tps": 1970.3666666666666,
+        "poolBefore": {
+          "pending": 1808,
+          "queued": 30
+        },
+        "poolAfter": {
+          "pending": 200,
+          "queued": 0
+        },
+        "poolGrowth": -1638
+      },
+      "completedScreenshot": "eth-transfer-on/browser/eth-transfer.png"
+    },
+    {
+      "case": "erc20-approve-off",
+      "workload": "erc20-approve",
+      "confirmed": 211562,
+      "successfulReceipts": 211562,
+      "missingReceipts": 290,
+      "failed": 0,
+      "duplicateLogEntries": 0,
+      "confirmedCounterDelta": 0,
+      "peakLiveTps": 2185.2805908711985,
+      "dashboardPeakTps": 2234,
+      "adaptive": true,
+      "wallets": 10,
+      "configuration": {
+        "pattern": "adaptive",
+        "durationSec": 120,
+        "numAccounts": 10,
+        "transactionType": "erc20-approve",
+        "adaptiveInitialRate": 500,
+        "adaptiveTargetPending": 2000,
+        "adaptiveRateStep": 50,
+        "privacyMode": true
+      },
+      "dashboardPeakTPS": 2234,
+      "best30SecondWindow": {
+        "from": 1789162952.5010839,
+        "to": 1789162982.5010839,
+        "canonicalTransactions": 60787,
+        "tps": 2026.2333333333333,
+        "poolBefore": {
+          "pending": 1722,
+          "queued": 67
+        },
+        "poolAfter": {
+          "pending": 2041,
+          "queued": 158
+        },
+        "poolGrowth": 410
+      },
+      "poolAtEndOfSending": {
+        "pending": 2041,
+        "queued": 158
+      },
+      "best30SecondsWithoutQueueGrowth": {
+        "from": 1789162883.3951738,
+        "to": 1789162913.3951738,
+        "canonicalTransactions": 55936,
+        "tps": 1864.5333333333333,
+        "poolBefore": {
+          "pending": 1372,
+          "queued": 109
+        },
+        "poolAfter": {
+          "pending": 1376,
+          "queued": 47
+        },
+        "poolGrowth": -58
+      },
+      "completedScreenshot": "erc20-approve-off/browser/erc20-approve.png"
+    },
+    {
+      "case": "erc20-approve-on",
+      "workload": "erc20-approve",
+      "confirmed": 167857,
+      "successfulReceipts": 167857,
+      "missingReceipts": 146,
+      "failed": 0,
+      "duplicateLogEntries": 0,
+      "confirmedCounterDelta": 0,
+      "peakLiveTps": 1727.4004248847818,
+      "dashboardPeakTps": 1750,
+      "adaptive": true,
+      "wallets": 10,
+      "configuration": {
+        "pattern": "adaptive",
+        "durationSec": 120,
+        "numAccounts": 10,
+        "transactionType": "erc20-approve",
+        "adaptiveInitialRate": 500,
+        "adaptiveTargetPending": 2000,
+        "adaptiveRateStep": 50,
+        "privacyMode": true
+      },
+      "dashboardPeakTPS": 1750,
+      "best30SecondWindow": {
+        "from": 1789162675.509047,
+        "to": 1789162705.509047,
+        "canonicalTransactions": 47554,
+        "tps": 1585.1333333333334,
+        "poolBefore": {
+          "pending": 1173,
+          "queued": 113
+        },
+        "poolAfter": {
+          "pending": 1231,
+          "queued": 124
+        },
+        "poolGrowth": 69
+      },
+      "poolAtEndOfSending": {
+        "pending": 1351,
+        "queued": 9
+      },
+      "best30SecondsWithoutQueueGrowth": {
+        "from": 1789162677.5086222,
+        "to": 1789162707.5086222,
+        "canonicalTransactions": 46941,
+        "tps": 1564.7,
+        "poolBefore": {
+          "pending": 1335,
+          "queued": 165
+        },
+        "poolAfter": {
+          "pending": 954,
+          "queued": 481
+        },
+        "poolGrowth": -65
+      },
+      "completedScreenshot": "erc20-approve-on/browser/erc20-approve.png"
+    }
+  ]
+}

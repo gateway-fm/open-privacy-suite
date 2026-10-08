@@ -1,0 +1,2031 @@
+# privacy-proxy/internal/rbac.test
+ld: warning: '/private/var/folders/d1/t8y3gjsj2db2w0b6t9lnsyx00000gn/T/go-link-1775348532/000014.o' has malformed LC_DYSYMTAB, expected 98 undefined symbols to start at index 1626, found 95 undefined symbols starting at index 1626
+# privacy-proxy/internal/nodeapproval.test
+ld: warning: '/private/var/folders/d1/t8y3gjsj2db2w0b6t9lnsyx00000gn/T/go-link-4211613200/000016.o' has malformed LC_DYSYMTAB, expected 98 undefined symbols to start at index 1626, found 95 undefined symbols starting at index 1626
+=== RUN   TestBatchGolden
+--- PASS: TestBatchGolden (0.01s)
+=== RUN   TestSignerSnapshotIndependentOfDelivery
+--- PASS: TestSignerSnapshotIndependentOfDelivery (0.00s)
+=== RUN   TestValueAndLifecycleFingerprint
+=== RUN   TestValueAndLifecycleFingerprint/CALL
+=== RUN   TestValueAndLifecycleFingerprint/CREATE
+=== RUN   TestValueAndLifecycleFingerprint/CREATE2
+=== RUN   TestValueAndLifecycleFingerprint/SELFDESTRUCT
+--- PASS: TestValueAndLifecycleFingerprint (0.01s)
+    --- PASS: TestValueAndLifecycleFingerprint/CALL (0.00s)
+    --- PASS: TestValueAndLifecycleFingerprint/CREATE (0.00s)
+    --- PASS: TestValueAndLifecycleFingerprint/CREATE2 (0.00s)
+    --- PASS: TestValueAndLifecycleFingerprint/SELFDESTRUCT (0.00s)
+=== RUN   TestNativeRecipientAndDeletionAffectFingerprint
+--- PASS: TestNativeRecipientAndDeletionAffectFingerprint (0.00s)
+=== RUN   TestFailedCreateAndCaughtDestructionStayInTrace
+--- PASS: TestFailedCreateAndCaughtDestructionStayInTrace (0.00s)
+=== RUN   TestCancunNoopSelfDestructTrace
+--- PASS: TestCancunNoopSelfDestructTrace (0.00s)
+=== RUN   TestPrepareBindsDeploymentNonceAndUsesOnePinnedSnapshot
+--- PASS: TestPrepareBindsDeploymentNonceAndUsesOnePinnedSnapshot (0.01s)
+=== RUN   TestCreationSetsExcludeCollisionsAndTemporaryContracts
+--- PASS: TestCreationSetsExcludeCollisionsAndTemporaryContracts (0.00s)
+=== RUN   TestPreflightRPCReusesConnectionsAcrossBursts
+    rpc_pool_test.go:75: 160 requests, 32 TCP connections
+--- PASS: TestPreflightRPCReusesConnectionsAcrossBursts (0.02s)
+=== RUN   TestFingerprintConformanceAndSensitivity
+--- PASS: TestFingerprintConformanceAndSensitivity (0.00s)
+=== RUN   TestDeliveryUsesPersistentConnectionWithoutAck
+2026/09/11 20:10:53 INFO approval connections used count=1
+--- PASS: TestDeliveryUsesPersistentConnectionWithoutAck (0.00s)
+=== RUN   TestQueueIsBounded
+--- PASS: TestQueueIsBounded (0.00s)
+=== RUN   TestConnectionEstablishedAtStartupAndReconnectsWithoutAnApproval
+2026/09/11 20:10:53 INFO approval connections used count=2
+--- PASS: TestConnectionEstablishedAtStartupAndReconnectsWithoutAnApproval (0.00s)
+=== RUN   TestTCPNoDelayIsActuallyEnabled
+--- PASS: TestTCPNoDelayIsActuallyEnabled (0.00s)
+PASS
+ok  	privacy-proxy/internal/nodeapproval	1.585s
+=== RUN   TestGetBuiltInABI_ERC20
+--- PASS: TestGetBuiltInABI_ERC20 (0.00s)
+=== RUN   TestGetBuiltInABI_ERC721
+--- PASS: TestGetBuiltInABI_ERC721 (0.00s)
+=== RUN   TestGetBuiltInABI_Unknown
+--- PASS: TestGetBuiltInABI_Unknown (0.00s)
+=== RUN   TestGetBuiltInABI_CaseInsensitive
+--- PASS: TestGetBuiltInABI_CaseInsensitive (0.00s)
+=== RUN   TestCheckAccess_BypassCacheServesFreshAfterMutation
+--- PASS: TestCheckAccess_BypassCacheServesFreshAfterMutation (0.00s)
+=== RUN   TestCheckAccess_BypassCacheDoesNotPopulateCache
+--- PASS: TestCheckAccess_BypassCacheDoesNotPopulateCache (0.00s)
+=== RUN   TestCheckAccessCrossOrgIsolation
+=== RUN   TestCheckAccessCrossOrgIsolation/SECURITY-001:_User_A_cannot_access_Contract_B_via_eth_call
+=== RUN   TestCheckAccessCrossOrgIsolation/SECURITY-002:_User_B_cannot_access_Contract_A_via_eth_call
+=== RUN   TestCheckAccessCrossOrgIsolation/SECURITY-003:_User_A_CAN_access_their_own_Contract_A
+=== RUN   TestCheckAccessCrossOrgIsolation/SECURITY-004:_eth_getLogs_on_cross-org_contract_is_denied
+=== RUN   TestCheckAccessCrossOrgIsolation/SECURITY-005:_eth_getLogs_with_mixed-org_addresses_is_denied
+=== RUN   TestCheckAccessCrossOrgIsolation/SECURITY-006:_eth_getBalance_on_cross-org_address_is_denied
+=== RUN   TestCheckAccessCrossOrgIsolation/SECURITY-007:_Unregistered_contract_denied_(private_by_default)
+=== RUN   TestCheckAccessCrossOrgIsolation/SECURITY-008:_eth_getCode_on_cross-org_contract_is_denied
+=== RUN   TestCheckAccessCrossOrgIsolation/SECURITY-009:_eth_getStorageAt_on_cross-org_contract_is_denied
+=== RUN   TestCheckAccessCrossOrgIsolation/SECURITY-010:_eth_sendTransaction_to_cross-org_contract_is_denied
+=== RUN   TestCheckAccessCrossOrgIsolation/SECURITY-011:_eth_getTransactionCount_on_cross-org_address_is_denied
+=== RUN   TestCheckAccessCrossOrgIsolation/SECURITY-012:_eth_getProof_on_cross-org_address_is_denied
+=== RUN   TestCheckAccessCrossOrgIsolation/SECURITY-013:_eth_createAccessList_on_cross-org_contract_is_denied
+--- PASS: TestCheckAccessCrossOrgIsolation (0.00s)
+    --- PASS: TestCheckAccessCrossOrgIsolation/SECURITY-001:_User_A_cannot_access_Contract_B_via_eth_call (0.00s)
+    --- PASS: TestCheckAccessCrossOrgIsolation/SECURITY-002:_User_B_cannot_access_Contract_A_via_eth_call (0.00s)
+    --- PASS: TestCheckAccessCrossOrgIsolation/SECURITY-003:_User_A_CAN_access_their_own_Contract_A (0.00s)
+    --- PASS: TestCheckAccessCrossOrgIsolation/SECURITY-004:_eth_getLogs_on_cross-org_contract_is_denied (0.00s)
+    --- PASS: TestCheckAccessCrossOrgIsolation/SECURITY-005:_eth_getLogs_with_mixed-org_addresses_is_denied (0.00s)
+    --- PASS: TestCheckAccessCrossOrgIsolation/SECURITY-006:_eth_getBalance_on_cross-org_address_is_denied (0.00s)
+    --- PASS: TestCheckAccessCrossOrgIsolation/SECURITY-007:_Unregistered_contract_denied_(private_by_default) (0.00s)
+    --- PASS: TestCheckAccessCrossOrgIsolation/SECURITY-008:_eth_getCode_on_cross-org_contract_is_denied (0.00s)
+    --- PASS: TestCheckAccessCrossOrgIsolation/SECURITY-009:_eth_getStorageAt_on_cross-org_contract_is_denied (0.00s)
+    --- PASS: TestCheckAccessCrossOrgIsolation/SECURITY-010:_eth_sendTransaction_to_cross-org_contract_is_denied (0.00s)
+    --- PASS: TestCheckAccessCrossOrgIsolation/SECURITY-011:_eth_getTransactionCount_on_cross-org_address_is_denied (0.00s)
+    --- PASS: TestCheckAccessCrossOrgIsolation/SECURITY-012:_eth_getProof_on_cross-org_address_is_denied (0.00s)
+    --- PASS: TestCheckAccessCrossOrgIsolation/SECURITY-013:_eth_createAccessList_on_cross-org_contract_is_denied (0.00s)
+=== RUN   TestCheckAccessCrossOrgWithClaims
+=== RUN   TestCheckAccessCrossOrgWithClaims/permissive_default_claims_cannot_access_cross-org_contract
+--- PASS: TestCheckAccessCrossOrgWithClaims (0.00s)
+    --- PASS: TestCheckAccessCrossOrgWithClaims/permissive_default_claims_cannot_access_cross-org_contract (0.00s)
+=== RUN   TestCheckAccessExplicitGrantRequirement
+=== RUN   TestCheckAccessExplicitGrantRequirement/SECURITY-011:_Registered_contract_in_own_org_WITHOUT_explicit_grant_is_denied_(read-only)
+=== RUN   TestCheckAccessExplicitGrantRequirement/SECURITY-011b:_Deploy/admin_claim_DENIED_for_registered_contract_in_own_org_without_explicit_grant_(RD-849)
+=== RUN   TestCheckAccessExplicitGrantRequirement/SECURITY-012:_Registered_contract_in_own_org_WITH_explicit_grant_is_allowed
+=== RUN   TestCheckAccessExplicitGrantRequirement/SECURITY-013:_Unregistered_contract_denied_for_read-only_user_(private_by_default)
+=== RUN   TestCheckAccessExplicitGrantRequirement/SECURITY-013b:_Unregistered_contract_denied_for_deploy_user_(private_by_default)
+--- PASS: TestCheckAccessExplicitGrantRequirement (0.00s)
+    --- PASS: TestCheckAccessExplicitGrantRequirement/SECURITY-011:_Registered_contract_in_own_org_WITHOUT_explicit_grant_is_denied_(read-only) (0.00s)
+    --- PASS: TestCheckAccessExplicitGrantRequirement/SECURITY-011b:_Deploy/admin_claim_DENIED_for_registered_contract_in_own_org_without_explicit_grant_(RD-849) (0.00s)
+    --- PASS: TestCheckAccessExplicitGrantRequirement/SECURITY-012:_Registered_contract_in_own_org_WITH_explicit_grant_is_allowed (0.00s)
+    --- PASS: TestCheckAccessExplicitGrantRequirement/SECURITY-013:_Unregistered_contract_denied_for_read-only_user_(private_by_default) (0.00s)
+    --- PASS: TestCheckAccessExplicitGrantRequirement/SECURITY-013b:_Unregistered_contract_denied_for_deploy_user_(private_by_default) (0.00s)
+=== RUN   TestContractExistenceOracle
+--- PASS: TestContractExistenceOracle (0.00s)
+=== RUN   TestCheckAccessMultiOrgUser
+=== RUN   TestCheckAccessMultiOrgUser/multi-org_user_can_access_Contract_A_(from_org-a)
+=== RUN   TestCheckAccessMultiOrgUser/multi-org_user_can_access_Contract_B_(from_org-b)
+--- PASS: TestCheckAccessMultiOrgUser (0.00s)
+    --- PASS: TestCheckAccessMultiOrgUser/multi-org_user_can_access_Contract_A_(from_org-a) (0.00s)
+    --- PASS: TestCheckAccessMultiOrgUser/multi-org_user_can_access_Contract_B_(from_org-b) (0.00s)
+=== RUN   TestUnregisteredAddressesDenied
+=== RUN   TestUnregisteredAddressesDenied/denies_unregistered_contract_access_via_eth_call_(private_by_default)
+=== RUN   TestUnregisteredAddressesDenied/denies_unregistered_contract_access_via_eth_getLogs_(private_by_default)
+--- PASS: TestUnregisteredAddressesDenied (0.00s)
+    --- PASS: TestUnregisteredAddressesDenied/denies_unregistered_contract_access_via_eth_call_(private_by_default) (0.00s)
+    --- PASS: TestUnregisteredAddressesDenied/denies_unregistered_contract_access_via_eth_getLogs_(private_by_default) (0.00s)
+=== RUN   TestCheckAccessDeployerAutoGrant
+=== RUN   TestCheckAccessDeployerAutoGrant/DEPLOYER-001:_Deployer_can_read_their_deployed_contract
+=== RUN   TestCheckAccessDeployerAutoGrant/DEPLOYER-002:_Deployer_can_write_to_their_deployed_contract
+=== RUN   TestCheckAccessDeployerAutoGrant/DEPLOYER-003:_Non-deployer_cannot_access_deployed_contract_without_grant
+=== RUN   TestCheckAccessDeployerAutoGrant/DEPLOYER-004:_Deployer_does_NOT_get_admin_claim_automatically
+=== RUN   TestCheckAccessDeployerAutoGrant/DEPLOYER-005:_Deployer_does_NOT_get_upgrade_claim_automatically
+--- PASS: TestCheckAccessDeployerAutoGrant (0.00s)
+    --- PASS: TestCheckAccessDeployerAutoGrant/DEPLOYER-001:_Deployer_can_read_their_deployed_contract (0.00s)
+    --- PASS: TestCheckAccessDeployerAutoGrant/DEPLOYER-002:_Deployer_can_write_to_their_deployed_contract (0.00s)
+    --- PASS: TestCheckAccessDeployerAutoGrant/DEPLOYER-003:_Non-deployer_cannot_access_deployed_contract_without_grant (0.00s)
+    --- PASS: TestCheckAccessDeployerAutoGrant/DEPLOYER-004:_Deployer_does_NOT_get_admin_claim_automatically (0.00s)
+    --- PASS: TestCheckAccessDeployerAutoGrant/DEPLOYER-005:_Deployer_does_NOT_get_upgrade_claim_automatically (0.00s)
+=== RUN   TestCheckAccessDeployerAutoGrantMerge
+=== RUN   TestCheckAccessDeployerAutoGrantMerge/DEPLOYER-MERGE-001:_Deployer_gets_write_even_with_read-only_defaults
+--- PASS: TestCheckAccessDeployerAutoGrantMerge (0.00s)
+    --- PASS: TestCheckAccessDeployerAutoGrantMerge/DEPLOYER-MERGE-001:_Deployer_gets_write_even_with_read-only_defaults (0.00s)
+=== RUN   TestCheckAccessUpgradeClaimEnforcement
+=== RUN   TestCheckAccessUpgradeClaimEnforcement/UPGRADE-CLAIM-001:_upgrade_tx_denied_without_upgrade_claim
+=== RUN   TestCheckAccessUpgradeClaimEnforcement/UPGRADE-CLAIM-002:_upgrade_tx_allowed_with_upgrade_claim
+=== RUN   TestCheckAccessUpgradeClaimEnforcement/UPGRADE-CLAIM-003:_regular_write_tx_not_affected_by_upgrade_claim_check
+=== RUN   TestCheckAccessUpgradeClaimEnforcement/UPGRADE-CLAIM-004:_deploy_claim_does_not_grant_upgrade
+--- PASS: TestCheckAccessUpgradeClaimEnforcement (0.00s)
+    --- PASS: TestCheckAccessUpgradeClaimEnforcement/UPGRADE-CLAIM-001:_upgrade_tx_denied_without_upgrade_claim (0.00s)
+    --- PASS: TestCheckAccessUpgradeClaimEnforcement/UPGRADE-CLAIM-002:_upgrade_tx_allowed_with_upgrade_claim (0.00s)
+    --- PASS: TestCheckAccessUpgradeClaimEnforcement/UPGRADE-CLAIM-003:_regular_write_tx_not_affected_by_upgrade_claim_check (0.00s)
+    --- PASS: TestCheckAccessUpgradeClaimEnforcement/UPGRADE-CLAIM-004:_deploy_claim_does_not_grant_upgrade (0.00s)
+=== RUN   TestCheckAccessEOAValueTransfer
+=== RUN   TestCheckAccessEOAValueTransfer/EOA-001:_User_with_write_claim_can_send_ETH_to_EOA
+=== RUN   TestCheckAccessEOAValueTransfer/EOA-002:_User_without_eth_sendTransaction_in_methods_cannot_send_ETH_to_EOA
+=== RUN   TestCheckAccessEOAValueTransfer/EOA-003:_Value_transfer_with_calldata_to_unregistered_address_is_denied_(private_by_default)
+=== RUN   TestCheckAccessEOAValueTransfer/EOA-004:_Value_transfer_to_registered_contract_goes_through_contract_check
+=== RUN   TestCheckAccessEOAValueTransfer/EOA-005:_eth_estimateGas_on_EOA_value_transfer_is_allowed_(cast_send_pre-flight)
+=== RUN   TestCheckAccessEOAValueTransfer/EOA-006:_eth_estimateGas_with_calldata_to_unregistered_address_is_denied_(carve-out_doesn't_widen)
+=== RUN   TestCheckAccessEOAValueTransfer/EOA-007:_eth_estimateGas_to_registered_contract_still_goes_through_contract_access_check
+--- PASS: TestCheckAccessEOAValueTransfer (0.00s)
+    --- PASS: TestCheckAccessEOAValueTransfer/EOA-001:_User_with_write_claim_can_send_ETH_to_EOA (0.00s)
+    --- PASS: TestCheckAccessEOAValueTransfer/EOA-002:_User_without_eth_sendTransaction_in_methods_cannot_send_ETH_to_EOA (0.00s)
+    --- PASS: TestCheckAccessEOAValueTransfer/EOA-003:_Value_transfer_with_calldata_to_unregistered_address_is_denied_(private_by_default) (0.00s)
+    --- PASS: TestCheckAccessEOAValueTransfer/EOA-004:_Value_transfer_to_registered_contract_goes_through_contract_check (0.00s)
+    --- PASS: TestCheckAccessEOAValueTransfer/EOA-005:_eth_estimateGas_on_EOA_value_transfer_is_allowed_(cast_send_pre-flight) (0.00s)
+    --- PASS: TestCheckAccessEOAValueTransfer/EOA-006:_eth_estimateGas_with_calldata_to_unregistered_address_is_denied_(carve-out_doesn't_widen) (0.00s)
+    --- PASS: TestCheckAccessEOAValueTransfer/EOA-007:_eth_estimateGas_to_registered_contract_still_goes_through_contract_access_check (0.00s)
+=== RUN   TestBasicAddressQueryOnEOA
+=== RUN   TestBasicAddressQueryOnEOA/eth_getBalance_on_EOA_allowed
+=== RUN   TestBasicAddressQueryOnEOA/eth_getTransactionCount_on_EOA_allowed
+=== RUN   TestBasicAddressQueryOnEOA/eth_getCode_on_EOA_denied_(all_unregistered_private)
+=== RUN   TestBasicAddressQueryOnEOA/eth_getStorageAt_on_EOA_denied_(not_a_basic_address_query)
+=== RUN   TestBasicAddressQueryOnEOA/eth_getProof_on_EOA_denied_(all_unregistered_private)
+--- PASS: TestBasicAddressQueryOnEOA (0.00s)
+    --- PASS: TestBasicAddressQueryOnEOA/eth_getBalance_on_EOA_allowed (0.00s)
+    --- PASS: TestBasicAddressQueryOnEOA/eth_getTransactionCount_on_EOA_allowed (0.00s)
+    --- PASS: TestBasicAddressQueryOnEOA/eth_getCode_on_EOA_denied_(all_unregistered_private) (0.00s)
+    --- PASS: TestBasicAddressQueryOnEOA/eth_getStorageAt_on_EOA_denied_(not_a_basic_address_query) (0.00s)
+    --- PASS: TestBasicAddressQueryOnEOA/eth_getProof_on_EOA_denied_(all_unregistered_private) (0.00s)
+=== RUN   TestBasicAddressQueryOnOrgContract
+--- PASS: TestBasicAddressQueryOnOrgContract (0.00s)
+=== RUN   TestEthGetLogsOrgResolutionForMultiOrgUser
+=== RUN   TestEthGetLogsOrgResolutionForMultiOrgUser/eth_getLogs_resolves_to_contract_owning_org
+=== RUN   TestEthGetLogsOrgResolutionForMultiOrgUser/eth_getLogs_without_address_is_denied
+--- PASS: TestEthGetLogsOrgResolutionForMultiOrgUser (0.00s)
+    --- PASS: TestEthGetLogsOrgResolutionForMultiOrgUser/eth_getLogs_resolves_to_contract_owning_org (0.00s)
+    --- PASS: TestEthGetLogsOrgResolutionForMultiOrgUser/eth_getLogs_without_address_is_denied (0.00s)
+=== RUN   TestPreregisteredAddressAccessGate
+=== RUN   TestPreregisteredAddressAccessGate/deploy_claim_in_owning_org_→_allowed
+=== RUN   TestPreregisteredAddressAccessGate/admin_claim_in_owning_org_→_allowed
+=== RUN   TestPreregisteredAddressAccessGate/no_operational_claim_in_owning_org_→_denied
+=== RUN   TestPreregisteredAddressAccessGate/deploy_claim_but_cross-org_→_denied
+--- PASS: TestPreregisteredAddressAccessGate (0.00s)
+    --- PASS: TestPreregisteredAddressAccessGate/deploy_claim_in_owning_org_→_allowed (0.00s)
+    --- PASS: TestPreregisteredAddressAccessGate/admin_claim_in_owning_org_→_allowed (0.00s)
+    --- PASS: TestPreregisteredAddressAccessGate/no_operational_claim_in_owning_org_→_denied (0.00s)
+    --- PASS: TestPreregisteredAddressAccessGate/deploy_claim_but_cross-org_→_denied (0.00s)
+=== RUN   TestDenyResultsCarryResolvedOrg
+=== RUN   TestDenyResultsCarryResolvedOrg/method_not_allowed_deny
+=== RUN   TestDenyResultsCarryResolvedOrg/cross-org_contract_deny
+=== RUN   TestDenyResultsCarryResolvedOrg/eth_getLogs_multi-address_deny
+=== RUN   TestDenyResultsCarryResolvedOrg/cross-org_deny_with_foreign_explicit_org_id
+=== RUN   TestDenyResultsCarryResolvedOrg/allow_still_attributed
+=== RUN   TestDenyResultsCarryResolvedOrg/anonymous_deny
+=== RUN   TestDenyResultsCarryResolvedOrg/unknown_user_deny
+=== RUN   TestDenyResultsCarryResolvedOrg/banned_user_deny
+=== RUN   TestDenyResultsCarryResolvedOrg/globally_blocked_method_deny
+--- PASS: TestDenyResultsCarryResolvedOrg (0.00s)
+    --- PASS: TestDenyResultsCarryResolvedOrg/method_not_allowed_deny (0.00s)
+    --- PASS: TestDenyResultsCarryResolvedOrg/cross-org_contract_deny (0.00s)
+    --- PASS: TestDenyResultsCarryResolvedOrg/eth_getLogs_multi-address_deny (0.00s)
+    --- PASS: TestDenyResultsCarryResolvedOrg/cross-org_deny_with_foreign_explicit_org_id (0.00s)
+    --- PASS: TestDenyResultsCarryResolvedOrg/allow_still_attributed (0.00s)
+    --- PASS: TestDenyResultsCarryResolvedOrg/anonymous_deny (0.00s)
+    --- PASS: TestDenyResultsCarryResolvedOrg/unknown_user_deny (0.00s)
+    --- PASS: TestDenyResultsCarryResolvedOrg/banned_user_deny (0.00s)
+    --- PASS: TestDenyResultsCarryResolvedOrg/globally_blocked_method_deny (0.00s)
+=== RUN   TestKYCGateExemptsOrgFreeMetadataMethods
+=== RUN   TestKYCGateExemptsOrgFreeMetadataMethods/non-KYC_user_allowed_on_every_org-free_metadata_method
+=== RUN   TestKYCGateExemptsOrgFreeMetadataMethods/non-KYC_user_still_denied_on_state_query
+=== RUN   TestKYCGateExemptsOrgFreeMetadataMethods/non-KYC_user_still_denied_on_eth_call
+=== RUN   TestKYCGateExemptsOrgFreeMetadataMethods/non-KYC_user_still_denied_on_send
+=== RUN   TestKYCGateExemptsOrgFreeMetadataMethods/banned_user_denied_even_on_metadata_method
+=== RUN   TestKYCGateExemptsOrgFreeMetadataMethods/metadata_method_is_case-insensitive
+--- PASS: TestKYCGateExemptsOrgFreeMetadataMethods (0.00s)
+    --- PASS: TestKYCGateExemptsOrgFreeMetadataMethods/non-KYC_user_allowed_on_every_org-free_metadata_method (0.00s)
+    --- PASS: TestKYCGateExemptsOrgFreeMetadataMethods/non-KYC_user_still_denied_on_state_query (0.00s)
+    --- PASS: TestKYCGateExemptsOrgFreeMetadataMethods/non-KYC_user_still_denied_on_eth_call (0.00s)
+    --- PASS: TestKYCGateExemptsOrgFreeMetadataMethods/non-KYC_user_still_denied_on_send (0.00s)
+    --- PASS: TestKYCGateExemptsOrgFreeMetadataMethods/banned_user_denied_even_on_metadata_method (0.00s)
+    --- PASS: TestKYCGateExemptsOrgFreeMetadataMethods/metadata_method_is_case-insensitive (0.00s)
+=== RUN   TestClassifyOperation
+=== RUN   TestClassifyOperation/Read_operation_-_eth_call_(no_claim)
+=== RUN   TestClassifyOperation/Read_operation_-_eth_getBalance_(no_claim)
+=== RUN   TestClassifyOperation/Read_operation_-_eth_estimateGas_with_to_address_(no_claim)
+=== RUN   TestClassifyOperation/Write_operation_-_eth_sendTransaction_with_to_address_(no_claim)
+=== RUN   TestClassifyOperation/Other_method_-_no_contract_claim_required
+=== RUN   TestClassifyOperation/Other_method_-_net_version
+=== RUN   TestClassifyOperation/eth_sendTransaction_with_no_params_(no_claim)
+=== RUN   TestClassifyOperation/eth_sendTransaction_with_empty_params_(no_claim)
+=== RUN   TestClassifyOperation/Deploy_-_eth_sendTransaction_with_no_'to'_field
+=== RUN   TestClassifyOperation/Deploy_-_eth_sendTransaction_with_'to'_=_null
+=== RUN   TestClassifyOperation/Deploy_-_eth_sendTransaction_with_'to'_=_empty_string
+=== RUN   TestClassifyOperation/Deploy_-_eth_sendTransaction_with_'to'_=_'0x'
+=== RUN   TestClassifyOperation/NOT_Deploy_-_eth_sendTransaction_with_valid_'to'_address_(no_claim)
+=== RUN   TestClassifyOperation/NOT_Deploy_-_eth_sendTransaction_to_zero_address_(no_claim)
+=== RUN   TestClassifyOperation/Deploy_-_eth_estimateGas_with_no_'to'_field_(deployment_estimation)
+=== RUN   TestClassifyOperation/Deploy_-_eth_estimateGas_with_'to'_=_null_(deployment_estimation)
+=== RUN   TestClassifyOperation/NOT_Deploy_-_eth_estimateGas_with_valid_'to'_(no_claim)
+--- PASS: TestClassifyOperation (0.00s)
+    --- PASS: TestClassifyOperation/Read_operation_-_eth_call_(no_claim) (0.00s)
+    --- PASS: TestClassifyOperation/Read_operation_-_eth_getBalance_(no_claim) (0.00s)
+    --- PASS: TestClassifyOperation/Read_operation_-_eth_estimateGas_with_to_address_(no_claim) (0.00s)
+    --- PASS: TestClassifyOperation/Write_operation_-_eth_sendTransaction_with_to_address_(no_claim) (0.00s)
+    --- PASS: TestClassifyOperation/Other_method_-_no_contract_claim_required (0.00s)
+    --- PASS: TestClassifyOperation/Other_method_-_net_version (0.00s)
+    --- PASS: TestClassifyOperation/eth_sendTransaction_with_no_params_(no_claim) (0.00s)
+    --- PASS: TestClassifyOperation/eth_sendTransaction_with_empty_params_(no_claim) (0.00s)
+    --- PASS: TestClassifyOperation/Deploy_-_eth_sendTransaction_with_no_'to'_field (0.00s)
+    --- PASS: TestClassifyOperation/Deploy_-_eth_sendTransaction_with_'to'_=_null (0.00s)
+    --- PASS: TestClassifyOperation/Deploy_-_eth_sendTransaction_with_'to'_=_empty_string (0.00s)
+    --- PASS: TestClassifyOperation/Deploy_-_eth_sendTransaction_with_'to'_=_'0x' (0.00s)
+    --- PASS: TestClassifyOperation/NOT_Deploy_-_eth_sendTransaction_with_valid_'to'_address_(no_claim) (0.00s)
+    --- PASS: TestClassifyOperation/NOT_Deploy_-_eth_sendTransaction_to_zero_address_(no_claim) (0.00s)
+    --- PASS: TestClassifyOperation/Deploy_-_eth_estimateGas_with_no_'to'_field_(deployment_estimation) (0.00s)
+    --- PASS: TestClassifyOperation/Deploy_-_eth_estimateGas_with_'to'_=_null_(deployment_estimation) (0.00s)
+    --- PASS: TestClassifyOperation/NOT_Deploy_-_eth_estimateGas_with_valid_'to'_(no_claim) (0.00s)
+=== RUN   TestIsContractDeployment
+=== RUN   TestIsContractDeployment/eth_sendTransaction_with_no_params_-_unknown_(not_deployment)
+=== RUN   TestIsContractDeployment/eth_sendTransaction_with_empty_params_-_unknown_(not_deployment)
+=== RUN   TestIsContractDeployment/eth_sendTransaction_with_no_'to'_field_-_deployment
+=== RUN   TestIsContractDeployment/eth_sendTransaction_with_'to'_=_nil_-_deployment
+=== RUN   TestIsContractDeployment/eth_sendTransaction_with_'to'_=_empty_string_-_deployment
+=== RUN   TestIsContractDeployment/eth_sendTransaction_with_'to'_=_'0x'_-_deployment
+=== RUN   TestIsContractDeployment/eth_sendTransaction_with_malformed_params_(not_map)_-_deployment_(safe_default)
+=== RUN   TestIsContractDeployment/eth_sendTransaction_with_'to'_as_number_-_deployment_(safe_default)
+=== RUN   TestIsContractDeployment/eth_sendTransaction_with_valid_'to'_-_NOT_deployment
+=== RUN   TestIsContractDeployment/eth_sendTransaction_to_zero_address_-_NOT_deployment_(it's_a_burn)
+=== RUN   TestIsContractDeployment/eth_sendTransaction_with_short_but_valid_'to'_-_NOT_deployment
+=== RUN   TestIsContractDeployment/eth_estimateGas_with_no_'to'_field_-_deployment
+=== RUN   TestIsContractDeployment/eth_estimateGas_with_'to'_=_nil_-_deployment
+=== RUN   TestIsContractDeployment/eth_estimateGas_with_'to'_=_''_-_deployment
+=== RUN   TestIsContractDeployment/eth_estimateGas_with_valid_'to'_-_NOT_deployment
+=== RUN   TestIsContractDeployment/eth_sendRawTransaction_-_NOT_deployment_(can't_validate)
+=== RUN   TestIsContractDeployment/eth_call_-_NOT_deployment
+=== RUN   TestIsContractDeployment/eth_blockNumber_-_NOT_deployment
+--- PASS: TestIsContractDeployment (0.00s)
+    --- PASS: TestIsContractDeployment/eth_sendTransaction_with_no_params_-_unknown_(not_deployment) (0.00s)
+    --- PASS: TestIsContractDeployment/eth_sendTransaction_with_empty_params_-_unknown_(not_deployment) (0.00s)
+    --- PASS: TestIsContractDeployment/eth_sendTransaction_with_no_'to'_field_-_deployment (0.00s)
+    --- PASS: TestIsContractDeployment/eth_sendTransaction_with_'to'_=_nil_-_deployment (0.00s)
+    --- PASS: TestIsContractDeployment/eth_sendTransaction_with_'to'_=_empty_string_-_deployment (0.00s)
+    --- PASS: TestIsContractDeployment/eth_sendTransaction_with_'to'_=_'0x'_-_deployment (0.00s)
+    --- PASS: TestIsContractDeployment/eth_sendTransaction_with_malformed_params_(not_map)_-_deployment_(safe_default) (0.00s)
+    --- PASS: TestIsContractDeployment/eth_sendTransaction_with_'to'_as_number_-_deployment_(safe_default) (0.00s)
+    --- PASS: TestIsContractDeployment/eth_sendTransaction_with_valid_'to'_-_NOT_deployment (0.00s)
+    --- PASS: TestIsContractDeployment/eth_sendTransaction_to_zero_address_-_NOT_deployment_(it's_a_burn) (0.00s)
+    --- PASS: TestIsContractDeployment/eth_sendTransaction_with_short_but_valid_'to'_-_NOT_deployment (0.00s)
+    --- PASS: TestIsContractDeployment/eth_estimateGas_with_no_'to'_field_-_deployment (0.00s)
+    --- PASS: TestIsContractDeployment/eth_estimateGas_with_'to'_=_nil_-_deployment (0.00s)
+    --- PASS: TestIsContractDeployment/eth_estimateGas_with_'to'_=_''_-_deployment (0.00s)
+    --- PASS: TestIsContractDeployment/eth_estimateGas_with_valid_'to'_-_NOT_deployment (0.00s)
+    --- PASS: TestIsContractDeployment/eth_sendRawTransaction_-_NOT_deployment_(can't_validate) (0.00s)
+    --- PASS: TestIsContractDeployment/eth_call_-_NOT_deployment (0.00s)
+    --- PASS: TestIsContractDeployment/eth_blockNumber_-_NOT_deployment (0.00s)
+=== RUN   TestGetTargetAddress
+=== RUN   TestGetTargetAddress/No_params
+=== RUN   TestGetTargetAddress/Empty_params
+=== RUN   TestGetTargetAddress/eth_call_with_to_address
+=== RUN   TestGetTargetAddress/eth_estimateGas_with_to_address
+=== RUN   TestGetTargetAddress/eth_sendTransaction_with_to_address
+=== RUN   TestGetTargetAddress/eth_getCode_with_address
+=== RUN   TestGetTargetAddress/eth_getStorageAt_with_address
+=== RUN   TestGetTargetAddress/eth_getBalance_extracts_target_address
+=== RUN   TestGetTargetAddress/eth_getTransactionCount_extracts_target_address
+=== RUN   TestGetTargetAddress/eth_getProof_extracts_target_address
+=== RUN   TestGetTargetAddress/eth_createAccessList_extracts_to_from_call_object
+=== RUN   TestGetTargetAddress/eth_getLogs_with_single_address_string
+=== RUN   TestGetTargetAddress/eth_getLogs_with_address_array
+=== RUN   TestGetTargetAddress/eth_getLogs_with_no_address_in_filter
+=== RUN   TestGetTargetAddress/eth_getLogs_with_empty_address_array
+=== RUN   TestGetTargetAddress/Unknown_method
+--- PASS: TestGetTargetAddress (0.00s)
+    --- PASS: TestGetTargetAddress/No_params (0.00s)
+    --- PASS: TestGetTargetAddress/Empty_params (0.00s)
+    --- PASS: TestGetTargetAddress/eth_call_with_to_address (0.00s)
+    --- PASS: TestGetTargetAddress/eth_estimateGas_with_to_address (0.00s)
+    --- PASS: TestGetTargetAddress/eth_sendTransaction_with_to_address (0.00s)
+    --- PASS: TestGetTargetAddress/eth_getCode_with_address (0.00s)
+    --- PASS: TestGetTargetAddress/eth_getStorageAt_with_address (0.00s)
+    --- PASS: TestGetTargetAddress/eth_getBalance_extracts_target_address (0.00s)
+    --- PASS: TestGetTargetAddress/eth_getTransactionCount_extracts_target_address (0.00s)
+    --- PASS: TestGetTargetAddress/eth_getProof_extracts_target_address (0.00s)
+    --- PASS: TestGetTargetAddress/eth_createAccessList_extracts_to_from_call_object (0.00s)
+    --- PASS: TestGetTargetAddress/eth_getLogs_with_single_address_string (0.00s)
+    --- PASS: TestGetTargetAddress/eth_getLogs_with_address_array (0.00s)
+    --- PASS: TestGetTargetAddress/eth_getLogs_with_no_address_in_filter (0.00s)
+    --- PASS: TestGetTargetAddress/eth_getLogs_with_empty_address_array (0.00s)
+    --- PASS: TestGetTargetAddress/Unknown_method (0.00s)
+=== RUN   TestEffectivePermissionsMethods
+--- PASS: TestEffectivePermissionsMethods (0.00s)
+=== RUN   TestIsMethodBlocked
+=== RUN   TestIsMethodBlocked/debug_setHead
+=== RUN   TestIsMethodBlocked/debug_unknown
+=== RUN   TestIsMethodBlocked/debug_traceTransaction
+=== RUN   TestIsMethodBlocked/debug_traceCall
+=== RUN   TestIsMethodBlocked/debug_traceCall_case
+=== RUN   TestIsMethodBlocked/admin_addPeer
+=== RUN   TestIsMethodBlocked/admin_nodeInfo
+=== RUN   TestIsMethodBlocked/admin_unknown
+=== RUN   TestIsMethodBlocked/personal_unlockAccount
+=== RUN   TestIsMethodBlocked/personal_sign
+=== RUN   TestIsMethodBlocked/personal_unknown
+=== RUN   TestIsMethodBlocked/miner_start
+=== RUN   TestIsMethodBlocked/miner_stop
+=== RUN   TestIsMethodBlocked/txpool_content
+=== RUN   TestIsMethodBlocked/txpool_status
+=== RUN   TestIsMethodBlocked/eth_sign
+=== RUN   TestIsMethodBlocked/eth_signTransaction
+=== RUN   TestIsMethodBlocked/clique_propose
+=== RUN   TestIsMethodBlocked/les_serverInfo
+=== RUN   TestIsMethodBlocked/eth_getStorageAt
+=== RUN   TestIsMethodBlocked/eth_call
+=== RUN   TestIsMethodBlocked/eth_getBalance
+=== RUN   TestIsMethodBlocked/eth_blockNumber
+=== RUN   TestIsMethodBlocked/eth_getTransactionReceipt
+=== RUN   TestIsMethodBlocked/eth_chainId
+=== RUN   TestIsMethodBlocked/eth_sendTransaction
+=== RUN   TestIsMethodBlocked/eth_sendRawTransaction
+=== RUN   TestIsMethodBlocked/net_version
+=== RUN   TestIsMethodBlocked/web3_clientVersion
+--- PASS: TestIsMethodBlocked (0.00s)
+    --- PASS: TestIsMethodBlocked/debug_setHead (0.00s)
+    --- PASS: TestIsMethodBlocked/debug_unknown (0.00s)
+    --- PASS: TestIsMethodBlocked/debug_traceTransaction (0.00s)
+    --- PASS: TestIsMethodBlocked/debug_traceCall (0.00s)
+    --- PASS: TestIsMethodBlocked/debug_traceCall_case (0.00s)
+    --- PASS: TestIsMethodBlocked/admin_addPeer (0.00s)
+    --- PASS: TestIsMethodBlocked/admin_nodeInfo (0.00s)
+    --- PASS: TestIsMethodBlocked/admin_unknown (0.00s)
+    --- PASS: TestIsMethodBlocked/personal_unlockAccount (0.00s)
+    --- PASS: TestIsMethodBlocked/personal_sign (0.00s)
+    --- PASS: TestIsMethodBlocked/personal_unknown (0.00s)
+    --- PASS: TestIsMethodBlocked/miner_start (0.00s)
+    --- PASS: TestIsMethodBlocked/miner_stop (0.00s)
+    --- PASS: TestIsMethodBlocked/txpool_content (0.00s)
+    --- PASS: TestIsMethodBlocked/txpool_status (0.00s)
+    --- PASS: TestIsMethodBlocked/eth_sign (0.00s)
+    --- PASS: TestIsMethodBlocked/eth_signTransaction (0.00s)
+    --- PASS: TestIsMethodBlocked/clique_propose (0.00s)
+    --- PASS: TestIsMethodBlocked/les_serverInfo (0.00s)
+    --- PASS: TestIsMethodBlocked/eth_getStorageAt (0.00s)
+    --- PASS: TestIsMethodBlocked/eth_call (0.00s)
+    --- PASS: TestIsMethodBlocked/eth_getBalance (0.00s)
+    --- PASS: TestIsMethodBlocked/eth_blockNumber (0.00s)
+    --- PASS: TestIsMethodBlocked/eth_getTransactionReceipt (0.00s)
+    --- PASS: TestIsMethodBlocked/eth_chainId (0.00s)
+    --- PASS: TestIsMethodBlocked/eth_sendTransaction (0.00s)
+    --- PASS: TestIsMethodBlocked/eth_sendRawTransaction (0.00s)
+    --- PASS: TestIsMethodBlocked/net_version (0.00s)
+    --- PASS: TestIsMethodBlocked/web3_clientVersion (0.00s)
+=== RUN   TestIsMulticallTarget
+=== RUN   TestIsMulticallTarget/Multicall3_lowercase
+=== RUN   TestIsMulticallTarget/Multicall3_uppercase
+=== RUN   TestIsMulticallTarget/Multicall3_mixed_case
+=== RUN   TestIsMulticallTarget/Multicall2_mainnet
+=== RUN   TestIsMulticallTarget/Original_Multicall
+=== RUN   TestIsMulticallTarget/Random_address
+=== RUN   TestIsMulticallTarget/Empty_address
+--- PASS: TestIsMulticallTarget (0.00s)
+    --- PASS: TestIsMulticallTarget/Multicall3_lowercase (0.00s)
+    --- PASS: TestIsMulticallTarget/Multicall3_uppercase (0.00s)
+    --- PASS: TestIsMulticallTarget/Multicall3_mixed_case (0.00s)
+    --- PASS: TestIsMulticallTarget/Multicall2_mainnet (0.00s)
+    --- PASS: TestIsMulticallTarget/Original_Multicall (0.00s)
+    --- PASS: TestIsMulticallTarget/Random_address (0.00s)
+    --- PASS: TestIsMulticallTarget/Empty_address (0.00s)
+=== RUN   TestIsMulticallData
+=== RUN   TestIsMulticallData/aggregate_selector
+=== RUN   TestIsMulticallData/aggregate3_selector
+=== RUN   TestIsMulticallData/tryAggregate_selector
+=== RUN   TestIsMulticallData/aggregate_with_params
+=== RUN   TestIsMulticallData/Not_multicall
+=== RUN   TestIsMulticallData/Empty_data
+=== RUN   TestIsMulticallData/Short_data
+=== RUN   TestIsMulticallData/No_0x_prefix
+--- PASS: TestIsMulticallData (0.00s)
+    --- PASS: TestIsMulticallData/aggregate_selector (0.00s)
+    --- PASS: TestIsMulticallData/aggregate3_selector (0.00s)
+    --- PASS: TestIsMulticallData/tryAggregate_selector (0.00s)
+    --- PASS: TestIsMulticallData/aggregate_with_params (0.00s)
+    --- PASS: TestIsMulticallData/Not_multicall (0.00s)
+    --- PASS: TestIsMulticallData/Empty_data (0.00s)
+    --- PASS: TestIsMulticallData/Short_data (0.00s)
+    --- PASS: TestIsMulticallData/No_0x_prefix (0.00s)
+=== RUN   TestDetectMulticall
+=== RUN   TestDetectMulticall/eth_call_to_Multicall3_with_aggregate
+=== RUN   TestDetectMulticall/eth_estimateGas_to_Multicall3
+=== RUN   TestDetectMulticall/eth_call_to_regular_contract
+=== RUN   TestDetectMulticall/eth_call_to_Multicall3_with_non-multicall_function
+=== RUN   TestDetectMulticall/eth_sendTransaction_to_Multicall3_with_aggregate_-_BLOCKED
+=== RUN   TestDetectMulticall/eth_sendTransaction_to_Multicall3_with_aggregate3_-_BLOCKED
+=== RUN   TestDetectMulticall/eth_sendTransaction_to_regular_contract_-_allowed
+=== RUN   TestDetectMulticall/eth_sendTransaction_to_Multicall3_with_non-multicall_function_-_allowed
+=== RUN   TestDetectMulticall/eth_sendTransaction_with_empty_params_-_not_checked
+=== RUN   TestDetectMulticall/eth_blockNumber_is_not_checked
+=== RUN   TestDetectMulticall/Empty_params
+=== RUN   TestDetectMulticall/Missing_data_field
+--- PASS: TestDetectMulticall (0.00s)
+    --- PASS: TestDetectMulticall/eth_call_to_Multicall3_with_aggregate (0.00s)
+    --- PASS: TestDetectMulticall/eth_estimateGas_to_Multicall3 (0.00s)
+    --- PASS: TestDetectMulticall/eth_call_to_regular_contract (0.00s)
+    --- PASS: TestDetectMulticall/eth_call_to_Multicall3_with_non-multicall_function (0.00s)
+    --- PASS: TestDetectMulticall/eth_sendTransaction_to_Multicall3_with_aggregate_-_BLOCKED (0.00s)
+    --- PASS: TestDetectMulticall/eth_sendTransaction_to_Multicall3_with_aggregate3_-_BLOCKED (0.00s)
+    --- PASS: TestDetectMulticall/eth_sendTransaction_to_regular_contract_-_allowed (0.00s)
+    --- PASS: TestDetectMulticall/eth_sendTransaction_to_Multicall3_with_non-multicall_function_-_allowed (0.00s)
+    --- PASS: TestDetectMulticall/eth_sendTransaction_with_empty_params_-_not_checked (0.00s)
+    --- PASS: TestDetectMulticall/eth_blockNumber_is_not_checked (0.00s)
+    --- PASS: TestDetectMulticall/Empty_params (0.00s)
+    --- PASS: TestDetectMulticall/Missing_data_field (0.00s)
+=== RUN   TestHelperFunctions
+=== RUN   TestHelperFunctions/intersectStrings
+=== RUN   TestHelperFunctions/intersectStrings_empty
+=== RUN   TestHelperFunctions/unionStrings
+--- PASS: TestHelperFunctions (0.00s)
+    --- PASS: TestHelperFunctions/intersectStrings (0.00s)
+    --- PASS: TestHelperFunctions/intersectStrings_empty (0.00s)
+    --- PASS: TestHelperFunctions/unionStrings (0.00s)
+=== RUN   TestExtractGetLogsAddresses
+=== RUN   TestExtractGetLogsAddresses/No_address_field
+=== RUN   TestExtractGetLogsAddresses/Address_field_is_nil
+=== RUN   TestExtractGetLogsAddresses/Single_address_as_string
+=== RUN   TestExtractGetLogsAddresses/Single_address_as_string_(lowercase)
+=== RUN   TestExtractGetLogsAddresses/Empty_string_address
+=== RUN   TestExtractGetLogsAddresses/Multiple_addresses_as_array
+=== RUN   TestExtractGetLogsAddresses/Empty_address_array
+=== RUN   TestExtractGetLogsAddresses/Array_with_empty_string_(filtered_out)
+=== RUN   TestExtractGetLogsAddresses/Array_with_mixed_types_(non-strings_ignored)
+--- PASS: TestExtractGetLogsAddresses (0.00s)
+    --- PASS: TestExtractGetLogsAddresses/No_address_field (0.00s)
+    --- PASS: TestExtractGetLogsAddresses/Address_field_is_nil (0.00s)
+    --- PASS: TestExtractGetLogsAddresses/Single_address_as_string (0.00s)
+    --- PASS: TestExtractGetLogsAddresses/Single_address_as_string_(lowercase) (0.00s)
+    --- PASS: TestExtractGetLogsAddresses/Empty_string_address (0.00s)
+    --- PASS: TestExtractGetLogsAddresses/Multiple_addresses_as_array (0.00s)
+    --- PASS: TestExtractGetLogsAddresses/Empty_address_array (0.00s)
+    --- PASS: TestExtractGetLogsAddresses/Array_with_empty_string_(filtered_out) (0.00s)
+    --- PASS: TestExtractGetLogsAddresses/Array_with_mixed_types_(non-strings_ignored) (0.00s)
+=== RUN   TestValidateGetLogsAccess
+=== RUN   TestValidateGetLogsAccess/No_params
+=== RUN   TestValidateGetLogsAccess/Empty_params
+=== RUN   TestValidateGetLogsAccess/Invalid_filter_type_(not_a_map)
+=== RUN   TestValidateGetLogsAccess/No_address_filter_-_security_denial
+=== RUN   TestValidateGetLogsAccess/Null_address_filter_-_security_denial
+=== RUN   TestValidateGetLogsAccess/Empty_address_array_-_security_denial
+=== RUN   TestValidateGetLogsAccess/Empty_string_address_-_security_denial
+=== RUN   TestValidateGetLogsAccess/Single_address_-_no_access_at_all
+=== RUN   TestValidateGetLogsAccess/Single_address_-_has_access_(method_allowlist_controls_read/write)
+=== RUN   TestValidateGetLogsAccess/Multiple_addresses_-_one_without_access
+=== RUN   TestValidateGetLogsAccess/Multiple_addresses_-_one_has_no_contract_access_entry
+=== RUN   TestValidateGetLogsAccess/Single_address_-_has_read_access
+=== RUN   TestValidateGetLogsAccess/Single_address_-_case_insensitive_match
+=== RUN   TestValidateGetLogsAccess/Multiple_addresses_-_all_have_read_access
+=== RUN   TestValidateGetLogsAccess/Single_address_-_deploy_user_denied_unregistered_contract_(all_private)
+=== RUN   TestValidateGetLogsAccess/Multiple_addresses_-_registered_passes_but_unregistered_fails_(all_private)
+=== RUN   TestValidateGetLogsAccess/Single_address_-_user_with_no_claims_denied_unregistered_contract_(all_private)
+--- PASS: TestValidateGetLogsAccess (0.00s)
+    --- PASS: TestValidateGetLogsAccess/No_params (0.00s)
+    --- PASS: TestValidateGetLogsAccess/Empty_params (0.00s)
+    --- PASS: TestValidateGetLogsAccess/Invalid_filter_type_(not_a_map) (0.00s)
+    --- PASS: TestValidateGetLogsAccess/No_address_filter_-_security_denial (0.00s)
+    --- PASS: TestValidateGetLogsAccess/Null_address_filter_-_security_denial (0.00s)
+    --- PASS: TestValidateGetLogsAccess/Empty_address_array_-_security_denial (0.00s)
+    --- PASS: TestValidateGetLogsAccess/Empty_string_address_-_security_denial (0.00s)
+    --- PASS: TestValidateGetLogsAccess/Single_address_-_no_access_at_all (0.00s)
+    --- PASS: TestValidateGetLogsAccess/Single_address_-_has_access_(method_allowlist_controls_read/write) (0.00s)
+    --- PASS: TestValidateGetLogsAccess/Multiple_addresses_-_one_without_access (0.00s)
+    --- PASS: TestValidateGetLogsAccess/Multiple_addresses_-_one_has_no_contract_access_entry (0.00s)
+    --- PASS: TestValidateGetLogsAccess/Single_address_-_has_read_access (0.00s)
+    --- PASS: TestValidateGetLogsAccess/Single_address_-_case_insensitive_match (0.00s)
+    --- PASS: TestValidateGetLogsAccess/Multiple_addresses_-_all_have_read_access (0.00s)
+    --- PASS: TestValidateGetLogsAccess/Single_address_-_deploy_user_denied_unregistered_contract_(all_private) (0.00s)
+    --- PASS: TestValidateGetLogsAccess/Multiple_addresses_-_registered_passes_but_unregistered_fails_(all_private) (0.00s)
+    --- PASS: TestValidateGetLogsAccess/Single_address_-_user_with_no_claims_denied_unregistered_contract_(all_private) (0.00s)
+=== RUN   TestClassifyOperation_EthGetLogs
+=== RUN   TestClassifyOperation_EthGetLogs/eth_getLogs_requires_no_claim
+=== RUN   TestClassifyOperation_EthGetLogs/eth_getLogs_with_filter_requires_no_claim
+--- PASS: TestClassifyOperation_EthGetLogs (0.00s)
+    --- PASS: TestClassifyOperation_EthGetLogs/eth_getLogs_requires_no_claim (0.00s)
+    --- PASS: TestClassifyOperation_EthGetLogs/eth_getLogs_with_filter_requires_no_claim (0.00s)
+=== RUN   TestCrossOrgIsolation
+=== RUN   TestCrossOrgIsolation/IsContractRegistered_-_explicit_access
+=== RUN   TestCrossOrgIsolation/GetContractAccess_returns_nil_for_unregistered_(private_by_default)
+=== RUN   TestCrossOrgIsolation/GetContractAccess_returns_access_for_precompile_address
+=== RUN   TestCrossOrgIsolation/No_default_claims_means_no_access_to_unregistered
+--- PASS: TestCrossOrgIsolation (0.00s)
+    --- PASS: TestCrossOrgIsolation/IsContractRegistered_-_explicit_access (0.00s)
+    --- PASS: TestCrossOrgIsolation/GetContractAccess_returns_nil_for_unregistered_(private_by_default) (0.00s)
+    --- PASS: TestCrossOrgIsolation/GetContractAccess_returns_access_for_precompile_address (0.00s)
+    --- PASS: TestCrossOrgIsolation/No_default_claims_means_no_access_to_unregistered (0.00s)
+=== RUN   TestGetContractAccessUnregisteredRestriction
+=== RUN   TestGetContractAccessUnregisteredRestriction/upgrade_denied
+=== RUN   TestGetContractAccessUnregisteredRestriction/deploy_denied
+=== RUN   TestGetContractAccessUnregisteredRestriction/admin_denied
+=== RUN   TestGetContractAccessUnregisteredRestriction/empty_claims_denied
+--- PASS: TestGetContractAccessUnregisteredRestriction (0.00s)
+    --- PASS: TestGetContractAccessUnregisteredRestriction/upgrade_denied (0.00s)
+    --- PASS: TestGetContractAccessUnregisteredRestriction/deploy_denied (0.00s)
+    --- PASS: TestGetContractAccessUnregisteredRestriction/admin_denied (0.00s)
+    --- PASS: TestGetContractAccessUnregisteredRestriction/empty_claims_denied (0.00s)
+=== RUN   TestReadWriteOpsMaps
+--- PASS: TestReadWriteOpsMaps (0.00s)
+=== RUN   TestCrossOrgIsolationComprehensive
+=== RUN   TestCrossOrgIsolationComprehensive/user_cannot_access_other_org_contract_via_eth_call
+=== RUN   TestCrossOrgIsolationComprehensive/user_cannot_access_other_org_contract_via_eth_estimateGas
+=== RUN   TestCrossOrgIsolationComprehensive/user_can_access_their_own_org_contract
+=== RUN   TestCrossOrgIsolationComprehensive/user_denied_access_to_unregistered_contract_(all_private)
+=== RUN   TestCrossOrgIsolationComprehensive/default_claims_do_not_grant_access_to_other_org_contracts
+    access_test.go:1430: Note: GetContractAccess returns default claims; controller checks cross-org
+--- PASS: TestCrossOrgIsolationComprehensive (0.00s)
+    --- PASS: TestCrossOrgIsolationComprehensive/user_cannot_access_other_org_contract_via_eth_call (0.00s)
+    --- PASS: TestCrossOrgIsolationComprehensive/user_cannot_access_other_org_contract_via_eth_estimateGas (0.00s)
+    --- PASS: TestCrossOrgIsolationComprehensive/user_can_access_their_own_org_contract (0.00s)
+    --- PASS: TestCrossOrgIsolationComprehensive/user_denied_access_to_unregistered_contract_(all_private) (0.00s)
+    --- PASS: TestCrossOrgIsolationComprehensive/default_claims_do_not_grant_access_to_other_org_contracts (0.00s)
+=== RUN   TestCrossOrgIsolationEdgeCasesComprehensive
+=== RUN   TestCrossOrgIsolationEdgeCasesComprehensive/case_insensitive_address_matching
+=== RUN   TestCrossOrgIsolationEdgeCasesComprehensive/empty_contract_access_map_with_deploy_claim_denied_unregistered_(all_private)
+=== RUN   TestCrossOrgIsolationEdgeCasesComprehensive/empty_contract_access_map_with_no_claims_denied_unregistered_(all_private)
+=== RUN   TestCrossOrgIsolationEdgeCasesComprehensive/no_default_claims_means_no_access_to_unregistered_contracts
+=== RUN   TestCrossOrgIsolationEdgeCasesComprehensive/nil_default_claims_treated_as_empty
+--- PASS: TestCrossOrgIsolationEdgeCasesComprehensive (0.00s)
+    --- PASS: TestCrossOrgIsolationEdgeCasesComprehensive/case_insensitive_address_matching (0.00s)
+    --- PASS: TestCrossOrgIsolationEdgeCasesComprehensive/empty_contract_access_map_with_deploy_claim_denied_unregistered_(all_private) (0.00s)
+    --- PASS: TestCrossOrgIsolationEdgeCasesComprehensive/empty_contract_access_map_with_no_claims_denied_unregistered_(all_private) (0.00s)
+    --- PASS: TestCrossOrgIsolationEdgeCasesComprehensive/no_default_claims_means_no_access_to_unregistered_contracts (0.00s)
+    --- PASS: TestCrossOrgIsolationEdgeCasesComprehensive/nil_default_claims_treated_as_empty (0.00s)
+=== RUN   TestReadOpsValidationComprehensive
+=== RUN   TestReadOpsValidationComprehensive/eth_call_to_accessible_contract_is_allowed
+=== RUN   TestReadOpsValidationComprehensive/eth_call_to_inaccessible_contract_is_denied
+=== RUN   TestReadOpsValidationComprehensive/eth_estimateGas_follows_same_rules_as_eth_call
+=== RUN   TestReadOpsValidationComprehensive/eth_call_without_target_address_uses_empty_string
+=== RUN   TestReadOpsValidationComprehensive/read_ops_require_no_claim_(gated_by_method_allowlist)
+--- PASS: TestReadOpsValidationComprehensive (0.00s)
+    --- PASS: TestReadOpsValidationComprehensive/eth_call_to_accessible_contract_is_allowed (0.00s)
+    --- PASS: TestReadOpsValidationComprehensive/eth_call_to_inaccessible_contract_is_denied (0.00s)
+    --- PASS: TestReadOpsValidationComprehensive/eth_estimateGas_follows_same_rules_as_eth_call (0.00s)
+    --- PASS: TestReadOpsValidationComprehensive/eth_call_without_target_address_uses_empty_string (0.00s)
+    --- PASS: TestReadOpsValidationComprehensive/read_ops_require_no_claim_(gated_by_method_allowlist) (0.00s)
+=== RUN   TestGetContractAccessComprehensive
+=== RUN   TestGetContractAccessComprehensive/returns_explicit_access_for_registered_contract
+=== RUN   TestGetContractAccessComprehensive/returns_nil_for_other_org_contract_when_no_default_claims
+=== RUN   TestGetContractAccessComprehensive/returns_nil_for_unregistered_contract_(private_by_default)
+=== RUN   TestGetContractAccessComprehensive/returns_read_access_for_precompile_address
+=== RUN   TestGetContractAccessComprehensive/HasFunctionSelector_with_explicit_restrictions
+=== RUN   TestGetContractAccessComprehensive/HasFunctionSelector_with_no_restrictions_allows_all
+=== RUN   TestGetContractAccessComprehensive/HasFunctionSelector_with_empty_slice_denies_all
+=== RUN   TestGetContractAccessComprehensive/HasAdminOnContract_checks_admin_claim
+--- PASS: TestGetContractAccessComprehensive (0.00s)
+    --- PASS: TestGetContractAccessComprehensive/returns_explicit_access_for_registered_contract (0.00s)
+    --- PASS: TestGetContractAccessComprehensive/returns_nil_for_other_org_contract_when_no_default_claims (0.00s)
+    --- PASS: TestGetContractAccessComprehensive/returns_nil_for_unregistered_contract_(private_by_default) (0.00s)
+    --- PASS: TestGetContractAccessComprehensive/returns_read_access_for_precompile_address (0.00s)
+    --- PASS: TestGetContractAccessComprehensive/HasFunctionSelector_with_explicit_restrictions (0.00s)
+    --- PASS: TestGetContractAccessComprehensive/HasFunctionSelector_with_no_restrictions_allows_all (0.00s)
+    --- PASS: TestGetContractAccessComprehensive/HasFunctionSelector_with_empty_slice_denies_all (0.00s)
+    --- PASS: TestGetContractAccessComprehensive/HasAdminOnContract_checks_admin_claim (0.00s)
+=== RUN   TestGetFunctionSelectorComprehensive
+=== RUN   TestGetFunctionSelectorComprehensive/eth_call_with_data
+=== RUN   TestGetFunctionSelectorComprehensive/eth_estimateGas_with_data
+=== RUN   TestGetFunctionSelectorComprehensive/eth_sendTransaction_with_data
+=== RUN   TestGetFunctionSelectorComprehensive/eth_call_with_uppercase_data
+=== RUN   TestGetFunctionSelectorComprehensive/No_params
+=== RUN   TestGetFunctionSelectorComprehensive/Empty_params
+=== RUN   TestGetFunctionSelectorComprehensive/No_data_field
+=== RUN   TestGetFunctionSelectorComprehensive/Data_too_short
+=== RUN   TestGetFunctionSelectorComprehensive/Data_exactly_10_chars
+=== RUN   TestGetFunctionSelectorComprehensive/Non-call_method
+=== RUN   TestGetFunctionSelectorComprehensive/eth_getLogs_(not_a_contract_call)
+=== RUN   TestGetFunctionSelectorComprehensive/Malformed_params_(not_a_map)
+=== RUN   TestGetFunctionSelectorComprehensive/eth_call_with_input_field_instead_of_data
+=== RUN   TestGetFunctionSelectorComprehensive/eth_sendTransaction_with_input_field
+=== RUN   TestGetFunctionSelectorComprehensive/data_takes_precedence_over_input
+=== RUN   TestGetFunctionSelectorComprehensive/empty_data_falls_back_to_input
+=== RUN   TestGetFunctionSelectorComprehensive/input_too_short
+--- PASS: TestGetFunctionSelectorComprehensive (0.00s)
+    --- PASS: TestGetFunctionSelectorComprehensive/eth_call_with_data (0.00s)
+    --- PASS: TestGetFunctionSelectorComprehensive/eth_estimateGas_with_data (0.00s)
+    --- PASS: TestGetFunctionSelectorComprehensive/eth_sendTransaction_with_data (0.00s)
+    --- PASS: TestGetFunctionSelectorComprehensive/eth_call_with_uppercase_data (0.00s)
+    --- PASS: TestGetFunctionSelectorComprehensive/No_params (0.00s)
+    --- PASS: TestGetFunctionSelectorComprehensive/Empty_params (0.00s)
+    --- PASS: TestGetFunctionSelectorComprehensive/No_data_field (0.00s)
+    --- PASS: TestGetFunctionSelectorComprehensive/Data_too_short (0.00s)
+    --- PASS: TestGetFunctionSelectorComprehensive/Data_exactly_10_chars (0.00s)
+    --- PASS: TestGetFunctionSelectorComprehensive/Non-call_method (0.00s)
+    --- PASS: TestGetFunctionSelectorComprehensive/eth_getLogs_(not_a_contract_call) (0.00s)
+    --- PASS: TestGetFunctionSelectorComprehensive/Malformed_params_(not_a_map) (0.00s)
+    --- PASS: TestGetFunctionSelectorComprehensive/eth_call_with_input_field_instead_of_data (0.00s)
+    --- PASS: TestGetFunctionSelectorComprehensive/eth_sendTransaction_with_input_field (0.00s)
+    --- PASS: TestGetFunctionSelectorComprehensive/data_takes_precedence_over_input (0.00s)
+    --- PASS: TestGetFunctionSelectorComprehensive/empty_data_falls_back_to_input (0.00s)
+    --- PASS: TestGetFunctionSelectorComprehensive/input_too_short (0.00s)
+=== RUN   TestGetLogsSecurityAdditional
+=== RUN   TestGetLogsSecurityAdditional/eth_getLogs_with_mixed_accessible_and_inaccessible_in_array
+=== RUN   TestGetLogsSecurityAdditional/eth_getLogs_with_all_addresses_accessible
+=== RUN   TestGetLogsSecurityAdditional/eth_getLogs_with_deploy_claims_denied_for_unregistered_contract_(all_private)
+=== RUN   TestGetLogsSecurityAdditional/eth_getLogs_user_with_no_claims_denied_for_unregistered_contract_(all_private)
+=== RUN   TestGetLogsSecurityAdditional/eth_getLogs_allowed_when_user_has_contract_access_(claims_no_longer_checked)
+--- PASS: TestGetLogsSecurityAdditional (0.00s)
+    --- PASS: TestGetLogsSecurityAdditional/eth_getLogs_with_mixed_accessible_and_inaccessible_in_array (0.00s)
+    --- PASS: TestGetLogsSecurityAdditional/eth_getLogs_with_all_addresses_accessible (0.00s)
+    --- PASS: TestGetLogsSecurityAdditional/eth_getLogs_with_deploy_claims_denied_for_unregistered_contract_(all_private) (0.00s)
+    --- PASS: TestGetLogsSecurityAdditional/eth_getLogs_user_with_no_claims_denied_for_unregistered_contract_(all_private) (0.00s)
+    --- PASS: TestGetLogsSecurityAdditional/eth_getLogs_allowed_when_user_has_contract_access_(claims_no_longer_checked) (0.00s)
+=== RUN   TestExtractDeploymentBytecode
+=== RUN   TestExtractDeploymentBytecode/eth_sendTransaction_with_data_field
+=== RUN   TestExtractDeploymentBytecode/eth_sendTransaction_with_input_field
+=== RUN   TestExtractDeploymentBytecode/eth_sendTransaction_with_both_data_and_input_-_prefers_data
+=== RUN   TestExtractDeploymentBytecode/eth_estimateGas_with_data_field
+=== RUN   TestExtractDeploymentBytecode/eth_estimateGas_with_input_field
+=== RUN   TestExtractDeploymentBytecode/eth_call_-_not_a_deployment_method
+=== RUN   TestExtractDeploymentBytecode/eth_sendRawTransaction_-_not_a_deployment_method
+=== RUN   TestExtractDeploymentBytecode/No_params
+=== RUN   TestExtractDeploymentBytecode/Empty_params
+=== RUN   TestExtractDeploymentBytecode/Malformed_params_-_not_a_map
+=== RUN   TestExtractDeploymentBytecode/Empty_data_field
+=== RUN   TestExtractDeploymentBytecode/Data_is_just_0x
+=== RUN   TestExtractDeploymentBytecode/No_data_or_input_field
+=== RUN   TestExtractDeploymentBytecode/Data_is_non-string_type
+--- PASS: TestExtractDeploymentBytecode (0.00s)
+    --- PASS: TestExtractDeploymentBytecode/eth_sendTransaction_with_data_field (0.00s)
+    --- PASS: TestExtractDeploymentBytecode/eth_sendTransaction_with_input_field (0.00s)
+    --- PASS: TestExtractDeploymentBytecode/eth_sendTransaction_with_both_data_and_input_-_prefers_data (0.00s)
+    --- PASS: TestExtractDeploymentBytecode/eth_estimateGas_with_data_field (0.00s)
+    --- PASS: TestExtractDeploymentBytecode/eth_estimateGas_with_input_field (0.00s)
+    --- PASS: TestExtractDeploymentBytecode/eth_call_-_not_a_deployment_method (0.00s)
+    --- PASS: TestExtractDeploymentBytecode/eth_sendRawTransaction_-_not_a_deployment_method (0.00s)
+    --- PASS: TestExtractDeploymentBytecode/No_params (0.00s)
+    --- PASS: TestExtractDeploymentBytecode/Empty_params (0.00s)
+    --- PASS: TestExtractDeploymentBytecode/Malformed_params_-_not_a_map (0.00s)
+    --- PASS: TestExtractDeploymentBytecode/Empty_data_field (0.00s)
+    --- PASS: TestExtractDeploymentBytecode/Data_is_just_0x (0.00s)
+    --- PASS: TestExtractDeploymentBytecode/No_data_or_input_field (0.00s)
+    --- PASS: TestExtractDeploymentBytecode/Data_is_non-string_type (0.00s)
+=== RUN   TestExtractBlockParam
+=== RUN   TestExtractBlockParam/eth_call_with_no_params_-_defaults_to_latest
+=== RUN   TestExtractBlockParam/eth_call_with_empty_params_-_defaults_to_latest
+=== RUN   TestExtractBlockParam/eth_call_with_only_txObject_-_defaults_to_latest
+=== RUN   TestExtractBlockParam/eth_call_with_latest_block_param
+=== RUN   TestExtractBlockParam/eth_call_with_pending_block_param
+=== RUN   TestExtractBlockParam/eth_call_with_safe_block_param
+=== RUN   TestExtractBlockParam/eth_call_with_finalized_block_param
+=== RUN   TestExtractBlockParam/eth_call_with_earliest_block_param
+=== RUN   TestExtractBlockParam/eth_call_with_hex_block_number
+=== RUN   TestExtractBlockParam/eth_call_with_block_hash_(66_chars)
+=== RUN   TestExtractBlockParam/eth_call_with_nil_block_param_-_defaults_to_latest
+=== RUN   TestExtractBlockParam/eth_call_with_empty_string_block_param_-_defaults_to_latest
+=== RUN   TestExtractBlockParam/eth_call_with_non-string_block_param_(number)_-_treated_as_historical
+=== RUN   TestExtractBlockParam/eth_getStorageAt_with_no_params_-_defaults_to_latest
+=== RUN   TestExtractBlockParam/eth_getStorageAt_with_only_address_-_defaults_to_latest
+=== RUN   TestExtractBlockParam/eth_getStorageAt_with_address_and_slot_-_defaults_to_latest
+=== RUN   TestExtractBlockParam/eth_getStorageAt_with_latest_block_param
+=== RUN   TestExtractBlockParam/eth_getStorageAt_with_hex_block_number
+=== RUN   TestExtractBlockParam/eth_getStorageAt_with_nil_block_param_-_defaults_to_latest
+=== RUN   TestExtractBlockParam/eth_getBalance_with_historical_block
+=== RUN   TestExtractBlockParam/eth_getBalance_with_latest
+=== RUN   TestExtractBlockParam/eth_getBalance_without_block_param
+=== RUN   TestExtractBlockParam/eth_getCode_with_historical_block
+=== RUN   TestExtractBlockParam/eth_getTransactionCount_with_historical_block
+=== RUN   TestExtractBlockParam/eth_getProof_with_historical_block
+=== RUN   TestExtractBlockParam/eth_blockNumber_-_not_applicable,_returns_latest
+--- PASS: TestExtractBlockParam (0.00s)
+    --- PASS: TestExtractBlockParam/eth_call_with_no_params_-_defaults_to_latest (0.00s)
+    --- PASS: TestExtractBlockParam/eth_call_with_empty_params_-_defaults_to_latest (0.00s)
+    --- PASS: TestExtractBlockParam/eth_call_with_only_txObject_-_defaults_to_latest (0.00s)
+    --- PASS: TestExtractBlockParam/eth_call_with_latest_block_param (0.00s)
+    --- PASS: TestExtractBlockParam/eth_call_with_pending_block_param (0.00s)
+    --- PASS: TestExtractBlockParam/eth_call_with_safe_block_param (0.00s)
+    --- PASS: TestExtractBlockParam/eth_call_with_finalized_block_param (0.00s)
+    --- PASS: TestExtractBlockParam/eth_call_with_earliest_block_param (0.00s)
+    --- PASS: TestExtractBlockParam/eth_call_with_hex_block_number (0.00s)
+    --- PASS: TestExtractBlockParam/eth_call_with_block_hash_(66_chars) (0.00s)
+    --- PASS: TestExtractBlockParam/eth_call_with_nil_block_param_-_defaults_to_latest (0.00s)
+    --- PASS: TestExtractBlockParam/eth_call_with_empty_string_block_param_-_defaults_to_latest (0.00s)
+    --- PASS: TestExtractBlockParam/eth_call_with_non-string_block_param_(number)_-_treated_as_historical (0.00s)
+    --- PASS: TestExtractBlockParam/eth_getStorageAt_with_no_params_-_defaults_to_latest (0.00s)
+    --- PASS: TestExtractBlockParam/eth_getStorageAt_with_only_address_-_defaults_to_latest (0.00s)
+    --- PASS: TestExtractBlockParam/eth_getStorageAt_with_address_and_slot_-_defaults_to_latest (0.00s)
+    --- PASS: TestExtractBlockParam/eth_getStorageAt_with_latest_block_param (0.00s)
+    --- PASS: TestExtractBlockParam/eth_getStorageAt_with_hex_block_number (0.00s)
+    --- PASS: TestExtractBlockParam/eth_getStorageAt_with_nil_block_param_-_defaults_to_latest (0.00s)
+    --- PASS: TestExtractBlockParam/eth_getBalance_with_historical_block (0.00s)
+    --- PASS: TestExtractBlockParam/eth_getBalance_with_latest (0.00s)
+    --- PASS: TestExtractBlockParam/eth_getBalance_without_block_param (0.00s)
+    --- PASS: TestExtractBlockParam/eth_getCode_with_historical_block (0.00s)
+    --- PASS: TestExtractBlockParam/eth_getTransactionCount_with_historical_block (0.00s)
+    --- PASS: TestExtractBlockParam/eth_getProof_with_historical_block (0.00s)
+    --- PASS: TestExtractBlockParam/eth_blockNumber_-_not_applicable,_returns_latest (0.00s)
+=== RUN   TestIsHistoricalBlock
+=== RUN   TestIsHistoricalBlock/empty_string_-_not_historical
+=== RUN   TestIsHistoricalBlock/latest_-_not_historical
+=== RUN   TestIsHistoricalBlock/LATEST_uppercase_-_not_historical
+=== RUN   TestIsHistoricalBlock/Latest_mixed_case_-_not_historical
+=== RUN   TestIsHistoricalBlock/pending_-_not_historical
+=== RUN   TestIsHistoricalBlock/PENDING_uppercase_-_not_historical
+=== RUN   TestIsHistoricalBlock/safe_-_not_historical
+=== RUN   TestIsHistoricalBlock/SAFE_uppercase_-_not_historical
+=== RUN   TestIsHistoricalBlock/finalized_-_not_historical
+=== RUN   TestIsHistoricalBlock/FINALIZED_uppercase_-_not_historical
+=== RUN   TestIsHistoricalBlock/earliest_-_not_historical
+=== RUN   TestIsHistoricalBlock/EARLIEST_uppercase_-_not_historical
+=== RUN   TestIsHistoricalBlock/hex_block_number_0x0_-_historical
+=== RUN   TestIsHistoricalBlock/hex_block_number_0x1_-_historical
+=== RUN   TestIsHistoricalBlock/hex_block_number_0x1234_-_historical
+=== RUN   TestIsHistoricalBlock/hex_block_number_0xabcdef_-_historical
+=== RUN   TestIsHistoricalBlock/large_hex_block_number_-_historical
+=== RUN   TestIsHistoricalBlock/block_hash_(66_chars)_-_historical
+=== RUN   TestIsHistoricalBlock/historical_marker_-_historical
+=== RUN   TestIsHistoricalBlock/random_string_-_historical
+=== RUN   TestIsHistoricalBlock/number_as_string_-_historical
+--- PASS: TestIsHistoricalBlock (0.00s)
+    --- PASS: TestIsHistoricalBlock/empty_string_-_not_historical (0.00s)
+    --- PASS: TestIsHistoricalBlock/latest_-_not_historical (0.00s)
+    --- PASS: TestIsHistoricalBlock/LATEST_uppercase_-_not_historical (0.00s)
+    --- PASS: TestIsHistoricalBlock/Latest_mixed_case_-_not_historical (0.00s)
+    --- PASS: TestIsHistoricalBlock/pending_-_not_historical (0.00s)
+    --- PASS: TestIsHistoricalBlock/PENDING_uppercase_-_not_historical (0.00s)
+    --- PASS: TestIsHistoricalBlock/safe_-_not_historical (0.00s)
+    --- PASS: TestIsHistoricalBlock/SAFE_uppercase_-_not_historical (0.00s)
+    --- PASS: TestIsHistoricalBlock/finalized_-_not_historical (0.00s)
+    --- PASS: TestIsHistoricalBlock/FINALIZED_uppercase_-_not_historical (0.00s)
+    --- PASS: TestIsHistoricalBlock/earliest_-_not_historical (0.00s)
+    --- PASS: TestIsHistoricalBlock/EARLIEST_uppercase_-_not_historical (0.00s)
+    --- PASS: TestIsHistoricalBlock/hex_block_number_0x0_-_historical (0.00s)
+    --- PASS: TestIsHistoricalBlock/hex_block_number_0x1_-_historical (0.00s)
+    --- PASS: TestIsHistoricalBlock/hex_block_number_0x1234_-_historical (0.00s)
+    --- PASS: TestIsHistoricalBlock/hex_block_number_0xabcdef_-_historical (0.00s)
+    --- PASS: TestIsHistoricalBlock/large_hex_block_number_-_historical (0.00s)
+    --- PASS: TestIsHistoricalBlock/block_hash_(66_chars)_-_historical (0.00s)
+    --- PASS: TestIsHistoricalBlock/historical_marker_-_historical (0.00s)
+    --- PASS: TestIsHistoricalBlock/random_string_-_historical (0.00s)
+    --- PASS: TestIsHistoricalBlock/number_as_string_-_historical (0.00s)
+=== RUN   TestIsHistoricalStateQuery
+=== RUN   TestIsHistoricalStateQuery/eth_call_with_latest_-_allowed
+=== RUN   TestIsHistoricalStateQuery/eth_call_with_pending_-_allowed
+=== RUN   TestIsHistoricalStateQuery/eth_call_with_safe_-_allowed
+=== RUN   TestIsHistoricalStateQuery/eth_call_with_finalized_-_allowed
+=== RUN   TestIsHistoricalStateQuery/eth_call_with_earliest_-_allowed
+=== RUN   TestIsHistoricalStateQuery/eth_call_without_block_param_(defaults_to_latest)_-_allowed
+=== RUN   TestIsHistoricalStateQuery/eth_call_with_hex_block_number_-_blocked
+=== RUN   TestIsHistoricalStateQuery/eth_call_with_block_hash_-_blocked
+=== RUN   TestIsHistoricalStateQuery/eth_call_with_0x0_block_-_blocked
+=== RUN   TestIsHistoricalStateQuery/eth_getStorageAt_with_latest_-_allowed
+=== RUN   TestIsHistoricalStateQuery/eth_getStorageAt_with_pending_-_allowed
+=== RUN   TestIsHistoricalStateQuery/eth_getStorageAt_without_block_param_-_allowed
+=== RUN   TestIsHistoricalStateQuery/eth_getStorageAt_with_hex_block_number_-_blocked
+=== RUN   TestIsHistoricalStateQuery/eth_getStorageAt_with_block_hash_-_blocked
+=== RUN   TestIsHistoricalStateQuery/eth_getBalance_with_historical_block_-_blocked
+=== RUN   TestIsHistoricalStateQuery/eth_getBalance_with_latest_-_allowed
+=== RUN   TestIsHistoricalStateQuery/eth_getCode_with_historical_block_-_blocked
+=== RUN   TestIsHistoricalStateQuery/eth_getTransactionCount_with_historical_block_-_blocked
+=== RUN   TestIsHistoricalStateQuery/eth_getProof_with_historical_block_-_blocked
+=== RUN   TestIsHistoricalStateQuery/eth_blockNumber_-_not_checked
+=== RUN   TestIsHistoricalStateQuery/eth_estimateGas_-_not_checked
+=== RUN   TestIsHistoricalStateQuery/eth_sendTransaction_-_not_checked
+--- PASS: TestIsHistoricalStateQuery (0.00s)
+    --- PASS: TestIsHistoricalStateQuery/eth_call_with_latest_-_allowed (0.00s)
+    --- PASS: TestIsHistoricalStateQuery/eth_call_with_pending_-_allowed (0.00s)
+    --- PASS: TestIsHistoricalStateQuery/eth_call_with_safe_-_allowed (0.00s)
+    --- PASS: TestIsHistoricalStateQuery/eth_call_with_finalized_-_allowed (0.00s)
+    --- PASS: TestIsHistoricalStateQuery/eth_call_with_earliest_-_allowed (0.00s)
+    --- PASS: TestIsHistoricalStateQuery/eth_call_without_block_param_(defaults_to_latest)_-_allowed (0.00s)
+    --- PASS: TestIsHistoricalStateQuery/eth_call_with_hex_block_number_-_blocked (0.00s)
+    --- PASS: TestIsHistoricalStateQuery/eth_call_with_block_hash_-_blocked (0.00s)
+    --- PASS: TestIsHistoricalStateQuery/eth_call_with_0x0_block_-_blocked (0.00s)
+    --- PASS: TestIsHistoricalStateQuery/eth_getStorageAt_with_latest_-_allowed (0.00s)
+    --- PASS: TestIsHistoricalStateQuery/eth_getStorageAt_with_pending_-_allowed (0.00s)
+    --- PASS: TestIsHistoricalStateQuery/eth_getStorageAt_without_block_param_-_allowed (0.00s)
+    --- PASS: TestIsHistoricalStateQuery/eth_getStorageAt_with_hex_block_number_-_blocked (0.00s)
+    --- PASS: TestIsHistoricalStateQuery/eth_getStorageAt_with_block_hash_-_blocked (0.00s)
+    --- PASS: TestIsHistoricalStateQuery/eth_getBalance_with_historical_block_-_blocked (0.00s)
+    --- PASS: TestIsHistoricalStateQuery/eth_getBalance_with_latest_-_allowed (0.00s)
+    --- PASS: TestIsHistoricalStateQuery/eth_getCode_with_historical_block_-_blocked (0.00s)
+    --- PASS: TestIsHistoricalStateQuery/eth_getTransactionCount_with_historical_block_-_blocked (0.00s)
+    --- PASS: TestIsHistoricalStateQuery/eth_getProof_with_historical_block_-_blocked (0.00s)
+    --- PASS: TestIsHistoricalStateQuery/eth_blockNumber_-_not_checked (0.00s)
+    --- PASS: TestIsHistoricalStateQuery/eth_estimateGas_-_not_checked (0.00s)
+    --- PASS: TestIsHistoricalStateQuery/eth_sendTransaction_-_not_checked (0.00s)
+=== RUN   TestHistoricalStateQuery_AnonymousBlocked
+--- PASS: TestHistoricalStateQuery_AnonymousBlocked (0.00s)
+=== RUN   TestHistoricalStateQuery_AuthenticatedAllowed
+--- PASS: TestHistoricalStateQuery_AuthenticatedAllowed (0.00s)
+=== RUN   TestHistoricalStateQuery_AuthenticatedCrossOrgStillDenied
+--- PASS: TestHistoricalStateQuery_AuthenticatedCrossOrgStillDenied (0.00s)
+=== RUN   TestCheckAccessParamConstraints
+=== RUN   TestCheckAccessParamConstraints/self_constraint_passes
+=== RUN   TestCheckAccessParamConstraints/self_constraint_fails
+=== RUN   TestCheckAccessParamConstraints/no_param_rules_-_allowed
+=== RUN   TestCheckAccessParamConstraints/missing_calldata_-_denied
+=== RUN   TestCheckAccessParamConstraints/no_linked_addresses_-_denied
+=== RUN   TestCheckAccessParamConstraints/missing_contract_ABI_-_denied
+--- PASS: TestCheckAccessParamConstraints (0.00s)
+    --- PASS: TestCheckAccessParamConstraints/self_constraint_passes (0.00s)
+    --- PASS: TestCheckAccessParamConstraints/self_constraint_fails (0.00s)
+    --- PASS: TestCheckAccessParamConstraints/no_param_rules_-_allowed (0.00s)
+    --- PASS: TestCheckAccessParamConstraints/missing_calldata_-_denied (0.00s)
+    --- PASS: TestCheckAccessParamConstraints/no_linked_addresses_-_denied (0.00s)
+    --- PASS: TestCheckAccessParamConstraints/missing_contract_ABI_-_denied (0.00s)
+=== RUN   TestDeployUserParamConstraints
+=== RUN   TestDeployUserParamConstraints/deploy_user_-_self_constraint_passes
+=== RUN   TestDeployUserParamConstraints/deploy_user_-_self_constraint_denies_other_address
+=== RUN   TestDeployUserParamConstraints/deploy_user_-_unlisted_function_denied
+--- PASS: TestDeployUserParamConstraints (0.00s)
+    --- PASS: TestDeployUserParamConstraints/deploy_user_-_self_constraint_passes (0.00s)
+    --- PASS: TestDeployUserParamConstraints/deploy_user_-_self_constraint_denies_other_address (0.00s)
+    --- PASS: TestDeployUserParamConstraints/deploy_user_-_unlisted_function_denied (0.00s)
+=== RUN   TestEmptySelectorDeniedWithFunctionRestrictions
+=== RUN   TestEmptySelectorDeniedWithFunctionRestrictions/function_restrictions_+_empty_selector_->_denied
+=== RUN   TestEmptySelectorDeniedWithFunctionRestrictions/no_function_restrictions_+_empty_selector_->_allowed
+=== RUN   TestEmptySelectorDeniedWithFunctionRestrictions/empty_function_restrictions_slice_+_empty_selector_->_denied
+=== RUN   TestEmptySelectorDeniedWithFunctionRestrictions/function_restrictions_+_valid_matching_selector_->_allowed
+=== RUN   TestEmptySelectorDeniedWithFunctionRestrictions/function_restrictions_+_non-matching_selector_->_denied_by_selector_check
+--- PASS: TestEmptySelectorDeniedWithFunctionRestrictions (0.00s)
+    --- PASS: TestEmptySelectorDeniedWithFunctionRestrictions/function_restrictions_+_empty_selector_->_denied (0.00s)
+    --- PASS: TestEmptySelectorDeniedWithFunctionRestrictions/no_function_restrictions_+_empty_selector_->_allowed (0.00s)
+    --- PASS: TestEmptySelectorDeniedWithFunctionRestrictions/empty_function_restrictions_slice_+_empty_selector_->_denied (0.00s)
+    --- PASS: TestEmptySelectorDeniedWithFunctionRestrictions/function_restrictions_+_valid_matching_selector_->_allowed (0.00s)
+    --- PASS: TestEmptySelectorDeniedWithFunctionRestrictions/function_restrictions_+_non-matching_selector_->_denied_by_selector_check (0.00s)
+=== RUN   TestAnonymousAccess
+=== RUN   TestAnonymousAccess/eth_blockNumber
+=== RUN   TestAnonymousAccess/eth_chainId
+=== RUN   TestAnonymousAccess/eth_gasPrice
+=== RUN   TestAnonymousAccess/net_version
+=== RUN   TestAnonymousAccess/net_listening
+=== RUN   TestAnonymousAccess/web3_clientVersion
+=== RUN   TestAnonymousAccess/eth_getBalance
+=== RUN   TestAnonymousAccess/eth_call
+=== RUN   TestAnonymousAccess/eth_estimateGas
+=== RUN   TestAnonymousAccess/eth_getCode
+=== RUN   TestAnonymousAccess/eth_getStorageAt
+=== RUN   TestAnonymousAccess/eth_getTransactionCount
+=== RUN   TestAnonymousAccess/eth_getLogs
+=== RUN   TestAnonymousAccess/eth_getBlockByNumber
+=== RUN   TestAnonymousAccess/eth_getBlockByHash
+=== RUN   TestAnonymousAccess/eth_getBlockTransactionCountByNumber
+=== RUN   TestAnonymousAccess/eth_getBlockTransactionCountByHash
+=== RUN   TestAnonymousAccess/eth_getUncleByBlockHashAndIndex
+=== RUN   TestAnonymousAccess/eth_getUncleByBlockNumberAndIndex
+=== RUN   TestAnonymousAccess/eth_getUncleCountByBlockHash
+=== RUN   TestAnonymousAccess/eth_getUncleCountByBlockNumber
+=== RUN   TestAnonymousAccess/eth_getTransactionByHash
+=== RUN   TestAnonymousAccess/eth_getTransactionByBlockHashAndIndex
+=== RUN   TestAnonymousAccess/eth_getTransactionByBlockNumberAndIndex
+=== RUN   TestAnonymousAccess/eth_getTransactionReceipt
+=== RUN   TestAnonymousAccess/eth_getProof
+=== RUN   TestAnonymousAccess/eth_createAccessList
+=== RUN   TestAnonymousAccess/eth_accounts
+=== RUN   TestAnonymousAccess/eth_newFilter
+=== RUN   TestAnonymousAccess/eth_newBlockFilter
+=== RUN   TestAnonymousAccess/eth_newPendingTransactionFilter
+=== RUN   TestAnonymousAccess/eth_getFilterChanges
+=== RUN   TestAnonymousAccess/eth_getFilterLogs
+=== RUN   TestAnonymousAccess/eth_uninstallFilter
+=== RUN   TestAnonymousAccess/ETH_GETBALANCE_uppercase
+=== RUN   TestAnonymousAccess/Eth_GetBlockByNumber_mixed
+=== RUN   TestAnonymousAccess/ETH_NEWFILTER_uppercase
+=== RUN   TestAnonymousAccess/eth_sendTransaction
+=== RUN   TestAnonymousAccess/eth_sendRawTransaction
+--- PASS: TestAnonymousAccess (0.00s)
+    --- PASS: TestAnonymousAccess/eth_blockNumber (0.00s)
+    --- PASS: TestAnonymousAccess/eth_chainId (0.00s)
+    --- PASS: TestAnonymousAccess/eth_gasPrice (0.00s)
+    --- PASS: TestAnonymousAccess/net_version (0.00s)
+    --- PASS: TestAnonymousAccess/net_listening (0.00s)
+    --- PASS: TestAnonymousAccess/web3_clientVersion (0.00s)
+    --- PASS: TestAnonymousAccess/eth_getBalance (0.00s)
+    --- PASS: TestAnonymousAccess/eth_call (0.00s)
+    --- PASS: TestAnonymousAccess/eth_estimateGas (0.00s)
+    --- PASS: TestAnonymousAccess/eth_getCode (0.00s)
+    --- PASS: TestAnonymousAccess/eth_getStorageAt (0.00s)
+    --- PASS: TestAnonymousAccess/eth_getTransactionCount (0.00s)
+    --- PASS: TestAnonymousAccess/eth_getLogs (0.00s)
+    --- PASS: TestAnonymousAccess/eth_getBlockByNumber (0.00s)
+    --- PASS: TestAnonymousAccess/eth_getBlockByHash (0.00s)
+    --- PASS: TestAnonymousAccess/eth_getBlockTransactionCountByNumber (0.00s)
+    --- PASS: TestAnonymousAccess/eth_getBlockTransactionCountByHash (0.00s)
+    --- PASS: TestAnonymousAccess/eth_getUncleByBlockHashAndIndex (0.00s)
+    --- PASS: TestAnonymousAccess/eth_getUncleByBlockNumberAndIndex (0.00s)
+    --- PASS: TestAnonymousAccess/eth_getUncleCountByBlockHash (0.00s)
+    --- PASS: TestAnonymousAccess/eth_getUncleCountByBlockNumber (0.00s)
+    --- PASS: TestAnonymousAccess/eth_getTransactionByHash (0.00s)
+    --- PASS: TestAnonymousAccess/eth_getTransactionByBlockHashAndIndex (0.00s)
+    --- PASS: TestAnonymousAccess/eth_getTransactionByBlockNumberAndIndex (0.00s)
+    --- PASS: TestAnonymousAccess/eth_getTransactionReceipt (0.00s)
+    --- PASS: TestAnonymousAccess/eth_getProof (0.00s)
+    --- PASS: TestAnonymousAccess/eth_createAccessList (0.00s)
+    --- PASS: TestAnonymousAccess/eth_accounts (0.00s)
+    --- PASS: TestAnonymousAccess/eth_newFilter (0.00s)
+    --- PASS: TestAnonymousAccess/eth_newBlockFilter (0.00s)
+    --- PASS: TestAnonymousAccess/eth_newPendingTransactionFilter (0.00s)
+    --- PASS: TestAnonymousAccess/eth_getFilterChanges (0.00s)
+    --- PASS: TestAnonymousAccess/eth_getFilterLogs (0.00s)
+    --- PASS: TestAnonymousAccess/eth_uninstallFilter (0.00s)
+    --- PASS: TestAnonymousAccess/ETH_GETBALANCE_uppercase (0.00s)
+    --- PASS: TestAnonymousAccess/Eth_GetBlockByNumber_mixed (0.00s)
+    --- PASS: TestAnonymousAccess/ETH_NEWFILTER_uppercase (0.00s)
+    --- PASS: TestAnonymousAccess/eth_sendTransaction (0.00s)
+    --- PASS: TestAnonymousAccess/eth_sendRawTransaction (0.00s)
+=== RUN   TestAnonymousAccess_DBSourced
+--- PASS: TestAnonymousAccess_DBSourced (0.00s)
+=== RUN   TestAnonymousAccess_DeploymentBlocked
+--- PASS: TestAnonymousAccess_DeploymentBlocked (0.00s)
+=== RUN   TestOrgFreeMetadataMethods
+=== RUN   TestOrgFreeMetadataMethods/allowed/eth_blockNumber
+=== RUN   TestOrgFreeMetadataMethods/allowed/eth_chainId
+=== RUN   TestOrgFreeMetadataMethods/allowed/eth_gasPrice
+=== RUN   TestOrgFreeMetadataMethods/allowed/net_version
+=== RUN   TestOrgFreeMetadataMethods/allowed/net_listening
+=== RUN   TestOrgFreeMetadataMethods/allowed/web3_clientVersion
+=== RUN   TestOrgFreeMetadataMethods/denied/eth_getBalance
+=== RUN   TestOrgFreeMetadataMethods/denied/eth_call
+=== RUN   TestOrgFreeMetadataMethods/denied/eth_sendTransaction
+=== RUN   TestOrgFreeMetadataMethods/banned_user_blocked
+=== RUN   TestOrgFreeMetadataMethods/no-KYC_user_allowed_on_metadata
+--- PASS: TestOrgFreeMetadataMethods (0.00s)
+    --- PASS: TestOrgFreeMetadataMethods/allowed/eth_blockNumber (0.00s)
+    --- PASS: TestOrgFreeMetadataMethods/allowed/eth_chainId (0.00s)
+    --- PASS: TestOrgFreeMetadataMethods/allowed/eth_gasPrice (0.00s)
+    --- PASS: TestOrgFreeMetadataMethods/allowed/net_version (0.00s)
+    --- PASS: TestOrgFreeMetadataMethods/allowed/net_listening (0.00s)
+    --- PASS: TestOrgFreeMetadataMethods/allowed/web3_clientVersion (0.00s)
+    --- PASS: TestOrgFreeMetadataMethods/denied/eth_getBalance (0.00s)
+    --- PASS: TestOrgFreeMetadataMethods/denied/eth_call (0.00s)
+    --- PASS: TestOrgFreeMetadataMethods/denied/eth_sendTransaction (0.00s)
+    --- PASS: TestOrgFreeMetadataMethods/banned_user_blocked (0.00s)
+    --- PASS: TestOrgFreeMetadataMethods/no-KYC_user_allowed_on_metadata (0.00s)
+=== RUN   TestSingleOrgImplicitFallback
+=== RUN   TestSingleOrgImplicitFallback/single-org_user:_eth_blockNumber_without_org_id
+=== RUN   TestSingleOrgImplicitFallback/single-org_user:_eth_getBalance_without_org_id
+=== RUN   TestSingleOrgImplicitFallback/single-org_user:_explicit_org_id_still_works
+=== RUN   TestSingleOrgImplicitFallback/multi-org_user:_eth_getBalance_without_org_id_is_denied
+=== RUN   TestSingleOrgImplicitFallback/multi-org_user:_explicit_org_id_is_allowed
+--- PASS: TestSingleOrgImplicitFallback (0.00s)
+    --- PASS: TestSingleOrgImplicitFallback/single-org_user:_eth_blockNumber_without_org_id (0.00s)
+    --- PASS: TestSingleOrgImplicitFallback/single-org_user:_eth_getBalance_without_org_id (0.00s)
+    --- PASS: TestSingleOrgImplicitFallback/single-org_user:_explicit_org_id_still_works (0.00s)
+    --- PASS: TestSingleOrgImplicitFallback/multi-org_user:_eth_getBalance_without_org_id_is_denied (0.00s)
+    --- PASS: TestSingleOrgImplicitFallback/multi-org_user:_explicit_org_id_is_allowed (0.00s)
+=== RUN   TestFunctionSelectorGateOnlyForCallMethods
+=== RUN   TestFunctionSelectorGateOnlyForCallMethods/eth_getCode_allowed_when_in_AllowedMethods,_no_ABI
+=== RUN   TestFunctionSelectorGateOnlyForCallMethods/eth_getCode_allowed_when_in_AllowedMethods,_ABI_registered
+=== RUN   TestFunctionSelectorGateOnlyForCallMethods/eth_getCode_denied_when_NOT_in_AllowedMethods,_no_ABI
+=== RUN   TestFunctionSelectorGateOnlyForCallMethods/eth_getCode_denied_when_NOT_in_AllowedMethods,_ABI_registered
+=== RUN   TestFunctionSelectorGateOnlyForCallMethods/eth_getCode_denied_with_empty_AllowedMethods_regardless_of_ABI
+=== RUN   TestFunctionSelectorGateOnlyForCallMethods/eth_call_without_selector,_ABI_registered_—_denied_(selector_required)
+=== RUN   TestFunctionSelectorGateOnlyForCallMethods/eth_call_without_selector,_no_ABI_—_allowed
+=== RUN   TestFunctionSelectorGateOnlyForCallMethods/eth_call_with_selector_matching_ABI_—_allowed
+=== RUN   TestFunctionSelectorGateOnlyForCallMethods/eth_call_with_selector_not_in_ABI_—_denied
+=== RUN   TestFunctionSelectorGateOnlyForCallMethods/eth_estimateGas_without_selector,_ABI_registered_—_denied
+=== RUN   TestFunctionSelectorGateOnlyForCallMethods/eth_sendTransaction_without_selector,_ABI_registered_—_denied
+--- PASS: TestFunctionSelectorGateOnlyForCallMethods (0.00s)
+    --- PASS: TestFunctionSelectorGateOnlyForCallMethods/eth_getCode_allowed_when_in_AllowedMethods,_no_ABI (0.00s)
+    --- PASS: TestFunctionSelectorGateOnlyForCallMethods/eth_getCode_allowed_when_in_AllowedMethods,_ABI_registered (0.00s)
+    --- PASS: TestFunctionSelectorGateOnlyForCallMethods/eth_getCode_denied_when_NOT_in_AllowedMethods,_no_ABI (0.00s)
+    --- PASS: TestFunctionSelectorGateOnlyForCallMethods/eth_getCode_denied_when_NOT_in_AllowedMethods,_ABI_registered (0.00s)
+    --- PASS: TestFunctionSelectorGateOnlyForCallMethods/eth_getCode_denied_with_empty_AllowedMethods_regardless_of_ABI (0.00s)
+    --- PASS: TestFunctionSelectorGateOnlyForCallMethods/eth_call_without_selector,_ABI_registered_—_denied_(selector_required) (0.00s)
+    --- PASS: TestFunctionSelectorGateOnlyForCallMethods/eth_call_without_selector,_no_ABI_—_allowed (0.00s)
+    --- PASS: TestFunctionSelectorGateOnlyForCallMethods/eth_call_with_selector_matching_ABI_—_allowed (0.00s)
+    --- PASS: TestFunctionSelectorGateOnlyForCallMethods/eth_call_with_selector_not_in_ABI_—_denied (0.00s)
+    --- PASS: TestFunctionSelectorGateOnlyForCallMethods/eth_estimateGas_without_selector,_ABI_registered_—_denied (0.00s)
+    --- PASS: TestFunctionSelectorGateOnlyForCallMethods/eth_sendTransaction_without_selector,_ABI_registered_—_denied (0.00s)
+=== RUN   TestUnregisteredContractAccess
+=== RUN   TestUnregisteredContractAccess/read-only_user_DENIED_on_unregistered_contract_(private_by_default)
+=== RUN   TestUnregisteredContractAccess/write_user_DENIED_on_unregistered_contract_(private_by_default)
+=== RUN   TestUnregisteredContractAccess/user_CANNOT_call_contract_registered_to_another_org
+=== RUN   TestUnregisteredContractAccess/anonymous_user_cannot_call_unregistered_contract
+=== RUN   TestUnregisteredContractAccess/deploy_user_DENIED_on_unregistered_contract_(private_by_default)
+=== RUN   TestUnregisteredContractAccess/read_user_DENIED_eth_getLogs_on_unregistered_contract
+=== RUN   TestUnregisteredContractAccess/read_user_DENIED_eth_getCode_on_unregistered_address_(all_private)
+=== RUN   TestUnregisteredContractAccess/user_with_no_claims_cannot_access_unregistered_contract
+=== RUN   TestUnregisteredContractAccess/read_user_can_call_precompile_address
+=== RUN   TestUnregisteredContractAccess/eth_getLogs_on_precompile_is_allowed
+=== RUN   TestUnregisteredContractAccess/value_transfer_to_unregistered_EOA_still_allowed
+=== RUN   TestUnregisteredContractAccess/eth_getBalance_on_unregistered_address_still_allowed_(basic_query)
+--- PASS: TestUnregisteredContractAccess (0.00s)
+    --- PASS: TestUnregisteredContractAccess/read-only_user_DENIED_on_unregistered_contract_(private_by_default) (0.00s)
+    --- PASS: TestUnregisteredContractAccess/write_user_DENIED_on_unregistered_contract_(private_by_default) (0.00s)
+    --- PASS: TestUnregisteredContractAccess/user_CANNOT_call_contract_registered_to_another_org (0.00s)
+    --- PASS: TestUnregisteredContractAccess/anonymous_user_cannot_call_unregistered_contract (0.00s)
+    --- PASS: TestUnregisteredContractAccess/deploy_user_DENIED_on_unregistered_contract_(private_by_default) (0.00s)
+    --- PASS: TestUnregisteredContractAccess/read_user_DENIED_eth_getLogs_on_unregistered_contract (0.00s)
+    --- PASS: TestUnregisteredContractAccess/read_user_DENIED_eth_getCode_on_unregistered_address_(all_private) (0.00s)
+    --- PASS: TestUnregisteredContractAccess/user_with_no_claims_cannot_access_unregistered_contract (0.00s)
+    --- PASS: TestUnregisteredContractAccess/read_user_can_call_precompile_address (0.00s)
+    --- PASS: TestUnregisteredContractAccess/eth_getLogs_on_precompile_is_allowed (0.00s)
+    --- PASS: TestUnregisteredContractAccess/value_transfer_to_unregistered_EOA_still_allowed (0.00s)
+    --- PASS: TestUnregisteredContractAccess/eth_getBalance_on_unregistered_address_still_allowed_(basic_query) (0.00s)
+=== RUN   TestCacheBasicOperations
+--- PASS: TestCacheBasicOperations (0.00s)
+=== RUN   TestCacheExpiration
+--- PASS: TestCacheExpiration (0.10s)
+=== RUN   TestCacheInvalidateUser
+--- PASS: TestCacheInvalidateUser (0.00s)
+=== RUN   TestCacheInvalidateOrg
+--- PASS: TestCacheInvalidateOrg (0.00s)
+=== RUN   TestCacheLRUEviction
+--- PASS: TestCacheLRUEviction (0.00s)
+=== RUN   TestCacheClear
+--- PASS: TestCacheClear (0.00s)
+=== RUN   TestCacheStats
+--- PASS: TestCacheStats (0.00s)
+=== RUN   TestCacheSetWithCustomTTL
+--- PASS: TestCacheSetWithCustomTTL (0.10s)
+=== RUN   TestCacheConcurrency
+--- PASS: TestCacheConcurrency (0.03s)
+=== RUN   TestCacheConcurrentEviction
+--- PASS: TestCacheConcurrentEviction (0.04s)
+=== RUN   TestCanonicalizeMethod
+--- PASS: TestCanonicalizeMethod (0.00s)
+=== RUN   TestCanonicalizeMethod_NoCaseCollisions
+--- PASS: TestCanonicalizeMethod_NoCaseCollisions (0.00s)
+=== RUN   TestFilterEventLogs_NoEventRules_DenyAll
+--- PASS: TestFilterEventLogs_NoEventRules_DenyAll (0.00s)
+=== RUN   TestFilterEventLogs_AllowlistMode
+--- PASS: TestFilterEventLogs_AllowlistMode (0.00s)
+=== RUN   TestFilterEventLogs_AnonymousEventsBlocked
+--- PASS: TestFilterEventLogs_AnonymousEventsBlocked (0.00s)
+=== RUN   TestFilterEventLogs_WildcardPassesAll
+--- PASS: TestFilterEventLogs_WildcardPassesAll (0.00s)
+=== RUN   TestFilterEventLogs_DeniesWhenNoABI_Wildcard
+--- PASS: TestFilterEventLogs_DeniesWhenNoABI_Wildcard (0.00s)
+=== RUN   TestFilterEventLogs_DeniesWhenNoABI_Allowlist
+--- PASS: TestFilterEventLogs_DeniesWhenNoABI_Allowlist (0.00s)
+=== RUN   TestFilterEventLogs_AllowsWhenABIPresent_Wildcard
+--- PASS: TestFilterEventLogs_AllowsWhenABIPresent_Wildcard (0.00s)
+=== RUN   TestFilterEventLogs_AdminBypassesABIRequirement
+--- PASS: TestFilterEventLogs_AdminBypassesABIRequirement (0.00s)
+=== RUN   TestFilterEventLogs_DeniesWhenNoABI_VisibleToFallback
+--- PASS: TestFilterEventLogs_DeniesWhenNoABI_VisibleToFallback (0.00s)
+=== RUN   TestFilterEventLogs_OrdinaryVisibleTo_NoGrant_Denied_RD1208
+--- PASS: TestFilterEventLogs_OrdinaryVisibleTo_NoGrant_Denied_RD1208 (0.00s)
+=== RUN   TestFilterEventLogs_NilABIProviderDisablesGate
+--- PASS: TestFilterEventLogs_NilABIProviderDisablesGate (0.00s)
+=== RUN   TestEventRulesField_MarshalUnmarshal
+=== RUN   TestEventRulesField_MarshalUnmarshal/wildcard
+=== RUN   TestEventRulesField_MarshalUnmarshal/null
+=== RUN   TestEventRulesField_MarshalUnmarshal/empty_array
+=== RUN   TestEventRulesField_MarshalUnmarshal/one_rule
+--- PASS: TestEventRulesField_MarshalUnmarshal (0.00s)
+    --- PASS: TestEventRulesField_MarshalUnmarshal/wildcard (0.00s)
+    --- PASS: TestEventRulesField_MarshalUnmarshal/null (0.00s)
+    --- PASS: TestEventRulesField_MarshalUnmarshal/empty_array (0.00s)
+    --- PASS: TestEventRulesField_MarshalUnmarshal/one_rule (0.00s)
+=== RUN   TestEventRulesField_MarshalRoundtrip
+--- PASS: TestEventRulesField_MarshalRoundtrip (0.00s)
+=== RUN   TestEventRulesField_UnmarshalInvalidString
+--- PASS: TestEventRulesField_UnmarshalInvalidString (0.00s)
+=== RUN   TestFilterEventLogs_ParamRulesNilAndEmptyBothAllow
+=== RUN   TestFilterEventLogs_ParamRulesNilAndEmptyBothAllow/nil
+=== RUN   TestFilterEventLogs_ParamRulesNilAndEmptyBothAllow/empty
+--- PASS: TestFilterEventLogs_ParamRulesNilAndEmptyBothAllow (0.00s)
+    --- PASS: TestFilterEventLogs_ParamRulesNilAndEmptyBothAllow/nil (0.00s)
+    --- PASS: TestFilterEventLogs_ParamRulesNilAndEmptyBothAllow/empty (0.00s)
+=== RUN   TestFilterEventLogs_NoContractAccess
+--- PASS: TestFilterEventLogs_NoContractAccess (0.00s)
+=== RUN   TestFilterEventLogs_ParamRules_IndexedParam
+--- PASS: TestFilterEventLogs_ParamRules_IndexedParam (0.00s)
+=== RUN   TestFilterEventLogs_NilAndEmptyEventRulesEquivalent
+=== RUN   TestFilterEventLogs_NilAndEmptyEventRulesEquivalent/nil
+=== RUN   TestFilterEventLogs_NilAndEmptyEventRulesEquivalent/empty
+--- PASS: TestFilterEventLogs_NilAndEmptyEventRulesEquivalent (0.00s)
+    --- PASS: TestFilterEventLogs_NilAndEmptyEventRulesEquivalent/nil (0.00s)
+    --- PASS: TestFilterEventLogs_NilAndEmptyEventRulesEquivalent/empty (0.00s)
+=== RUN   TestFilterEventLogs_EmptyTopicsArray
+--- PASS: TestFilterEventLogs_EmptyTopicsArray (0.00s)
+=== RUN   TestFilterEventLogs_MalformedDataWithParamRules
+--- PASS: TestFilterEventLogs_MalformedDataWithParamRules (0.00s)
+=== RUN   TestFilterEventLogs_MultipleParamRules_OneMatches
+--- PASS: TestFilterEventLogs_MultipleParamRules_OneMatches (0.00s)
+=== RUN   TestFilterEventLogs_MultipleParamRules_NoneMatch
+--- PASS: TestFilterEventLogs_MultipleParamRules_NoneMatch (0.00s)
+=== RUN   TestFilterEventLogs_ParamRuleIndexOutOfRange
+--- PASS: TestFilterEventLogs_ParamRuleIndexOutOfRange (0.00s)
+=== RUN   TestFilterEventLogs_CaseInsensitiveAddressMatching
+--- PASS: TestFilterEventLogs_CaseInsensitiveAddressMatching (0.00s)
+=== RUN   TestFilterEventLogs_UnionAcrossGrants
+--- PASS: TestFilterEventLogs_UnionAcrossGrants (0.00s)
+=== RUN   TestFilterEventLogs_EventRulesNoParamRules_WidensAccess
+--- PASS: TestFilterEventLogs_EventRulesNoParamRules_WidensAccess (0.00s)
+=== RUN   TestFilterEventLogs_EmptyParamRules_NoConstraints
+--- PASS: TestFilterEventLogs_EmptyParamRules_NoConstraints (0.00s)
+=== RUN   TestFilterEventLogs_NilParamRules_AllowsAll
+--- PASS: TestFilterEventLogs_NilParamRules_AllowsAll (0.00s)
+=== RUN   TestFilterEventLogs_EventRulesWithSelfConstraint
+--- PASS: TestFilterEventLogs_EventRulesWithSelfConstraint (0.00s)
+=== RUN   TestFilterEventLogs_NilPerms_FailClosed
+--- PASS: TestFilterEventLogs_NilPerms_FailClosed (0.00s)
+=== RUN   TestContractGrant_JSON_NilEventRules
+--- PASS: TestContractGrant_JSON_NilEventRules (0.00s)
+=== RUN   TestContractGrant_JSON_WildcardEventRules
+--- PASS: TestContractGrant_JSON_WildcardEventRules (0.00s)
+=== RUN   TestContractGrant_JSON_DenyEventRules
+--- PASS: TestContractGrant_JSON_DenyEventRules (0.00s)
+=== RUN   TestIsValidTopic0_Comprehensive
+=== RUN   TestIsValidTopic0_Comprehensive/U01_ValidTopic0
+=== RUN   TestIsValidTopic0_Comprehensive/U02_TooShort
+=== RUN   TestIsValidTopic0_Comprehensive/U03_NotHex
+=== RUN   TestIsValidTopic0_Comprehensive/U04_Empty
+--- PASS: TestIsValidTopic0_Comprehensive (0.00s)
+    --- PASS: TestIsValidTopic0_Comprehensive/U01_ValidTopic0 (0.00s)
+    --- PASS: TestIsValidTopic0_Comprehensive/U02_TooShort (0.00s)
+    --- PASS: TestIsValidTopic0_Comprehensive/U03_NotHex (0.00s)
+    --- PASS: TestIsValidTopic0_Comprehensive/U04_Empty (0.00s)
+=== RUN   TestFilterEventLogs_CustomHex_IndexedAddress_Match
+--- PASS: TestFilterEventLogs_CustomHex_IndexedAddress_Match (0.00s)
+=== RUN   TestFilterEventLogs_CustomHex_IndexedUint256_Match
+--- PASS: TestFilterEventLogs_CustomHex_IndexedUint256_Match (0.00s)
+=== RUN   TestFilterEventLogs_CustomHex_Mismatch
+--- PASS: TestFilterEventLogs_CustomHex_Mismatch (0.00s)
+=== RUN   TestFilterEventLogs_MixedRules_SelfAndCustom
+--- PASS: TestFilterEventLogs_MixedRules_SelfAndCustom (0.00s)
+=== RUN   TestFilterEventLogs_CustomHex_CaseInsensitive
+--- PASS: TestFilterEventLogs_CustomHex_CaseInsensitive (0.00s)
+=== RUN   TestFilterEventLogs_CustomHex_NonIndexedAddress
+--- PASS: TestFilterEventLogs_CustomHex_NonIndexedAddress (0.00s)
+=== RUN   TestFilterEventLogs_CustomHex_ShortFormEquivalence
+=== RUN   TestFilterEventLogs_CustomHex_ShortFormEquivalence/must_be=0x2a
+=== RUN   TestFilterEventLogs_CustomHex_ShortFormEquivalence/must_be=0x002a
+=== RUN   TestFilterEventLogs_CustomHex_ShortFormEquivalence/must_be=0x000000000000000000000000000000000000000000000000000000000000002a
+=== RUN   TestFilterEventLogs_CustomHex_ShortFormEquivalence/must_be=0x2b_should_not_match
+--- PASS: TestFilterEventLogs_CustomHex_ShortFormEquivalence (0.00s)
+    --- PASS: TestFilterEventLogs_CustomHex_ShortFormEquivalence/must_be=0x2a (0.00s)
+    --- PASS: TestFilterEventLogs_CustomHex_ShortFormEquivalence/must_be=0x002a (0.00s)
+    --- PASS: TestFilterEventLogs_CustomHex_ShortFormEquivalence/must_be=0x000000000000000000000000000000000000000000000000000000000000002a (0.00s)
+    --- PASS: TestFilterEventLogs_CustomHex_ShortFormEquivalence/must_be=0x2b_should_not_match (0.00s)
+=== RUN   TestFilterEventLogs_CustomHex_Bool
+--- PASS: TestFilterEventLogs_CustomHex_Bool (0.00s)
+=== RUN   TestFilterEventLogs_CustomHex_NoABI_FallbackTopicCompare
+--- PASS: TestFilterEventLogs_CustomHex_NoABI_FallbackTopicCompare (0.00s)
+=== RUN   TestValidateParamRuleMustBe
+=== RUN   TestValidateParamRuleMustBe/self_is_valid
+=== RUN   TestValidateParamRuleMustBe/valid_address_hex
+=== RUN   TestValidateParamRuleMustBe/valid_32-byte_hex
+=== RUN   TestValidateParamRuleMustBe/valid_short_hex_(1_byte)
+=== RUN   TestValidateParamRuleMustBe/valid_bool_false
+=== RUN   TestValidateParamRuleMustBe/empty_string
+=== RUN   TestValidateParamRuleMustBe/no_0x_prefix
+=== RUN   TestValidateParamRuleMustBe/just_0x
+=== RUN   TestValidateParamRuleMustBe/odd_hex_chars
+=== RUN   TestValidateParamRuleMustBe/too_long_(33_bytes)
+=== RUN   TestValidateParamRuleMustBe/invalid_hex_chars
+--- PASS: TestValidateParamRuleMustBe (0.00s)
+    --- PASS: TestValidateParamRuleMustBe/self_is_valid (0.00s)
+    --- PASS: TestValidateParamRuleMustBe/valid_address_hex (0.00s)
+    --- PASS: TestValidateParamRuleMustBe/valid_32-byte_hex (0.00s)
+    --- PASS: TestValidateParamRuleMustBe/valid_short_hex_(1_byte) (0.00s)
+    --- PASS: TestValidateParamRuleMustBe/valid_bool_false (0.00s)
+    --- PASS: TestValidateParamRuleMustBe/empty_string (0.00s)
+    --- PASS: TestValidateParamRuleMustBe/no_0x_prefix (0.00s)
+    --- PASS: TestValidateParamRuleMustBe/just_0x (0.00s)
+    --- PASS: TestValidateParamRuleMustBe/odd_hex_chars (0.00s)
+    --- PASS: TestValidateParamRuleMustBe/too_long_(33_bytes) (0.00s)
+    --- PASS: TestValidateParamRuleMustBe/invalid_hex_chars (0.00s)
+=== RUN   TestFilterEventLogs_UnknownMustBe_FailClosed
+--- PASS: TestFilterEventLogs_UnknownMustBe_FailClosed (0.00s)
+=== RUN   TestFilterEventLogs_NegativeParamIndex_FailClosed
+--- PASS: TestFilterEventLogs_NegativeParamIndex_FailClosed (0.00s)
+=== RUN   TestExtractEventSignatures_AnonymousEvent
+--- PASS: TestExtractEventSignatures_AnonymousEvent (0.00s)
+=== RUN   TestFilterEventLogs_Allowlist_MixedLogs
+--- PASS: TestFilterEventLogs_Allowlist_MixedLogs (0.00s)
+=== RUN   TestFilterEventLogs_NonIndexedParam_Match
+--- PASS: TestFilterEventLogs_NonIndexedParam_Match (0.00s)
+=== RUN   TestFilterEventLogs_NonIndexedParam_NoMatch
+--- PASS: TestFilterEventLogs_NonIndexedParam_NoMatch (0.00s)
+=== RUN   TestFilterEventLogs_NonIndexedParam_NoABI_FailClosed
+--- PASS: TestFilterEventLogs_NonIndexedParam_NoABI_FailClosed (0.00s)
+=== RUN   TestUnionEventRules_OneNil_OneRestricted
+--- PASS: TestUnionEventRules_OneNil_OneRestricted (0.00s)
+=== RUN   TestUnionEventRules_BothNil
+--- PASS: TestUnionEventRules_BothNil (0.00s)
+=== RUN   TestUnionEventRules_SameEvent_BothParams
+--- PASS: TestUnionEventRules_SameEvent_BothParams (0.00s)
+=== RUN   TestUnionEventRules_EmptySlice_vs_Rules
+--- PASS: TestUnionEventRules_EmptySlice_vs_Rules (0.00s)
+=== RUN   TestUnionEventRules_SameEvent_OneNoParams
+--- PASS: TestUnionEventRules_SameEvent_OneNoParams (0.00s)
+=== RUN   TestUnionEventRules_DifferentEvents
+--- PASS: TestUnionEventRules_DifferentEvents (0.00s)
+=== RUN   TestUnionEventRules_WildcardWins
+--- PASS: TestUnionEventRules_WildcardWins (0.00s)
+=== RUN   TestUnionEventRules_WildcardPlusNil
+--- PASS: TestUnionEventRules_WildcardPlusNil (0.00s)
+=== RUN   TestGetEventRules_NilDenyAll
+--- PASS: TestGetEventRules_NilDenyAll (0.00s)
+=== RUN   TestGetEventRules_EmptyDenyAll
+--- PASS: TestGetEventRules_EmptyDenyAll (0.00s)
+=== RUN   TestGetEventRules_PopulatedAllowlist
+--- PASS: TestGetEventRules_PopulatedAllowlist (0.00s)
+=== RUN   TestGetEventRules_FindByTopic0
+--- PASS: TestGetEventRules_FindByTopic0 (0.00s)
+=== RUN   TestFilterEventLogs_AdminClaim_Bypass
+--- PASS: TestFilterEventLogs_AdminClaim_Bypass (0.00s)
+=== RUN   TestFilterEventLogs_OrgAdmin_Bypass
+--- PASS: TestFilterEventLogs_OrgAdmin_Bypass (0.00s)
+=== RUN   TestFilterEventLogs_ReadClaim_NoByppass
+--- PASS: TestFilterEventLogs_ReadClaim_NoByppass (0.00s)
+=== RUN   TestFilterEventLogs_CrossOrg_NoAccess
+--- PASS: TestFilterEventLogs_CrossOrg_NoAccess (0.00s)
+=== RUN   TestFilterEventLogs_MultipleContracts_PartialAccess
+--- PASS: TestFilterEventLogs_MultipleContracts_PartialAccess (0.00s)
+=== RUN   TestFilterEventLogs_ViewerDimension_SenderSeesOwnTransfer
+--- PASS: TestFilterEventLogs_ViewerDimension_SenderSeesOwnTransfer (0.00s)
+=== RUN   TestFilterEventLogs_ViewerDimension_ReceiverDeniedBySelfOnFrom
+--- PASS: TestFilterEventLogs_ViewerDimension_ReceiverDeniedBySelfOnFrom (0.00s)
+=== RUN   TestFilterEventLogs_ViewerDimension_ThirdParty_NoParamMatch
+--- PASS: TestFilterEventLogs_ViewerDimension_ThirdParty_NoParamMatch (0.00s)
+=== RUN   TestFilterEventLogs_ViewerDimension_ThirdParty_NoParamRules
+--- PASS: TestFilterEventLogs_ViewerDimension_ThirdParty_NoParamRules (0.00s)
+=== RUN   TestFilterEventLogs_UnionGrants_BothEventsAllowed
+--- PASS: TestFilterEventLogs_UnionGrants_BothEventsAllowed (0.00s)
+=== RUN   TestFilterEventLogs_UnionGrants_BothRestricted
+--- PASS: TestFilterEventLogs_UnionGrants_BothRestricted (0.00s)
+=== RUN   TestHexEncodingConsistency
+--- PASS: TestHexEncodingConsistency (0.00s)
+=== RUN   TestFilterEventLogs_AdminSeesAllLogs_NoAddressInTopics
+--- PASS: TestFilterEventLogs_AdminSeesAllLogs_NoAddressInTopics (0.00s)
+=== RUN   TestFilterEventLogs_ReadUser_NoAddressInTopics_Filtered
+--- PASS: TestFilterEventLogs_ReadUser_NoAddressInTopics_Filtered (0.00s)
+=== RUN   TestFilterEventLogs_AdminBypassWithEventRulesStillSeesAll
+--- PASS: TestFilterEventLogs_AdminBypassWithEventRulesStillSeesAll (0.00s)
+=== RUN   TestFilterEventLogs_AdminBypassWithEmptyEventRules
+--- PASS: TestFilterEventLogs_AdminBypassWithEmptyEventRules (0.00s)
+=== RUN   TestFilterEventLogs_AdminOnOneContract_ReadOnAnother
+--- PASS: TestFilterEventLogs_AdminOnOneContract_ReadOnAnother (0.00s)
+=== RUN   TestFilterEventLogs_CrossOrgIsolation_NoAccessToOtherOrg
+--- PASS: TestFilterEventLogs_CrossOrgIsolation_NoAccessToOtherOrg (0.00s)
+=== RUN   TestFilterEventLogs_AdminBypassWithAnonymousEvent
+--- PASS: TestFilterEventLogs_AdminBypassWithAnonymousEvent (0.00s)
+=== RUN   TestFilterEventLogs_DeployWriteClaims_NoBypass
+--- PASS: TestFilterEventLogs_DeployWriteClaims_NoBypass (0.00s)
+=== RUN   TestFilterEventLogs_VisibleTo_ParamRulesFail_ViewerInList
+--- PASS: TestFilterEventLogs_VisibleTo_ParamRulesFail_ViewerInList (0.00s)
+=== RUN   TestFilterEventLogs_VisibleTo_ViewerNotInList
+--- PASS: TestFilterEventLogs_VisibleTo_ViewerNotInList (0.00s)
+=== RUN   TestFilterEventLogs_VisibleTo_NilContext_BackwardCompat
+--- PASS: TestFilterEventLogs_VisibleTo_NilContext_BackwardCompat (0.00s)
+=== RUN   TestFilterEventLogs_VisibleTo_DoesNotBypassTopic0Allowlist
+--- PASS: TestFilterEventLogs_VisibleTo_DoesNotBypassTopic0Allowlist (0.00s)
+=== RUN   TestFilterEventLogs_VisibleTo_AdminStillBypasses
+--- PASS: TestFilterEventLogs_VisibleTo_AdminStillBypasses (0.00s)
+=== RUN   TestFilterEventLogs_NilEventRules_DenyAll_EvenWithVisibleTo
+--- PASS: TestFilterEventLogs_NilEventRules_DenyAll_EvenWithVisibleTo (0.00s)
+=== RUN   TestFilterEventLogs_M15_DynamicPayload_Drops
+--- PASS: TestFilterEventLogs_M15_DynamicPayload_Drops (0.00s)
+=== RUN   TestFilterEventLogs_M15_OptOut_Passes
+--- PASS: TestFilterEventLogs_M15_OptOut_Passes (0.00s)
+=== RUN   TestFilterEventLogs_M15_StaticEvent_Unaffected
+--- PASS: TestFilterEventLogs_M15_StaticEvent_Unaffected (0.00s)
+=== RUN   TestFilterEventLogs_M15_AdminBypass
+--- PASS: TestFilterEventLogs_M15_AdminBypass (0.00s)
+=== RUN   TestFilterEventLogs_M15_VisibleToUnlockBypass
+--- PASS: TestFilterEventLogs_M15_VisibleToUnlockBypass (0.00s)
+=== RUN   TestFilterEventLogs_M15_LegacyProviderDisablesGate
+--- PASS: TestFilterEventLogs_M15_LegacyProviderDisablesGate (0.00s)
+=== RUN   TestEventHasDynamicNonIndexedParam_TypeMatrix
+=== RUN   TestEventHasDynamicNonIndexedParam_TypeMatrix/ERC20_Transfer_static
+=== RUN   TestEventHasDynamicNonIndexedParam_TypeMatrix/non_indexed_bytes
+=== RUN   TestEventHasDynamicNonIndexedParam_TypeMatrix/non_indexed_string
+=== RUN   TestEventHasDynamicNonIndexedParam_TypeMatrix/non_indexed_dynamic_array
+=== RUN   TestEventHasDynamicNonIndexedParam_TypeMatrix/indexed_bytes_does_not_count
+=== RUN   TestEventHasDynamicNonIndexedParam_TypeMatrix/bytes32_is_static
+--- PASS: TestEventHasDynamicNonIndexedParam_TypeMatrix (0.00s)
+    --- PASS: TestEventHasDynamicNonIndexedParam_TypeMatrix/ERC20_Transfer_static (0.00s)
+    --- PASS: TestEventHasDynamicNonIndexedParam_TypeMatrix/non_indexed_bytes (0.00s)
+    --- PASS: TestEventHasDynamicNonIndexedParam_TypeMatrix/non_indexed_string (0.00s)
+    --- PASS: TestEventHasDynamicNonIndexedParam_TypeMatrix/non_indexed_dynamic_array (0.00s)
+    --- PASS: TestEventHasDynamicNonIndexedParam_TypeMatrix/indexed_bytes_does_not_count (0.00s)
+    --- PASS: TestEventHasDynamicNonIndexedParam_TypeMatrix/bytes32_is_static (0.00s)
+=== RUN   TestFilterEventLogs_ParticipantSeesOwnTxLog_RD1162
+--- PASS: TestFilterEventLogs_ParticipantSeesOwnTxLog_RD1162 (0.00s)
+=== RUN   TestFilterEventLogs_ParticipantBounds_RD1162
+--- PASS: TestFilterEventLogs_ParticipantBounds_RD1162 (0.00s)
+=== RUN   TestExtractEventSignatures
+--- PASS: TestExtractEventSignatures (0.00s)
+=== RUN   TestExtractEventSignatures_EmptyABI
+--- PASS: TestExtractEventSignatures_EmptyABI (0.00s)
+=== RUN   TestExtractEventSignatures_NoEvents
+--- PASS: TestExtractEventSignatures_NoEvents (0.00s)
+=== RUN   TestExtractEventSignatures_EmptyArray
+--- PASS: TestExtractEventSignatures_EmptyArray (0.00s)
+=== RUN   TestExtractEventSignatures_MalformedABI
+--- PASS: TestExtractEventSignatures_MalformedABI (0.00s)
+=== RUN   TestExtractEventSignatures_OverloadedEvents
+--- PASS: TestExtractEventSignatures_OverloadedEvents (0.00s)
+=== RUN   TestExtractEventSignatures_ExactKeccak256
+--- PASS: TestExtractEventSignatures_ExactKeccak256 (0.00s)
+=== RUN   TestIsValidTopic0
+=== RUN   TestIsValidTopic0/valid
+=== RUN   TestIsValidTopic0/all_zeros
+=== RUN   TestIsValidTopic0/too_short
+=== RUN   TestIsValidTopic0/no_prefix
+=== RUN   TestIsValidTopic0/invalid_hex
+=== RUN   TestIsValidTopic0/empty
+--- PASS: TestIsValidTopic0 (0.00s)
+    --- PASS: TestIsValidTopic0/valid (0.00s)
+    --- PASS: TestIsValidTopic0/all_zeros (0.00s)
+    --- PASS: TestIsValidTopic0/too_short (0.00s)
+    --- PASS: TestIsValidTopic0/no_prefix (0.00s)
+    --- PASS: TestIsValidTopic0/invalid_hex (0.00s)
+    --- PASS: TestIsValidTopic0/empty (0.00s)
+=== RUN   TestExpandClaims
+=== RUN   TestExpandClaims/admin_expands_to_deploy_and_upgrade
+=== RUN   TestExpandClaims/deploy_does_not_expand
+=== RUN   TestExpandClaims/upgrade_does_not_expand
+=== RUN   TestExpandClaims/deploy_and_upgrade_stay_as-is
+=== RUN   TestExpandClaims/empty_input_returns_empty
+=== RUN   TestExpandClaims/already_expanded_input_is_idempotent
+--- PASS: TestExpandClaims (0.00s)
+    --- PASS: TestExpandClaims/admin_expands_to_deploy_and_upgrade (0.00s)
+    --- PASS: TestExpandClaims/deploy_does_not_expand (0.00s)
+    --- PASS: TestExpandClaims/upgrade_does_not_expand (0.00s)
+    --- PASS: TestExpandClaims/deploy_and_upgrade_stay_as-is (0.00s)
+    --- PASS: TestExpandClaims/empty_input_returns_empty (0.00s)
+    --- PASS: TestExpandClaims/already_expanded_input_is_idempotent (0.00s)
+=== RUN   TestFactoryAutoAllowLogic
+=== RUN   TestFactoryAutoAllowLogic/containsClaim_helper_works_correctly
+=== RUN   TestFactoryAutoAllowLogic/deploy_claim_in_default_claims_grants_factory_access
+=== RUN   TestFactoryAutoAllowLogic/deploy_claim_on_any_contract_grants_factory_access
+=== RUN   TestFactoryAutoAllowLogic/no_deploy_claim_denies_factory_access
+=== RUN   TestFactoryAutoAllowLogic/factory_address_comparison_is_case-insensitive
+=== RUN   TestFactoryAutoAllowLogic/collectAllClaims_includes_claims_from_all_sources
+--- PASS: TestFactoryAutoAllowLogic (0.00s)
+    --- PASS: TestFactoryAutoAllowLogic/containsClaim_helper_works_correctly (0.00s)
+    --- PASS: TestFactoryAutoAllowLogic/deploy_claim_in_default_claims_grants_factory_access (0.00s)
+    --- PASS: TestFactoryAutoAllowLogic/deploy_claim_on_any_contract_grants_factory_access (0.00s)
+    --- PASS: TestFactoryAutoAllowLogic/no_deploy_claim_denies_factory_access (0.00s)
+    --- PASS: TestFactoryAutoAllowLogic/factory_address_comparison_is_case-insensitive (0.00s)
+    --- PASS: TestFactoryAutoAllowLogic/collectAllClaims_includes_claims_from_all_sources (0.00s)
+=== RUN   TestFactoryAutoAllowSecurityProperties
+=== RUN   TestFactoryAutoAllowSecurityProperties/cross-org_factory_access_prevented_by_address_isolation
+=== RUN   TestFactoryAutoAllowSecurityProperties/factory_auto-allow_requires_deploy_claim_specifically
+--- PASS: TestFactoryAutoAllowSecurityProperties (0.00s)
+    --- PASS: TestFactoryAutoAllowSecurityProperties/cross-org_factory_access_prevented_by_address_isolation (0.00s)
+    --- PASS: TestFactoryAutoAllowSecurityProperties/factory_auto-allow_requires_deploy_claim_specifically (0.00s)
+=== RUN   TestDecideLogEmitterAccess
+=== RUN   TestDecideLogEmitterAccess/admin_bypasses_everything_(no_grant,_deny,_no_ABI)
+=== RUN   TestDecideLogEmitterAccess/unlock_bypasses_everything_(no_grant,_deny,_no_ABI)
+=== RUN   TestDecideLogEmitterAccess/no_ABI_drops_even_with_grant+wildcard
+=== RUN   TestDecideLogEmitterAccess/M15_dynamic_payload_drops_even_with_grant+wildcard
+=== RUN   TestDecideLogEmitterAccess/no_ABI_drops_even_for_a_participant
+=== RUN   TestDecideLogEmitterAccess/M15_drops_even_for_a_participant
+=== RUN   TestDecideLogEmitterAccess/admin_bypasses_the_no-ABI_gate
+=== RUN   TestDecideLogEmitterAccess/NO_grant_drops_even_with_wildcard_rules
+=== RUN   TestDecideLogEmitterAccess/NO_grant_+_participant_drops_(participant_is_grant-bounded,_RD-1162)
+=== RUN   TestDecideLogEmitterAccess/NO_grant_+_visibleTo_drops_(ordinary_visibleTo_not_a_grant,_RD-1208)
+=== RUN   TestDecideLogEmitterAccess/NO_grant_+_allowlisted+param-matched_still_drops
+=== RUN   TestDecideLogEmitterAccess/participant_+_grant_admits_even_under_deny-all_rules
+=== RUN   TestDecideLogEmitterAccess/grant_+_wildcard_admits
+=== RUN   TestDecideLogEmitterAccess/grant_+_wildcard_admits_anonymous_event
+=== RUN   TestDecideLogEmitterAccess/grant_+_deny-all_drops
+=== RUN   TestDecideLogEmitterAccess/allowlist:_topic0_allowed_+_param_matched_→_admit
+=== RUN   TestDecideLogEmitterAccess/allowlist:_topic0_allowlisted,_param_failed,_in_visibleTo_→_admit_(fallback)
+=== RUN   TestDecideLogEmitterAccess/allowlist:_topic0_allowlisted,_param_failed,_NOT_in_visibleTo_→_drop
+=== RUN   TestDecideLogEmitterAccess/allowlist:_topic0_NOT_allowlisted_→_drop_even_with_visibleTo
+=== RUN   TestDecideLogEmitterAccess/allowlist:_anonymous_event_(no_topic0)_→_drop
+--- PASS: TestDecideLogEmitterAccess (0.00s)
+    --- PASS: TestDecideLogEmitterAccess/admin_bypasses_everything_(no_grant,_deny,_no_ABI) (0.00s)
+    --- PASS: TestDecideLogEmitterAccess/unlock_bypasses_everything_(no_grant,_deny,_no_ABI) (0.00s)
+    --- PASS: TestDecideLogEmitterAccess/no_ABI_drops_even_with_grant+wildcard (0.00s)
+    --- PASS: TestDecideLogEmitterAccess/M15_dynamic_payload_drops_even_with_grant+wildcard (0.00s)
+    --- PASS: TestDecideLogEmitterAccess/no_ABI_drops_even_for_a_participant (0.00s)
+    --- PASS: TestDecideLogEmitterAccess/M15_drops_even_for_a_participant (0.00s)
+    --- PASS: TestDecideLogEmitterAccess/admin_bypasses_the_no-ABI_gate (0.00s)
+    --- PASS: TestDecideLogEmitterAccess/NO_grant_drops_even_with_wildcard_rules (0.00s)
+    --- PASS: TestDecideLogEmitterAccess/NO_grant_+_participant_drops_(participant_is_grant-bounded,_RD-1162) (0.00s)
+    --- PASS: TestDecideLogEmitterAccess/NO_grant_+_visibleTo_drops_(ordinary_visibleTo_not_a_grant,_RD-1208) (0.00s)
+    --- PASS: TestDecideLogEmitterAccess/NO_grant_+_allowlisted+param-matched_still_drops (0.00s)
+    --- PASS: TestDecideLogEmitterAccess/participant_+_grant_admits_even_under_deny-all_rules (0.00s)
+    --- PASS: TestDecideLogEmitterAccess/grant_+_wildcard_admits (0.00s)
+    --- PASS: TestDecideLogEmitterAccess/grant_+_wildcard_admits_anonymous_event (0.00s)
+    --- PASS: TestDecideLogEmitterAccess/grant_+_deny-all_drops (0.00s)
+    --- PASS: TestDecideLogEmitterAccess/allowlist:_topic0_allowed_+_param_matched_→_admit (0.00s)
+    --- PASS: TestDecideLogEmitterAccess/allowlist:_topic0_allowlisted,_param_failed,_in_visibleTo_→_admit_(fallback) (0.00s)
+    --- PASS: TestDecideLogEmitterAccess/allowlist:_topic0_allowlisted,_param_failed,_NOT_in_visibleTo_→_drop (0.00s)
+    --- PASS: TestDecideLogEmitterAccess/allowlist:_topic0_NOT_allowlisted_→_drop_even_with_visibleTo (0.00s)
+    --- PASS: TestDecideLogEmitterAccess/allowlist:_anonymous_event_(no_topic0)_→_drop (0.00s)
+=== RUN   TestGetClaimForMethod
+=== RUN   TestGetClaimForMethod/eth_call_has_no_claim
+=== RUN   TestGetClaimForMethod/eth_getBalance_has_no_claim
+=== RUN   TestGetClaimForMethod/eth_chainId_has_no_claim
+=== RUN   TestGetClaimForMethod/eth_blockNumber_has_no_claim
+=== RUN   TestGetClaimForMethod/eth_estimateGas_has_no_claim
+=== RUN   TestGetClaimForMethod/eth_getLogs_has_no_claim
+=== RUN   TestGetClaimForMethod/eth_getTransactionReceipt_has_no_claim
+=== RUN   TestGetClaimForMethod/eth_getCode_has_no_claim
+=== RUN   TestGetClaimForMethod/net_version_has_no_claim
+=== RUN   TestGetClaimForMethod/web3_clientVersion_has_no_claim
+=== RUN   TestGetClaimForMethod/eth_newFilter_has_no_claim
+=== RUN   TestGetClaimForMethod/eth_getFilterChanges_has_no_claim
+=== RUN   TestGetClaimForMethod/eth_sendTransaction_has_no_claim
+=== RUN   TestGetClaimForMethod/eth_sendRawTransaction_has_no_claim
+=== RUN   TestGetClaimForMethod/eth_sign_has_no_claim
+=== RUN   TestGetClaimForMethod/eth_signTransaction_has_no_claim
+=== RUN   TestGetClaimForMethod/personal_sign_has_no_claim
+=== RUN   TestGetClaimForMethod/eth_signTypedData_has_no_claim
+=== RUN   TestGetClaimForMethod/eth_signTypedData_v4_has_no_claim
+=== RUN   TestGetClaimForMethod/debug_traceCall_has_no_claim
+=== RUN   TestGetClaimForMethod/debug_traceTransaction_has_no_claim
+=== RUN   TestGetClaimForMethod/unknown_method_returns_empty
+=== RUN   TestGetClaimForMethod/admin_method_returns_empty
+--- PASS: TestGetClaimForMethod (0.00s)
+    --- PASS: TestGetClaimForMethod/eth_call_has_no_claim (0.00s)
+    --- PASS: TestGetClaimForMethod/eth_getBalance_has_no_claim (0.00s)
+    --- PASS: TestGetClaimForMethod/eth_chainId_has_no_claim (0.00s)
+    --- PASS: TestGetClaimForMethod/eth_blockNumber_has_no_claim (0.00s)
+    --- PASS: TestGetClaimForMethod/eth_estimateGas_has_no_claim (0.00s)
+    --- PASS: TestGetClaimForMethod/eth_getLogs_has_no_claim (0.00s)
+    --- PASS: TestGetClaimForMethod/eth_getTransactionReceipt_has_no_claim (0.00s)
+    --- PASS: TestGetClaimForMethod/eth_getCode_has_no_claim (0.00s)
+    --- PASS: TestGetClaimForMethod/net_version_has_no_claim (0.00s)
+    --- PASS: TestGetClaimForMethod/web3_clientVersion_has_no_claim (0.00s)
+    --- PASS: TestGetClaimForMethod/eth_newFilter_has_no_claim (0.00s)
+    --- PASS: TestGetClaimForMethod/eth_getFilterChanges_has_no_claim (0.00s)
+    --- PASS: TestGetClaimForMethod/eth_sendTransaction_has_no_claim (0.00s)
+    --- PASS: TestGetClaimForMethod/eth_sendRawTransaction_has_no_claim (0.00s)
+    --- PASS: TestGetClaimForMethod/eth_sign_has_no_claim (0.00s)
+    --- PASS: TestGetClaimForMethod/eth_signTransaction_has_no_claim (0.00s)
+    --- PASS: TestGetClaimForMethod/personal_sign_has_no_claim (0.00s)
+    --- PASS: TestGetClaimForMethod/eth_signTypedData_has_no_claim (0.00s)
+    --- PASS: TestGetClaimForMethod/eth_signTypedData_v4_has_no_claim (0.00s)
+    --- PASS: TestGetClaimForMethod/debug_traceCall_has_no_claim (0.00s)
+    --- PASS: TestGetClaimForMethod/debug_traceTransaction_has_no_claim (0.00s)
+    --- PASS: TestGetClaimForMethod/unknown_method_returns_empty (0.00s)
+    --- PASS: TestGetClaimForMethod/admin_method_returns_empty (0.00s)
+=== RUN   TestIsReadMethod
+--- PASS: TestIsReadMethod (0.00s)
+=== RUN   TestIsWriteMethod
+--- PASS: TestIsWriteMethod (0.00s)
+=== RUN   TestValidateMethodsMatchClaims
+=== RUN   TestValidateMethodsMatchClaims/read_methods_need_no_claims
+=== RUN   TestValidateMethodsMatchClaims/write_methods_need_no_claims
+=== RUN   TestValidateMethodsMatchClaims/mixed_read+write_methods_need_no_claims
+=== RUN   TestValidateMethodsMatchClaims/trace_method_with_deploy_claim_is_fine
+=== RUN   TestValidateMethodsMatchClaims/trace_method_without_any_claim_is_allowed_(RD-1121)
+=== RUN   TestValidateMethodsMatchClaims/trace_method_with_admin_claim_is_fine
+=== RUN   TestValidateMethodsMatchClaims/empty_methods_list
+=== RUN   TestValidateMethodsMatchClaims/unknown_methods_don't_require_claims
+--- PASS: TestValidateMethodsMatchClaims (0.00s)
+    --- PASS: TestValidateMethodsMatchClaims/read_methods_need_no_claims (0.00s)
+    --- PASS: TestValidateMethodsMatchClaims/write_methods_need_no_claims (0.00s)
+    --- PASS: TestValidateMethodsMatchClaims/mixed_read+write_methods_need_no_claims (0.00s)
+    --- PASS: TestValidateMethodsMatchClaims/trace_method_with_deploy_claim_is_fine (0.00s)
+    --- PASS: TestValidateMethodsMatchClaims/trace_method_without_any_claim_is_allowed_(RD-1121) (0.00s)
+    --- PASS: TestValidateMethodsMatchClaims/trace_method_with_admin_claim_is_fine (0.00s)
+    --- PASS: TestValidateMethodsMatchClaims/empty_methods_list (0.00s)
+    --- PASS: TestValidateMethodsMatchClaims/unknown_methods_don't_require_claims (0.00s)
+=== RUN   TestMethodClaimMismatchError
+--- PASS: TestMethodClaimMismatchError (0.00s)
+=== RUN   TestGetAllReadMethods
+--- PASS: TestGetAllReadMethods (0.00s)
+=== RUN   TestGetAllWriteMethods
+--- PASS: TestGetAllWriteMethods (0.00s)
+=== RUN   TestGetAllDeployMethods
+--- PASS: TestGetAllDeployMethods (0.00s)
+=== RUN   TestAllAllowedMethods
+--- PASS: TestAllAllowedMethods (0.00s)
+=== RUN   TestExpandWildcardMethods
+=== RUN   TestExpandWildcardMethods/wildcard_alone
+=== RUN   TestExpandWildcardMethods/wildcard_with_other_methods
+=== RUN   TestExpandWildcardMethods/no_wildcard
+=== RUN   TestExpandWildcardMethods/empty_list
+=== RUN   TestExpandWildcardMethods/nil_list
+--- PASS: TestExpandWildcardMethods (0.00s)
+    --- PASS: TestExpandWildcardMethods/wildcard_alone (0.00s)
+    --- PASS: TestExpandWildcardMethods/wildcard_with_other_methods (0.00s)
+    --- PASS: TestExpandWildcardMethods/no_wildcard (0.00s)
+    --- PASS: TestExpandWildcardMethods/empty_list (0.00s)
+    --- PASS: TestExpandWildcardMethods/nil_list (0.00s)
+=== RUN   TestRegisterExtraNamespaces
+--- PASS: TestRegisterExtraNamespaces (0.00s)
+=== RUN   TestMatchWildcard
+=== RUN   TestMatchWildcard/linea_unknown_method_matches
+=== RUN   TestMatchWildcard/linea_explicit_also_matches
+=== RUN   TestMatchWildcard/linea_deny_exact_match
+=== RUN   TestMatchWildcard/linea_deny_suffix_glob
+=== RUN   TestMatchWildcard/linea_deny_suffix_glob_exact
+=== RUN   TestMatchWildcard/unrelated_prefix
+=== RUN   TestMatchWildcard/trace_any_method_passes_(no_deny_list)
+=== RUN   TestMatchWildcard/empty_method
+--- PASS: TestMatchWildcard (0.00s)
+    --- PASS: TestMatchWildcard/linea_unknown_method_matches (0.00s)
+    --- PASS: TestMatchWildcard/linea_explicit_also_matches (0.00s)
+    --- PASS: TestMatchWildcard/linea_deny_exact_match (0.00s)
+    --- PASS: TestMatchWildcard/linea_deny_suffix_glob (0.00s)
+    --- PASS: TestMatchWildcard/linea_deny_suffix_glob_exact (0.00s)
+    --- PASS: TestMatchWildcard/unrelated_prefix (0.00s)
+    --- PASS: TestMatchWildcard/trace_any_method_passes_(no_deny_list) (0.00s)
+    --- PASS: TestMatchWildcard/empty_method (0.00s)
+=== RUN   TestHasWildcardForPrefix
+--- PASS: TestHasWildcardForPrefix (0.00s)
+=== RUN   TestRegisterExtraNamespaces_WithWildcards
+--- PASS: TestRegisterExtraNamespaces_WithWildcards (0.00s)
+=== RUN   TestAccessCheckRequest_EffectiveMethod
+=== RUN   TestAccessCheckRequest_EffectiveMethod/returns_AccessMethod_when_set
+=== RUN   TestAccessCheckRequest_EffectiveMethod/returns_Method_when_AccessMethod_empty
+--- PASS: TestAccessCheckRequest_EffectiveMethod (0.00s)
+    --- PASS: TestAccessCheckRequest_EffectiveMethod/returns_AccessMethod_when_set (0.00s)
+    --- PASS: TestAccessCheckRequest_EffectiveMethod/returns_Method_when_AccessMethod_empty (0.00s)
+=== RUN   TestEffectivePermissions_HasMethod_Glob
+=== RUN   TestEffectivePermissions_HasMethod_Glob/explicit_exact_match_still_wins
+=== RUN   TestEffectivePermissions_HasMethod_Glob/glob_covers_unknown_method_via_registered_wildcard
+=== RUN   TestEffectivePermissions_HasMethod_Glob/glob_does_NOT_cover_deny-listed_method
+=== RUN   TestEffectivePermissions_HasMethod_Glob/glob_does_NOT_cover_deny-glob_match
+=== RUN   TestEffectivePermissions_HasMethod_Glob/unrelated_prefix_glob_without_registered_wildcard_is_ignored
+=== RUN   TestEffectivePermissions_HasMethod_Glob/bare_*_still_allows_anything_not_in_any_wildcard_Deny
+=== RUN   TestEffectivePermissions_HasMethod_Glob/empty_glob_entry_is_ignored
+=== RUN   TestEffectivePermissions_HasMethod_Glob/wildcard_Deny_is_hard_floor_even_against_*
+=== RUN   TestEffectivePermissions_HasMethod_Glob/glob_entry_alongside_explicits_—_explicit_wins_for_explicit_method
+=== RUN   TestEffectivePermissions_HasMethod_Glob/glob_entry_alongside_explicits_—_glob_covers_other_methods
+=== RUN   TestEffectivePermissions_HasMethod_Glob/no_glob,_unknown_method_denied
+--- PASS: TestEffectivePermissions_HasMethod_Glob (0.00s)
+    --- PASS: TestEffectivePermissions_HasMethod_Glob/explicit_exact_match_still_wins (0.00s)
+    --- PASS: TestEffectivePermissions_HasMethod_Glob/glob_covers_unknown_method_via_registered_wildcard (0.00s)
+    --- PASS: TestEffectivePermissions_HasMethod_Glob/glob_does_NOT_cover_deny-listed_method (0.00s)
+    --- PASS: TestEffectivePermissions_HasMethod_Glob/glob_does_NOT_cover_deny-glob_match (0.00s)
+    --- PASS: TestEffectivePermissions_HasMethod_Glob/unrelated_prefix_glob_without_registered_wildcard_is_ignored (0.00s)
+    --- PASS: TestEffectivePermissions_HasMethod_Glob/bare_*_still_allows_anything_not_in_any_wildcard_Deny (0.00s)
+    --- PASS: TestEffectivePermissions_HasMethod_Glob/empty_glob_entry_is_ignored (0.00s)
+    --- PASS: TestEffectivePermissions_HasMethod_Glob/wildcard_Deny_is_hard_floor_even_against_* (0.00s)
+    --- PASS: TestEffectivePermissions_HasMethod_Glob/glob_entry_alongside_explicits_—_explicit_wins_for_explicit_method (0.00s)
+    --- PASS: TestEffectivePermissions_HasMethod_Glob/glob_entry_alongside_explicits_—_glob_covers_other_methods (0.00s)
+    --- PASS: TestEffectivePermissions_HasMethod_Glob/no_glob,_unknown_method_denied (0.00s)
+=== RUN   TestEffectivePermissions_HasMethod_NoWildcardsRegistered
+--- PASS: TestEffectivePermissions_HasMethod_NoWildcardsRegistered (0.00s)
+=== RUN   TestNewOrgContext
+=== RUN   TestNewOrgContext/creates_context_for_contract_in_user's_org
+=== RUN   TestNewOrgContext/error_for_contract_in_different_org
+=== RUN   TestNewOrgContext/creates_context_for_public_contract
+=== RUN   TestNewOrgContext/creates_context_with_empty_target_address
+=== RUN   TestNewOrgContext/multi-org_user_can_access_contract_from_any_org
+=== RUN   TestNewOrgContext/error_when_memberships_lookup_fails
+--- PASS: TestNewOrgContext (0.00s)
+    --- PASS: TestNewOrgContext/creates_context_for_contract_in_user's_org (0.00s)
+    --- PASS: TestNewOrgContext/error_for_contract_in_different_org (0.00s)
+    --- PASS: TestNewOrgContext/creates_context_for_public_contract (0.00s)
+    --- PASS: TestNewOrgContext/creates_context_with_empty_target_address (0.00s)
+    --- PASS: TestNewOrgContext/multi-org_user_can_access_contract_from_any_org (0.00s)
+    --- PASS: TestNewOrgContext/error_when_memberships_lookup_fails (0.00s)
+=== RUN   TestNewOrgContextForOrg
+=== RUN   TestNewOrgContextForOrg/creates_context_for_explicit_org_user_belongs_to
+=== RUN   TestNewOrgContextForOrg/error_for_org_user_is_not_member_of
+--- PASS: TestNewOrgContextForOrg (0.00s)
+    --- PASS: TestNewOrgContextForOrg/creates_context_for_explicit_org_user_belongs_to (0.00s)
+    --- PASS: TestNewOrgContextForOrg/error_for_org_user_is_not_member_of (0.00s)
+=== RUN   TestOrgContext_CheckAddressInScope
+=== RUN   TestOrgContext_CheckAddressInScope/allows_address_in_same_org
+=== RUN   TestOrgContext_CheckAddressInScope/allows_address_in_user's_other_org
+=== RUN   TestOrgContext_CheckAddressInScope/denies_address_in_different_org
+=== RUN   TestOrgContext_CheckAddressInScope/denies_unregistered_non-precompile_address_(private_by_default)
+=== RUN   TestOrgContext_CheckAddressInScope/allows_precompile_address
+--- PASS: TestOrgContext_CheckAddressInScope (0.00s)
+    --- PASS: TestOrgContext_CheckAddressInScope/allows_address_in_same_org (0.00s)
+    --- PASS: TestOrgContext_CheckAddressInScope/allows_address_in_user's_other_org (0.00s)
+    --- PASS: TestOrgContext_CheckAddressInScope/denies_address_in_different_org (0.00s)
+    --- PASS: TestOrgContext_CheckAddressInScope/denies_unregistered_non-precompile_address_(private_by_default) (0.00s)
+    --- PASS: TestOrgContext_CheckAddressInScope/allows_precompile_address (0.00s)
+=== RUN   TestOrgContext_CheckMultiAddressesInScope
+=== RUN   TestOrgContext_CheckMultiAddressesInScope/all_registered_addresses_in_scope_succeeds
+=== RUN   TestOrgContext_CheckMultiAddressesInScope/unregistered_address_in_multi-check_fails
+=== RUN   TestOrgContext_CheckMultiAddressesInScope/one_cross-org_address_fails
+--- PASS: TestOrgContext_CheckMultiAddressesInScope (0.00s)
+    --- PASS: TestOrgContext_CheckMultiAddressesInScope/all_registered_addresses_in_scope_succeeds (0.00s)
+    --- PASS: TestOrgContext_CheckMultiAddressesInScope/unregistered_address_in_multi-check_fails (0.00s)
+    --- PASS: TestOrgContext_CheckMultiAddressesInScope/one_cross-org_address_fails (0.00s)
+=== RUN   TestOrgContext_CheckDefaultClaimsAllowed
+=== RUN   TestOrgContext_CheckDefaultClaimsAllowed/allows_when_user_has_explicit_access
+=== RUN   TestOrgContext_CheckDefaultClaimsAllowed/denies_registered_own-org_contract_without_explicit_grant_(RD-849)
+=== RUN   TestOrgContext_CheckDefaultClaimsAllowed/denies_for_contracts_registered_to_other_org
+=== RUN   TestOrgContext_CheckDefaultClaimsAllowed/denies_unregistered_non-precompile_contracts_(private_by_default)
+=== RUN   TestOrgContext_CheckDefaultClaimsAllowed/allows_precompile_via_CheckDefaultClaimsAllowed
+=== RUN   TestOrgContext_CheckDefaultClaimsAllowed/denies_registered_contract_in_user's_other_org_without_explicit_grant
+--- PASS: TestOrgContext_CheckDefaultClaimsAllowed (0.00s)
+    --- PASS: TestOrgContext_CheckDefaultClaimsAllowed/allows_when_user_has_explicit_access (0.00s)
+    --- PASS: TestOrgContext_CheckDefaultClaimsAllowed/denies_registered_own-org_contract_without_explicit_grant_(RD-849) (0.00s)
+    --- PASS: TestOrgContext_CheckDefaultClaimsAllowed/denies_for_contracts_registered_to_other_org (0.00s)
+    --- PASS: TestOrgContext_CheckDefaultClaimsAllowed/denies_unregistered_non-precompile_contracts_(private_by_default) (0.00s)
+    --- PASS: TestOrgContext_CheckDefaultClaimsAllowed/allows_precompile_via_CheckDefaultClaimsAllowed (0.00s)
+    --- PASS: TestOrgContext_CheckDefaultClaimsAllowed/denies_registered_contract_in_user's_other_org_without_explicit_grant (0.00s)
+=== RUN   TestOrgContext_Accessors
+=== RUN   TestOrgContext_Accessors/OrgID_returns_correct_ID
+=== RUN   TestOrgContext_Accessors/Org_returns_organization
+=== RUN   TestOrgContext_Accessors/User_returns_user
+=== RUN   TestOrgContext_Accessors/UserOrgIDs_returns_all_orgs
+=== RUN   TestOrgContext_Accessors/IsPublicContext_returns_false_when_org_set
+=== RUN   TestOrgContext_Accessors/UserBelongsToOrg_returns_true
+--- PASS: TestOrgContext_Accessors (0.00s)
+    --- PASS: TestOrgContext_Accessors/OrgID_returns_correct_ID (0.00s)
+    --- PASS: TestOrgContext_Accessors/Org_returns_organization (0.00s)
+    --- PASS: TestOrgContext_Accessors/User_returns_user (0.00s)
+    --- PASS: TestOrgContext_Accessors/UserOrgIDs_returns_all_orgs (0.00s)
+    --- PASS: TestOrgContext_Accessors/IsPublicContext_returns_false_when_org_set (0.00s)
+    --- PASS: TestOrgContext_Accessors/UserBelongsToOrg_returns_true (0.00s)
+=== RUN   TestOrgContext_PublicContext
+=== RUN   TestOrgContext_PublicContext/OrgID_returns_empty_for_public
+=== RUN   TestOrgContext_PublicContext/Org_returns_nil_for_public
+=== RUN   TestOrgContext_PublicContext/IsPublicContext_returns_true
+=== RUN   TestOrgContext_PublicContext/UserBelongsToOrg_returns_true_for_public
+--- PASS: TestOrgContext_PublicContext (0.00s)
+    --- PASS: TestOrgContext_PublicContext/OrgID_returns_empty_for_public (0.00s)
+    --- PASS: TestOrgContext_PublicContext/Org_returns_nil_for_public (0.00s)
+    --- PASS: TestOrgContext_PublicContext/IsPublicContext_returns_true (0.00s)
+    --- PASS: TestOrgContext_PublicContext/UserBelongsToOrg_returns_true_for_public (0.00s)
+=== RUN   TestOrgContextOwnerOrgIDMemoizedDedup
+--- PASS: TestOrgContextOwnerOrgIDMemoizedDedup (0.00s)
+=== RUN   TestValidateParamRules
+=== RUN   TestValidateParamRules/nil_rule
+=== RUN   TestValidateParamRules/no_param_rules
+=== RUN   TestValidateParamRules/self_constraint_passes
+=== RUN   TestValidateParamRules/self_constraint_fails
+=== RUN   TestValidateParamRules/missing_ABI
+=== RUN   TestValidateParamRules/no_linked_addresses
+=== RUN   TestValidateParamRules/index_out_of_range
+=== RUN   TestValidateParamRules/transfer_with_self_on_param_0
+=== RUN   TestValidateParamRules/case-insensitive_match
+=== RUN   TestValidateParamRules/unknown_constraint_type
+=== RUN   TestValidateParamRules/calldata_too_short
+=== RUN   TestValidateParamRules/selector_mismatch_between_rule_and_calldata
+--- PASS: TestValidateParamRules (0.00s)
+    --- PASS: TestValidateParamRules/nil_rule (0.00s)
+    --- PASS: TestValidateParamRules/no_param_rules (0.00s)
+    --- PASS: TestValidateParamRules/self_constraint_passes (0.00s)
+    --- PASS: TestValidateParamRules/self_constraint_fails (0.00s)
+    --- PASS: TestValidateParamRules/missing_ABI (0.00s)
+    --- PASS: TestValidateParamRules/no_linked_addresses (0.00s)
+    --- PASS: TestValidateParamRules/index_out_of_range (0.00s)
+    --- PASS: TestValidateParamRules/transfer_with_self_on_param_0 (0.00s)
+    --- PASS: TestValidateParamRules/case-insensitive_match (0.00s)
+    --- PASS: TestValidateParamRules/unknown_constraint_type (0.00s)
+    --- PASS: TestValidateParamRules/calldata_too_short (0.00s)
+    --- PASS: TestValidateParamRules/selector_mismatch_between_rule_and_calldata (0.00s)
+=== RUN   TestPendingDeploymentTracker_TrackAndGet
+--- PASS: TestPendingDeploymentTracker_TrackAndGet (0.00s)
+=== RUN   TestPendingDeploymentTracker_GetRemovesEntry
+--- PASS: TestPendingDeploymentTracker_GetRemovesEntry (0.00s)
+=== RUN   TestPendingDeploymentTracker_GetNonExistent
+--- PASS: TestPendingDeploymentTracker_GetNonExistent (0.00s)
+=== RUN   TestPendingDeploymentTracker_Peek
+--- PASS: TestPendingDeploymentTracker_Peek (0.00s)
+=== RUN   TestPendingDeploymentTracker_Remove
+--- PASS: TestPendingDeploymentTracker_Remove (0.00s)
+=== RUN   TestPendingDeploymentTracker_Cleanup
+--- PASS: TestPendingDeploymentTracker_Cleanup (0.00s)
+=== RUN   TestPendingDeploymentTracker_CleanupRemovesAllExpired
+--- PASS: TestPendingDeploymentTracker_CleanupRemovesAllExpired (0.00s)
+=== RUN   TestPendingDeploymentTracker_Size
+--- PASS: TestPendingDeploymentTracker_Size (0.00s)
+=== RUN   TestPendingDeploymentTracker_Clear
+--- PASS: TestPendingDeploymentTracker_Clear (0.00s)
+=== RUN   TestPendingDeploymentTracker_TrackOverwrite
+--- PASS: TestPendingDeploymentTracker_TrackOverwrite (0.00s)
+=== RUN   TestPendingDeploymentTracker_NilAndEmptyHandling
+--- PASS: TestPendingDeploymentTracker_NilAndEmptyHandling (0.00s)
+=== RUN   TestPendingDeploymentTracker_ThreadSafety
+--- PASS: TestPendingDeploymentTracker_ThreadSafety (0.04s)
+=== RUN   TestPendingDeploymentTracker_ThreadSafetyWithSize
+--- PASS: TestPendingDeploymentTracker_ThreadSafetyWithSize (0.00s)
+=== RUN   TestResolverFlatGroupPermissions
+--- PASS: TestResolverFlatGroupPermissions (0.00s)
+=== RUN   TestResolverFlatGroupEdgeCases
+=== RUN   TestResolverFlatGroupEdgeCases/empty_claims_on_group_means_zero_claims
+=== RUN   TestResolverFlatGroupEdgeCases/nil_claims_on_group_means_zero_claims
+=== RUN   TestResolverFlatGroupEdgeCases/empty_allowed_methods_means_zero_methods
+=== RUN   TestResolverFlatGroupEdgeCases/nil_allowed_methods_means_zero_methods
+--- PASS: TestResolverFlatGroupEdgeCases (0.00s)
+    --- PASS: TestResolverFlatGroupEdgeCases/empty_claims_on_group_means_zero_claims (0.00s)
+    --- PASS: TestResolverFlatGroupEdgeCases/nil_claims_on_group_means_zero_claims (0.00s)
+    --- PASS: TestResolverFlatGroupEdgeCases/empty_allowed_methods_means_zero_methods (0.00s)
+    --- PASS: TestResolverFlatGroupEdgeCases/nil_allowed_methods_means_zero_methods (0.00s)
+=== RUN   TestResolverMultipleMemberships
+--- PASS: TestResolverMultipleMemberships (0.00s)
+=== RUN   TestResolverContractGrantsFlatGroup
+--- PASS: TestResolverContractGrantsFlatGroup (0.00s)
+=== RUN   TestResolverNoMemberships
+--- PASS: TestResolverNoMemberships (0.00s)
+=== RUN   TestIntersectFunctions
+=== RUN   TestIntersectFunctions/both_nil_returns_nil
+=== RUN   TestIntersectFunctions/parent_nil_child_has_rules_returns_child
+=== RUN   TestIntersectFunctions/parent_has_rules_child_nil_returns_parent
+=== RUN   TestIntersectFunctions/intersection_of_selectors
+=== RUN   TestIntersectFunctions/child_param_rules_override_parent_param_rules
+=== RUN   TestIntersectFunctions/both_empty_slices_returns_empty
+=== RUN   TestIntersectFunctions/parent_has_rules_child_is_empty_returns_empty_(child_deny-all_narrows)
+=== RUN   TestIntersectFunctions/parent_is_empty_child_has_rules_returns_empty_(parent_deny-all_narrows)
+=== RUN   TestIntersectFunctions/parent_has_param_rules_child_has_none_keeps_parent_rules
+--- PASS: TestIntersectFunctions (0.00s)
+    --- PASS: TestIntersectFunctions/both_nil_returns_nil (0.00s)
+    --- PASS: TestIntersectFunctions/parent_nil_child_has_rules_returns_child (0.00s)
+    --- PASS: TestIntersectFunctions/parent_has_rules_child_nil_returns_parent (0.00s)
+    --- PASS: TestIntersectFunctions/intersection_of_selectors (0.00s)
+    --- PASS: TestIntersectFunctions/child_param_rules_override_parent_param_rules (0.00s)
+    --- PASS: TestIntersectFunctions/both_empty_slices_returns_empty (0.00s)
+    --- PASS: TestIntersectFunctions/parent_has_rules_child_is_empty_returns_empty_(child_deny-all_narrows) (0.00s)
+    --- PASS: TestIntersectFunctions/parent_is_empty_child_has_rules_returns_empty_(parent_deny-all_narrows) (0.00s)
+    --- PASS: TestIntersectFunctions/parent_has_param_rules_child_has_none_keeps_parent_rules (0.00s)
+=== RUN   TestUnionFunctions
+=== RUN   TestUnionFunctions/both_nil_returns_nil
+=== RUN   TestUnionFunctions/a_nil_b_has_rules_returns_nil
+=== RUN   TestUnionFunctions/a_has_rules_b_nil_returns_nil
+=== RUN   TestUnionFunctions/union_of_disjoint_selectors
+=== RUN   TestUnionFunctions/one_has_param_rules_other_has_none_drops_param_rules
+=== RUN   TestUnionFunctions/same_param_rules_on_both_keeps_them
+=== RUN   TestUnionFunctions/both_empty_slices_returns_empty
+=== RUN   TestUnionFunctions/different_param_rules_on_both_keeps_a_side
+--- PASS: TestUnionFunctions (0.00s)
+    --- PASS: TestUnionFunctions/both_nil_returns_nil (0.00s)
+    --- PASS: TestUnionFunctions/a_nil_b_has_rules_returns_nil (0.00s)
+    --- PASS: TestUnionFunctions/a_has_rules_b_nil_returns_nil (0.00s)
+    --- PASS: TestUnionFunctions/union_of_disjoint_selectors (0.00s)
+    --- PASS: TestUnionFunctions/one_has_param_rules_other_has_none_drops_param_rules (0.00s)
+    --- PASS: TestUnionFunctions/same_param_rules_on_both_keeps_them (0.00s)
+    --- PASS: TestUnionFunctions/both_empty_slices_returns_empty (0.00s)
+    --- PASS: TestUnionFunctions/different_param_rules_on_both_keeps_a_side (0.00s)
+=== RUN   TestResolverCachesPermissionsSynchronously
+=== RUN   TestResolverCachesPermissionsSynchronously/cache_populated_by_the_time_ResolvePermissions_returns
+=== RUN   TestResolverCachesPermissionsSynchronously/invalidate-after-resolve_sees_empty_cache_deterministically
+--- PASS: TestResolverCachesPermissionsSynchronously (0.00s)
+    --- PASS: TestResolverCachesPermissionsSynchronously/cache_populated_by_the_time_ResolvePermissions_returns (0.00s)
+    --- PASS: TestResolverCachesPermissionsSynchronously/invalidate-after-resolve_sees_empty_cache_deterministically (0.00s)
+=== RUN   TestIsWellKnownStorageSlot
+=== RUN   TestIsWellKnownStorageSlot/EIP-1967_implementation_slot
+=== RUN   TestIsWellKnownStorageSlot/EIP-1967_admin_slot
+=== RUN   TestIsWellKnownStorageSlot/EIP-1967_beacon_slot
+=== RUN   TestIsWellKnownStorageSlot/Diamond_storage_slot_(EIP-2535)
+=== RUN   TestIsWellKnownStorageSlot/EIP-1967_implementation_without_0x_prefix
+=== RUN   TestIsWellKnownStorageSlot/EIP-1967_admin_without_0x_prefix
+=== RUN   TestIsWellKnownStorageSlot/Diamond_slot_without_0x_prefix
+=== RUN   TestIsWellKnownStorageSlot/EIP-1967_implementation_uppercase
+=== RUN   TestIsWellKnownStorageSlot/Diamond_slot_mixed_case
+=== RUN   TestIsWellKnownStorageSlot/empty_string_returns_false
+=== RUN   TestIsWellKnownStorageSlot/slot_zero
+=== RUN   TestIsWellKnownStorageSlot/short_slot_0x1
+=== RUN   TestIsWellKnownStorageSlot/random_32-byte_hex
+=== RUN   TestIsWellKnownStorageSlot/implementation_slot_off-by-one_(last_byte)
+=== RUN   TestIsWellKnownStorageSlot/Diamond_slot_off-by-one_(first_byte)
+=== RUN   TestIsWellKnownStorageSlot/admin_slot_off-by-one
+--- PASS: TestIsWellKnownStorageSlot (0.00s)
+    --- PASS: TestIsWellKnownStorageSlot/EIP-1967_implementation_slot (0.00s)
+    --- PASS: TestIsWellKnownStorageSlot/EIP-1967_admin_slot (0.00s)
+    --- PASS: TestIsWellKnownStorageSlot/EIP-1967_beacon_slot (0.00s)
+    --- PASS: TestIsWellKnownStorageSlot/Diamond_storage_slot_(EIP-2535) (0.00s)
+    --- PASS: TestIsWellKnownStorageSlot/EIP-1967_implementation_without_0x_prefix (0.00s)
+    --- PASS: TestIsWellKnownStorageSlot/EIP-1967_admin_without_0x_prefix (0.00s)
+    --- PASS: TestIsWellKnownStorageSlot/Diamond_slot_without_0x_prefix (0.00s)
+    --- PASS: TestIsWellKnownStorageSlot/EIP-1967_implementation_uppercase (0.00s)
+    --- PASS: TestIsWellKnownStorageSlot/Diamond_slot_mixed_case (0.00s)
+    --- PASS: TestIsWellKnownStorageSlot/empty_string_returns_false (0.00s)
+    --- PASS: TestIsWellKnownStorageSlot/slot_zero (0.00s)
+    --- PASS: TestIsWellKnownStorageSlot/short_slot_0x1 (0.00s)
+    --- PASS: TestIsWellKnownStorageSlot/random_32-byte_hex (0.00s)
+    --- PASS: TestIsWellKnownStorageSlot/implementation_slot_off-by-one_(last_byte) (0.00s)
+    --- PASS: TestIsWellKnownStorageSlot/Diamond_slot_off-by-one_(first_byte) (0.00s)
+    --- PASS: TestIsWellKnownStorageSlot/admin_slot_off-by-one (0.00s)
+=== RUN   TestExtractStorageSlot
+=== RUN   TestExtractStorageSlot/normal_params_with_address,_slot,_and_block_tag
+=== RUN   TestExtractStorageSlot/missing_slot_(only_address)
+=== RUN   TestExtractStorageSlot/empty_params
+=== RUN   TestExtractStorageSlot/nil_params
+=== RUN   TestExtractStorageSlot/non-string_slot_(integer)
+=== RUN   TestExtractStorageSlot/non-string_slot_(bool)
+=== RUN   TestExtractStorageSlot/non-string_slot_(nil)
+=== RUN   TestExtractStorageSlot/slot_with_extra_params_(ignored)
+=== RUN   TestExtractStorageSlot/EIP-1967_implementation_slot_extracted_correctly
+--- PASS: TestExtractStorageSlot (0.00s)
+    --- PASS: TestExtractStorageSlot/normal_params_with_address,_slot,_and_block_tag (0.00s)
+    --- PASS: TestExtractStorageSlot/missing_slot_(only_address) (0.00s)
+    --- PASS: TestExtractStorageSlot/empty_params (0.00s)
+    --- PASS: TestExtractStorageSlot/nil_params (0.00s)
+    --- PASS: TestExtractStorageSlot/non-string_slot_(integer) (0.00s)
+    --- PASS: TestExtractStorageSlot/non-string_slot_(bool) (0.00s)
+    --- PASS: TestExtractStorageSlot/non-string_slot_(nil) (0.00s)
+    --- PASS: TestExtractStorageSlot/slot_with_extra_params_(ignored) (0.00s)
+    --- PASS: TestExtractStorageSlot/EIP-1967_implementation_slot_extracted_correctly (0.00s)
+=== RUN   TestPreflightCreationOwnership
+=== RUN   TestPreflightCreationOwnership/new_child_is_callable
+=== RUN   TestPreflightCreationOwnership/deploy_claim_required
+=== RUN   TestPreflightCreationOwnership/failed_collision_cannot_grant_existing_code
+=== RUN   TestPreflightCreationOwnership/unrelated_address_cannot_be_granted
+=== RUN   TestPreflightCreationOwnership/foreign_ownership_still_denied
+--- PASS: TestPreflightCreationOwnership (0.00s)
+    --- PASS: TestPreflightCreationOwnership/new_child_is_callable (0.00s)
+    --- PASS: TestPreflightCreationOwnership/deploy_claim_required (0.00s)
+    --- PASS: TestPreflightCreationOwnership/failed_collision_cannot_grant_existing_code (0.00s)
+    --- PASS: TestPreflightCreationOwnership/unrelated_address_cannot_be_granted (0.00s)
+    --- PASS: TestPreflightCreationOwnership/foreign_ownership_still_denied (0.00s)
+=== RUN   TestPreflightValueRecipients
+=== RUN   TestPreflightValueRecipients/native_call
+=== RUN   TestPreflightValueRecipients/destruction_payout
+=== RUN   TestPreflightValueRecipients/unknown_contract_remains_private
+=== RUN   TestPreflightValueRecipients/foreign_registration_wins
+=== RUN   TestPreflightValueRecipients/foreign_destruction_target
+=== RUN   TestPreflightValueRecipients/no_delegation_exemption
+--- PASS: TestPreflightValueRecipients (0.00s)
+    --- PASS: TestPreflightValueRecipients/native_call (0.00s)
+    --- PASS: TestPreflightValueRecipients/destruction_payout (0.00s)
+    --- PASS: TestPreflightValueRecipients/unknown_contract_remains_private (0.00s)
+    --- PASS: TestPreflightValueRecipients/foreign_registration_wins (0.00s)
+    --- PASS: TestPreflightValueRecipients/foreign_destruction_target (0.00s)
+    --- PASS: TestPreflightValueRecipients/no_delegation_exemption (0.00s)
+=== RUN   TestValidateTrace_M6_DelegateCallSharedInfraDenied
+=== RUN   TestValidateTrace_M6_DelegateCallSharedInfraDenied/CALL_allowed
+=== RUN   TestValidateTrace_M6_DelegateCallSharedInfraDenied/STATICCALL_allowed
+=== RUN   TestValidateTrace_M6_DelegateCallSharedInfraDenied/DELEGATECALL_denied
+=== RUN   TestValidateTrace_M6_DelegateCallSharedInfraDenied/CALLCODE_denied
+--- PASS: TestValidateTrace_M6_DelegateCallSharedInfraDenied (0.00s)
+    --- PASS: TestValidateTrace_M6_DelegateCallSharedInfraDenied/CALL_allowed (0.00s)
+    --- PASS: TestValidateTrace_M6_DelegateCallSharedInfraDenied/STATICCALL_allowed (0.00s)
+    --- PASS: TestValidateTrace_M6_DelegateCallSharedInfraDenied/DELEGATECALL_denied (0.00s)
+    --- PASS: TestValidateTrace_M6_DelegateCallSharedInfraDenied/CALLCODE_denied (0.00s)
+=== RUN   TestValidateTrace_M5_CodehashPin
+=== RUN   TestValidateTrace_M5_CodehashPin/no_codehash_stored_→_skip_allowed_(back-compat)
+=== RUN   TestValidateTrace_M5_CodehashPin/codehash_matches_→_skip_allowed
+=== RUN   TestValidateTrace_M5_CodehashPin/codehash_mismatch_→_denied_with_mismatch_kind
+2026/09/11 20:10:54 WARN trace: shared_infra codehash mismatch — treating as untagged address=0xbbbb000000000000000000000000000000000000 attested=0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470 observed=0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef
+=== RUN   TestValidateTrace_M5_CodehashPin/codehash_match_is_case-insensitive
+--- PASS: TestValidateTrace_M5_CodehashPin (0.00s)
+    --- PASS: TestValidateTrace_M5_CodehashPin/no_codehash_stored_→_skip_allowed_(back-compat) (0.00s)
+    --- PASS: TestValidateTrace_M5_CodehashPin/codehash_matches_→_skip_allowed (0.00s)
+    --- PASS: TestValidateTrace_M5_CodehashPin/codehash_mismatch_→_denied_with_mismatch_kind (0.00s)
+    --- PASS: TestValidateTrace_M5_CodehashPin/codehash_match_is_case-insensitive (0.00s)
+=== RUN   TestValidateTrace_NilTrace
+--- PASS: TestValidateTrace_NilTrace (0.00s)
+=== RUN   TestValidateTrace_EmptyTrace
+--- PASS: TestValidateTrace_EmptyTrace (0.00s)
+=== RUN   TestValidateTrace_CreateDenied
+--- PASS: TestValidateTrace_CreateDenied (0.00s)
+=== RUN   TestValidateTrace_Create2Denied
+--- PASS: TestValidateTrace_Create2Denied (0.00s)
+=== RUN   TestValidateTrace_PrecompileAllowed
+--- PASS: TestValidateTrace_PrecompileAllowed (0.00s)
+=== RUN   TestValidateTrace_SharedInfrastructureAllowed
+--- PASS: TestValidateTrace_SharedInfrastructureAllowed (0.00s)
+=== RUN   TestValidateTrace_OrgOwnedContractAllowed
+--- PASS: TestValidateTrace_OrgOwnedContractAllowed (0.00s)
+=== RUN   TestValidateTrace_OtherOrgContractDenied
+--- PASS: TestValidateTrace_OtherOrgContractDenied (0.00s)
+=== RUN   TestValidateTrace_UnregisteredContractDenied
+--- PASS: TestValidateTrace_UnregisteredContractDenied (0.00s)
+=== RUN   TestValidateTrace_MultiOrgUserAllowed
+--- PASS: TestValidateTrace_MultiOrgUserAllowed (0.00s)
+=== RUN   TestValidateTrace_MixedTargets
+--- PASS: TestValidateTrace_MixedTargets (0.00s)
+=== RUN   TestValidateTrace_MixedTargetsWithUnregistered
+--- PASS: TestValidateTrace_MixedTargetsWithUnregistered (0.00s)
+=== RUN   TestValidateTrace_DenyOnFirstViolation
+--- PASS: TestValidateTrace_DenyOnFirstViolation (0.00s)
+=== RUN   TestValidateTrace_AddressNormalization
+--- PASS: TestValidateTrace_AddressNormalization (0.00s)
+=== RUN   TestValidateTrace_EmptyUserOrgs
+--- PASS: TestValidateTrace_EmptyUserOrgs (0.00s)
+=== RUN   TestValidateTrace_SkipsZeroAddress
+--- PASS: TestValidateTrace_SkipsZeroAddress (0.00s)
+=== RUN   TestValidateTrace_Create2AllowedWithDeployClaim
+--- PASS: TestValidateTrace_Create2AllowedWithDeployClaim (0.00s)
+=== RUN   TestValidateTrace_Create2DeniedCrossOrg
+--- PASS: TestValidateTrace_Create2DeniedCrossOrg (0.00s)
+=== RUN   TestValidateTrace_Create2DeniedWithoutDeployClaim
+--- PASS: TestValidateTrace_Create2DeniedWithoutDeployClaim (0.00s)
+=== RUN   TestValidateTrace_TableDriven
+=== RUN   TestValidateTrace_TableDriven/nil_trace_allowed
+=== RUN   TestValidateTrace_TableDriven/CREATE_blocked_without_deploy_claim
+=== RUN   TestValidateTrace_TableDriven/all_precompiles_allowed
+=== RUN   TestValidateTrace_TableDriven/shared_infra_allowed
+=== RUN   TestValidateTrace_TableDriven/cross-org_isolation_enforced
+--- PASS: TestValidateTrace_TableDriven (0.00s)
+    --- PASS: TestValidateTrace_TableDriven/nil_trace_allowed (0.00s)
+    --- PASS: TestValidateTrace_TableDriven/CREATE_blocked_without_deploy_claim (0.00s)
+    --- PASS: TestValidateTrace_TableDriven/all_precompiles_allowed (0.00s)
+    --- PASS: TestValidateTrace_TableDriven/shared_infra_allowed (0.00s)
+    --- PASS: TestValidateTrace_TableDriven/cross-org_isolation_enforced (0.00s)
+=== RUN   TestValidateTrace_IntraOrgGrantScoping
+=== RUN   TestValidateTrace_IntraOrgGrantScoping/scoping_OFF:_same-org_ungranted_frame_is_allowed_(pre-RD-1053_behaviour)
+=== RUN   TestValidateTrace_IntraOrgGrantScoping/scoping_ON:_same-org_ungranted_frame_is_denied
+=== RUN   TestValidateTrace_IntraOrgGrantScoping/scoping_ON:_same-org_granted_frame_is_allowed
+=== RUN   TestValidateTrace_IntraOrgGrantScoping/scoping_ON:_cross-org_frame_still_denied_as_foreign_org_(not_intra-org)
+=== RUN   TestValidateTrace_IntraOrgGrantScoping/scoping_ON:_unregistered_frame_still_denied_as_unregistered
+=== RUN   TestValidateTrace_IntraOrgGrantScoping/scoping_ON:_precompile_and_shared-infra_frames_remain_allowed
+--- PASS: TestValidateTrace_IntraOrgGrantScoping (0.00s)
+    --- PASS: TestValidateTrace_IntraOrgGrantScoping/scoping_OFF:_same-org_ungranted_frame_is_allowed_(pre-RD-1053_behaviour) (0.00s)
+    --- PASS: TestValidateTrace_IntraOrgGrantScoping/scoping_ON:_same-org_ungranted_frame_is_denied (0.00s)
+    --- PASS: TestValidateTrace_IntraOrgGrantScoping/scoping_ON:_same-org_granted_frame_is_allowed (0.00s)
+    --- PASS: TestValidateTrace_IntraOrgGrantScoping/scoping_ON:_cross-org_frame_still_denied_as_foreign_org_(not_intra-org) (0.00s)
+    --- PASS: TestValidateTrace_IntraOrgGrantScoping/scoping_ON:_unregistered_frame_still_denied_as_unregistered (0.00s)
+    --- PASS: TestValidateTrace_IntraOrgGrantScoping/scoping_ON:_precompile_and_shared-infra_frames_remain_allowed (0.00s)
+=== RUN   TestValidateTrace_IntraOrgScoping_PreregisteredSibling
+=== RUN   TestValidateTrace_IntraOrgScoping_PreregisteredSibling/deploy-claim_caller:_pre-registered_same-org_frame_allowed_despite_no_grant
+=== RUN   TestValidateTrace_IntraOrgScoping_PreregisteredSibling/non-deployer:_pre-registered_same-org_frame_still_denied
+=== RUN   TestValidateTrace_IntraOrgScoping_PreregisteredSibling/scoping_OFF:_pre-registered_frame_allowed_regardless_of_claim
+--- PASS: TestValidateTrace_IntraOrgScoping_PreregisteredSibling (0.00s)
+    --- PASS: TestValidateTrace_IntraOrgScoping_PreregisteredSibling/deploy-claim_caller:_pre-registered_same-org_frame_allowed_despite_no_grant (0.00s)
+    --- PASS: TestValidateTrace_IntraOrgScoping_PreregisteredSibling/non-deployer:_pre-registered_same-org_frame_still_denied (0.00s)
+    --- PASS: TestValidateTrace_IntraOrgScoping_PreregisteredSibling/scoping_OFF:_pre-registered_frame_allowed_regardless_of_claim (0.00s)
+=== RUN   TestIsUpgradeSelector
+=== RUN   TestIsUpgradeSelector/upgradeTo
+=== RUN   TestIsUpgradeSelector/upgradeToAndCall
+=== RUN   TestIsUpgradeSelector/setImplementation
+=== RUN   TestIsUpgradeSelector/upgrade_(proxy_admin)
+=== RUN   TestIsUpgradeSelector/upgradeAndCall_(proxy_admin)
+=== RUN   TestIsUpgradeSelector/random_selector
+=== RUN   TestIsUpgradeSelector/without_0x_prefix
+=== RUN   TestIsUpgradeSelector/uppercase
+--- PASS: TestIsUpgradeSelector (0.00s)
+    --- PASS: TestIsUpgradeSelector/upgradeTo (0.00s)
+    --- PASS: TestIsUpgradeSelector/upgradeToAndCall (0.00s)
+    --- PASS: TestIsUpgradeSelector/setImplementation (0.00s)
+    --- PASS: TestIsUpgradeSelector/upgrade_(proxy_admin) (0.00s)
+    --- PASS: TestIsUpgradeSelector/upgradeAndCall_(proxy_admin) (0.00s)
+    --- PASS: TestIsUpgradeSelector/random_selector (0.00s)
+    --- PASS: TestIsUpgradeSelector/without_0x_prefix (0.00s)
+    --- PASS: TestIsUpgradeSelector/uppercase (0.00s)
+=== RUN   TestGetUpgradeFunctionName
+=== RUN   TestGetUpgradeFunctionName/0x3659cfe6
+=== RUN   TestGetUpgradeFunctionName/0x4f1ef286
+=== RUN   TestGetUpgradeFunctionName/0xd784d426
+=== RUN   TestGetUpgradeFunctionName/0x99a88ec4
+=== RUN   TestGetUpgradeFunctionName/0x9623609d
+=== RUN   TestGetUpgradeFunctionName/0xabcdef12
+--- PASS: TestGetUpgradeFunctionName (0.00s)
+    --- PASS: TestGetUpgradeFunctionName/0x3659cfe6 (0.00s)
+    --- PASS: TestGetUpgradeFunctionName/0x4f1ef286 (0.00s)
+    --- PASS: TestGetUpgradeFunctionName/0xd784d426 (0.00s)
+    --- PASS: TestGetUpgradeFunctionName/0x99a88ec4 (0.00s)
+    --- PASS: TestGetUpgradeFunctionName/0x9623609d (0.00s)
+    --- PASS: TestGetUpgradeFunctionName/0xabcdef12 (0.00s)
+=== RUN   TestValidateUpgrade
+=== RUN   TestValidateUpgrade/Non-upgrade_call_passes_through
+=== RUN   TestValidateUpgrade/Short_calldata_passes_through
+=== RUN   TestValidateUpgrade/Upgrade_with_unowned_implementation_denied
+=== RUN   TestValidateUpgrade/Valid_upgrade_allowed
+--- PASS: TestValidateUpgrade (0.00s)
+    --- PASS: TestValidateUpgrade/Non-upgrade_call_passes_through (0.00s)
+    --- PASS: TestValidateUpgrade/Short_calldata_passes_through (0.00s)
+    --- PASS: TestValidateUpgrade/Upgrade_with_unowned_implementation_denied (0.00s)
+    --- PASS: TestValidateUpgrade/Valid_upgrade_allowed (0.00s)
+=== RUN   TestExtractImplementationAddress
+=== RUN   TestExtractImplementationAddress/upgradeTo_extracts_address
+=== RUN   TestExtractImplementationAddress/upgradeToAndCall_extracts_address
+=== RUN   TestExtractImplementationAddress/upgrade_(proxy_admin)_extracts_second_address
+--- PASS: TestExtractImplementationAddress (0.00s)
+    --- PASS: TestExtractImplementationAddress/upgradeTo_extracts_address (0.00s)
+    --- PASS: TestExtractImplementationAddress/upgradeToAndCall_extracts_address (0.00s)
+    --- PASS: TestExtractImplementationAddress/upgrade_(proxy_admin)_extracts_second_address (0.00s)
+PASS
+ok  	privacy-proxy/internal/rbac	2.278s
+=== RUN   TestTraceCache_GetSet
+--- PASS: TestTraceCache_GetSet (0.00s)
+=== RUN   TestTraceCache_Miss
+--- PASS: TestTraceCache_Miss (0.00s)
+=== RUN   TestTraceCache_DifferentKeys
+--- PASS: TestTraceCache_DifferentKeys (0.00s)
+=== RUN   TestTraceCache_Expiration
+--- PASS: TestTraceCache_Expiration (0.10s)
+=== RUN   TestTraceCache_Cleanup
+--- PASS: TestTraceCache_Cleanup (0.10s)
+=== RUN   TestTraceCache_Stop
+--- PASS: TestTraceCache_Stop (0.00s)
+=== RUN   TestCacheKey
+--- PASS: TestCacheKey (0.00s)
+=== RUN   TestTraceTransactionUncached_BypassesCachedHit
+--- PASS: TestTraceTransactionUncached_BypassesCachedHit (0.00s)
+=== RUN   TestTraceTransactionUncached_DoesNotPopulateCache
+--- PASS: TestTraceTransactionUncached_DoesNotPopulateCache (0.00s)
+=== RUN   TestNewTracer
+--- PASS: TestNewTracer (0.00s)
+=== RUN   TestParseHexUint64
+--- PASS: TestParseHexUint64 (0.00s)
+=== RUN   TestExtractCallTargets
+--- PASS: TestExtractCallTargets (0.00s)
+=== RUN   TestExtractCallTargets_CreateOperations
+--- PASS: TestExtractCallTargets_CreateOperations (0.00s)
+=== RUN   TestTraceCall_MockServer
+--- PASS: TestTraceCall_MockServer (0.00s)
+=== RUN   TestHasCode_Contract
+--- PASS: TestHasCode_Contract (0.00s)
+=== RUN   TestHasCode_EOA
+--- PASS: TestHasCode_EOA (0.00s)
+=== RUN   TestHasCode_RPCError
+--- PASS: TestHasCode_RPCError (0.00s)
+=== RUN   TestTraceTransaction_MockServer
+--- PASS: TestTraceTransaction_MockServer (0.00s)
+=== RUN   TestTraceCall_RPCError
+--- PASS: TestTraceCall_RPCError (0.00s)
+=== RUN   TestExtractCallTargets_MaxDepthExceeded
+--- PASS: TestExtractCallTargets_MaxDepthExceeded (0.00s)
+=== RUN   TestExtractCallTargets_MaxDepthAllowed
+--- PASS: TestExtractCallTargets_MaxDepthAllowed (0.00s)
+PASS
+ok  	privacy-proxy/internal/tracer	2.468s

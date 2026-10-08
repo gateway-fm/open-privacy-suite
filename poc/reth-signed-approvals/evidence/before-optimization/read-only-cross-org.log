@@ -1,0 +1,48 @@
+[2m2026-09-11T13:04:16.224748Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m Initialized tracing, debug log directory: <repo>/.tmp/approval-runs/read-only-cross-org-wetaq0sr/logs/anvil-hardhat
+[2m2026-09-11T13:04:16.424939Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m Starting Reth [3mversion[0m[2m=[0m"2.5.2 (5a6940e)"
+[2m2026-09-11T13:04:16.424999Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m Opening database [3mpath[0m[2m=[0m"<repo>/.tmp/approval-runs/read-only-cross-org-wetaq0sr/data/db"
+[2m2026-09-11T13:04:16.430704Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m Configuration loaded [3mpath[0m[2m=[0m"<repo>/.tmp/approval-runs/read-only-cross-org-wetaq0sr/data/reth.toml"
+[2m2026-09-11T13:04:16.431062Z[0m [33m WARN[0m [2mproviders::rocksdb[0m[2m:[0m RocksDB will not keep all files open; performance may be reduced [3mfile_descriptor_limit[0m[2m=[0mSome(122880) [3mthreshold[0m[2m=[0m131072 [3mmax_open_files[0m[2m=[0m512
+[2m2026-09-11T13:04:16.444719Z[0m [32m INFO[0m [1mcheck_consistency[0m[2m:[0m [2mreth::cli[0m[2m:[0m Healing static file inconsistencies.
+[2m2026-09-11T13:04:16.528386Z[0m [32m INFO[0m [1mcheck_consistency[0m[2m:[0m[1mcheck_consistency[0m[1m{[0m[3mread_only[0m[2m=[0mfalse[1m}[0m[2m:[0m [2mreth::cli[0m[2m:[0m Verifying storage consistency.
+[2m2026-09-11T13:04:16.528517Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m Database opened
+[2m2026-09-11T13:04:16.725881Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m 
+Pre-merge hard forks (block based):
+- Frontier                         @0
+- Homestead                        @0
+- Tangerine                        @0
+- SpuriousDragon                   @0
+- Byzantium                        @0
+- Constantinople                   @0
+- Petersburg                       @0
+- Istanbul                         @0
+- Berlin                           @0
+- London                           @0
+Merge hard forks:
+- Paris                            @0 (network is known to be merged)
+Post-merge hard forks (timestamp based):
+- Shanghai                         @0
+[2m2026-09-11T13:04:16.725913Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m Loaded storage settings [3msettings[0m[2m=[0mStorageSettings { storage_v2: true } [3mpruning_mode[0m[2m=[0m"archive"
+[2m2026-09-11T13:04:16.726286Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m Transaction pool initialized
+[2m2026-09-11T13:04:16.734676Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m P2P networking initialized [3menode[0m[2m=[0menode://eae4c6440c284d24f5c39aa9e8398379cd05e153b28f3c38e8a38578c4c108be9436e6bbec10521dd8f6c8d64bcb5c93e393756e67ef2b0cb78d34ae8f8df560@127.0.0.1:59677
+[2m2026-09-11T13:04:16.734854Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m StaticFileProducer initialized
+[2m2026-09-11T13:04:16.734986Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m Pruner initialized [3mprune_config[0m[2m=[0mPruneConfig { block_interval: 5, segments: PruneModes { sender_recovery: None, transaction_lookup: None, receipts: None, account_history: None, storage_history: None, bodies_history: None, receipts_log_filter: ReceiptsLogPruneConfig({}) }, minimum_pruning_distance: 10064 }
+[2m2026-09-11T13:04:16.735462Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m Consensus engine initialized
+[2m2026-09-11T13:04:16.735526Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m Engine API handler initialized
+[2m2026-09-11T13:04:16.736209Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m RPC HTTP server started [3murl[0m[2m=[0m127.0.0.1:59669
+[2m2026-09-11T13:04:16.736239Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m RPC auth server started [3murl[0m[2m=[0m127.0.0.1:59670
+[2m2026-09-11T13:04:16.736312Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m Starting consensus engine
+[2m2026-09-11T13:04:16.772450Z[0m [32m INFO[0m [2mreth_node_events::node[0m[2m:[0m Forkchoice updated [3mhead_block_hash[0m[2m=[0m0xf922e99fea18f376212f348d6ac663c5313d3c6d0237797d9cb74d62109d5139 [3msafe_block_hash[0m[2m=[0m0xf922e99fea18f376212f348d6ac663c5313d3c6d0237797d9cb74d62109d5139 [3mfinalized_block_hash[0m[2m=[0m0xf922e99fea18f376212f348d6ac663c5313d3c6d0237797d9cb74d62109d5139
+[2m2026-09-11T13:04:16.772458Z[0m [32m INFO[0m [2mpayload_builder[0m[2m:[0m New payload job created [3mid[0m[2m=[0m0x7b3bcb11fbddc976 [3mparent[0m[2m=[0m0xf922e99fea18f376212f348d6ac663c5313d3c6d0237797d9cb74d62109d5139
+OPS_APPROVAL_DECISION {"actual":"Ok(0xcdf73f345a24a11eeee5ecd5c90f37c06ae575dc679e8c33bd588483da900b5f)","decision":"deny","expected":"0xe6fb7543c66a9f3000992f5ed4388a58b167884c11cab9a25107139666c59ad3","tx_hash":"0xad278285819350b4dc377633506e44b849e975bbe80ad273823f65c75907c1f9"}
+OPS_BUILD_TIMING {"approval_stats":{"ready_on_first_seen":1,"verification_ns":48333,"verified":1,"waiting_on_first_seen":0},"block_hash":"0x605ef13ff9db608847713f058b8b73e1b3085222404b605d046d3f26ba376219","elapsed_ns":376916,"module":true,"transactions":0}
+OPS_APPROVAL_DECISION {"actual":"Ok(0xcdf73f345a24a11eeee5ecd5c90f37c06ae575dc679e8c33bd588483da900b5f)","decision":"deny","expected":"0xe6fb7543c66a9f3000992f5ed4388a58b167884c11cab9a25107139666c59ad3","tx_hash":"0xad278285819350b4dc377633506e44b849e975bbe80ad273823f65c75907c1f9"}
+[2m2026-09-11T13:04:16.879145Z[0m [32m INFO[0m [2mreth_node_events::node[0m[2m:[0m Received new payload from consensus engine [3mnumber[0m[2m=[0m1 [3mhash[0m[2m=[0m0x605ef13ff9db608847713f058b8b73e1b3085222404b605d046d3f26ba376219
+[2m2026-09-11T13:04:17.041512Z[0m [32m INFO[0m [2mengine::tree::payload_validator[0m[2m:[0m State root job finished [3mstrategy[0m[2m=[0m"sparse-trie" [3mstate_root[0m[2m=[0m0x038507942d57d598ee95c57061d3496892364cd3ebce7445086d43f93d2b4251 [3melapsed[0m[2m=[0m3.916µs
+[2m2026-09-11T13:04:17.041652Z[0m [32m INFO[0m [2mreth_node_events::node[0m[2m:[0m Block added to canonical chain [3mnumber[0m[2m=[0m1 [3mhash[0m[2m=[0m0x605ef13ff9db608847713f058b8b73e1b3085222404b605d046d3f26ba376219 [3mpeers[0m[2m=[0m0 [3mtxs[0m[2m=[0m0 [3mgas_used[0m[2m=[0m0.00Kgas [3mgas_throughput[0m[2m=[0m0.00Kgas/second [3mgas_limit[0m[2m=[0m30.03Mgas [3mfull[0m[2m=[0m0.0% [3mbase_fee[0m[2m=[0m0.88Gwei [3mblobs[0m[2m=[0m0 [3mexcess_blobs[0m[2m=[0m0 [3melapsed[0m[2m=[0m162.434884ms
+[2m2026-09-11T13:04:17.042538Z[0m [32m INFO[0m [2mreth_node_events::node[0m[2m:[0m Canonical chain committed [3mnumber[0m[2m=[0m1 [3mhash[0m[2m=[0m0x605ef13ff9db608847713f058b8b73e1b3085222404b605d046d3f26ba376219 [3melapsed[0m[2m=[0m17.709µs
+[2m2026-09-11T13:04:17.042554Z[0m [32m INFO[0m [2mreth_node_events::node[0m[2m:[0m Forkchoice updated [3mhead_block_hash[0m[2m=[0m0x605ef13ff9db608847713f058b8b73e1b3085222404b605d046d3f26ba376219 [3msafe_block_hash[0m[2m=[0m0x605ef13ff9db608847713f058b8b73e1b3085222404b605d046d3f26ba376219 [3mfinalized_block_hash[0m[2m=[0m0x605ef13ff9db608847713f058b8b73e1b3085222404b605d046d3f26ba376219
+[2m2026-09-11T13:04:17.048229Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m Received SIGTERM
+[2m2026-09-11T13:04:17.048361Z[0m [32m INFO[0m [2mtxpool[0m[2m:[0m Saving current local transactions [3mtxs_file[0m[2m=[0m"<repo>/.tmp/approval-runs/read-only-cross-org-wetaq0sr/data/txpool-transactions-backup.rlp" [3mnum_txs[0m[2m=[0m1
+[2m2026-09-11T13:04:17.048578Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m Wrote network peers to file [3mpeers_file[0m[2m=[0m"<repo>/.tmp/approval-runs/read-only-cross-org-wetaq0sr/data/known-peers.json"
+[2m2026-09-11T13:04:17.054098Z[0m [32m INFO[0m [2mtxpool[0m[2m:[0m Wrote local transactions to file [3mtxs_file[0m[2m=[0m"<repo>/.tmp/approval-runs/read-only-cross-org-wetaq0sr/data/txpool-transactions-backup.rlp"

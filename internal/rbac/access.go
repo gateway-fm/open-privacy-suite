@@ -201,6 +201,10 @@ var orgFreeMetadataMethods = map[string]bool{
 
 // blockedMethodPrefixes is used for future-proofing (checked after exact match fails)
 var blockedMethodPrefixes = []string{
+	// Node-side approval preparation returns private execution facts. It is
+	// called only by the internal preflight client, never by an RPC caller,
+	// including a caller whose group grants all methods.
+	"ops_",
 	"debug_",
 	"admin_",
 	"personal_",

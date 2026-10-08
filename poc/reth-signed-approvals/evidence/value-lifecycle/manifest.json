@@ -1,0 +1,209 @@
+{
+  "created_at": "2026-09-11T17:37:28.741544+00:00",
+  "branch": "poc/ops-reth-signed-approvals",
+  "base_commit": "717279591c7a51c96187b9081eceb9afeb7fa30f",
+  "upstream_reth": "5a6940e351fed80458fe6c9da8581cbe4b8bd036",
+  "upstream_clean": true,
+  "hardware": {
+    "os": "macOS-26.6.1-arm64-arm-64bit-Mach-O",
+    "architecture": "arm64",
+    "logical_cpus": 12,
+    "cpu": "Apple M2 Max",
+    "memory_bytes": 34359738368
+  },
+  "build": {
+    "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    "go": "go version go1.25.13 darwin/arm64",
+    "OPS_tags": [
+      "mockauth"
+    ],
+    "profile": "release opt-level=3 lto=false codegen-units=16"
+  },
+  "fingerprint_version": "OPS_EXECUTION_V2; Go preflight, Rust direct encoder and reference encoder",
+  "transport": "Startup-open persistent TCP; length-prefixed binary signed batches; TCP_NODELAY; dedicated receiver/verifier thread; no application ACK.",
+  "validation": {
+    "real_node_scenarios": 55,
+    "OPS_HTTP_scenarios": 12,
+    "rust_unit_tests": 13,
+    "go_race_packages": [
+      "internal/nodeapproval",
+      "internal/rbac",
+      "internal/tracer"
+    ],
+    "direct_reference_equivalence": "OPS_FINGERPRINT_MODE=verify in the 55-scenario regression run",
+    "forks": [
+      "Shanghai",
+      "Cancun"
+    ],
+    "additional_checks": [
+      "clippy all targets with -D warnings",
+      "gofmt",
+      "cargo fmt --check",
+      "git diff --check",
+      "Python compilation",
+      "bash syntax",
+      "isolated Docker containers cleaned up"
+    ]
+  },
+  "commands_from_worktree_root": {
+    "Go_race": "go test -race ./internal/nodeapproval ./internal/rbac ./internal/tracer -count=1",
+    "Rust_tests": "CARGO_TARGET_DIR=<repo>/.tmp/reth-policy-poc/target cargo test --manifest-path poc/reth-signed-approvals/Cargo.toml --package ops-reth-approvals-poc",
+    "clippy": "CARGO_TARGET_DIR=<repo>/.tmp/reth-policy-poc/target cargo clippy --manifest-path poc/reth-signed-approvals/Cargo.toml --package ops-reth-approvals-poc --all-targets -- -D warnings",
+    "regressions": "OPS_RETH_BINARY=<repo>/.tmp/reth-policy-poc/target/release/ops-reth-approvals-poc OPS_FINGERPRINT_MODE=verify OPS_EVIDENCE_DIR=poc/reth-signed-approvals/evidence/value-lifecycle/regression-final python3 poc/reth-signed-approvals/verify.py",
+    "OPS_HTTP": "OPS_EVIDENCE_DIR=poc/reth-signed-approvals/evidence/value-lifecycle/ops-final bash poc/reth-signed-approvals/demo.sh lifecycle",
+    "benchmark": "OPS_RETH_BINARY=<repo>/.tmp/reth-policy-poc/target/release/ops-reth-approvals-poc OPS_FINGERPRINT_MODE=direct OPS_PROFILE=0 OPS_EVIDENCE_DIR=poc/reth-signed-approvals/evidence/value-lifecycle/benchmark-final python3 poc/reth-signed-approvals/run.py bench"
+  },
+  "benchmark": {
+    "results": "benchmark-final/benchmark.json",
+    "method": "Instant around real Reth default_ethereum_payload including execution and state/receipt roots; divided by included tx count. Identical preflight warming in BOTH modes. Excludes RPC/preflight/approval delivery/wait and engine import. Same block hashes asserted for every control/module pair.",
+    "measured_blocks": 54,
+    "paired_identical_block_hashes": 27,
+    "transactions_per_block": 32,
+    "samples_per_workload_per_mode": 9,
+    "summary": [
+      {
+        "workload": "eighteen_calls",
+        "batch": 32,
+        "samples_per_mode": 9,
+        "baseline_us_per_tx": 70.4609375,
+        "module_us_per_tx": 89.0104375,
+        "extra_us_per_tx": 18.549499999999995,
+        "time_increase_percent": 26.32593413903981,
+        "throughput_decrease_percent": 20.83969085086229,
+        "baseline_range_us": [
+          59.5833125,
+          80.50521875
+        ],
+        "module_range_us": [
+          83.43359375,
+          105.05078125
+        ],
+        "signature_verification_mean_us": 1.787,
+        "ready_on_first_seen": 384,
+        "waiting_on_first_seen": 0
+      },
+      {
+        "workload": "single_storage_write",
+        "batch": 32,
+        "samples_per_mode": 9,
+        "baseline_us_per_tx": 10.81771875,
+        "module_us_per_tx": 13.63803125,
+        "extra_us_per_tx": 2.8203125,
+        "time_increase_percent": 26.071231515424632,
+        "throughput_decrease_percent": 20.67976270401932,
+        "baseline_range_us": [
+          10.3736875,
+          11.80078125
+        ],
+        "module_range_us": [
+          12.85546875,
+          14.5885625
+        ],
+        "signature_verification_mean_us": 1.821609375,
+        "ready_on_first_seen": 384,
+        "waiting_on_first_seen": 0
+      },
+      {
+        "workload": "three_calls",
+        "batch": 32,
+        "samples_per_mode": 9,
+        "baseline_us_per_tx": 13.290375,
+        "module_us_per_tx": 18.39971875,
+        "extra_us_per_tx": 5.1093437500000025,
+        "time_increase_percent": 38.443939693199034,
+        "throughput_decrease_percent": 27.768597006408058,
+        "baseline_range_us": [
+          12.5611875,
+          13.859375
+        ],
+        "module_range_us": [
+          17.53125,
+          19.90234375
+        ],
+        "signature_verification_mean_us": 1.8646927083333333,
+        "ready_on_first_seen": 384,
+        "waiting_on_first_seen": 0
+      }
+    ]
+  },
+  "scope": [
+    "Protected legacy and EIP-1559 transactions; native ETH, payable and nested calls, CREATE/CREATE2 and SELFDESTRUCT.",
+    "Producer enforcement only; block import uses stock execution. No approval history required for import.",
+    "Compare application call tree and effects. Protocol fees, absolute EOA balances and every environmental opcode read are not independently pinned.",
+    "Real OPS HTTP/DB policy checks, signatures and Reth execution. Development identities, contract fixtures and Engine API block scheduling; no indexer or browser UI.",
+    "Local performance measurements exclude OPS preflight, approval delivery/wait and import; they are not sustained whole-stack TPS.",
+    "No production transport hardening, DSL compiler, Solidity policy or consensus rule introduced."
+  ],
+  "binary_sha256": {
+    "<repo>/.tmp/ops-server": "dbff007f7c4977163f59be490c6392f25067b8fed3eea5b432e248c1b1efa4d7",
+    "<repo>/.tmp/approval-client": "6c38ba6fa8a8ac461a79a37b6c5464155ae325312daf4cc79fb798b6018f703e",
+    "<repo>/.tmp/server-approval.test": "528c2a37320078d09344f9804428c4cfc482c75ce91ef7a216b4b8c2169b41f1",
+    "<repo>/.tmp/reth-policy-poc/target/release/ops-reth-approvals-poc": "44ee7893ae691398aee2392514750f3b33e84ac664150c996e038fd9f4472197"
+  },
+  "source_sha256": {
+    "go.mod": "eb3f8465e1e3c510b76d22446a0f47bd49deec7da6dbf1274370c1fbd278876d",
+    "go.sum": "2fd49546a9e625916d89949e23669b7878ff97c287852f563201ed9dbe643d2d",
+    "internal/nodeapproval/batch.go": "de2f51b9a126bad48aa98d994fc604782a888e6197a24e224e49811f17baf889",
+    "internal/nodeapproval/batch_test.go": "eb391243d81c4c44b49f155a0b75e6a1daaa84db93fdbeba84be88a280d36eb6",
+    "internal/nodeapproval/fingerprint.go": "e634c03a3185acee72e0d51cba957f98468149deca618ddeb38f5d93e8ab5683",
+    "internal/nodeapproval/hops.go": "07fb3240298ed800847707e266373c0974a67ac9558e1241dedc5cc61d7d27ac",
+    "internal/nodeapproval/lifecycle_test.go": "879f4a3c4c15b753e1c6ac74398e47ca46f2a8e863d63398a36a453e2959ddaa",
+    "internal/nodeapproval/prepare_test.go": "0f1d2a21a5bc938581f0bf811b2c7559b1e7d953ef141932fabf4d2cb576b22a",
+    "internal/nodeapproval/service.go": "92f35e48180c49004113d70b68c4981a5edc7bc535fc69a65abfc250553187b2",
+    "internal/nodeapproval/service_test.go": "f9358d48b375a3c53a675e2f4d143057d59843467807ddcd031b40fd3d0c15b1",
+    "internal/nodeapproval/testdata/batch.json": "97f3954ab979223f70a083d47ffeafcb061d29c5dcd8b120b6a70a6f9bf8ea3d",
+    "internal/nodeapproval/testdata/fingerprint.json": "a71ccc94bf5a07a4ca892a646c05fa499dc7786e44ccaec55c0130726a67a79a",
+    "internal/nodeapproval/transport.go": "3d83fb925844ac90cd9d89466d330cf645cecb8ab97c7a7c363a93ccf8228106",
+    "internal/nodeapproval/transport_test.go": "68ba999e492405e4141527e7b1864331b0214673e4ae100086dfa2d94f8a09e8",
+    "internal/rbac/trace_creation_test.go": "678b6d5ac522c78c7a6b5c01a353474f319b92c0e60c9f7c49f26e93c9368c10",
+    "internal/rbac/trace_validator.go": "d00f4dcc3129b42ea7febbccaad18db304b43773cb15f69f243f2815dc4bedaf",
+    "internal/rbac/trace_validator_test.go": "ba5537c6d9ea366d2ae67cffc17f19035a167b6ef0ce3001f1683adbb46bbfa1",
+    "internal/server/jsonrpc_processor.go": "c99e943351f9b9bfb910a05e8a7d01d15b38c777356d3b5ade322b47a9a6cbb3",
+    "internal/server/jsonrpc_trace.go": "69cb7bde5ba5769787c0414935390823363708d24f0568ea886c9ea48d66d7a4",
+    "internal/server/node_approvals.go": "00956873e2f1dd6f72a890925d9d10aa3e173b22b6f0696b15911c2f74e6c009",
+    "internal/server/node_approvals_integration_test.go": "d0e458d09255b8f45476d2fc22a81a2161ac3f8119eac2f4538ff1db916eec06",
+    "internal/server/server.go": "67e631be587f8662aef970dcb3074e8ee1f1dca238301525a033e3bc9ef7d2a8",
+    "poc/reth-signed-approvals/Cargo.lock": "39d5f147648f7667ebbd975523515db3d1bb7d3037cad88cbb0e7214c2bba6da",
+    "poc/reth-signed-approvals/Cargo.toml": "f56952ab76414512d1fb4aaded7add380c0229ffb4a601a8ae99f96439a1401f",
+    "poc/reth-signed-approvals/analyze_transport.py": "2c9cdaef68aded8cf76af4f031d36026603b2de448bc82bdc18ebd650c1e5cd0",
+    "poc/reth-signed-approvals/batch_tests.py": "140e084c387b77839ecd2b60328896c5dcf7100cb5798d28654eb0bfc44b2223",
+    "poc/reth-signed-approvals/client/main.go": "57c4722d62211a053974482161f79755d3ea0a739422537c4bebddc264e0d8e8",
+    "poc/reth-signed-approvals/contracts/Applications.sol": "6f20f989a724184cbe9326e3b818a00f1c2a2f8147eef6cbe49441ed07d067a1",
+    "poc/reth-signed-approvals/demo.py": "37395f20297b2fd98679bb221e3a48bab76905f9e7a0b913782b88b823d59eea",
+    "poc/reth-signed-approvals/demo.sh": "832d003dbc73574b39cb437206a214531a2e8a85b587b89f3f8fa40dbaba8e79",
+    "poc/reth-signed-approvals/harness.py": "8437ed328741d0254244859e00710ef0049a24e7355670bd9446a9e1c0f7ba15",
+    "poc/reth-signed-approvals/lifecycle_ops_tests.py": "50eaaec12cb0328d283424996fc0b02edbbc713b2b82d3d3bd21b4c7010206e2",
+    "poc/reth-signed-approvals/lifecycle_tests.py": "b61c521e65be9dc6175147f418111dc22fc0f1bf5cb10950c21fb08edd22826e",
+    "poc/reth-signed-approvals/profile_bench.py": "1269d9f0e232b49b79209edfbef9b15bc204b01a3d1bcf2e132e059fdb25cd7c",
+    "poc/reth-signed-approvals/run.py": "34b56dd48664bed2ff856fa08ec2a7e203c06492b5f2285725684087485f083d",
+    "poc/reth-signed-approvals/setup.py": "e4a5b658a73625b377c7a1b933ecbf52725a53ee39b39bd587c392710e5cf6bd",
+    "poc/reth-signed-approvals/src/approvals.rs": "456c4fd2ef897ccfaa76b531a2f36ff3ae278ceac737b6658be7a4b055911cae",
+    "poc/reth-signed-approvals/src/batch.rs": "f4c871e5adef3e16cdd7c1ce333b2aebff03728ab1714cbc5cdf439138789d6d",
+    "poc/reth-signed-approvals/src/direct.rs": "eec20034efdb6c5c2382f4378292ed0c2df686370420beb854699346d3ce532d",
+    "poc/reth-signed-approvals/src/execution.rs": "6299024821cd93e1acd4dc80c04bf1c86540b2404c7d914b5656f44505e9cf2c",
+    "poc/reth-signed-approvals/src/fingerprint.rs": "3d898bf86ca4ad68198c2ebe36789aa2ad3bd90d10ed6835b0b234258a3e2891",
+    "poc/reth-signed-approvals/src/hops.rs": "f58ad5efd25724f49e27c89eebbefa8732a3618038dd9cb188f78b52649e8157",
+    "poc/reth-signed-approvals/src/main.rs": "7e7a215f18c77862ca13f7700544c8d9588e63dbb7bd51067a0d4ec6f87832e4",
+    "poc/reth-signed-approvals/src/payload.rs": "126a1cfae32288155cb6f8279e80615670754ff5130d70999cee567256fedb5d",
+    "poc/reth-signed-approvals/src/profile.rs": "7d34b43bea2a08c8ce755e1250a447eed7b8b7750c7e3a37a8e47811fd5204ac",
+    "poc/reth-signed-approvals/src/verification.rs": "ccef3dd209fbbf74a191a57bff730e1a491a1366b4aa2541e1d8664ffe9ed2d1",
+    "poc/reth-signed-approvals/transport_checks.py": "8f36c74c628e5b5b63d16902ea561aba2c7212c12481f919806e3c63e17319b6",
+    "poc/reth-signed-approvals/verify.py": "089ccbfc1552efcc338a5092640ec5b736feafbef7d294e334480b08ecc9e2e1"
+  },
+  "documentation_sha256": {
+    "poc/reth-signed-approvals/DEMO.md": "533da872f062922a328e76de024f06fc64f43dc6fb80ea9ca70159f98c376bd6",
+    "poc/reth-signed-approvals/README.md": "e48a984e200fcfa4a28e8ad2d2f654715ad2796c4c3f484ed4e7b5e4d1c337bf",
+    "poc/reth-signed-approvals/EXTENSION-PLAN.md": "a2982326419ba4a5f17118d7fcea134965091615715d9f22b747b7ae7ec2626c",
+    "poc/reth-signed-approvals/EXTENSION-REVIEW.md": "de8ec35e657f892954de2e666bee5ff0f400e27db88862b53027b7815d85f5f7",
+    "docs/research/dsl-policy-and-node-enforcement/ops-reth-integration-2026-09-11/IMPLEMENTATION.md": "825a09cf35235733d99144b75d05247eb5fb9f828c7aef7de10b8b0388b1c5d6"
+  },
+  "evidence_sha256": {
+    "regression-final/tests.json": "57fb4657094e9f29fc9c5eb01ad6f845bee76d7f14c2953c19c32ebfd38a4191",
+    "ops-final/tests.json": "849530e8ad654545e888ad0ea337ec6f4011a144ea616a1c095e395f0252e44d",
+    "benchmark-final/benchmark.json": "c808b915d524b6bef962fbc31fe59ff7ed09c66b9562b13ac3734350a066748b",
+    "go-tests-final.log": "4c04321fd04cf5f5f0ce8674865442b99dcf4d6ff06a12ff747389996fd0d97d",
+    "rust-tests-final.log": "3cb9558519850ed1ba5a2881e7594d8cc14097a3c93c5ee41c15c69751bc0c38",
+    "clippy.log": "0c6278921902074a819541259c32dfd315120c454b8388fa35c4585df9869bca",
+    "build-final.log": "f6d3db1acec6a4dc902a4123aee5375f461b0d0871372a0d32241dde55a868fe"
+  }
+}

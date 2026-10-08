@@ -1,0 +1,10 @@
+# Throwaway localhost certificates: run.sh generates them when missing.
+certs/
+# Per-record measurements are large; summary.jsonl and summary.log are the evidence.
+results/*-sender.jsonl
+results/*-receiver.jsonl
+results/*-receiver.log
+# The repository ignores *.log; keep the summary log with the evidence.
+!results/summary.log
+receiver/build/
+receiver/.gradle/

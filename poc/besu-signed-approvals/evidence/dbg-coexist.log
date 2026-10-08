@@ -1,0 +1,4 @@
+option '--logging' (<LOG VERBOSITY LEVEL>) should be specified only once
+
+To display full help:
+besu [COMMAND] --help

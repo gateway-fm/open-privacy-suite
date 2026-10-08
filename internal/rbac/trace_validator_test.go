@@ -158,6 +158,7 @@ func TestValidateTrace_M6_DelegateCallSharedInfraDenied(t *testing.T) {
 		{"CALL allowed", "CALL", true, DenialKindNone},
 		{"STATICCALL allowed", "STATICCALL", true, DenialKindNone},
 		{"DELEGATECALL denied", "DELEGATECALL", false, DenialKindDelegateSharedInfra},
+		{"CALLCODE denied", "CALLCODE", false, DenialKindDelegateSharedInfra},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

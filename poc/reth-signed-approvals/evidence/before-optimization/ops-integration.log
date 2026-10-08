@@ -1,0 +1,14 @@
+=== RUN   TestNodeApprovalsRealReth
+=== RUN   TestNodeApprovalsRealReth/foreign_contract_denied
+2026/09/11 15:04:29 INFO RBAC access denied method=eth_sendRawTransaction user=did:privado:caller-77876950-c181-426f-a467-d07e4d793d43 ip=127.0.0.1 auth_required=false
+=== RUN   TestNodeApprovalsRealReth/same_signer_different_DID_denied
+2026/09/11 15:04:29 INFO RBAC access denied method=eth_sendRawTransaction user=did:privado:test-acab2a28-ec35-4e67-bdd7-6aebc9aab345 ip=127.0.0.1 auth_required=false
+=== RUN   TestNodeApprovalsRealReth/nested_foreign_contract_denied_by_DB_trace_validator
+2026/09/11 15:04:29 INFO raw send trace: denial user=did:privado:caller-77876950-c181-426f-a467-d07e4d793d43 to=0x0000000000000000000000000000000000001100
+=== RUN   TestNodeApprovalsRealReth/same_org_signed_and_forwarded
+--- PASS: TestNodeApprovalsRealReth (0.14s)
+    --- PASS: TestNodeApprovalsRealReth/foreign_contract_denied (0.00s)
+    --- PASS: TestNodeApprovalsRealReth/same_signer_different_DID_denied (0.00s)
+    --- PASS: TestNodeApprovalsRealReth/nested_foreign_contract_denied_by_DB_trace_validator (0.01s)
+    --- PASS: TestNodeApprovalsRealReth/same_org_signed_and_forwarded (0.01s)
+PASS
