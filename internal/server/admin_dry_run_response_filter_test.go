@@ -151,7 +151,7 @@ func setupDRFFixture(t *testing.T) *drfFixture {
 
 	readMethods := []string{
 		rbac.MethodGetTransactionByHash, rbac.MethodGetTransactionReceipt, rbac.MethodGetLogs,
-		"eth_call", "eth_sendTransaction", rbac.MethodGetCode, rbac.MethodGetBalance,
+		"eth_call", "eth_sendTransaction", rbac.MethodGetCode, rbac.MethodGetBalance, rbac.MethodGetStorageAt,
 		// Outside the View-as method set: granted here so that only the
 		// mirror's own allowlist can be what refuses them.
 		"eth_sendRawTransaction", "eth_getBlockReceipts", "eth_getBlockByNumber", "debug_traceTransaction",
@@ -385,6 +385,77 @@ func TestDryRunAndViewAsRPC_DeployerAccessUsesNamedOrg_RD1308(t *testing.T) {
 			f.router.ServeHTTP(w, req)
 			assert.Equal(t, http.StatusNotFound, w.Code, w.Body.String())
 			assert.False(t, f.reached(method), "a read outside the named org is decided before upstream forwarding")
+		})
+	}
+}
+
+// State reads answer as the user's own call in the named org would, on both
+// surfaces: an in-org value comes back unchanged, the tiered storage-slot rule
+// applies, and another org's contract is refused before forwarding although
+// the user's own session in that org may read it.
+func TestDryRunAndViewAsRPC_StateReads_RD1308(t *testing.T) {
+	const (
+		slot  = "0x0" // not an infrastructure slot: admin claim required
+		value = "0x00000000000000000000000000000000000000000000000000000000000013a8"
+	)
+	cases := []struct {
+		name      string
+		method    string
+		params    []any
+		wantAllow bool
+		// ownOrg, when set, is an org whose session of the user may make the
+		// same read: the control for a denial that only the path-org pin causes.
+		ownOrg func(f *drfFixture) string
+	}{
+		{name: "eth_getStorageAt, admin claim on an org-O contract", method: rbac.MethodGetStorageAt,
+			params: []any{drfAdminCO, slot, "latest"}, wantAllow: true},
+		{name: "eth_getStorageAt, plain grant, non-infrastructure slot", method: rbac.MethodGetStorageAt,
+			params: []any{drfContractO, slot, "latest"}, wantAllow: false},
+		{name: "eth_getStorageAt, org-P contract", method: rbac.MethodGetStorageAt,
+			params: []any{drfContractP, slot, "latest"}, wantAllow: false,
+			ownOrg: func(f *drfFixture) string { return f.orgP }},
+		{name: "eth_getBalance, org-O contract", method: rbac.MethodGetBalance,
+			params: []any{drfContractO, "latest"}, wantAllow: true},
+		{name: "eth_getCode, org-O contract", method: rbac.MethodGetCode,
+			params: []any{drfContractO, "latest"}, wantAllow: true},
+		{name: "eth_blockNumber", method: "eth_blockNumber", params: []any{}, wantAllow: true},
+	}
+	f := setupDRFFixture(t)
+	ctx := context.Background()
+	// In P the member is a tier-2 admin (admin claim on drfContractP); this
+	// group also allows the storage read there, so the org-P control holds.
+	pReaders := uuid.New().String()
+	require.NoError(t, f.ts.db.CreateGroup(ctx, &rbac.Group{ID: pReaders, OrgID: f.orgP, Slug: "drf-p-readers", Name: "drf-p-readers", Path: "drf-p-readers"}))
+	require.NoError(t, f.ts.db.CreateGroupAccess(ctx, &rbac.GroupAccess{ID: uuid.New().String(), GroupID: pReaders, AllowedMethods: []string{rbac.MethodGetStorageAt}}))
+	impAddUserToGroup(t, f.ts.db, f.memberID, pReaders)
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f.resetReached()
+			f.serve(c.method, drfEnvelope(t, value))
+			if c.ownOrg != nil {
+				own, err := f.ts.rbacAccessCtrl.CheckAccess(ctx, &rbac.AccessCheckRequest{
+					UserExternalID: drfMemberDID, OrgID: c.ownOrg(f), Method: c.method, Params: c.params,
+					TargetAddress: rbac.GetTargetAddress(c.method, c.params),
+				})
+				require.NoError(t, err)
+				require.True(t, own.Allowed, "control: the user's own session in that org may read it: %s", own.Reason)
+			}
+
+			resp, raw := f.dryRun(t, c.method, c.params)
+			w := f.mirrorRaw(t, c.method, c.params)
+			if c.wantAllow {
+				require.Equal(t, "allow", resp.Decision, raw)
+				assert.JSONEq(t, `"`+value+`"`, string(drfResult(t, resp.Response)), raw)
+				require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+				assert.JSONEq(t, `"`+value+`"`, string(drfResult(t, w.Body.Bytes())))
+				return
+			}
+			assert.Equal(t, "deny", resp.Decision, raw)
+			assert.Empty(t, resp.Response)
+			assert.Equal(t, http.StatusNotFound, w.Code, w.Body.String())
+			assert.NotContains(t, w.Body.String(), value)
+			assert.False(t, f.reached(c.method), "a denied read is decided before upstream forwarding")
 		})
 	}
 }
@@ -962,20 +1033,6 @@ func TestExplorerViewAs_ExistingVisibilityScope_RD1315(t *testing.T) {
 
 	assert.False(t, gotScoped, "the explorer mirror retains its current context")
 	assert.Equal(t, explorer.VisibilityFull, gotLevel, "the explorer visibility resolver retains its current membership scope")
-}
-
-// filterDryRunLogs is a test-only wrapper that pins the rbac.FilterEventLogs
-// grant states (wildcard / deny / allowlist) without a Server, passing no
-// linked addresses, ABI provider, visibleTo context or admin map. Dry-run
-// itself does NOT use it: logs_visible_to_user comes from the production
-// receipt filter (dryRunTraceLogsVisibleToUser, RD-1308).
-func filterDryRunLogs(logs []json.RawMessage, perms *rbac.EffectivePermissions, user *rbac.User, viewerDID string) []json.RawMessage {
-	if len(logs) == 0 || perms == nil {
-		return nil
-	}
-	_ = user
-	_ = viewerDID
-	return rbac.FilterEventLogs(logs, perms, []string{}, nil, nil, nil)
 }
 
 // A deployment transaction has no `to`: the envelope pin judges it by the
