@@ -57,9 +57,9 @@ While the banner is up:
 
 What the admin sees vs what the user sees: **the redaction layer and visible dataset are the target user's own.** Logs the target cannot read are removed; addresses they cannot resolve are returned redacted; contracts they cannot access are denied. The admin's own broader visibility is not merged into the session. Clicking **Stop viewing as** restores the normal admin view.
 
-RPC calls under View-as give the same answer the [dry-run](/docs/rbac#admin-dry-run--impersonation) gives for the same call:
+RPC calls under View-as to a [dry-run](/docs/rbac#admin-dry-run--impersonation) read method give the same answer the dry-run gives for the same call:
 
-| What decides visibility | Applies |
+| What decides visibility | Applies (View-as RPC and dry-run) |
 |---|---|
 | The target's grants, admin role and `visibleTo` unlock eligibility in the named org | Yes |
 | The target's grants or admin role in any other org | No |

@@ -13114,7 +13114,8 @@ tags:
     tier-2 admin gated, per-request audited. The mirrored operations are documented
     once, under their canonical /api/v1/explorer and /rpc paths. The JSON-RPC mirror
     serves only the dry-run read methods and the org-free metadata methods (any other
-    method in the body returns 400), and answers them as the dry-run does.'
+    method in the body returns 400), and answers the dry-run read methods as the dry-run
+    does.'
   name: 'Admin: impersonation'
 - description: Fleet-level shared contract infrastructure and Azure tenant administration.
   name: 'Admin: shared infrastructure'
