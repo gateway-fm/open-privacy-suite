@@ -16,12 +16,8 @@ var bs = string(rune(92))
 // ParseEnvelope) enforces.
 const maxEnvelopeDepth = 10000
 
-// ambiguousEnvelopes are JSON-RPC bodies that different JSON decoders read
-// differently. Go's encoding/json matches member names case-insensitively and
-// keeps the LAST duplicate; exact-case decoders (Reth/jsonrpsee, Besu/Jackson)
-// read only the exact-case member, and some keep the first duplicate or reject.
-// The proxy must refuse every one of them, because whichever reading it
-// authorises, the node may execute the other.
+// ambiguousEnvelopes covers duplicate and case-variant request members.
+// Envelope validation rejects each case before forwarding.
 var ambiguousEnvelopes = []struct {
 	name string
 	body string
@@ -214,12 +210,9 @@ func TestFoldKey_MatchesEqualFold(t *testing.T) {
 	}
 }
 
-// TestParseEnvelope_ParamFieldCaseVariants: inside params, a Go-based node
-// (Geth, Erigon) reads `To` as `to` while the proxy's exact lookup does not
-// see it, so a call would be checked as one without a target. Such names are
-// reported by ParamsAmbiguity (the caller refuses them for methods whose
-// params the proxy reads); names that only look similar, or are not Ethereum
-// request fields, are not.
+// TestParseEnvelope_ParamFieldCaseVariants covers exact spelling for standard
+// request fields within params. Unrelated names and correctly spelled fields
+// remain accepted; the caller selects which method policies apply.
 func TestParseEnvelope_ParamFieldCaseVariants(t *testing.T) {
 	rejected := map[string]string{
 		"call To":                          `[{"To":"0x000000000000000000000000000000000000000b","data":"0x01"},"latest"]`,

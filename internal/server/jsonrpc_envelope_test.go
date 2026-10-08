@@ -186,9 +186,7 @@ const (
 func TestJSONRPCEnvelope_Anonymous_AmbiguousNeverForwarded(t *testing.T) {
 	h := setupEnvelopeHarness(t)
 	cases := map[string]string{
-		// The proxy's old reading was the LAST case-insensitive match
-		// (eth_blockNumber, anonymous-allowed); an exact-case node executes
-		// the lower-case member (eth_getBalance).
+		// Duplicate and case-variant members are rejected before forwarding.
 		"method then Method": `{"jsonrpc":"2.0","id":1,"method":"eth_getBalance","Method":"eth_blockNumber","params":["` + envAddrA + `","latest"]}`,
 		"duplicate method":   `{"jsonrpc":"2.0","id":1,"method":"eth_getBalance","method":"eth_blockNumber","params":["` + envAddrA + `","latest"]}`,
 		"lone Method":        `{"jsonrpc":"2.0","id":1,"Method":"eth_blockNumber","params":[]}`,
@@ -212,7 +210,7 @@ func TestJSONRPCEnvelope_Authenticated_AmbiguousNeverForwarded(t *testing.T) {
 		// is org-free metadata and always allowed to a member.
 		"method then Method": `{"jsonrpc":"2.0","id":1,"method":"eth_getStorageAt","Method":"eth_blockNumber","params":["` + envAddrA + `","0x0","latest"]}`,
 		"Method then method": `{"jsonrpc":"2.0","id":1,"Method":"eth_getStorageAt","method":"eth_blockNumber","params":["` + envAddrA + `","0x0","latest"]}`,
-		// The proxy's old reading checked B; an exact-case node reads A.
+		// Case-variant parameter members are rejected before forwarding.
 		"params then Params": `{"jsonrpc":"2.0","id":1,"method":"eth_getBalance","params":["` + envAddrA + `","latest"],"Params":["` + envAddrB + `","latest"]}`,
 		"duplicate params":   `{"jsonrpc":"2.0","id":1,"method":"eth_getBalance","params":["` + envAddrA + `","latest"],"params":["` + envAddrB + `","latest"]}`,
 		"nested case pair":   `{"jsonrpc":"2.0","id":1,"method":"eth_getBalance","params":["` + envAddrA + `",{"blockHash":"0x01","BlockHash":"0x02"}]}`,
@@ -440,8 +438,7 @@ func TestProcessCalledOnlyFromHandleJSONRPC(t *testing.T) {
 }
 
 // TestDryRun_RefusesCaseVariantRequestField: the admin dry-run forwards its rpc
-// block re-encoded, so a `To` the access check never saw would reach a Go-based
-// node as the call target.
+// block re-encoded. Both diagnostics follow the request-field validation policy.
 func TestDryRun_RefusesCaseVariantRequestField(t *testing.T) {
 	f := setupDryRunFixture(t)
 	node := newEnvelopeCanaryNode(t)

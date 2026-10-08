@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
@@ -7,6 +7,7 @@ import GroupAccessForm from '../GroupAccessForm';
 import { mockGroupAccess } from '@/test/mocks/handlers';
 import { mockGroupAccessFull } from '@/test/mocks/rbac-fixtures';
 import { METHOD_SECTIONS, getPresetMethods, PERMISSION_PRESETS } from '@/types/rbac';
+import { rbacApi } from '@/api/rbac';
 
 // Minimal wrapper since GroupAccessForm doesn't need org context directly
 function renderGroupAccessForm(props: {
@@ -740,6 +741,62 @@ describe('GroupAccessForm', () => {
           methods,
         })
       );
+
+    it('waits for the method catalog before presets and saving become available', async () => {
+      const user = userEvent.setup();
+      const onSave = vi.fn();
+      const presetMethods = getPresetMethods(PERMISSION_PRESETS[0]);
+      type StatusResponse = Awaited<ReturnType<typeof rbacApi.status.get>>;
+      let releaseStatus!: (value: StatusResponse) => void;
+      const pendingStatus = new Promise<StatusResponse>(resolve => {
+        releaseStatus = resolve;
+      });
+      const accessSpy = vi.spyOn(rbacApi.groups, 'getAccess').mockResolvedValue({
+        data: {
+          ...mockGroupAccess,
+          allowed_methods: ['eth_call', 'linea_estimateGas', 'eth_getProof'],
+        },
+      } as Awaited<ReturnType<typeof rbacApi.groups.getAccess>>);
+      const statusSpy = vi.spyOn(rbacApi.status, 'get').mockReturnValue(pendingStatus);
+      let capturedMethods: string[] | undefined;
+      server.use(
+        http.put('/api/v1/admin/orgs/:orgId/groups/:groupId/access', async ({ request }) => {
+          const body = (await request.json()) as { allowed_methods: string[] };
+          capturedMethods = body.allowed_methods;
+          return HttpResponse.json({ ...mockGroupAccess, ...body });
+        })
+      );
+
+      try {
+        await act(async () => {
+          renderGroupAccessForm({ onSave });
+        });
+        expect(accessSpy).toHaveBeenCalled();
+        expect(statusSpy).toHaveBeenCalled();
+        expect(screen.queryByText('Save Access Settings')).not.toBeInTheDocument();
+        expect(screen.queryByText(PERMISSION_PRESETS[0].description)).not.toBeInTheDocument();
+
+        await act(async () => {
+          releaseStatus({
+            data: {
+              methods: {
+                extra_namespaces: { Linea: ['linea_estimateGas'] },
+                supported_methods: [...presetMethods, 'linea_estimateGas', 'eth_getProof'],
+              },
+            },
+          } as StatusResponse);
+        });
+        await user.click(screen.getByText(PERMISSION_PRESETS[0].description).closest('button')!);
+        await user.click(screen.getByText('Save Access Settings'));
+        await waitFor(() => expect(onSave).toHaveBeenCalled());
+        expect(capturedMethods).not.toContain('linea_estimateGas');
+        expect(capturedMethods).toContain('eth_getProof');
+      } finally {
+        releaseStatus({ data: {} } as StatusResponse);
+        accessSpy.mockRestore();
+        statusSpy.mockRestore();
+      }
+    });
 
     it('does not offer a prefix-wildcard toggle', async () => {
       server.use(

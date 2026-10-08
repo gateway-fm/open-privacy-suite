@@ -70,8 +70,14 @@ export default function GroupAccessForm({
   // non-memoised helpers that read current state via closure; adding them to
   // deps would require useCallback and risk a refetch loop.
   useEffect(() => {
-    loadAccess();
-    loadExtraNamespaces();
+    let active = true;
+    setLoading(true);
+    // Presets and save cleanup need both the stored grants and the catalog.
+    // Keep editing unavailable until both independent reads have settled.
+    void Promise.all([loadAccess(), loadExtraNamespaces()]).then(() => {
+      if (active) setLoading(false);
+    });
+    return () => { active = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groupId]);
 
@@ -92,7 +98,6 @@ export default function GroupAccessForm({
 
   const loadAccess = async () => {
     try {
-      setLoading(true);
       const response = await rbacApi.groups.getAccess(orgId, groupId);
       const access = response.data;
       if (access) {
@@ -108,8 +113,6 @@ export default function GroupAccessForm({
       }
     } catch {
       // No access settings yet, that's OK
-    } finally {
-      setLoading(false);
     }
   };
 

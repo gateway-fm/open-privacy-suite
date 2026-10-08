@@ -130,9 +130,7 @@ var GlobalBlockedMethods = map[string]bool{
 	// in CheckAccess: admin-claim users get all slots, non-admin users get only
 	// well-known infrastructure slots (EIP-1967, EIP-2535). See storage_slots.go.
 
-	// Signing methods - key exposure risk. Typed-data signing (EIP-712) is the
-	// same risk: the node signs with one of its own keys (e.g. a token permit)
-	// with no check that the caller controls that key.
+	// Node signing methods are unavailable through the proxied RPC endpoint.
 	"eth_sign":             true,
 	"eth_signtransaction":  true,
 	"eth_signtypeddata":    true,

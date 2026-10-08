@@ -222,9 +222,9 @@ The proxy uses `debug_traceCall` to validate all addresses touched by transactio
 
 <Callout title="Important: eth_call tracing scope">
 
-The eth_call cross-org trace fires **only** when the method resolves to `eth_call` or `eth_estimateGas`. Chain-specific methods declared in `EXTRA_RPC_NAMESPACES_FILE` with `"alias": "eth_call"` (e.g. an explicit `linea_call` entry) are traced. **Passthrough methods are NOT traced** — and they are also not subject to contract access checks or response filtering (see Extra RPC Namespaces below).
+The eth_call trace validation runs **only** when the method resolves to `eth_call` or `eth_estimateGas`. Chain-specific methods declared in `EXTRA_RPC_NAMESPACES_FILE` with `"alias": "eth_call"` (e.g. an explicit `linea_call` entry) are traced. **Passthrough methods are NOT traced** — and they are also not subject to contract access checks or response filtering (see Extra RPC Namespaces below).
 
-A passthrough method has no defined `to`/`from`/`data` shape, so the proxy has nothing to extract for the trace and no way to know whether the method even runs the EVM. If you need cross-org isolation on a chain-specific method, declare it with an `alias` instead.
+A passthrough method has no defined `to`/`from`/`data` shape, so the proxy has nothing to extract for the trace and no way to know whether the method even runs the EVM. To apply organization scope checks to a chain-specific method, declare it with an `alias` instead.
 
 </Callout>
 

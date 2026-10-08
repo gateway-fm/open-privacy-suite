@@ -14,12 +14,9 @@ import (
 	"privacy-proxy/internal/rbac"
 )
 
-// The proxy decides access on its own parse of a JSON-RPC body and forwards a
-// body to the node. These tests put a recording relay between the proxy and
-// the real node, so they observe what the node receives: an ambiguous envelope
-// (duplicate or case-variant member names, which exact-case node parsers read
-// differently from Go's case-folding, last-wins decoder) must never arrive,
-// and an accepted request must arrive as exactly the members the proxy read.
+// A recording relay verifies the request envelope received by the real node.
+// Rejected envelopes remain local; accepted envelopes contain only the
+// canonical forwarded members.
 
 type recordingRelay struct {
 	srv    *httptest.Server
@@ -104,8 +101,7 @@ func TestE2E_RequestEnvelope_AmbiguousNeverReachesNode(t *testing.T) {
 	cases := []struct {
 		name, path, token, body string
 	}{
-		// Old reading: the last case-insensitive match. Exact-case nodes run
-		// the lower-case member instead.
+		// Case variants and duplicate members are rejected.
 		{"anonymous method then Method", "/", "",
 			`{"jsonrpc":"2.0","id":1,"method":"eth_getBalance","Method":"eth_blockNumber","params":["` + envelopeAddrA + `","latest"]}`},
 		{"anonymous duplicate method", "/rpc", "",
@@ -116,8 +112,7 @@ func TestE2E_RequestEnvelope_AmbiguousNeverReachesNode(t *testing.T) {
 			`{"jsonrpc":"2.0","id":1,"method":"eth_getBalance","params":["` + envelopeAddrA + `","latest"],"Params":["` + envelopeAddrB + `","latest"]}`},
 		{"authenticated nested data and Data", "/rpc/" + rbac.DefaultOrgID, token,
 			`{"jsonrpc":"2.0","id":1,"method":"eth_call","params":[{"to":"` + envelopeIdentity + `","data":"0x1111","Data":"0x2222"},"latest"]}`},
-		// A Go-based node reads To as the call target; the proxy's exact
-		// lookup would see a call without one.
+		// Request object fields use their exact supported spelling.
 		{"authenticated call with To", "/rpc/" + rbac.DefaultOrgID, token,
 			`{"jsonrpc":"2.0","id":1,"method":"eth_call","params":[{"To":"` + envelopeIdentity + `","data":"0x1111"},"latest"]}`},
 	}

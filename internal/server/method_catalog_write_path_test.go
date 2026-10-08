@@ -149,7 +149,7 @@ func TestSetGroupAccess_AnonymousGroupAcceptsCatalogMethodsOnly(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 }
 
-// Batch-move's new_group used to be stored with a literal "*".
+// Batch-move initializes a new group with an explicit method list.
 func TestBatchMoveNewGroup_StoresExplicitMethodList(t *testing.T) {
 	ts := setupTestServerForRBAC(t)
 	ctx := context.Background()

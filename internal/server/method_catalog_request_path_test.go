@@ -18,16 +18,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Request-path regression tests for the RPC method catalog (RD-1311).
-//
-// A method the proxy has no model for has no target address (so no
-// per-contract / cross-org gate), no response filter and no send-side
-// tracing. It must therefore never reach the node, however a group's
-// allowed_methods was populated: a literal "*" (the batch-move new_group
-// path used to store one), a free-text name saved through the admin API, or
-// the anonymous group's row. A canary upstream records every method it
-// receives, so each test proves the node never saw the request rather than
-// inferring it from the proxy's verdict.
+// Request-path regression tests for the explicit RPC method catalog (RD-1311).
+// Requests outside the catalog require a configured operator method entry.
+// A recording upstream verifies request admission for stored exact names,
+// legacy wildcard rows, anonymous callers and configured operator methods.
 
 // canaryNode is an httptest upstream that records the JSON-RPC method of
 // every request it receives and answers with a trivial result.
@@ -99,12 +93,8 @@ const (
 	catalogTestAddr   = "0x1311131113111311131113111311131113111311"
 )
 
-// unmodelledMethods are real upstream methods (geth, erigon, reth, otterscan,
-// parity/openethereum, EIP-7966) that the proxy has no gate or response filter
-// for. Each one returns data a private network must not expose unfiltered —
-// raw sender/value/calldata/nonce, full traces, account state — or, for
-// eth_sendRawTransactionSync, submits a transaction around the send-side
-// decode, sender-link, trace and compliance checks.
+// unmodelledMethods lists upstream extensions outside the built-in catalog.
+// These cases exercise the default admission policy across namespaces.
 var unmodelledMethods = []struct {
 	method string
 	params []any
@@ -151,9 +141,7 @@ func assertNeverForwarded(t *testing.T, p *JSONRPCProcessor, canary *canaryNode,
 	assert.Empty(t, canary.seen(), "the node must never receive a method the proxy has no gate or response filter for")
 }
 
-// A group whose stored allowed_methods is the literal "*" — the shape the
-// batch-move new_group path and the dev admin bootstrap wrote — reaches the
-// catalog, never methods outside it.
+// A group with a legacy literal "*" row reaches catalog methods only.
 func TestMethodCatalog_LiteralStarGroup_UnmodelledMethodsNeverReachNode(t *testing.T) {
 	ts := setupTestServerForRBAC(t)
 	ctx := context.Background()
@@ -172,8 +160,7 @@ func TestMethodCatalog_LiteralStarGroup_UnmodelledMethodsNeverReachNode(t *testi
 	assert.Equal(t, []string{"eth_feeHistory"}, canary.seen())
 }
 
-// A group row that names unmodelled methods explicitly (setGroupAccess stored
-// any string verbatim) still cannot reach them.
+// Stored exact names outside the registered method set remain unavailable.
 func TestMethodCatalog_ExplicitUnknownNames_NeverReachNode(t *testing.T) {
 	ts := setupTestServerForRBAC(t)
 	ctx := context.Background()

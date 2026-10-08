@@ -108,8 +108,7 @@ func TestMethodCatalog_UnsupportedMethodsNeverReachNode(t *testing.T) {
 	_, token := f.CreateUserWithMembership(group.ID, testfixtures.CreateUserOptions{})
 	auth := map[string]string{"Authorization": "Bearer " + token}
 
-	// A legacy row with a literal "*" (what batch-move new_group used to
-	// store) must not reach unsupported methods either.
+	// A legacy literal "*" row follows the same catalog admission policy.
 	legacyGroup := f.CreateGroup(org.ID, "legacy", testfixtures.CreateGroupOptions{})
 	if _, err := srv.DB().Conn().ExecContext(context.Background(),
 		`INSERT INTO group_access (id, group_id, allowed_methods, claims) VALUES ($1, $2, '{*}', '{deploy}')`,

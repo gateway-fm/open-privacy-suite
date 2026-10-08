@@ -10,12 +10,8 @@ import (
 	"unicode/utf8"
 )
 
-// ErrAmbiguousRequest is returned for a JSON-RPC request whose member names
-// can be read more than one way. JSON decoders disagree on such input: Go's
-// encoding/json folds letter case and keeps the last duplicate, while the
-// exact-case decoders in Reth and Besu read only the exact-case member, and
-// some decoders keep the first duplicate or reject it. Whichever reading the
-// proxy authorised, the node might execute another, so the request is refused.
+// ErrAmbiguousRequest identifies duplicate or case-variant request members.
+// Envelope validation requires member names to have a single exact spelling.
 var ErrAmbiguousRequest = errors.New("ambiguous JSON-RPC request: duplicate or case-variant member names")
 
 // forwardedMembers are the top-level members the proxy reads, in the order
@@ -33,13 +29,8 @@ const (
 	memberPrivateFor
 )
 
-// paramFieldNames are the standard field names of Ethereum JSON-RPC request
-// objects: transaction and call objects, log filters, EIP-1898 block
-// selectors, tracer options, and state and block overrides, plus the proxy's
-// own visibleTo/privateFor. Inside params, a name that differs from one of
-// these only by letter case is refused: a case-insensitive node decoder (Go's
-// in Geth and Erigon) matches it to the field while the proxy's exact lookup
-// does not see it, so `{"To": X}` would be checked as a call without a target.
+// paramFieldNames lists standard Ethereum request-object fields and proxy
+// metadata. Case variants are reported for methods whose parameters OPS reads.
 var paramFieldNames = []string{
 	// transaction / call object
 	"from", "to", "gas", "gasPrice", "maxFeePerGas", "maxPriorityFeePerGas",
@@ -102,7 +93,7 @@ type Envelope struct {
 //     `data` first. Equal values (web3.js sends both) are fine.
 //
 // The caller refuses the request when the proxy reads the method's params;
-// for payloads it never inspects (typed-data signing, wildcard passthrough)
+// for payloads it never inspects (typed-data signing, named passthrough)
 // the names are just data.
 func (e *Envelope) ParamsAmbiguity() string {
 	if e.fieldVariant != "" {
@@ -153,13 +144,9 @@ func (e *Envelope) CanonicalWithoutMetadata() []byte {
 	return buildCanonical(e.members, e.Method, false)
 }
 
-// CheckDecodedRequest applies ParseEnvelope to a method and params that a
-// handler decoded itself (for example from an admin request body) and
-// forwards re-encoded. Go's decoder already merged repeated names, but a pair
-// differing only in case, a case variant of a request field (`{"To": X}`) or
-// a data/input mismatch survives the round trip and would reach the node in a
-// form the proxy's checks did not read. The caller applies ParamsAmbiguity as
-// it does for /rpc.
+// CheckDecodedRequest applies envelope validation to decoded method/params
+// pairs used by admin handlers. Callers apply ParamsAmbiguity using the same
+// method policy as the public RPC handler.
 func CheckDecodedRequest(method string, params []interface{}) (*Envelope, error) {
 	body, err := json.Marshal(struct {
 		Method string        `json:"method"`
@@ -424,11 +411,8 @@ func skipJSONSpace(b []byte, i int) int {
 	return i
 }
 
-// scanJSONString returns the index of the closing quote of the string that
-// opens at b[start], whether it contains escapes, and an error for an
-// unpaired surrogate escape (\uD800-\uDFFF not forming a pair). encoding/json
-// silently turns those into U+FFFD, so the proxy would authorise a different
-// string from the one a strict node decodes. b must be valid JSON.
+// scanJSONString locates a closing quote, reports escapes, and rejects
+// unpaired UTF-16 surrogate escapes. The input must already be valid JSON.
 func scanJSONString(b []byte, start int) (end int, escaped bool, err error) {
 	for j := start + 1; j < len(b); {
 		switch b[j] {
