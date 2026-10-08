@@ -238,7 +238,7 @@ Set `RUNTIME_TRACING_INTRA_ORG_GRANTS_ENABLED=true` to tighten this: when on, an
 
 - **Default OFF.** Org ownership remains the boundary unless you opt in.
 - **Cross-org isolation is unaffected** by this flag — calls into another org's contracts (and into unregistered addresses) are always denied regardless.
-- Governs both reads (`eth_call`) and writes (`eth_sendTransaction`, `eth_sendRawTransaction`, and contract-deploy constructor calls). Trace requests (`debug_traceCall`, `debug_traceTransaction`) always apply this check, whatever this flag says, because a trace returns every internal call's input and output.
+- Governs both reads (`eth_call`) and writes (`eth_sendTransaction`, `eth_sendRawTransaction`, and contract-deploy constructor calls). Trace requests (`debug_traceCall`, `debug_traceTransaction`) always apply this check, whatever this flag says, because a trace names every contract its internal calls reach.
 - **In-flight deploys are not blocked.** Multi-contract or factory deploys (CREATE2/CREATE3) that reference a precomputed sibling address before it is mined still work — pre-registered deployment addresses are allowed for deploy-claim callers, the same as the direct-call access check.
 - Has no effect when runtime tracing is globally unavailable.
 
