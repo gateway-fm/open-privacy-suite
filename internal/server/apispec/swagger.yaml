@@ -7334,18 +7334,24 @@ paths:
   /api/v1/admin/orgs/{org_id}/dry-run:
     post:
       description: 'Evaluates "what would this user see if they made this RPC call?"
-        in the path org, without mutating chain state. Read methods are forwarded
-        and redacted as the impersonated user; write methods (eth_sendTransaction
-        / eth_sendRawTransaction) are translated to debug_traceCall so the RBAC verdict
-        and the events the tx would emit (and the subset visible to the user) can
-        be inspected. Requires a tier-2 org-admin JWT of the path org: X-Admin-Token
-        credentials (both the full super-admin token and the operator token) are explicitly
-        rejected, since impersonation reads tenant data as the user. The impersonated
-        user must exist and be a member of the path org, else an opaque 404 (no cross-org
-        existence leak). Every evaluation is written to the impersonation audit log
-        fail-closed. Supported methods: eth_call, eth_getLogs, eth_getTransactionReceipt,
-        eth_getTransactionByHash, eth_getBalance, eth_getCode, eth_getStorageAt, eth_blockNumber,
-        eth_chainId, eth_sendTransaction, eth_sendRawTransaction.'
+        in the path org, without mutating chain state. Read methods are forwarded,
+        and the response goes through the same privacy filter as the user''s own call,
+        evaluated in the path org only: the user''s grants, admin role and visibleTo
+        shares from other organizations do not apply; a transaction or receipt the
+        user may not read, or one involving another organization''s contract, comes
+        back null; logs are filtered and their embedded addresses redacted. Write
+        methods (eth_sendTransaction / eth_sendRawTransaction) are translated to debug_traceCall
+        so the RBAC verdict, the events the tx would emit, and the subset the user
+        would see in its receipt can be inspected. If the user''s view cannot be produced,
+        nothing from the node is returned (500). Requires a tier-2 org-admin JWT of
+        the path org: X-Admin-Token credentials (both the full super-admin token and
+        the operator token) are explicitly rejected, since impersonation reads tenant
+        data as the user. The impersonated user must exist and be a member of the
+        path org, else an opaque 404 (no cross-org existence leak). Every evaluation
+        is written to the impersonation audit log fail-closed. Supported methods:
+        eth_call, eth_getLogs, eth_getTransactionReceipt, eth_getTransactionByHash,
+        eth_getBalance, eth_getCode, eth_getStorageAt, eth_blockNumber, eth_chainId,
+        eth_sendTransaction, eth_sendRawTransaction.'
       parameters:
       - description: Organization ID (UUID)
         in: path
@@ -7403,8 +7409,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
-          description: internal error (includes audit-log write failure — response
-            withheld)
+          description: internal error (includes audit-log write failure, or the user's
+            view could not be produced — response withheld)
         "502":
           content:
             application/json:
