@@ -2918,11 +2918,21 @@ func (s *Server) getExplorerSearchSuggestions(c *gin.Context) {
 	// viewer who may open it (the same redactor decision as GET
 	// /transactions/:hash), so the search box is not a tx-existence oracle.
 	if s.readProfile().Strict() && len(suggestions) > 0 {
+		ctx := c.Request.Context()
 		viewerDID := s.getViewerDIDFromRequest(c)
+		// The viewer's redaction options are built once per request, on the
+		// first transaction suggestion, not once per suggestion.
+		var opts *explorer.RedactOpts
 		kept := suggestions[:0]
 		for _, sug := range suggestions {
-			if sug.Type == "transaction" && !s.strictTxVisible(c.Request.Context(), viewerDID, sug.Value) {
-				continue
+			if sug.Type == "transaction" {
+				if opts == nil {
+					o := s.buildRedactOptsForViewer(ctx, viewerDID)
+					opts = &o
+				}
+				if !s.strictTxVisible(ctx, viewerDID, sug.Value, *opts) {
+					continue
+				}
 			}
 			kept = append(kept, sug)
 		}
@@ -2972,8 +2982,9 @@ func (s *Server) getExplorerSearchSuggestions(c *gin.Context) {
 }
 
 // strictTxVisible reports whether the viewer may open the transaction under
-// the redactor's decision; any lookup failure is "no" (fail closed).
-func (s *Server) strictTxVisible(ctx context.Context, viewerDID, hash string) bool {
+// the redactor's decision, given the viewer's redaction options (as built by
+// buildRedactOptsForViewer); any lookup failure is "no" (fail closed).
+func (s *Server) strictTxVisible(ctx context.Context, viewerDID, hash string, opts explorer.RedactOpts) bool {
 	if viewerDID == "" || s.explorerRedactor == nil {
 		return false
 	}
@@ -2981,7 +2992,7 @@ func (s *Server) strictTxVisible(ctx context.Context, viewerDID, hash string) bo
 	if err != nil || tx == nil {
 		return false
 	}
-	out, err := s.explorerRedactor.RedactTransactions(ctx, []explorer.Transaction{*tx}, viewerDID, s.buildRedactOptsForViewer(ctx, viewerDID))
+	out, err := s.explorerRedactor.RedactTransactions(ctx, []explorer.Transaction{*tx}, viewerDID, opts)
 	return err == nil && len(out) == 1
 }
 
