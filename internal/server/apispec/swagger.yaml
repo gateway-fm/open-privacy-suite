@@ -8770,11 +8770,12 @@ paths:
       - 'Admin: system'
   /api/v1/admin/test-request:
     post:
-      description: 'Dashboard diagnostic: runs one method through RBAC, travel-rule
-        compliance, and upstream forwarding, using a synthetic identity ("test:dashboard")
-        or the subject of a supplied jwt_token. On an upstream JSON-RPC-level error
-        the call still returns HTTP 200 with the error in the response body. Requires
-        the private-network source gate (403 otherwise).'
+      description: 'Dashboard diagnostic: runs one method through RBAC, the same nested-call
+        trace as /rpc (eth_call, eth_estimateGas, and eth_createAccessList without
+        `to`), travel-rule compliance, and upstream forwarding, using a synthetic
+        identity ("test:dashboard") or the subject of a supplied jwt_token. On an
+        upstream JSON-RPC-level error the call still returns HTTP 200 with the error
+        in the response body. Requires the private-network source gate (403 otherwise).'
       requestBody:
         content:
           application/json:
@@ -8799,7 +8800,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
-          description: invalid request body or invalid JWT
+          description: invalid request body or invalid JWT (an invalid call shape
+            refused by the trace returns a TestRequestResponse)
         "401":
           content:
             application/json:
@@ -8811,14 +8813,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/privacy-proxy_internal_apimodels.TestRequestResponse'
-          description: RBAC or compliance denied (network-gate rejections return the
-            generic error envelope)
+          description: RBAC, nested-call trace or compliance denied (network-gate
+            rejections return the generic error envelope)
         "500":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/privacy-proxy_internal_apimodels.TestRequestResponse'
-          description: access-check error
+          description: access-check or trace-validation error
         "502":
           content:
             application/json:

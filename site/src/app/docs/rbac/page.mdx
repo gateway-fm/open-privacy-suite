@@ -150,11 +150,11 @@ graph TD
 
 | Claim | Purpose | Required For |
 |-------|---------|--------------|
-| `deploy` | Deploy new contracts | `eth_sendTransaction` with empty `to`, `eth_estimateGas` for deployment |
+| `deploy` | Deploy new contracts | `eth_sendTransaction` without `to`, and `eth_estimateGas` / `eth_call` / `eth_createAccessList` without `to` (deployment simulation) |
 | `admin` | Full administrative access | All operations including deployment; implies `deploy` + `upgrade` |
 | `upgrade` | Upgrade proxy contracts | `upgradeTo()`, `upgradeToAndCall()` on proxy contracts |
 
-Non-privileged method access (reads + non-mutating calls + ordinary writes) is controlled entirely by the method allowlist. If `eth_call` is in a group's allowed methods, members can read contract data. If `eth_sendTransaction` is in the list, members can send transactions. No additional claim is needed.
+Non-privileged method access (reads + non-mutating calls + ordinary writes) is controlled entirely by the method allowlist. If `eth_call` is in a group's allowed methods, members can read contract data. If `eth_sendTransaction` is in the list, members can send transactions. No additional claim is needed — except for calls without a `to`, which run contract-creation code and therefore need the `deploy` claim (see the table above).
 
 <Callout variant="info" title="Tracing is gated by the allowlist">
 

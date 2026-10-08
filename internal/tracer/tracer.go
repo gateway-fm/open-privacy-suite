@@ -42,6 +42,10 @@ type CallTarget struct {
 	From  string
 	To    string
 	Depth int
+	// Error is the frame's error as reported by the tracer ("" on success).
+	// A failed CREATE (e.g. an address collision) reports the address of
+	// existing code, which must not be mistaken for a freshly created one.
+	Error string
 }
 
 // Tracer provides debug_traceCall functionality for an Ethereum node.
@@ -238,6 +242,7 @@ func (t *Tracer) extractCallTargets(frame *callFrame, result *TraceResult, depth
 			From:  frame.From,
 			To:    frame.To,
 			Depth: depth,
+			Error: frame.Error,
 		})
 	case "CREATE":
 		result.HasCreate = true
@@ -246,6 +251,7 @@ func (t *Tracer) extractCallTargets(frame *callFrame, result *TraceResult, depth
 			From:  frame.From,
 			To:    frame.To, // For CREATE, "to" is the created contract address
 			Depth: depth,
+			Error: frame.Error,
 		})
 	case "CREATE2":
 		result.HasCreate2 = true
@@ -254,6 +260,7 @@ func (t *Tracer) extractCallTargets(frame *callFrame, result *TraceResult, depth
 			From:  frame.From,
 			To:    frame.To, // For CREATE2, "to" is the created contract address
 			Depth: depth,
+			Error: frame.Error,
 		})
 	}
 

@@ -1769,10 +1769,10 @@ func TestExtractDeploymentBytecode(t *testing.T) {
 			expected: "0x6080604052",
 		},
 		{
-			name:     "eth_call - not a deployment method",
+			name:     "eth_call without to - creation code is the bytecode",
 			method:   "eth_call",
 			params:   []any{map[string]any{"data": "0x6080604052"}},
-			expected: "",
+			expected: "0x6080604052",
 		},
 		{
 			name:     "eth_sendRawTransaction - not a deployment method",

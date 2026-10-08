@@ -77,15 +77,25 @@ func TestEthEstimateGasTracing_InvalidFromReturns400(t *testing.T) {
 	assert.Contains(t, err.Message, "invalid request shape")
 }
 
-func TestEthCallTracing_EmptyTargetBypasses(t *testing.T) {
+// An empty target does not skip the trace. A creation-shaped call (no `to`) is
+// traced like any other call — here the unknown user fails closed before the
+// trace — and a missing or malformed call object is refused as an invalid
+// shape. Neither returns nil (= forward). The trace-and-decide paths
+// are in creation_shaped_call_test.go.
+func TestEthCallTracing_EmptyTargetIsNotForwardedUntraced(t *testing.T) {
 	proc, _ := setupEthCallProc(t)
-	req := &ProcessRequest{
-		UserID: "did:privado:any",
-		Method: "eth_call",
-		Params: []any{map[string]any{}},
+	for name, params := range map[string][]any{
+		"creation-shaped": {map[string]any{"data": "0x6080"}},
+		"no call object":  {},
+		"string call":     {"0x6080"},
+		"to is a number":  {map[string]any{"to": 1, "data": "0x6080"}},
+	} {
+		for _, method := range []string{"eth_call", "eth_estimateGas"} {
+			req := &ProcessRequest{UserID: "did:privado:any", Method: method, Params: params}
+			require.NotNil(t, proc.validateEthCallWithTracing(context.Background(), req, ""),
+				"%s %s with an empty target must not be forwarded untraced", method, name)
+		}
 	}
-	require.Nil(t, proc.validateEthCallWithTracing(context.Background(), req, ""),
-		"empty target — RBAC entry-point check would have already rejected if required")
 }
 
 func TestEthCallTracing_InvalidToReturns400(t *testing.T) {

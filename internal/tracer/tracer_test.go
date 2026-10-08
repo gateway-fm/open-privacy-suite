@@ -457,3 +457,30 @@ func TestExtractCallTargets_MaxDepthAllowed(t *testing.T) {
 		t.Fatalf("expected %d call targets, got %d", maxTraceDepth+1, got)
 	}
 }
+
+// A failed frame (e.g. a CREATE that hit an address collision) keeps its
+// error on the extracted target so the validator can tell it apart from a
+// successful creation.
+func TestExtractCallTargets_KeepsFrameError(t *testing.T) {
+	tracer := NewTracer("http://localhost:8545", DefaultTimeout)
+	frame := &callFrame{
+		Type: "CREATE", From: "0xsender", To: "0xcreated",
+		Calls: []callFrame{
+			{Type: "CREATE", From: "0xcreated", To: "0xexisting", Error: "contract address collision"},
+			{Type: "CALL", From: "0xcreated", To: "0xother"},
+		},
+	}
+	result := &TraceResult{CallTargets: make([]CallTarget, 0)}
+	if err := tracer.extractCallTargets(frame, result, 0); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.CallTargets) != 3 {
+		t.Fatalf("expected 3 targets, got %d", len(result.CallTargets))
+	}
+	if result.CallTargets[0].Error != "" || result.CallTargets[2].Error != "" {
+		t.Errorf("successful frames must carry no error: %+v", result.CallTargets)
+	}
+	if result.CallTargets[1].Error != "contract address collision" {
+		t.Errorf("failed CREATE must keep its error, got %q", result.CallTargets[1].Error)
+	}
+}

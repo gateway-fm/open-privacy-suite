@@ -107,6 +107,24 @@ type TraceOption func(*traceOptions)
 type traceOptions struct {
 	intraOrgGrantScoping bool
 	grantedContracts     map[string]bool
+	createdAsOwn         bool
+}
+
+// WithCreatedContractsAsOwn is for traces of contract-creation code (an
+// eth_call / eth_estimateGas / eth_createAccessList without `to`). Creation code
+// may deploy contracts and then call them — a constructor that runs
+// `child = new Child(); child.init()`, or a deployless read. Such a callee
+// runs code the caller just supplied in this same trace, and every frame it
+// executes is validated in turn, so a frame into an address created by a
+// successful CREATE/CREATE2 earlier in the trace is not refused as
+// unregistered. A failed CREATE (e.g. an address collision, where existing
+// code sits at the address) does not qualify. Creation itself still needs the
+// deploy claim, and a created address registered to another org is still
+// refused (Rule 1).
+func WithCreatedContractsAsOwn() TraceOption {
+	return func(o *traceOptions) {
+		o.createdAsOwn = true
+	}
 }
 
 // WithIntraOrgGrantScoping enables the RD-1053 intra-org pass: an internal
@@ -248,6 +266,21 @@ func (v *TraceValidator) ValidateTrace(
 		}
 	}
 
+	// Contracts created by successful CREATE/CREATE2 frames of this trace
+	// (WithCreatedContractsAsOwn). Collected after Rule 1, which already
+	// required the deploy claim and refused collisions with another org.
+	var createdInTrace map[string]bool
+	if o.createdAsOwn {
+		createdInTrace = make(map[string]bool)
+		for _, target := range trace.CallTargets {
+			if (target.Type == "CREATE" || target.Type == "CREATE2") && target.Error == "" {
+				if addr := normalizeTraceAddr(target.To); addr != "" && addr != "0x" {
+					createdInTrace[addr] = true
+				}
+			}
+		}
+	}
+
 	// Rule 2: Validate each call target
 	for _, target := range trace.CallTargets {
 		// Skip CREATE/CREATE2 targets — handled above
@@ -265,6 +298,12 @@ func (v *TraceValidator) ValidateTrace(
 
 		// Rule 2a: Precompiles are always allowed
 		if v.precompileFunc(addr) {
+			continue
+		}
+
+		// A contract this trace created runs the caller's own code; its
+		// frames are validated as their own targets.
+		if createdInTrace[addr] {
 			continue
 		}
 
