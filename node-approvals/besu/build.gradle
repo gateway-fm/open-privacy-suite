@@ -1,7 +1,7 @@
 // OPS signed-approvals Besu plugin. Built against the Besu artifacts Lineth consumes.
 plugins {
   id 'java'
-  id 'com.google.protobuf' version '0.9.5'
+  id 'com.google.protobuf' version '0.10.0'
   id 'com.gradleup.shadow' version '9.2.2'
 }
 
