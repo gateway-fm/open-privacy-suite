@@ -47,7 +47,7 @@ func setupAdminAuthTestServer(t *testing.T, adminToken string) (*Server, *gin.En
 	require.NoError(t, err)
 
 	cfg := &config.Config{
-		ReadProfile: rbac.ReadProfileStandard,
+		ReadProfile:   rbac.ReadProfileStandard,
 		AdminAPIToken: adminToken,
 	}
 
@@ -530,4 +530,3 @@ func TestAdminAuth_JWT_BannedUserDenied(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, w.Code)
 	assert.Contains(t, w.Body.String(), "banned")
 }
-
