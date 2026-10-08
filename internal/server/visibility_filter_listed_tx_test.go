@@ -38,6 +38,7 @@ func TestRedactOptsFromFilter_ListedTxHashesAreOnlyGenuineListings(t *testing.T)
 
 func TestBuildVisibilityFilter_ListedTxHashesExcludeTransferUnion(t *testing.T) {
 	srv, database, conn := setupTestServerForExplorerTransactions(t)
+	srv.config.ReadProfile = rbac.ReadProfileStandard
 	_, err := conn.ExecContext(context.Background(), extendedExplorerSchemaRD1009)
 	require.NoError(t, err)
 	t.Cleanup(func() { _, _ = conn.ExecContext(context.Background(), "DROP TABLE IF EXISTS token_transfers") })

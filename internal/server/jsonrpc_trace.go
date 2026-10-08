@@ -371,8 +371,21 @@ func sendTraceDenyMessage(reason string) string {
 //     upstream error and never echo the denied contract address.
 //
 // Returns nil to allow the eth_call to be forwarded; non-nil to deny.
+//
+// Under an impersonation scope (RD-1308, the View-as RPC mirror) the trace is
+// validated in the scope org only, exactly as the admin dry-run does; an empty
+// scope denies rather than widening to every org of the viewer.
 func (p *JSONRPCProcessor) validateEthCallWithTracing(ctx context.Context, req *ProcessRequest, targetAddr string) *ProcessError {
-	return p.validateEthCallWithTracingInOrg(ctx, req, targetAddr, "")
+	orgID := ""
+	if scope, scoped := viewerOrgScope(ctx); scoped {
+		// An empty scope cannot occur (both writers pass a validated org);
+		// should it, refuse every method rather than trace in all orgs.
+		if scope == "" {
+			return &ProcessError{StatusCode: http.StatusForbidden, Message: ethCallDenyTracerError, Reason: ReasonTracingUnavailable}
+		}
+		orgID = scope
+	}
+	return p.validateEthCallWithTracingInOrg(ctx, req, targetAddr, orgID)
 }
 
 // validateEthCallWithTracingInOrg is the dry-run-safe variant of

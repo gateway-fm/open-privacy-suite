@@ -599,9 +599,9 @@ POST /api/orgs/:org_id/dry-run
 }
 ```
 
-Non-mutating methods (`eth_call`, `eth_getLogs`, `eth_getTransactionReceipt`, `eth_getTransactionByHash`, `eth_getBalance`, `eth_getCode`, `eth_getStorageAt`, `eth_blockNumber`, `eth_chainId`) pass through to the upstream node and return the user's would-be response.
+Non-mutating methods (`eth_call`, `eth_getLogs`, `eth_getTransactionReceipt`, `eth_getTransactionByHash`, `eth_getBalance`, `eth_getCode`, `eth_getStorageAt`, `eth_blockNumber`, `eth_chainId`) are forwarded to the upstream node, and the response goes through the same privacy filter as the user's own call, evaluated in `:org_id`: a transaction the user may not read comes back `null`, and logs and receipts are filtered and their embedded addresses redacted exactly as on the live RPC. The user's grants, admin role and `visibleTo` shares from another organization do not apply, and the user's own transactions or receipts with another organization's contract (including deploying one) come back `null`.
 
-Mutating methods (`eth_sendTransaction`) are translated to `debug_traceCall` against the upstream node — current state, no commit. The trace returns nested call frames + emitted logs; the proxy walks the frames and runs the logs through the impersonated user's RBAC view, returning both the full event list (`logs_emitted`) and the subset the user would actually see (`logs_visible_to_user`).
+Mutating methods (`eth_sendTransaction`, `eth_sendRawTransaction`) are translated to `debug_traceCall` against the upstream node — current state, no commit. The trace returns nested call frames + emitted logs; the proxy returns the full event list (`logs_emitted`) and the subset the user would see in that transaction's receipt (`logs_visible_to_user`), filtered and redacted the same way as a real receipt in `:org_id`.
 
 ### Operational requirements
 
@@ -612,4 +612,4 @@ Mutating methods (`eth_sendTransaction`) are translated to `debug_traceCall` aga
 ### Limitations
 
 - Cross-org impersonation is structurally blocked (admin in Org A can only dry-run or browse as users with a membership in Org A).
-- Dashboard View-as is read-only and scoped to one explicit organization. It applies the target user's visibility without merging the admin's broader grants; see [View as user](/docs/security/view-as-user).
+- Dashboard View-as is read-only and scoped to one explicit organization. It applies the target user's visibility without merging the admin's broader grants; its RPC calls are evaluated in the named organization the same way as dry-run. See [View as user](/docs/security/view-as-user).

@@ -14,6 +14,7 @@ import (
 	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
+	"privacy-proxy/internal/server/middleware"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -41,6 +42,18 @@ type dryRunTestServer struct {
 func setupDryRunTestServer(t *testing.T) *dryRunTestServer {
 	t.Helper()
 	ts := setupTestServerForRBAC(t)
+	// The production processor is always wired (NewWithVerifier); dry-run
+	// runs its response filter as the impersonated user (RD-1308), and
+	// withholds read responses when it is missing.
+	ts.jsonrpcProcessor = NewJSONRPCProcessor(JSONRPCProcessorConfig{
+		RBACAccessCtrl:            ts.rbacAccessCtrl,
+		RateLimiter:               &noopRateLimiter{},
+		AccessLogger:              ts.db,
+		CircuitBreaker:            middleware.NewCircuitBreaker(),
+		ConcurrencyLimiter:        middleware.NewConcurrencyLimiter(50, 0),
+		TxVisibilityStore:         ts.db,
+		AddressVisibilityResolver: ts.db,
+	})
 
 	// Inject a minimal middleware that mirrors what
 	// adminAuthMiddleware sets in production. Real auth is exercised

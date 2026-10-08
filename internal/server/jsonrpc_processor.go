@@ -1032,6 +1032,9 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 	// This filters responses to prevent cross-participant data leakage
 	// within the same organization.
 	responseBody = p.applyResponseFilter(ctx, req, result, responseBody)
+	// RD-1308: under a View-as scope, another org's transactions stay out
+	// even when the target took part in them. No-op for a user's own call.
+	responseBody = p.applyViewerOrgScopeEnvelope(ctx, req.Method, responseBody)
 
 	// Log successful access
 	p.recordRPCOutcome(req.Method, "success", start)

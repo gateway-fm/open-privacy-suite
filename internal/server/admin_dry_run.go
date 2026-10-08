@@ -35,12 +35,10 @@ import (
 // to debug_traceCall so the admin can see RBAC's verdict + the events
 // the tx WOULD emit + the subset visible to user X.
 //
-// Why this is safe for tier-2: by the rbac resolver,
-// computeOrgAdminPermissions synthesises full claims on every contract
-// in the admin's org, so any data exposed via the impersonation
-// pipeline is already in the admin's reach via direct calls. Net new
-// data: zero. The endpoint is therefore an *ergonomics* tool wrapped
-// in audit logging, not a privacy expansion.
+// Read answers use the production response filter within :org_id
+// (RD-1308, viewer_org_scope.go). The write-method trace and logs_emitted
+// are admin diagnostics; validateDryRunTrace checks their frames against
+// the same named organization before they are returned.
 //
 // Super-admin (X-Admin-Token) is explicitly rejected — they have no
 // data-layer reach into RPC/explorer responses today, and impersonation
@@ -66,8 +64,8 @@ type dryRunResponse struct {
 	LogsVisibleToUser []json.RawMessage `json:"logs_visible_to_user,omitempty"`
 }
 
-// supported method allowlist for Phase 1. Read methods pass through
-// unchanged; write methods are translated to debug_traceCall. Anything
+// supported method allowlist for Phase 1. Read methods are forwarded and
+// filtered as the user; write methods are translated to debug_traceCall. Anything
 // outside this set returns 400 — clearer than silently no-op'ing,
 // expandable as use cases come up.
 var dryRunReadMethods = map[string]bool{
@@ -107,6 +105,7 @@ var dryRunTraceMethods = map[string]bool{
 func (s *Server) handleDryRun(c *gin.Context) {
 	ctx := c.Request.Context()
 	orgID := c.Param("org_id")
+	ctx = withViewerOrgScope(ctx, orgID)
 
 	// Reject the token credentials explicitly. orgScopingMiddleware lets both
 	// admin_token (full) and operator_token through any :org_id — we have to
@@ -338,18 +337,13 @@ func (s *Server) handleDryRun(c *gin.Context) {
 			Decision:          "allow",
 			Trace:             traceResp.Trace,
 			LogsEmitted:       traceResp.Logs,
-			LogsVisibleToUser: s.filterDryRunLogs(ctx, traceResp.Logs, userPerms, user, req.UserDID, orgID),
+			LogsVisibleToUser: s.dryRunTraceLogsVisibleToUser(ctx, traceResp, req.UserDID, orgID, accessResult),
 		})
 		return
 	}
 
-	// Read method: forward through the proxy. H13: with the C8 scope
-	// fix in place, the response is already restricted to admin's org
-	// for CheckAccess purposes — but eth_getLogs and
-	// eth_getTransactionReceipt would still pass through raw upstream
-	// data without the production event-rule + param-rule + no-ABI
-	// filters. Wire those filters here so the dry-run answer matches
-	// what the impersonated user would actually see.
+	// Read method: forward through the proxy, then filter the response as
+	// the impersonated user (below).
 	rawResp, err := s.forwardDryRunRead(ctx, req.RPC, c.ClientIP())
 	if err != nil {
 		if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "error", sanitizeDryRunReason(err), c.GetString("correlation_id")); logErr != nil {
@@ -361,48 +355,10 @@ func (s *Server) handleDryRun(c *gin.Context) {
 		return
 	}
 
-	// Apply production redaction for the two read methods that carry
-	// log data — pre-fix these were returned verbatim, so admins got a
-	// strictly-broader view than the impersonated user would see in
-	// production. Other read methods (eth_chainId, eth_blockNumber,
-	// eth_getBalance, eth_call, eth_getCode, eth_getStorageAt) are
-	// gated by CheckAccess and their response shape doesn't carry
-	// per-log redaction concerns.
+	// RD-1308: use the production response filter as the impersonated user,
+	// with permissions and visibility inputs scoped to the path organization.
 	if rawResp != nil {
-		var addrs []string
-		if user != nil && s.db != nil {
-			if links, lerr := s.db.GetEthAddressesByDID(ctx, user.ExternalID); lerr == nil {
-				addrs = make([]string, 0, len(links))
-				for _, l := range links {
-					addrs = append(addrs, strings.ToLower(l.EthAddress))
-				}
-			}
-		}
-		var abiProv rbac.ABIProvider
-		if s.db != nil {
-			abiProv = newStoreABIProvider(ctx, s.db)
-		}
-		// Field-redact embedded addresses too (RD-1214), using the impersonated
-		// user's DID, so the dry-run reflects the user's REAL view — entry
-		// filtering alone would still return embedded third-party addresses in
-		// the clear, over-showing vs production. No-op if the processor/resolver
-		// isn't wired or the user has no DID.
-		viewerDID := ""
-		if user != nil {
-			viewerDID = user.ExternalID
-		}
-		switch req.RPC.Method {
-		case "eth_getLogs":
-			rawResp = FilterLogsWithEventRules(s.readProfile(), []byte(rawResp), addrs, userPerms, abiProv, nil, nil)
-			if s.jsonrpcProcessor != nil && viewerDID != "" {
-				rawResp = s.jsonrpcProcessor.redactLogsArrayResponseFields(ctx, viewerDID, []byte(rawResp))
-			}
-		case "eth_getTransactionReceipt":
-			rawResp = FilterReceiptLogsWithEventRules(s.readProfile(), []byte(rawResp), addrs, userPerms, abiProv, nil, nil)
-			if s.jsonrpcProcessor != nil && viewerDID != "" {
-				rawResp = s.jsonrpcProcessor.redactReceiptResponseFields(ctx, viewerDID, []byte(rawResp))
-			}
-		}
+		rawResp = s.filterDryRunReadResponse(ctx, req.RPC, req.UserDID, orgID, accessResult, rawResp)
 	}
 
 	if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "allow", "", c.GetString("correlation_id")); logErr != nil {
@@ -687,81 +643,9 @@ func extractLogsFromCallTrace(raw json.RawMessage) []json.RawMessage {
 	return out
 }
 
-// filterDryRunLogs is the legacy package-level wrapper used by tests
-// to assert the deny / allow shape of FilterEventLogs without needing
-// a Server. New production code paths call the method on Server (see
-// (*Server).filterDryRunLogs) which additionally wires an ABI
-// provider. The wrapper passes nil for those, matching pre-M3 test
-// expectations.
-func filterDryRunLogs(profile rbac.ReadProfile, logs []json.RawMessage, perms *rbac.EffectivePermissions, user *rbac.User, viewerDID string) []json.RawMessage {
-	if len(logs) == 0 || perms == nil {
-		return nil
-	}
-	_ = user
-	_ = viewerDID
-	return rbac.FilterEventLogs(profile, logs, perms, []string{}, nil, nil, nil)
-}
-
-// filterDryRunLogs runs the impersonated user's RBAC view over the
-// emitted logs, returning the subset they would actually see if they
-// fetched the receipt. Reuses rbac.FilterEventLogs so the dry-run
-// answer matches what a real eth_getTransactionReceipt would give the
-// user.
-//
-// M3 / RD-930: pre-fix this called FilterEventLogs with `addrs` empty
-// and the abiProvider / visCtx / adminContracts arguments as nil. That
-// bypassed three production gates:
-//   - param-rule `must_be=self` constraints always failed (no addrs)
-//   - the RD-875/889 no-ABI deny gate didn't fire (abiProvider nil)
-//   - per-contract admin bypass didn't apply (adminContracts nil)
-//
-// Now: resolve the impersonated user's linked ETH addresses and wire
-// the production ABI provider. visibleTo unlock + admin bypass are
-// still nil because they require per-tx visibility context which the
-// dry-run synthetic principal doesn't have; we leave them at the
-// safe (under-redact) defaults. This is an over-approximation in the
-// other direction from what RD-930 pinned, but the audit answer is
-// strictly more accurate.
-func (s *Server) filterDryRunLogs(ctx context.Context, logs []json.RawMessage, perms *rbac.EffectivePermissions, user *rbac.User, viewerDID, orgID string) []json.RawMessage {
-	if len(logs) == 0 || perms == nil {
-		return nil
-	}
-
-	// Resolve the impersonated user's linked ETH addresses for
-	// param-rule self-matching. Best-effort: if the lookup errors we
-	// still pass an empty list and FilterEventLogs evaluates correctly,
-	// just stricter (param-rule self always fails).
-	var addrs []string
-	if user != nil && s.db != nil {
-		links, err := s.db.GetEthAddressesByDID(ctx, user.ExternalID)
-		if err == nil {
-			addrs = make([]string, 0, len(links))
-			for _, l := range links {
-				addrs = append(addrs, strings.ToLower(l.EthAddress))
-			}
-		} else {
-			slog.Warn("dry-run: link resolution failed", "user_id", user.ID, "err", err)
-		}
-	}
-
-	// abiProvider: wire the production store-backed provider so the
-	// RD-875/889 no-ABI deny gate fires correctly. Without it,
-	// FilterEventLogs treated every log as having no ABI to consult and
-	// silently let through events from contracts that production would
-	// have denied.
-	var abiProv rbac.ABIProvider
-	if s.db != nil {
-		abiProv = newStoreABIProvider(ctx, s.db)
-	}
-
-	_ = viewerDID
-	_ = orgID
-	return rbac.FilterEventLogs(s.readProfile(), logs, perms, addrs, abiProv, nil, nil)
-}
-
 // forwardDryRunRead forwards a read-only RPC call to the upstream node
-// and returns the raw response body for embedding in the dry-run
-// reply. No redaction here — see the caller's comment for why.
+// and returns the raw response body. The caller filters it as the
+// impersonated user (filterDryRunReadResponse) before it is returned.
 func (s *Server) forwardDryRunRead(ctx context.Context, rpc apimodels.DryRunRPCBlock, clientIP string) (json.RawMessage, error) {
 	if s.proxy == nil {
 		return nil, fmt.Errorf("proxy not configured")

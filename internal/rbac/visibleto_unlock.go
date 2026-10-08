@@ -3,6 +3,8 @@ package rbac
 import (
 	"context"
 	"strings"
+
+	"privacy-proxy/internal/viewscope"
 )
 
 // UnlockableContracts returns the lowercase addresses among contractAddrs for
@@ -17,12 +19,19 @@ import (
 // so the unlock set per (viewer, contract) cannot drift between them, and a
 // policy profile that must restrict the unlock has one place to do it.
 //
+// A viewer organization scope, when present, limits the set to contracts
+// owned by that organization. An empty scope produces an empty set.
+//
 // Cost per request: one contract lookup per unique address; the user and its
 // memberships/grants are loaded only if some contract is flagged, once per
 // owning org. Every lookup error fails closed (the contract is omitted).
 func UnlockableContracts(ctx context.Context, access *AccessController, viewerDID string, contractAddrs []string) map[string]bool {
 	out := make(map[string]bool)
 	if access == nil || viewerDID == "" || len(contractAddrs) == 0 {
+		return out
+	}
+	scope, scoped := viewscope.Org(ctx)
+	if scoped && scope == "" {
 		return out
 	}
 	store := access.Store()
@@ -43,6 +52,9 @@ func UnlockableContracts(ctx context.Context, access *AccessController, viewerDI
 		seen[addr] = struct{}{}
 		c, err := store.GetContractByAddressGlobal(ctx, addr)
 		if err != nil || c == nil || !c.AllowVisibleToUnlock || c.OrgID == "" {
+			continue
+		}
+		if scoped && c.OrgID != scope {
 			continue
 		}
 		flagged[addr] = c
@@ -95,8 +107,14 @@ func UnlockableContracts(ctx context.Context, access *AccessController, viewerDI
 // the store, so a revoked membership or grant stops the unlock on the next
 // read. Only memberships in the contract's owning org count, so access in
 // another org never makes a viewer eligible. Any lookup error fails closed.
+// A viewer organization scope additionally requires the contract's owner
+// to match that scope; an empty scope is ineligible.
 func IsViewerEligibleForVisibleToUnlock(ctx context.Context, access *AccessController, viewerDID, contractAddress string) bool {
 	if access == nil || viewerDID == "" || contractAddress == "" {
+		return false
+	}
+	scope, scoped := viewscope.Org(ctx)
+	if scoped && scope == "" {
 		return false
 	}
 	store := access.Store()
@@ -105,6 +123,9 @@ func IsViewerEligibleForVisibleToUnlock(ctx context.Context, access *AccessContr
 	}
 	c, err := store.GetContractByAddressGlobal(ctx, strings.ToLower(contractAddress))
 	if err != nil || c == nil || c.OrgID == "" {
+		return false
+	}
+	if scoped && c.OrgID != scope {
 		return false
 	}
 	user, err := store.GetUserByExternalID(ctx, viewerDID)
