@@ -113,24 +113,28 @@ func detectStateOverrideForMethod(resolved string, params []any) (bool, string) 
 	}
 }
 
-// classifyBlockRefSlot rejects objects with keys outside the EIP-1898 block
-// reference set. Block tags/numbers, nil and supported object keys pass here;
-// the block parser remains responsible for validating block-reference values.
+// classifyBlockRefSlot accepts only the block-reference shapes in the block
+// slot: nil, a string (tag or number) or an object whose keys are all EIP-1898
+// block keys. An object with any other key is an override set; any other type
+// is not a block reference and is refused as malformed. The block parser
+// remains responsible for validating the block-reference values themselves.
 func classifyBlockRefSlot(params []any, idx int) (bool, string) {
 	if len(params) <= idx || params[idx] == nil {
 		return false, ""
 	}
-	m, ok := params[idx].(map[string]any)
-	if !ok {
-		// Leave other block-reference shape validation to the block parser.
+	switch v := params[idx].(type) {
+	case string:
 		return false, ""
-	}
-	for key := range m {
-		if !isEIP1898BlockKey(key) {
-			return true, overrideKindState
+	case map[string]any:
+		for key := range v {
+			if !isEIP1898BlockKey(key) {
+				return true, overrideKindState
+			}
 		}
+		return false, ""
+	default:
+		return true, overrideKindMalformed
 	}
-	return false, ""
 }
 
 func isEIP1898BlockKey(key string) bool {

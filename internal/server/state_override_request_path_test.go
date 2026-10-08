@@ -127,6 +127,9 @@ func TestProcess_StateOverrideNeverReachesNode(t *testing.T) {
 		{"eth_call block override", "eth_call", []any{txObj, "latest", nil, map[string]any{"number": "0x1"}}},
 		{"eth_call malformed override", "eth_call", []any{txObj, "latest", "0xdeadbeef"}},
 		{"eth_call state options at block slot", "eth_call", []any{txObj, codeOverride}},
+		// The block slot takes only a block reference; other types fail closed.
+		{"eth_call array at block slot", "eth_call", []any{txObj, []any{codeOverride}}},
+		{"eth_call number at block slot", "eth_call", []any{txObj, float64(1)}},
 		{"eth_estimateGas state override", "eth_estimateGas", []any{txObj, "latest", codeOverride}},
 	}
 	for _, tc := range denied {

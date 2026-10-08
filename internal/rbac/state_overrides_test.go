@@ -47,6 +47,14 @@ func TestDetectStateOverride(t *testing.T) {
 		{"eth_call eip1898 blockHash+canonical ok", "eth_call", []any{tx(), map[string]any{"blockHash": "0xabc", "requireCanonical": true}}, false},
 		{"eth_call state options at index1", "eth_call", []any{tx(), nonEmptyOverride()}, true},
 		{"eth_call too many params", "eth_call", []any{tx(), "latest", map[string]any{}, map[string]any{}, "extra"}, true},
+		// The block slot holds a tag/number string, null or an EIP-1898
+		// object; any other type is not a block reference and fails closed.
+		{"eth_call nil block ok", "eth_call", []any{tx(), nil}, false},
+		{"eth_call array at index1", "eth_call", []any{tx(), []any{nonEmptyOverride()}}, true},
+		{"eth_call number at index1", "eth_call", []any{tx(), float64(1)}, true},
+		{"eth_call bool at index1", "eth_call", []any{tx(), true}, true},
+		{"estimateGas array at index1", "eth_estimateGas", []any{tx(), []any{}}, true},
+		{"createAccessList number at index1", "eth_createAccessList", []any{tx(), float64(1)}, true},
 
 		// eth_createAccessList accepts a state override at index 2
 		{"createAccessList no override", "eth_createAccessList", []any{tx(), "latest"}, false},
