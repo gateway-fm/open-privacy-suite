@@ -18,7 +18,7 @@ def nettyVersion = '4.2.17.Final'
 def bouncycastleVersion = '1.84'
 // Besu does not ship protobuf-java; the plugin bundles it, relocated. protoc and the runtime must be
 // the same release: generated code checks its runtime version.
-def protobufVersion = '4.32.1'
+def protobufVersion = '4.36.2'
 
 repositories {
   mavenCentral()
