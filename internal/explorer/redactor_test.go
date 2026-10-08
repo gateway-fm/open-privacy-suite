@@ -3875,7 +3875,7 @@ func TestRedactTransactions_VisibleToGrant_SetsMetadata(t *testing.T) {
 	)
 
 	txs := []Transaction{{Hash: "0xabc", From: alice, To: strPtr(bob), Value: "1000"}}
-	opts := RedactOpts{VisibleTxHashes: map[string]bool{"0xabc": true}}
+	opts := RedactOpts{VisibleTxHashes: map[string]bool{"0xabc": true}, ListedTxHashes: map[string]bool{"0xabc": true}}
 	result, err := engine.RedactTransactions(context.Background(), txs, "did:viewer", opts)
 	if err != nil {
 		t.Fatal(err)
@@ -3913,7 +3913,7 @@ func TestRedactTransactions_VisibleToGrant_ParticipantTakesPrecedence(t *testing
 	)
 
 	txs := []Transaction{{Hash: "0xabc", From: alice, To: strPtr(bob), Value: "1000"}}
-	opts := RedactOpts{VisibleTxHashes: map[string]bool{"0xabc": true}}
+	opts := RedactOpts{VisibleTxHashes: map[string]bool{"0xabc": true}, ListedTxHashes: map[string]bool{"0xabc": true}}
 	result, err := engine.RedactTransactions(context.Background(), txs, "did:alice", opts)
 	if err != nil {
 		t.Fatal(err)
@@ -3998,7 +3998,7 @@ func TestRedactTransactions_G10_VisibleToStillSees(t *testing.T) {
 	)
 
 	txs := []Transaction{{Hash: "0x01", From: sender, To: strPtr(contract), Value: "1000"}}
-	opts := RedactOpts{VisibleTxHashes: map[string]bool{"0x01": true}}
+	opts := RedactOpts{VisibleTxHashes: map[string]bool{"0x01": true}, ListedTxHashes: map[string]bool{"0x01": true}}
 	result, err := engine.RedactTransactions(context.Background(), txs, "did:viewer", opts)
 	if err != nil {
 		t.Fatal(err)

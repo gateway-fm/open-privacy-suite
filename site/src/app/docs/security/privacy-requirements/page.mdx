@@ -307,6 +307,21 @@ any one of them is a privacy or UX regression:
    lens). Participants and `visibleTo` recipients bypass the grant
    lens — they already know the counterparty via their own wallet.
    Pinned by an integration test.
+6. **A row kept for coherence reveals nothing new.**
+   When a viewer gets a transaction only because one of its token
+   transfers involves an address they see in full (for an org admin,
+   any org contract; for anyone else, their own wallet or the subject
+   of a full disclosure grant), the transaction and its internal calls
+   are **keep + `[PRIVATE]`**: every address renders at the viewer's
+   own visibility, so another user's wallet stays `[PRIVATE]` and
+   calldata and nonce are cleared beside it. Value is cleared too,
+   except under `ORG_ADMIN_VIEW_USER_TXS` (counted in the audit log)
+   or a disclosure grant's lens. That transfer follows the normal
+   rules; other transfers in the transaction are not kept by it.
+   Only a `visibleTo` share by the sender, a disclosure grant
+   (through its lens) or the viewer's own participation reveals those
+   addresses. A contract grant alone does not keep such rows for
+   members who are not admins.
 
 ---
 

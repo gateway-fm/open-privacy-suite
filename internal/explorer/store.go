@@ -609,11 +609,11 @@ type VisibilityFilter struct {
 	AllPrivate       bool     // when true, use allowlist mode (VisibleAddresses)
 	VisibleAddresses []string // allowlist mode: addresses with VisibilityFull
 	VisibleTxHashes  []string // tx hashes that are always visible (visibleTo override)
-	// ParticipantTxHashes is a LABEL-ONLY subset of VisibleTxHashes: hashes
-	// added by the RD-1009 transfer-participant union (visible because the
-	// viewer participates in the tx), NOT genuine visibleTo shares. It does
-	// not affect SQL filtering or row survival — it only lets the redactor
-	// label a revealed counterparty "Counterparty" vs "Shared" (RD-1155).
+	// ParticipantTxHashes is the subset of VisibleTxHashes added by the
+	// RD-1009 transfer-participant union, NOT genuine visibleTo shares.
+	// Informational only: it does not affect SQL filtering, row survival or
+	// rendering (since RD-1316 the union reveals no address, so there is no
+	// counterparty to label from it).
 	ParticipantTxHashes []string
 	// ListedTxHashes are ONLY the tx hashes whose tx_visible_to row lists the
 	// viewer — genuine visibleTo shares, never the RD-1009 transfer-participant
