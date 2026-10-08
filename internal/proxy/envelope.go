@@ -75,8 +75,8 @@ type Envelope struct {
 	// visibleTo and privateFor, in that order, only those that were present.
 	// id, params and the proxy metadata are copied byte for byte (number
 	// precision and absent-vs-null preserved); method is re-encoded from the
-	// decoded string the access decision used. Any other top-level member is
-	// dropped.
+	// decoded string (or the name given to SetMethod). Any other top-level
+	// member is dropped.
 	Canonical []byte
 
 	members      [len(forwardedMembers)][]byte
@@ -142,6 +142,18 @@ func (e *Envelope) CanonicalWithoutMetadata() []byte {
 		return e.Canonical
 	}
 	return buildCanonical(e.members, e.Method, false)
+}
+
+// SetMethod replaces the method name and rebuilds Canonical with it. The
+// caller passes the spelling its access decision is made on, so the body
+// forwarded to the node names the method that was authorized. An envelope
+// without a method member is left as it is.
+func (e *Envelope) SetMethod(method string) {
+	if e.members[memberMethod] == nil {
+		return
+	}
+	e.Method = method
+	e.Canonical = buildCanonical(e.members, method, true)
 }
 
 // CheckDecodedRequest applies envelope validation to decoded method/params

@@ -620,6 +620,11 @@ func ParseAndValidateBody(body []byte) (string, []any, []byte, *ProcessError) {
 			Message:    "invalid JSON-RPC request",
 		}
 	}
+	// Access is decided on the built-in spelling of a catalog method
+	// (CanonicalizeMethod, as Process dispatches), so the forwarded body
+	// carries that spelling rather than the caller's. Operator methods are
+	// matched by exact name and are left unchanged.
+	env.SetMethod(rbac.CanonicalizeMethod(env.Method))
 	if reason := ambiguousParams(env); reason != "" {
 		slog.Warn("ambiguous JSON-RPC request refused", slog.String("reason", reason), slog.String("method", env.Method))
 		return "", nil, nil, &ProcessError{
@@ -631,9 +636,9 @@ func ParseAndValidateBody(body []byte) (string, []any, []byte, *ProcessError) {
 	// visibleTo/privateFor are the proxy's own metadata. The two send paths
 	// read them from the body and strip them before forwarding (RD-1163);
 	// for every other method they are dropped here, so they never reach the
-	// node. The method is canonicalised the same way Process dispatches.
+	// node.
 	forward := env.Canonical
-	switch rbac.CanonicalizeMethod(env.Method) {
+	switch env.Method {
 	case "eth_sendTransaction", "eth_sendRawTransaction":
 	default:
 		forward = env.CanonicalWithoutMetadata()
@@ -666,9 +671,10 @@ func ambiguousParams(env *proxy.Envelope) string {
 func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *ProcessResult {
 	start := time.Now()
 
-	// Normalize built-in method names for internal dispatch and access checks.
-	// The canonical envelope preserves the caller's method spelling.
-	// Operator methods require an explicit registered alias or passthrough entry.
+	// Normalize built-in method names for internal dispatch and access checks;
+	// ParseAndValidateBody already wrote the same spelling into the forwarded
+	// body. Operator methods require an explicit registered alias or
+	// passthrough entry.
 	req.Method = rbac.CanonicalizeMethod(req.Method)
 
 	// Handle eth_sendRawTransaction specially - requires runtime tracing

@@ -330,6 +330,16 @@ func TestJSONRPCEnvelope_ForwardsExactlyWhatWasAuthorised(t *testing.T) {
 			want: `{"jsonrpc":"2.0","id":1,"method":"eth_getBalance","params":["` + envAddrA + `", "latest"]}`,
 		},
 		{
+			name: "anonymous, catalog method forwarded in its built-in spelling", path: "/rpc",
+			body: `{"jsonrpc":"2.0","id":4,"method":"ETH_CHAINID","params":[]}`,
+			want: `{"jsonrpc":"2.0","id":4,"method":"eth_chainId","params":[]}`,
+		},
+		{
+			name: "authenticated, catalog method forwarded in its built-in spelling", path: "/rpc/" + orgID, token: token,
+			body: `{"jsonrpc":"2.0","id":5,"method":"Eth_GetBalance","params":["` + envAddrA + `","latest"]}`,
+			want: `{"jsonrpc":"2.0","id":5,"method":"eth_getBalance","params":["` + envAddrA + `","latest"]}`,
+		},
+		{
 			name: "alias forwarded under its own name", path: "/rpc/" + orgID, token: token,
 			body: `{"jsonrpc":"2.0","id":2,"method":"linea_getBalance","params":["` + envAddrA + `","latest"]}`,
 			want: `{"jsonrpc":"2.0","id":2,"method":"linea_getBalance","params":["` + envAddrA + `","latest"]}`,
@@ -365,6 +375,39 @@ func TestParseAndValidateBody_ProxyMetadataOnlyOnSends(t *testing.T) {
 		require.Nil(t, perr)
 		assert.Equal(t, `{"jsonrpc":"2.0","id":1,"method":"`+method+`","params":[]}`, string(body), method)
 	}
+}
+
+// TestParseAndValidateBody_ForwardsCanonicalMethodName: access is decided on
+// the built-in spelling of a catalog method, so that spelling is what the
+// forwarded body carries, never the caller's letter case. Operator methods
+// are matched by exact name and keep theirs.
+func TestParseAndValidateBody_ForwardsCanonicalMethodName(t *testing.T) {
+	t.Cleanup(rbac.SnapshotMethodRegistriesForTest())
+	rbac.MethodAliases["linea_GetBalance"] = "eth_getBalance"
+	rbac.PassthroughMethods["lotus_Send"] = true
+
+	for _, tc := range []struct{ sent, want string }{
+		{"ETH_CHAINID", "eth_chainId"},
+		{"eth_chaİnId", "eth_chainId"}, // U+0130 folds to "i"
+		{"Eth_GetBalance", "eth_getBalance"},
+		{"eth_getBalance", "eth_getBalance"},
+		{"linea_GetBalance", "linea_GetBalance"},
+		{"lotus_Send", "lotus_Send"},
+		{"unknown_Method", "unknown_Method"},
+	} {
+		t.Run(tc.sent, func(t *testing.T) {
+			method, _, body, perr := ParseAndValidateBody([]byte(`{"jsonrpc":"2.0","id":1,"method":"` + tc.sent + `","params":[]}`))
+			require.Nil(t, perr)
+			assert.Equal(t, tc.want, method, "method handed to the processor")
+			assert.Equal(t, `{"jsonrpc":"2.0","id":1,"method":"`+tc.want+`","params":[]}`, string(body), "forwarded body")
+		})
+	}
+
+	t.Run("send keeps its metadata", func(t *testing.T) {
+		_, _, body, perr := ParseAndValidateBody([]byte(`{"jsonrpc":"2.0","id":1,"method":"ETH_SENDRAWTRANSACTION","params":["0x01"],"visibleTo":["did:a:b"]}`))
+		require.Nil(t, perr)
+		assert.Equal(t, `{"jsonrpc":"2.0","id":1,"method":"eth_sendRawTransaction","params":["0x01"],"visibleTo":["did:a:b"]}`, string(body))
+	})
 }
 
 // TestProcessCalledOnlyFromHandleJSONRPC pins the single choke point: the
