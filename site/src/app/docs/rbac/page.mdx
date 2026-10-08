@@ -559,6 +559,7 @@ Mutating methods (`eth_sendTransaction`) are translated to `debug_traceCall` aga
 - The upstream node must expose `debug_traceCall` for mutating-method dry-run to work (Geth: `--http.api debug`). If unavailable, mutating calls return a clear error; non-mutating methods continue to work.
 - All dry-run calls are recorded in the `impersonation_log` table with the actor's DID, the impersonated user's DID, the method, a SHA-256 hash of the params (raw params are never persisted), the decision, and a correlation ID. Operators are expected to forward this log to their SIEM via the existing `audit-forwarder` integration.
 - Dry-run results have no side effects on chain state, no caching that would survive past the request, and no JWT minting at any point. The "impersonated" identity exists only inside one request handler.
+- Disclosure grants the user holds never apply to a dry-run: a grant is approved for the grantee only, so addresses it would disclose stay redacted in the answer (see [Selective Disclosure](/docs/disclosure)).
 
 ### Limitations
 

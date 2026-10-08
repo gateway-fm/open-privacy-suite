@@ -16121,7 +16121,7 @@
         },
         "/api/v1/explorer/grant/{grant_id}/activity": {
             "get": {
-                "description": "Returns activity-log entries (method, status code, timestamp only) for a disclosure grant the caller holds. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered: a valid JWT is required, the viewer DID must match the grant's requester, the grant scope must include activity_logs or full_disclosure, and only entries inside the grant's validity window are returned. Fail-closed: anonymous callers are rejected, and \"grant missing\"/\"not your grant\"/\"expired\" all return the same 404 to prevent enumeration.",
+                "description": "Returns activity-log entries (method, status code, timestamp only) for a disclosure grant the caller holds. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered: a valid JWT is required, the viewer DID must match the grant's requester, the grant scope must include activity_logs or full_disclosure, and only entries inside the grant's validity window are returned. Fail-closed: anonymous callers are rejected, and \"grant missing\"/\"not your grant\"/\"expired\" all return the same 404 to prevent enumeration. Under the View-as mirror it always returns 404: the target's grants are not available to the admin viewing as them.",
                 "parameters": [
                     {
                         "description": "Disclosure grant ID",
@@ -16221,7 +16221,7 @@
         },
         "/api/v1/explorer/grant/{grant_id}/resolve/{address_id}": {
             "get": {
-                "description": "Resolves an opaque address_id (issued by viewable-addresses) back to grant-scoped disclosure data for the explorer backend. Private network only (serves the explorer backend); not reachable through the public ingress. The response is scoped to the grant's disclosure level: the real address is returned ONLY for a \"full\" grant; a \"pseudonymous\" grant returns a stable pseudonym and no real address; other levels return neither. Fail-closed: a revoked or expired grant, or an address_id that does not belong to the grant, yields 403/404.",
+                "description": "Resolves an opaque address_id (issued by viewable-addresses) back to grant-scoped disclosure data for the explorer backend. Private network only (serves the explorer backend); not reachable through the public ingress. The response is scoped to the grant's disclosure level: the real address is returned ONLY for a \"full\" grant; a \"pseudonymous\" grant returns a stable pseudonym and no real address; other levels return neither. Fail-closed: a revoked or expired grant, or an address_id that does not belong to the grant, yields 403/404. Under the View-as mirror it always returns 404: the target's grants are not available to the admin viewing as them.",
                 "parameters": [
                     {
                         "description": "Disclosure grant ID",
@@ -16312,7 +16312,7 @@
         },
         "/api/v1/explorer/grant/{grant_id}/{address_id}/transactions": {
             "get": {
-                "description": "Returns transactions for a disclosed address, rendered at the grant's disclosure level. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the grant: \"full\" reveals real addresses, hashes and values; \"pseudonymous\" replaces addresses with stable pseudonyms and hides values and hashes; \"redacted\" (or any unknown level) shows only direction, gas, status and timing with \"[PRIVATE]\" counterparties. Fail-closed: a revoked or expired grant, or an address_id that does not belong to the grant, yields 403/404.",
+                "description": "Returns transactions for a disclosed address, rendered at the grant's disclosure level. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the grant: \"full\" reveals real addresses, hashes and values; \"pseudonymous\" replaces addresses with stable pseudonyms and hides values and hashes; \"redacted\" (or any unknown level) shows only direction, gas, status and timing with \"[PRIVATE]\" counterparties. Fail-closed: a revoked or expired grant, or an address_id that does not belong to the grant, yields 403/404. Under the View-as mirror it always returns 404: the target's grants are not available to the admin viewing as them.",
                 "parameters": [
                     {
                         "description": "Disclosure grant ID",
@@ -17661,7 +17661,7 @@
         },
         "/api/v1/explorer/viewable-addresses": {
             "get": {
-                "description": "Lists the viewer's own linked addresses plus addresses disclosed to them via active disclosure grants. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: the viewer DID comes from a validated JWT (or the impersonation override) — never from a query param — and for non-full grants the disclosed address is a pseudonym or \"[PRIVATE]\", never the real address. Fail-closed: with no resolvable viewer, only empty lists are returned.",
+                "description": "Lists the viewer's own linked addresses plus addresses disclosed to them via active disclosure grants. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: the viewer DID comes from a validated JWT (or the impersonation override) — never from a query param — and for non-full grants the disclosed address is a pseudonym or \"[PRIVATE]\", never the real address. Fail-closed: with no resolvable viewer, only empty lists are returned. Under the View-as mirror no disclosed addresses are listed: the target's grants are not available to the admin viewing as them.",
                 "parameters": [
                     {
                         "description": "Viewer wallet address (0x-prefixed hex), echoed back for display only. The viewer identity is resolved solely from the JWT — a wallet value never resolves a DID (RD-1164 #7).",
