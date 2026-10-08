@@ -70,8 +70,8 @@ Any other slot returns an error for non-admin users. This allows standard proxy 
 
 For a non-admin user, a key list that mixes an allowed slot with any other slot, or that is missing, `null`, or not a list of hex strings, is rejected as a whole, before the request reaches the node. Contract admins may request any keys. Chain-specific methods you alias to `eth_getProof` or `eth_getStorageAt` (for example `linea_getProof`) follow the same rules.
 
-<Callout variant="warning" title="What an allowed proof still reveals">
-  A Merkle proof is not value-only. Every proof carries the contract's storage root (`storageHash`), which changes whenever any of its storage changes, and the proof nodes carry hashes that let a caller confirm guesses of low-entropy values in neighbouring storage slots and neighbouring accounts. Allow `eth_getProof` only for groups that need state proofs.
+<Callout variant="warning" title="Proof response metadata">
+  An allowed proof includes account metadata, the storage root (`storageHash`), and trie proof nodes in addition to the requested slot values. This metadata is forwarded unchanged; the slot allowlist controls the requested values. Allow `eth_getProof` only for groups that need state proofs.
 </Callout>
 
 ---

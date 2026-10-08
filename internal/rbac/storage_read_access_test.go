@@ -37,7 +37,7 @@ func TestExtractProofStorageKeys(t *testing.T) {
 		{"numeric key", []any{rd1301Contract, []any{float64(1)}}, nil, false},
 		{"null key", []any{rd1301Contract, []any{nil}}, nil, false},
 		{"nested list", []any{rd1301Contract, []any{[]any{rd1301Impl}}}, nil, false},
-		{"one bad key poisons the list", []any{rd1301Contract, []any{rd1301Impl, true}}, nil, false},
+		{"mixed string and non-string keys", []any{rd1301Contract, []any{rd1301Impl, true}}, nil, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -309,8 +309,8 @@ func TestCheckAccess_AnonymousAliasDeploymentDenied(t *testing.T) {
 // TestCheckAccess_BuiltinAliasKeyKeepsRawMethodChecks covers a standard
 // method name used as an alias key (e.g. eth_getStorageAt → eth_call). Config
 // loading refuses that (config.parseExplicitMethods); these rows set
-// AccessMethod on the request directly (bypassing config loading) to pin the
-// defence in depth behind it. The node executes
+// AccessMethod on the request directly, without config loading, to verify
+// both request fields. The node executes
 // the raw method (the body is forwarded verbatim), so every floor keyed on
 // method semantics must hold for the raw method as well as for the alias
 // target.

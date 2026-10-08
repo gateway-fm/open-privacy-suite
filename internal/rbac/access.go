@@ -688,9 +688,8 @@ func (c *AccessController) resolveAndValidateUser(ctx context.Context, req *Acce
 // contract's state at a past block when ownership may have been
 // different. The pre-fix IsHistoricalStateQuery guard only ran for
 // anonymous viewers. Authenticated non-admin viewers are now also
-// denied historical queries — the per-address visibility resolver
-// uses CURRENT ownership, so a contract that was owned by another
-// org at block N could leak past state to today's owner.
+// denied historical queries. The per-address visibility resolver uses
+// current ownership rather than ownership at the requested block.
 //
 // Org admins (is_org_admin, in any of the user's orgs) are exempted
 // by checking the user's group memberships via the optional
@@ -700,8 +699,8 @@ func (c *AccessController) resolveAndValidateUser(ctx context.Context, req *Acce
 // alias of a state-reading method (e.g. linea_getProof → eth_getProof)
 // is subject to the same guard as its target. When the extension is
 // not implemented (test fixtures using a minimal mock store) we err on
-// the side of allowing historical queries — those fixtures don't model
-// multi-tenant ownership changes, so the leak isn't reproducible there.
+// the side of allowing historical queries. Those legacy fixtures omit
+// organization-admin support and historical ownership changes.
 // The production store (*db.DB) is guaranteed to implement
 // OrgAdminChecker at compile time (see the `var _ rbac.OrgAdminChecker`
 // assertion in internal/db, RD-1164 #14), so this fail-open branch is
