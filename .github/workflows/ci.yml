@@ -13,7 +13,7 @@ on:
 env:
   # Pinned to the toolchain required by the advisory-fixed x/crypto release;
   # keep this in lockstep with go.mod.
-  GO_VERSION: '1.26.6'
+  GO_VERSION: '1.26.9'
   NODE_VERSION: '20'
   # Minimum coverage threshold (percentage).
   # Set to 44 because explorer/store.go (954 lines of SQL queries against the
