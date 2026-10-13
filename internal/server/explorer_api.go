@@ -424,7 +424,9 @@ func (s *Server) auditGrantFullReveal(c *gin.Context, viewerDID, endpoint, targe
 		},
 		IPAddress: c.ClientIP(),
 	}
-	if err := s.db.CreateAuditLog(c.Request.Context(), entry); err != nil {
+	auditCtx, cancel := grantRevealAuditContext(c.Request.Context())
+	defer cancel()
+	if err := s.db.CreateAuditLog(auditCtx, entry); err != nil {
 		slog.Error("failed to write grant-full-reveal audit log",
 			"viewer", viewerDID, "endpoint", endpoint, "error", err)
 	}

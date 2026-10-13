@@ -17,7 +17,7 @@ import (
 // the organization it was requested in. "For regular reads": the grant's scope
 // covers the subject's transaction history (no date range, no contract list,
 // methods empty or including transaction_history / full_disclosure); any other
-// grant is honoured only on its own grant pages, which apply the scope. Keys
+// grant is used only through its own grant pages. Keys
 // are lower-case 0x-prefixed addresses. Implemented by *db.DB on the grant set
 // the explorer's visibility resolution merges, so both read surfaces start
 // from one set.

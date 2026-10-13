@@ -553,8 +553,8 @@ type disclosedGrantRow struct {
 // date range, no contract-address list, and a method list that is empty or
 // includes "transaction_history" or "full_disclosure". A grant restricted
 // otherwise (for example to "activity_logs", the subject's RPC request log) is
-// honoured on its own grant pages only, which apply the scope. A scope that
-// does not parse, or a restriction of the wrong shape, fails closed.
+// used only through its own grant pages. A scope that does not parse, or a
+// restriction of the wrong shape, fails closed.
 func regularReadScope(raw []byte) bool {
 	var scope struct {
 		Methods   json.RawMessage `json:"methods"`

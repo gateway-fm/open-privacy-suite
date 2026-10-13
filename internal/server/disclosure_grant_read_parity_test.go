@@ -761,3 +761,20 @@ func TestDisclosureGrant_RPCAuditSurvivesCancelledRequest(t *testing.T) {
 		WHERE resource_type = 'disclosure_grant' AND actor_external_id = $1`, auditor.did).Scan(&n))
 	assert.Equal(t, 1, n)
 }
+
+// The explorer's grant-reveal audit entry is written even when the client has
+// gone away by the time the page is redacted.
+func TestDisclosureGrant_ExplorerAuditSurvivesCancelledRequest(t *testing.T) {
+	f := setupRPFixture(t)
+	auditor := f.addGrantViewer(t, "auditor", "rp-users", "full", time.Now().Add(24*time.Hour), false)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/explorer/transactions/"+rpTx1, nil).WithContext(ctx)
+	f.srv.auditGrantFullReveal(c, auditor.did, "transaction", rpTx1, &explorer.RedactStats{GrantFullReveals: 1})
+	var n int
+	require.NoError(t, f.conn.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM rbac_audit_log
+		WHERE resource_type = 'disclosure_grant' AND actor_external_id = $1`, auditor.did).Scan(&n))
+	assert.Equal(t, 1, n)
+}

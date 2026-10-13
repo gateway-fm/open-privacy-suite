@@ -119,8 +119,8 @@ and `redacted` grants apply in the block explorer only, because JSON-RPC
 cannot render an alias. A grant applies to these regular views only when its
 scope covers the target's transaction history (no date range, no contract
 list, and methods empty or including `transaction_history` or
-`full_disclosure`); any other grant applies on its grant pages only. The
-mapping:
+`full_disclosure`); any other grant is used only through its grant pages.
+The mapping:
 
 | `disclosure_level` | `VisibilityLevel` (internal) | What the auditor sees for the granted address |
 |---|---|---|

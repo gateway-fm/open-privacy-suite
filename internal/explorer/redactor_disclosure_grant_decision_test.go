@@ -270,9 +270,9 @@ func (failingLogsTxData) GetLogsByTransaction(context.Context, string) ([]Log, e
 }
 
 // Standard profile: when the events behind a Full-grant holder's transfer page
-// cannot be loaded, the page is still served — without any grant reveal (the
-// rows follow the ordinary rules) — as it was before grants joined the event
-// decision. Strict depends on those events for every row and still fails.
+// cannot be loaded, the page is still served, without any grant reveal: the
+// rows follow the ordinary rules (fail closed). Strict depends on those events
+// for every row and still fails.
 func TestRedactTransfers_GrantEventLookupFailure(t *testing.T) {
 	row := TokenTransfer{TxHash: dgTx, LogIndex: 0, TokenAddress: dgToken, From: dgSubject, To: dgPeer, Value: "1000"}
 	engine, _ := dgEngine(rbac.ReadProfileStandard, true, true)

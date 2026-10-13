@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"strings"
+	"time"
 
 	"privacy-proxy/internal/db"
 	"privacy-proxy/internal/rbac"
@@ -63,11 +64,23 @@ func (p *JSONRPCProcessor) auditDisclosureGrantReveals(ctx context.Context, req 
 		},
 		IPAddress: req.ClientIP,
 	}
-	// The reveal already happened: record it even if the client has gone.
-	if err := p.rbacAccessCtrl.Store().CreateAuditLog(context.WithoutCancel(ctx), entry); err != nil {
+	auditCtx, cancel := grantRevealAuditContext(ctx)
+	defer cancel()
+	if err := p.rbacAccessCtrl.Store().CreateAuditLog(auditCtx, entry); err != nil {
 		slog.Error("failed to write disclosure-grant reveal audit log",
 			"viewer", req.UserID, "method", req.Method, "error", err)
 	}
+}
+
+// grantRevealAuditTimeout bounds a disclosure-grant reveal audit write.
+const grantRevealAuditTimeout = 5 * time.Second
+
+// grantRevealAuditContext returns the context for a disclosure-grant reveal
+// audit write: detached from the request's cancellation (the reveal already
+// happened, so it is recorded even if the client has gone) and bounded, so a
+// stalled audit store cannot hold the request indefinitely.
+func grantRevealAuditContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), grantRevealAuditTimeout)
 }
 
 // grantRevealTarget returns the transaction hash a by-hash read names
