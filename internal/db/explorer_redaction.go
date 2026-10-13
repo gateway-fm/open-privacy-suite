@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 
 	"privacy-proxy/internal/disclosure"
@@ -510,14 +511,12 @@ func (d *DB) getDisclosedAddressesForViewer(ctx context.Context, viewerDID strin
 }
 
 // FullDisclosureGrantAddresses implements rbac.FullDisclosureGrantResolver:
-// each address an active, unscoped disclosure grant of the viewer covers at the
-// Full level, mapped to the ids of those grants. It reads the same grant rows
-// as the visibility merge of GetBatchVisibility (disclosedGrantRows: same
-// org-membership scoping, RD-1308 org pin, RD-1318 impersonation mark and
-// level mapping), restricted to Full grants whose scope sets no date range and
-// no contract addresses: a scoped grant is honoured on its own grant pages,
-// which apply the scope, and never as a regular read. Errors propagate;
-// callers deny on error.
+// each address an active disclosure grant of the viewer covers at the Full
+// level, for regular reads, mapped to the ids of those grants. It reads the
+// same grant rows as the visibility merge of GetBatchVisibility
+// (disclosedGrantRows: org-membership scoping, RD-1308 org pin, RD-1318
+// impersonation mark, regular-read scope, level mapping), restricted to Full.
+// Errors propagate; callers deny on error.
 func (d *DB) FullDisclosureGrantAddresses(ctx context.Context, viewerDID string) (map[string][]string, error) {
 	rows, err := d.disclosedGrantRows(ctx, viewerDID)
 	if err != nil {
@@ -525,7 +524,7 @@ func (d *DB) FullDisclosureGrantAddresses(ctx context.Context, viewerDID string)
 	}
 	out := make(map[string][]string)
 	for _, r := range rows {
-		if r.Level == explorer.VisibilityFull && !r.Scoped {
+		if r.Level == explorer.VisibilityFull {
 			out[r.Address] = append(out[r.Address], r.GrantID)
 		}
 	}
@@ -542,14 +541,59 @@ type disclosedGrantedAddress struct {
 }
 
 // disclosedGrantRow is one (grant, covered address) pair of an active
-// disclosure grant the viewer holds.
+// disclosure grant the viewer holds, eligible for regular reads.
 type disclosedGrantRow struct {
 	Address string // lower-case
 	GrantID string
 	Level   explorer.VisibilityLevel
-	// Scoped: the grant's scope restricts a date range or a set of contract
-	// addresses (or carries a malformed restriction — fail closed).
-	Scoped bool
+}
+
+// regularReadScope reports whether a grant's scope covers the subject's regular
+// reads — their transactions and events in the explorer and over JSON-RPC: no
+// date range, no contract-address list, and a method list that is empty or
+// includes "transaction_history" or "full_disclosure". A grant restricted
+// otherwise (for example to "activity_logs", the subject's RPC request log) is
+// honoured on its own grant pages only, which apply the scope. A scope that
+// does not parse, or a restriction of the wrong shape, fails closed.
+func regularReadScope(raw []byte) bool {
+	var scope struct {
+		Methods   json.RawMessage `json:"methods"`
+		Addresses json.RawMessage `json:"addresses"`
+		DateRange json.RawMessage `json:"date_range"`
+	}
+	if err := json.Unmarshal(raw, &scope); err != nil {
+		return false
+	}
+	if !jsonAbsentOrNull(scope.DateRange) {
+		return false
+	}
+	if !jsonAbsentOrNull(scope.Addresses) {
+		var addrs []json.RawMessage
+		if err := json.Unmarshal(scope.Addresses, &addrs); err != nil || len(addrs) > 0 {
+			return false
+		}
+	}
+	if jsonAbsentOrNull(scope.Methods) {
+		return true
+	}
+	var methods []string
+	if err := json.Unmarshal(scope.Methods, &methods); err != nil {
+		return false
+	}
+	if len(methods) == 0 {
+		return true
+	}
+	for _, m := range methods {
+		if m == "transaction_history" || m == "full_disclosure" {
+			return true
+		}
+	}
+	return false
+}
+
+// jsonAbsentOrNull reports whether a JSON member was absent or null.
+func jsonAbsentOrNull(raw json.RawMessage) bool {
+	return len(raw) == 0 || string(raw) == "null"
 }
 
 // getDisclosedAddressesWithLevels returns each active disclosure-grant address
@@ -584,11 +628,12 @@ func (d *DB) getDisclosedAddressesWithLevels(ctx context.Context, viewerDID stri
 }
 
 // disclosedGrantRows returns one row per (active disclosure grant of the
-// viewer, address its subject owns): the grant is unrevoked and unexpired, the
-// viewer requested it, the subject's address link is live, and the viewer is a
-// current member of the org the request was made in (M13). An impersonated
-// read pinned to one org (RD-1308) counts only grants requested in that org;
-// under the impersonation mark (RD-1318) there are none.
+// viewer, address its subject owns) that applies to regular reads: the grant
+// is unrevoked and unexpired, the viewer requested it, the subject's address
+// link is live, the viewer is a current member of the org the request was made
+// in (M13), and its scope covers regular reads (regularReadScope). An
+// impersonated read pinned to one org (RD-1308) counts only grants requested
+// in that org; under the impersonation mark (RD-1318) there are none.
 func (d *DB) disclosedGrantRows(ctx context.Context, viewerDID string) ([]disclosedGrantRow, error) {
 	if viewerDID == "" || disclosure.ViewerGrantsSuppressed(ctx) {
 		return nil, nil
@@ -598,12 +643,7 @@ func (d *DB) disclosedGrantRows(ctx context.Context, viewerDID string) ([]disclo
 		SELECT DISTINCT LOWER(eal.eth_address),
 		       g.id::text,
 		       COALESCE(g.scope->>'disclosure_level', ''),
-		       CASE
-		         WHEN COALESCE(jsonb_typeof(g.scope->'date_range'), 'null') <> 'null' THEN true
-		         WHEN COALESCE(jsonb_typeof(g.scope->'addresses'), 'null') = 'null' THEN false
-		         WHEN jsonb_typeof(g.scope->'addresses') <> 'array' THEN true
-		         ELSE jsonb_array_length(g.scope->'addresses') > 0
-		       END
+		       g.scope::text
 		FROM disclosure_grants g
 		JOIN disclosure_requests r ON g.request_id = r.id
 		JOIN users target_u ON r.target_user_id = target_u.id
@@ -638,9 +678,12 @@ func (d *DB) disclosedGrantRows(ctx context.Context, viewerDID string) ([]disclo
 	var out []disclosedGrantRow
 	for rows.Next() {
 		var r disclosedGrantRow
-		var lvlStr string
-		if err := rows.Scan(&r.Address, &r.GrantID, &lvlStr, &r.Scoped); err != nil {
+		var lvlStr, scope string
+		if err := rows.Scan(&r.Address, &r.GrantID, &lvlStr, &scope); err != nil {
 			return nil, err
+		}
+		if !regularReadScope([]byte(scope)) {
+			continue
 		}
 		r.Level = disclosureLevelToVisibility(lvlStr)
 		out = append(out, r)

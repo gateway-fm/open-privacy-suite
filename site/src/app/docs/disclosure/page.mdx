@@ -280,12 +280,17 @@ A disclosure grant is the consented exception to the read privacy rules: the dat
 Bounds that always apply:
 
 - **Events need contract access.** The grantee sees the owner's events only on contracts the grantee holds a grant on, and only when the grantee's event rules reach the event — `must_be: self` rules count the owner as the grantee, literal values still apply. An address carried in the event data (not an indexed parameter) keeps the grantee's own visibility. A token-transfer row follows its Transfer event.
-- **Only the owner's own transactions.** A transaction someone else sent — for example a relayer that moves tokens to the owner — is not opened by the grant; the owner's Transfer event in it is.
-- **Scoped grants.** A grant with a `date_range` or `addresses` scope applies on its grant pages, where the scope is enforced, and opens no regular explorer read and no JSON-RPC read.
+- **The owner's own transactions.** A transaction someone else sent — for example a relayer that moves tokens to the owner — is not opened by the grant on JSON-RPC; the owner's Transfer event in it is. The explorer may still list such a transaction as the context of that transfer, with its parties at the grantee's own visibility, and in the `standard` profile its internal-call view shows the frames the owner takes part in.
+- **Scope.** A grant applies to regular reads only when its scope covers the owner's transaction history: no `date_range`, no `addresses` list, and `methods` either empty or including `transaction_history` or `full_disclosure`. Any other grant — for example one approved only for `activity_logs`, or one limited to a date range — applies on its grant pages only, where its scope is enforced, and opens no regular explorer read and no JSON-RPC read.
 - **No new methods.** A grant never adds an RPC method to the grantee's group allowlist, and never opens `debug_traceTransaction`.
 - **Grantee only.** A grant never applies under View as user or an admin dry-run (see above).
 
-Every regular read that reveals data through a `full` grant writes one entry to the RBAC audit log (`resource_type` `disclosure_grant`): the grantee, the endpoint or RPC method, the transaction hash when the request names one, how many rows or objects were revealed, and the ids of the grants used. Addresses are never written to the audit log. Include these entries in access reviews of disclosure grants.
+Reads that reveal data through a `full` grant write one entry per request to the RBAC audit log (`resource_type` `disclosure_grant`), with the grantee, the endpoint or RPC method, the target (a transaction hash, or the address an explorer address page was requested for), a count, and the ids of the grants used:
+
+- **Block explorer:** a request whose rows or events show, through the grant, an address that is otherwise private to the grantee; the count is the number of such rows or events.
+- **JSON-RPC:** a response containing a transaction, receipt, block entry or event that the grant opened or rendered; the count is the number of such objects.
+
+No other address is written. Include these entries in access reviews of disclosure grants. A tool that polls `eth_getLogs` through a grant writes one entry per poll that returns the owner's events.
 
 ## Audit Trail
 

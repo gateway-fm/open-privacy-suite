@@ -369,6 +369,12 @@ func TestDisclosureGrant_RPCRevealIsAudited(t *testing.T) {
 			assert.Equal(t, "disclosure_grant_full_rpc", class)
 			assert.Equal(t, 1, objects)
 			assert.Nil(t, resourceID, "the resource id is a UUID column: a tx hash never goes there")
+			var grantIDs string
+			require.NoError(t, f.conn.QueryRowContext(ctx, `SELECT new_value::jsonb->>'grant_ids' FROM rbac_audit_log
+				WHERE resource_type = 'disclosure_grant' AND actor_external_id = $1`, auditor.did).Scan(&grantIDs))
+			var wantID string
+			require.NoError(t, f.conn.QueryRowContext(ctx, `SELECT id::text FROM disclosure_grants WHERE grant_token_hash = 'parity-auditor'`).Scan(&wantID))
+			assert.JSONEq(t, `["`+wantID+`"]`, grantIDs, "the entry names the grant the reveal was made through")
 
 			// The receipt reveals the envelope and the subject's Transfer event.
 			f.call(t, p, auditor, rbac.MethodGetTransactionReceipt, []any{rpTx1}, receiptBody)
@@ -526,29 +532,43 @@ func TestDisclosureGrant_SubjectDeploymentReceipt(t *testing.T) {
 	}
 }
 
-// A Full grant scoped to a date range (or to contract addresses) is honoured on
-// its grant pages only, where the scope is applied: it opens no regular read on
-// JSON-RPC, and under strict no explorer row.
+// A Full grant whose scope restricts a date range or contract addresses, or
+// that the subject approved only for their activity logs, is honoured on its
+// grant pages only, where the scope is applied: it opens no regular read on
+// either surface — no JSON-RPC result, no explorer row, no explorer count.
 func TestDisclosureGrant_ScopedGrantOpensNoRegularRead(t *testing.T) {
 	f := setupRPFixture(t)
 	auditor := f.addGrantViewer(t, "auditor", "rp-users", "full", time.Now().Add(24*time.Hour), false)
-	_, err := f.conn.ExecContext(context.Background(),
-		`UPDATE disclosure_grants SET scope = '{"disclosure_level":"full","date_range":{"start":"2026-01-01T00:00:00Z","end":"2026-02-01T00:00:00Z"}}'::jsonb
-		 WHERE grant_token_hash = 'parity-auditor'`)
-	require.NoError(t, err)
 	router := f.explorerRouter()
 	txBody := rpEnvelope(t, rpTxObject(rpTx1, rpE, rpData))
-	for _, profile := range []rbac.ReadProfile{rbac.ReadProfileStandard, rbac.ReadProfileStrict} {
-		t.Run(profile.String(), func(t *testing.T) {
-			f.wireExplorer(profile)
-			p := f.rpProcessor(profile)
-			out := f.call(t, p, auditor, rbac.MethodGetTransactionByHash, []any{rpTx1}, txBody)
-			assert.Equal(t, "null", string(rpResult(t, out)), "a scoped grant opens no JSON-RPC read: %s", out)
-			if profile.Strict() {
+	for _, scope := range []string{
+		`{"disclosure_level":"full","date_range":{"start":"2026-01-01T00:00:00Z","end":"2026-02-01T00:00:00Z"}}`,
+		`{"disclosure_level":"full","addresses":["` + rpC + `"]}`,
+		`{"disclosure_level":"full","methods":["activity_logs"]}`,
+	} {
+		_, err := f.conn.ExecContext(context.Background(),
+			`UPDATE disclosure_grants SET scope = $1::jsonb WHERE grant_token_hash = 'parity-auditor'`, scope)
+		require.NoError(t, err)
+		for _, profile := range []rbac.ReadProfile{rbac.ReadProfileStandard, rbac.ReadProfileStrict} {
+			t.Run(profile.String()+"/"+scope, func(t *testing.T) {
+				f.wireExplorer(profile)
+				p := f.rpProcessor(profile)
+				out := f.call(t, p, auditor, rbac.MethodGetTransactionByHash, []any{rpTx1}, txBody)
+				assert.Equal(t, "null", string(rpResult(t, out)), "a restricted grant opens no JSON-RPC read: %s", out)
 				code, body := f.explorerGet(t, router, auditor, "/api/v1/explorer/transactions/"+rpTx1)
-				assert.Equal(t, http.StatusNotFound, code, "%s", body)
-			}
-		})
+				assert.Equal(t, http.StatusNotFound, code, "a restricted grant opens no explorer row: %s", body)
+				assert.False(t, rpHasAddr(body, rpE), "%s", body)
+				filter := f.srv.buildVisibilityFilter(context.Background(), auditor.did, false)
+				n, err := f.srv.explorerStore.GetBlockTransactionCountFiltered(context.Background(), uint64(f.block), filter)
+				require.NoError(t, err)
+				if profile.Strict() {
+					assert.Zero(t, n, "a restricted grant's subject is not counted")
+				}
+				for _, a := range filter.VisibleAddresses {
+					assert.NotEqual(t, rpE, strings.ToLower(a), "a restricted grant's subject is not on the explorer allowlist")
+				}
+			})
+		}
 	}
 }
 
@@ -689,4 +709,55 @@ func TestDisclosureGrant_RPCSuppressedUnderViewAsAndDryRun(t *testing.T) {
 	assert.NotContains(t, strings.ToLower(mw.Body.String()), subject)
 
 	assert.Equal(t, 1, audits(), "no grant reveal is audited in the grantee's name under View-as or dry-run")
+}
+
+// The explorer's log endpoints record a grant-lens reveal in the audit log,
+// naming the grant, like its transaction endpoints.
+func TestDisclosureGrant_ExplorerLogRevealIsAudited(t *testing.T) {
+	f := setupRPFixture(t)
+	auditor := f.addGrantViewer(t, "auditor", "rp-users", "full", time.Now().Add(24*time.Hour), false)
+	router := f.explorerRouter()
+	ctx := context.Background()
+	var wantID string
+	require.NoError(t, f.conn.QueryRowContext(ctx, `SELECT id::text FROM disclosure_grants WHERE grant_token_hash = 'parity-auditor'`).Scan(&wantID))
+	for _, profile := range []rbac.ReadProfile{rbac.ReadProfileStandard, rbac.ReadProfileStrict} {
+		t.Run(profile.String(), func(t *testing.T) {
+			_, err := f.conn.ExecContext(ctx, `DELETE FROM rbac_audit_log WHERE resource_type = 'disclosure_grant'`)
+			require.NoError(t, err)
+			f.wireExplorer(profile)
+			for _, ep := range []struct{ path, label string }{
+				{"/api/v1/explorer/transactions/" + rpTx1 + "/logs", "transaction_logs"},
+				{"/api/v1/explorer/addresses/" + rpC + "/logs", "address_logs"},
+				{"/api/v1/explorer/logs?address=" + rpC, "logs"},
+			} {
+				code, body := f.explorerGet(t, router, auditor, ep.path)
+				require.Equal(t, http.StatusOK, code, "%s: %s", ep.path, body)
+				require.True(t, rpHasAddr(body, rpP), "%s: the lens reveals the subject's counterparty: %s", ep.path, body)
+				var n int
+				var ids string
+				require.NoError(t, f.conn.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(MAX(new_value::jsonb->>'grant_ids'), '') FROM rbac_audit_log
+					WHERE resource_type = 'disclosure_grant' AND actor_external_id = $1 AND resource_name = $2`, auditor.did, ep.label).Scan(&n, &ids))
+				assert.Equal(t, 1, n, "%s: one audit entry", ep.label)
+				assert.JSONEq(t, `["`+wantID+`"]`, ids, "%s: the entry names the grant", ep.label)
+			}
+		})
+	}
+}
+
+// The JSON-RPC audit entry is written even when the client has gone away by
+// the time the response is filtered.
+func TestDisclosureGrant_RPCAuditSurvivesCancelledRequest(t *testing.T) {
+	f := setupRPFixture(t)
+	auditor := f.addGrantViewer(t, "auditor", "rp-users", "full", time.Now().Add(24*time.Hour), false)
+	p := f.rpProcessor(rbac.ReadProfileStandard)
+	grants := rbac.ResolveDisclosureGrants(context.Background(), f.db, auditor.did)
+	require.True(t, grants.Covers(rpE))
+	grants.RecordReveal(rpE)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	p.auditDisclosureGrantReveals(ctx, &ProcessRequest{Method: rbac.MethodGetTransactionByHash, UserID: auditor.did, Params: []any{rpTx1}}, grants)
+	var n int
+	require.NoError(t, f.conn.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM rbac_audit_log
+		WHERE resource_type = 'disclosure_grant' AND actor_external_id = $1`, auditor.did).Scan(&n))
+	assert.Equal(t, 1, n)
 }

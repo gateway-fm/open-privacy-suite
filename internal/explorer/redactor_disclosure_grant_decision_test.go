@@ -2,6 +2,7 @@ package explorer
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -242,6 +243,53 @@ func TestRedactors_OneGrantLookupPerCall(t *testing.T) {
 	}
 	if counter.calls != 1 {
 		t.Fatalf("RedactLogs: %d grant lookups, want 1", counter.calls)
+	}
+	for _, profile := range []rbac.ReadProfile{rbac.ReadProfileStandard, rbac.ReadProfileStrict} {
+		engine, _ := dgEngine(profile, true, true)
+		counter := &stubGrantResolver{addrs: map[string][]string{dgSubject: {dgGrantID}}}
+		engine.SetDisclosureGrantResolver(counter)
+		row := TokenTransfer{TxHash: dgTx, TokenAddress: dgToken, From: dgSubject, To: dgPeer, Value: "1"}
+		if _, err := engine.RedactTransfers(context.Background(), []TokenTransfer{row, row, row}, "did:viewer"); err != nil {
+			t.Fatal(err)
+		}
+		if counter.calls != 1 {
+			t.Fatalf("%v RedactTransfers: %d grant lookups, want 1 (the event decision reuses the page's grant set)", profile, counter.calls)
+		}
+	}
+}
+
+// failingLogsTxData fails every log lookup.
+type failingLogsTxData struct{}
+
+func (failingLogsTxData) GetTransaction(context.Context, string) (*Transaction, error) {
+	return nil, errors.New("indexer unavailable")
+}
+
+func (failingLogsTxData) GetLogsByTransaction(context.Context, string) ([]Log, error) {
+	return nil, errors.New("indexer unavailable")
+}
+
+// Standard profile: when the events behind a Full-grant holder's transfer page
+// cannot be loaded, the page is still served — without any grant reveal (the
+// rows follow the ordinary rules) — as it was before grants joined the event
+// decision. Strict depends on those events for every row and still fails.
+func TestRedactTransfers_GrantEventLookupFailure(t *testing.T) {
+	row := TokenTransfer{TxHash: dgTx, LogIndex: 0, TokenAddress: dgToken, From: dgSubject, To: dgPeer, Value: "1000"}
+	engine, _ := dgEngine(rbac.ReadProfileStandard, true, true)
+	engine.SetTxDataResolver(failingLogsTxData{})
+	got, err := engine.RedactTransfers(context.Background(), []TokenTransfer{row}, "did:viewer")
+	if err != nil {
+		t.Fatalf("standard: a failed event lookup must not fail the page: %v", err)
+	}
+	for _, r := range got {
+		if r.To == dgPeer {
+			t.Fatalf("no admitted event, no grant reveal: %+v", r)
+		}
+	}
+	engine, _ = dgEngine(rbac.ReadProfileStrict, true, true)
+	engine.SetTxDataResolver(failingLogsTxData{})
+	if _, err := engine.RedactTransfers(context.Background(), []TokenTransfer{row}, "did:viewer"); err == nil {
+		t.Fatal("strict: the event lookup failure is still an error")
 	}
 }
 

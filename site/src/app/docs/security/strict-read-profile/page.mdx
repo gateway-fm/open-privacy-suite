@@ -90,7 +90,7 @@ An approved [selective disclosure](/docs/disclosure) grant stays in force under 
 
 - A `full` grant over a user opens that user's transactions and receipts (the ones they sent or received) and the events that name them in an indexed `address` parameter, on every surface in the table above. In such an event the other parties it names that way are shown too; an address in the event data keeps the viewer's own visibility. Events still require a contract grant on the emitting contract whose event rules reach the event, with the granted user counting as the viewer for `must_be: self` rules.
 - A `pseudonymous` or `redacted` grant shows rows in the explorer through its lens, never with real addresses, and opens nothing on JSON-RPC.
-- A grant scoped to a date range or to specific contracts applies on its grant pages only.
+- A grant limited to a date range or to specific contracts, or approved only for activity logs, applies on its grant pages only.
 - A grant never adds an RPC method to the viewer's allowlist, never opens `debug_traceTransaction`, and does not apply under View as user or an admin dry-run.
 
 ---

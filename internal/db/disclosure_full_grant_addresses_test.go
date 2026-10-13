@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -85,27 +86,48 @@ func TestFullDisclosureGrantAddresses(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "full", string(vis[grants["full"].addr].Level))
 
-	// A Full grant scoped to a date range or to contract addresses is honoured
-	// on its grant pages only, never as a regular read (fail closed, also for a
-	// malformed restriction). An empty address list restricts nothing.
+	// A grant whose scope restricts a date range or contract addresses, or
+	// whose methods do not include the subject's transaction history, is
+	// honoured on its grant pages only (which apply the scope): it is neither a
+	// Full-grant fact of the read decisions nor part of the visibility merge,
+	// at any level. Malformed restrictions fail closed. An empty address list
+	// or method list restricts nothing.
 	for _, sc := range []struct {
 		name, scope string
-		covers      bool
+		regular     bool
 	}{
 		{"date_range", `{"disclosure_level":"full","date_range":{"start":"2026-01-01T00:00:00Z","end":"2026-02-01T00:00:00Z"}}`, false},
 		{"addresses", `{"disclosure_level":"full","addresses":["0x70c3000000000000000000000000000000000003"]}`, false},
 		{"malformed_addresses", `{"disclosure_level":"full","addresses":"0x70c3"}`, false},
+		{"activity_logs_only", `{"disclosure_level":"full","methods":["activity_logs"]}`, false},
+		{"malformed_methods", `{"disclosure_level":"full","methods":"transaction_history"}`, false},
+		{"pseudonymous_activity_logs_only", `{"disclosure_level":"pseudonymous","methods":["activity_logs"]}`, false},
 		{"empty_addresses", `{"disclosure_level":"full","addresses":[],"date_range":null}`, true},
-		{"methods_only", `{"disclosure_level":"full","methods":["activity_logs"]}`, true},
+		{"empty_methods", `{"disclosure_level":"full","methods":[]}`, true},
+		{"transaction_history", `{"disclosure_level":"full","methods":["activity_logs","transaction_history"]}`, true},
+		{"full_disclosure", `{"disclosure_level":"full","methods":["full_disclosure"]}`, true},
 	} {
 		viewer := "did:test:fga_scope_" + sc.name
 		addr := "0xfb" + fmt.Sprintf("%038x", len(sc.name)*7919)
 		_, _, grantID := setupDisclosureGrantWithLevel(t, database, viewer, "did:test:fga_scope_t_"+sc.name, addr, "full", day)
 		_, err := conn.ExecContext(ctx, `UPDATE disclosure_grants SET scope = $1::jsonb WHERE id = $2`, sc.scope, grantID)
 		require.NoError(t, err)
-		assert.Equal(t, sc.covers, got(ctx, viewer)[addr], "%s grant", sc.name)
+		full := strings.Contains(sc.scope, `"disclosure_level":"full"`)
+		assert.Equal(t, sc.regular && full, got(ctx, viewer)[addr], "%s: Full-grant fact", sc.name)
+		has, err := database.ViewerHasFullDisclosureGrant(ctx, viewer, addr)
+		require.NoError(t, err)
+		assert.Equal(t, sc.regular && full, has, "%s: the address-page check uses the same grant set", sc.name)
 		vis, err := database.GetBatchVisibility(ctx, viewer, []string{addr})
 		require.NoError(t, err)
-		assert.Equal(t, "full", string(vis[addr]), "%s: the visibility merge is unchanged", sc.name)
+		if sc.regular {
+			assert.Equal(t, "full", string(vis[addr]), "%s: the visibility merge applies the grant", sc.name)
+		} else {
+			assert.Equal(t, "hidden", string(vis[addr]), "%s: a restricted grant is not merged into regular visibility", sc.name)
+		}
 	}
+
+	// The address-page check honours the impersonation pin like the merge.
+	has, err := database.ViewerHasFullDisclosureGrant(viewscope.WithOrg(ctx, orgs["pseudonymous"]), grants["full"].viewer, grants["full"].addr)
+	require.NoError(t, err)
+	assert.False(t, has, "a read pinned to another org ignores the grant")
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"privacy-proxy/internal/disclosure"
@@ -1640,20 +1641,17 @@ func (d *DB) ListAllGrantsForTarget(ctx context.Context, targetUserID string) ([
 }
 
 // ViewerHasFullDisclosureGrant checks whether viewerDID has an active disclosure
-// grant with "full" disclosure level that covers the given target address.
-//
-// The check joins disclosure_grants → disclosure_requests → users → eth_address_links
-// to verify:
-//  1. The grant is active (not expired, not revoked)
-//  2. The requester_did matches the viewer
-//  3. The target user owns the address
-//  4. The grant scope has disclosure_level = "full"
-//  5. The viewer is a current member of the org the disclosure was created in
-//     (M13 defence-in-depth: prevents cross-org leakage even if C3 is partially
-//     exploited and a disclosure request is forged against a foreign-org user).
+// grant with the "full" disclosure level that covers targetAddress for regular
+// reads. It answers from FullDisclosureGrantAddresses — the same grant set as
+// the visibility merge and the Full-grant fact of the shared read decisions —
+// so it applies the same rules: the grant is active (not expired, not
+// revoked), the viewer requested it, the target user owns the address, the
+// viewer is a current member of the org the disclosure was created in (M13),
+// the grant's scope covers regular reads, and an impersonated read pinned to
+// one org (RD-1308) counts only grants requested there.
 //
 // This is used by address-specific explorer endpoints to upgrade visibility for
-// full disclosure recipients without modifying GetBatchVisibility (G17 preserved).
+// full disclosure recipients.
 //
 // Under an impersonation (disclosure.WithoutViewerGrants) it is always false:
 // the grants belong to the viewer, not to the admin viewing as them (RD-1318).
@@ -1661,31 +1659,10 @@ func (d *DB) ViewerHasFullDisclosureGrant(ctx context.Context, viewerDID, target
 	if viewerDID == "" || targetAddress == "" || disclosure.ViewerGrantsSuppressed(ctx) {
 		return false, nil
 	}
-
-	query := `
-		SELECT EXISTS (
-			SELECT 1
-			FROM disclosure_grants g
-			JOIN disclosure_requests r ON g.request_id = r.id
-			JOIN users target_u ON r.target_user_id = target_u.id
-			JOIN eth_address_links eal ON eal.did = target_u.external_id
-			JOIN users viewer_u ON viewer_u.external_id = $1
-			JOIN user_memberships m ON m.user_id = viewer_u.id
-			JOIN groups gr ON gr.id = m.group_id
-			WHERE r.requester_did = $1
-			  AND LOWER(eal.eth_address) = LOWER($2)
-			  AND eal.revoked = false
-			  AND g.revoked_at IS NULL
-			  AND g.expires_at > NOW()
-			  AND g.scope->>'disclosure_level' = 'full'
-			  AND gr.org_id = r.org_id
-			  AND (m.expires_at IS NULL OR m.expires_at > NOW())
-		)`
-
-	var exists bool
-	err := d.conn.QueryRowContext(ctx, query, viewerDID, targetAddress).Scan(&exists)
+	addrs, err := d.FullDisclosureGrantAddresses(ctx, viewerDID)
 	if err != nil {
 		return false, fmt.Errorf("failed to check disclosure grant: %w", err)
 	}
-	return exists, nil
+	_, ok := addrs[strings.ToLower(targetAddress)]
+	return ok, nil
 }

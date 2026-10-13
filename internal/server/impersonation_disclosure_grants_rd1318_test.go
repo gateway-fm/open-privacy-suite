@@ -73,9 +73,10 @@ func setupRD1318Fixture(t *testing.T) *rd1318Fixture {
 	require.NoError(t, database.SystemLinkEthAddress(ctx, rd1318SubjectDID, rd1318SubjectEOA))
 	require.NoError(t, database.SystemLinkEthAddress(ctx, rd1318GranteeDID, rd1318GranteeEOA))
 
-	// The subject approved a Full disclosure (with activity logs) to the grantee.
+	// The subject approved a Full disclosure (with activity logs and the
+	// transaction history) to the grantee.
 	reqID := uuid.New().String()
-	scope := `{"disclosure_level":"full","methods":["activity_logs"]}`
+	scope := `{"disclosure_level":"full","methods":["activity_logs","transaction_history"]}`
 	exec(`INSERT INTO disclosure_requests (id, requester_did, target_user_id, org_id, scope, reason, status, requested_at)
 		VALUES ($1, $2, $3, $4, $5::jsonb, 'rd1318', 'approved', NOW())`, reqID, rd1318GranteeDID, subjectUID, orgID, scope)
 	grantID := uuid.New().String()

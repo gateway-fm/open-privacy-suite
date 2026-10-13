@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"log/slog"
 	"reflect"
 	"strconv"
 	"strings"
@@ -1394,9 +1395,16 @@ func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []Token
 	grants := r.disclosureGrants(ctx, viewerDID)
 	var logDecisions map[string]keptLogVerdict
 	if strict || len(grants.Addresses()) > 0 {
-		logDecisions, err = r.transferLogDecisions(ctx, transfers, viewerDID)
+		logDecisions, err = r.transferLogDecisions(ctx, transfers, viewerDID, grants)
 		if err != nil {
-			return nil, err
+			if strict {
+				return nil, err
+			}
+			// Standard: the events only matter for a Full-grant reveal.
+			// Without them no row is revealed through the grant, and the
+			// page is served under the ordinary rules (fail closed).
+			slog.Warn("explorer: transfer events unavailable; no disclosure-grant reveal on this page", "error", err)
+			logDecisions = nil
 		}
 	}
 
@@ -1636,7 +1644,7 @@ func transferLogKey(txHash string, logIndex int) string {
 // (batched when the data source supports it, else one per distinct
 // transaction) and ONE log-redaction pass over every row's log. No data source
 // → nothing is admitted (fail closed).
-func (r *RedactionEngine) transferLogDecisions(ctx context.Context, transfers []TokenTransfer, viewerDID string) (map[string]keptLogVerdict, error) {
+func (r *RedactionEngine) transferLogDecisions(ctx context.Context, transfers []TokenTransfer, viewerDID string, grants *rbac.DisclosureGrants) (map[string]keptLogVerdict, error) {
 	admitted := make(map[string]keptLogVerdict)
 	if r.txDataResolver == nil || viewerDID == "" {
 		return admitted, nil
@@ -1674,7 +1682,7 @@ func (r *RedactionEngine) transferLogDecisions(ctx context.Context, transfers []
 		return admitted, nil
 	}
 	// No stats: a reveal is counted once, on the transfer row.
-	kept, decisions, err := r.redactLogs(ctx, behind, viewerDID, nil)
+	kept, decisions, err := r.redactLogs(ctx, behind, viewerDID, nil, grants)
 	if err != nil {
 		return nil, err
 	}
@@ -2543,7 +2551,7 @@ func (r *RedactionEngine) RedactLogs(ctx context.Context, logs []Log, viewerDID 
 
 // RedactLogsWithOpts is RedactLogs with visibleTo support.
 func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, viewerDID string, opts *RedactOpts, participantAddrs ...string) ([]Log, error) {
-	out, _, err := r.redactLogs(ctx, logs, viewerDID, opts, participantAddrs...)
+	out, _, err := r.redactLogs(ctx, logs, viewerDID, opts, r.disclosureGrants(ctx, viewerDID), participantAddrs...)
 	return out, err
 }
 
@@ -2555,8 +2563,9 @@ type keptLogVerdict struct {
 }
 
 // redactLogs is RedactLogsWithOpts returning, alongside each kept log, the
-// shared decision (rbac.DecideLogEmitter) it was admitted with.
-func (r *RedactionEngine) redactLogs(ctx context.Context, logs []Log, viewerDID string, opts *RedactOpts, participantAddrs ...string) ([]Log, []keptLogVerdict, error) {
+// shared decision (rbac.DecideLogEmitter) it was admitted with. grants is the
+// caller's per-call disclosure-grant set (the shared fact builder's result).
+func (r *RedactionEngine) redactLogs(ctx context.Context, logs []Log, viewerDID string, opts *RedactOpts, grants *rbac.DisclosureGrants, participantAddrs ...string) ([]Log, []keptLogVerdict, error) {
 	var visibleTxHashes, listedTxHashes map[string]bool
 	if opts != nil {
 		visibleTxHashes = opts.VisibleTxHashes
@@ -2801,7 +2810,6 @@ func (r *RedactionEngine) redactLogs(ctx context.Context, logs []Log, viewerDID 
 	// names a grant subject is decided by the grant branch of the shared
 	// decision, with the subjects counting as the viewer for must_be:self rules
 	// (grantSelf) — exactly as rbac.FilterEventLogsDetailed resolves it.
-	grants := r.disclosureGrants(ctx, viewerDID)
 	var grantAddrs, grantSelf map[string]bool
 	var grantMatcher *rbac.IndexedSelfMatcher
 	if grantAddrs = grants.Addresses(); len(grantAddrs) > 0 {

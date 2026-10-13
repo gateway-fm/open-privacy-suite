@@ -11,14 +11,16 @@ import (
 )
 
 // FullDisclosureGrantResolver returns, for the viewer, each address that an
-// active, approved, unscoped Full disclosure grant covers, mapped to the ids of
-// the grants that cover it. "Active and approved": unexpired, unrevoked, the
-// viewer requested it, and the viewer is a current member of the organization
-// it was requested in. "Unscoped": the grant restricts neither a date range nor
-// a contract-address set — a scoped grant is honoured only on its own grant
-// pages, which apply the scope. Keys are lower-case 0x-prefixed addresses.
-// Implemented by *db.DB on the lookup the explorer's visibility resolution
-// merges, so both read surfaces start from one grant set.
+// active, approved Full disclosure grant covers for regular reads, mapped to
+// the ids of the grants that cover it. "Active and approved": unexpired,
+// unrevoked, the viewer requested it, and the viewer is a current member of
+// the organization it was requested in. "For regular reads": the grant's scope
+// covers the subject's transaction history (no date range, no contract list,
+// methods empty or including transaction_history / full_disclosure); any other
+// grant is honoured only on its own grant pages, which apply the scope. Keys
+// are lower-case 0x-prefixed addresses. Implemented by *db.DB on the grant set
+// the explorer's visibility resolution merges, so both read surfaces start
+// from one set.
 type FullDisclosureGrantResolver interface {
 	FullDisclosureGrantAddresses(ctx context.Context, viewerDID string) (map[string][]string, error)
 }

@@ -63,7 +63,8 @@ func (p *JSONRPCProcessor) auditDisclosureGrantReveals(ctx context.Context, req 
 		},
 		IPAddress: req.ClientIP,
 	}
-	if err := p.rbacAccessCtrl.Store().CreateAuditLog(ctx, entry); err != nil {
+	// The reveal already happened: record it even if the client has gone.
+	if err := p.rbacAccessCtrl.Store().CreateAuditLog(context.WithoutCancel(ctx), entry); err != nil {
 		slog.Error("failed to write disclosure-grant reveal audit log",
 			"viewer", req.UserID, "method", req.Method, "error", err)
 	}

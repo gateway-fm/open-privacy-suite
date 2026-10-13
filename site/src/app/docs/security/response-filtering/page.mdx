@@ -134,7 +134,7 @@ Transaction receipts contain execution results including status, gas used, and -
 |------------------------|----------|
 | Yes | Receipt (but logs are filtered to only show those involving the user, and `logsBloom` is zeroed) |
 | No, but entitled to ≥1 of the tx's logs under their event rules | Receipt, with the `logs` array filtered to only those entitled logs (`logsBloom` zeroed) |
-| No, but holds a `full` disclosure grant over the sender or recipient | Receipt, as for a participant of the viewer's own rules (deployments included) |
+| No, but holds a `full` disclosure grant over the sender or recipient | Receipt (deployments included), with its `logs` filtered by the viewer's own event rules plus the events that name the granted user |
 | No, and entitled to none of the tx's logs | `null` |
 
 Even when a user is a participant, the receipt's `logs` array is filtered using the same rules as `eth_getLogs` (see below), and the `logsBloom` is zeroed out to prevent leaking the total number or presence of redacted logs. Note that "the same rules as `eth_getLogs`" includes the own-transaction rule below: a participant sees every log of their own transaction that was emitted by a contract they have access to — including events that do not carry their address (e.g. an event keyed by a business identifier).
