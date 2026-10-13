@@ -40,34 +40,60 @@ func NewIndexedSelfMatcher() *IndexedSelfMatcher {
 // contractABI names one of the linked addresses (lowercase, 0x-prefixed) in an
 // indexed `address` parameter.
 func (m *IndexedSelfMatcher) Match(contractABI string, topics []string, data string, linked map[string]bool) bool {
-	if m == nil || contractABI == "" || len(topics) == 0 || len(linked) == 0 {
+	if len(linked) == 0 {
 		return false
+	}
+	for _, a := range m.IndexedAddresses(contractABI, topics, data) {
+		if linked[a] {
+			return true
+		}
+	}
+	return false
+}
+
+// IndexedAddresses returns the values (lowercase, 0x-prefixed) of the indexed
+// `address` parameters of the one event declaration in contractABI that fits
+// the log, or nil when none or more than one fits (the fail-closed cases listed
+// on IndexedSelfMatcher). These are the parties the event names: Match tests
+// them against the viewer's linked addresses, and the disclosure-grant lens
+// reveals them.
+func (m *IndexedSelfMatcher) IndexedAddresses(contractABI string, topics []string, data string) []string {
+	if m == nil || contractABI == "" || len(topics) == 0 {
+		return nil
 	}
 	byTopic0 := m.parse(contractABI)
 	if byTopic0 == nil {
-		return false
+		return nil
 	}
+	var found []string
 	foundLayout := false
 	for _, event := range byTopic0[strings.ToLower(topics[0])] {
-		fits, named := eventNamesLinked(event, topics, data, linked)
+		fits, addrs := eventIndexedAddresses(event, topics, data)
 		if !fits {
 			continue
 		}
 		// Indexed modifiers are not part of the event signature. A second
 		// fitting layout could reinterpret either a topic or a data word.
-		if foundLayout || !named {
-			return false
+		if foundLayout {
+			return nil
 		}
 		foundLayout = true
+		found = addrs
 	}
-	return foundLayout
+	if !foundLayout {
+		return nil
+	}
+	if found == nil {
+		found = []string{}
+	}
+	return found
 }
 
-// eventNamesLinked reports whether one declaration fits the log's shape and,
-// if it does, whether an indexed address names the viewer.
-func eventNamesLinked(event abi.Event, topics []string, data string, linked map[string]bool) (fits, named bool) {
+// eventIndexedAddresses reports whether one declaration fits the log's shape
+// and, if it does, the values of its indexed address parameters.
+func eventIndexedAddresses(event abi.Event, topics []string, data string) (fits bool, addrs []string) {
 	if event.Anonymous {
-		return false, false
+		return false, nil
 	}
 	var indexed, nonIndexed abi.Arguments
 	for _, in := range event.Inputs {
@@ -78,31 +104,29 @@ func eventNamesLinked(event abi.Event, topics []string, data string, linked map[
 		}
 	}
 	if len(topics) != 1+len(indexed) {
-		return false, false // malformed: topics do not match the declared event
+		return false, nil // malformed: topics do not match the declared event
 	}
 	if !dataDecodes(nonIndexed, data) {
-		return false, false // malformed payload
+		return false, nil // malformed payload
 	}
 
 	for i, in := range indexed {
 		topic := strings.ToLower(topics[1+i])
 		if len(topic) != 66 || !strings.HasPrefix(topic, "0x") {
-			return false, false
+			return false, nil
 		}
 		if _, err := hex.DecodeString(topic[2:]); err != nil {
-			return false, false
+			return false, nil
 		}
 		if in.Type.T != abi.AddressTy {
 			continue
 		}
 		if strings.Trim(topic[2:26], "0") != "" {
-			return false, false // not a canonically padded address: malformed
+			return false, nil // not a canonically padded address: malformed
 		}
-		if linked["0x"+topic[26:]] {
-			named = true
-		}
+		addrs = append(addrs, "0x"+topic[26:])
 	}
-	return true, named
+	return true, addrs
 }
 
 // parse returns the ABI's events grouped by lower-case topic0, memoised per

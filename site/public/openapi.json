@@ -13013,7 +13013,7 @@
         },
         "/api/v1/admin/system/read-profile": {
             "get": {
-                "description": "Effective deployment-wide read privacy profile (PRIVACY_READ_PROFILE, fixed at startup) and the effective state of the org-admin audit view (ORG_ADMIN_VIEW_USER_TXS). Under \"strict\", transactions and receipts are returned only to a transaction participant and an event only when an indexed address parameter of its registered ABI is one of the viewer's linked addresses; the org-admin audit view is then always off, whatever ORG_ADMIN_VIEW_USER_TXS says. Read-only; any admin the middleware admits.",
+                "description": "Effective deployment-wide read privacy profile (PRIVACY_READ_PROFILE, fixed at startup) and the effective state of the org-admin audit view (ORG_ADMIN_VIEW_USER_TXS). Under \"strict\", transactions and receipts are returned only to a transaction participant and an event only when an indexed address parameter of its registered ABI is one of the viewer's linked addresses, the one exception being an approved full disclosure grant, applied identically on JSON-RPC and the explorer; the org-admin audit view is then always off, whatever ORG_ADMIN_VIEW_USER_TXS says. Read-only; any admin the middleware admits.",
                 "responses": {
                     "200": {
                         "content": {

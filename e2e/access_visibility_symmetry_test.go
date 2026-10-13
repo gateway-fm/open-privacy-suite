@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -260,6 +261,79 @@ func TestAccessVisibilitySymmetry(t *testing.T) {
 		require.NotContains(t, got[0].AddressMetadata, foreignEOA, "no addressMetadata key for the private wallet")
 	})
 
+	// Disclosure grants (RD-1353): a Full grant over a user is an input of the
+	// shared read decision, so for a transaction that user sent the JSON-RPC
+	// read and the explorer agree — under both profiles, on a real server and
+	// a real mined transaction. Only an active Full grant opens it; a
+	// pseudonymous grant keeps its explorer-only lens (the subject is never
+	// Full there), and an expired or revoked grant opens nothing anywhere.
+	t.Run("disclosure grant viewers: JSON-RPC tx read agrees with explorer visibility", func(t *testing.T) {
+		const (
+			grantSubjectEOA = "0x23618e81e3f5cdf7f54c3d65f7fbc0abf5b21e8f" // anvil account 8
+			grantPeerEOA    = "0x14dc79964da2c08b23698b3d3cc7ca32193d9955" // anvil account 7
+		)
+		subject := createUserInGroup(t, database, "did:sym:grant_subject", subjectGID)
+		require.NoError(t, database.SystemLinkEthAddress(ctx, "did:sym:grant_subject", grantSubjectEOA))
+		auditorGID := createGroup(t, database, orgAID, "sym-a-auditors", nil, false)
+		attachAllowedMethods(t, database, auditorGID, []string{"eth_getTransactionByHash"})
+		viewers := []struct {
+			did, level string
+			expires    time.Time
+			revoked    bool
+			admits     bool
+		}{
+			{"did:sym:auditor_full", "full", time.Now().Add(24 * time.Hour), false, true},
+			{"did:sym:auditor_pseudo", "pseudonymous", time.Now().Add(24 * time.Hour), false, false},
+			{"did:sym:auditor_expired", "full", time.Now().Add(-time.Minute), false, false},
+			{"did:sym:auditor_revoked", "full", time.Now().Add(24 * time.Hour), true, false},
+		}
+		for _, v := range viewers {
+			createUserInGroup(t, database, v.did, auditorGID)
+			createDisclosureGrant(t, database, orgAID, v.did, subject, v.level, v.expires, v.revoked)
+			jwts[v.did], err = jwtService.IssueAccessToken(v.did, true)
+			require.NoError(t, err)
+		}
+
+		// The subject sends a transaction straight to the node.
+		raw, err := symmetryNodeRPC(t, "eth_sendTransaction", []any{map[string]any{"from": grantSubjectEOA, "to": grantPeerEOA, "value": "0x1"}})
+		require.NoError(t, err)
+		var txHash string
+		require.NoError(t, json.Unmarshal(raw, &txHash))
+		require.Eventually(t, func() bool {
+			r, err := symmetryNodeRPC(t, "eth_getTransactionReceipt", []any{txHash})
+			return err == nil && string(r) != "null"
+		}, 10*time.Second, 100*time.Millisecond, "the subject's transaction is mined")
+
+		peer := grantPeerEOA
+		for _, profile := range profiles {
+			engine := explorer.NewRedactionEngine(nil, database, profile)
+			engine.SetDisclosureGrantResolver(database)
+			for _, v := range viewers {
+				t.Run(profile.String()+"/"+v.did, func(t *testing.T) {
+					vis, err := database.GetBatchVisibility(ctx, v.did, []string{grantSubjectEOA})
+					require.NoError(t, err)
+					explorerFull := vis[grantSubjectEOA] == explorer.VisibilityFull
+					rows, err := engine.RedactTransactions(ctx, []explorer.Transaction{{Hash: txHash, From: grantSubjectEOA, To: &peer, Value: "1"}}, v.did)
+					require.NoError(t, err)
+					explorerReveals := len(rows) == 1 && strings.EqualFold(rows[0].From, grantSubjectEOA)
+
+					status, result, body := symmetryRPC(t, urls[profile], jwts[v.did], "eth_getTransactionByHash", []any{txHash})
+					require.Equal(t, http.StatusOK, status, "%s server: %s", profile, body)
+					rpcAdmits := result != ""
+
+					require.Equal(t, v.admits, rpcAdmits, "%s server: JSON-RPC admission for %s; response %s", profile, v.did, body)
+					require.Equal(t, v.admits, explorerFull, "explorer visibility of the subject for %s", v.did)
+					require.Equal(t, v.admits, explorerReveals, "explorer row for %s: %+v", v.did, rows)
+					if rpcAdmits {
+						require.Contains(t, strings.ToLower(result), grantSubjectEOA, "the RPC tx carries the subject")
+					} else {
+						require.NotContains(t, strings.ToLower(body), grantSubjectEOA[2:], "a refused read never names the subject")
+					}
+				})
+			}
+		}
+	})
+
 	// Strict explorer allowlist bound: the SQL-level allowlist that lists,
 	// counts and stats use under strict holds only the viewer's own linked
 	// addresses and approved disclosure-grant addresses. Grant- or
@@ -415,6 +489,59 @@ func symmetryEthCall(t *testing.T, baseURL, jwt, contract string) (int, string, 
 	return resp.StatusCode, result, string(raw)
 }
 
+// symmetryRPC sends one JSON-RPC request as the JWT's viewer and returns the
+// HTTP status, the JSON-RPC result (empty on an error or a null result) and the
+// raw response body.
+func symmetryRPC(t *testing.T, baseURL, jwt, method string, params []any) (int, string, string) {
+	t.Helper()
+	reqBody, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
+	require.NoError(t, err)
+	req, err := http.NewRequest(http.MethodPost, baseURL+"/", bytes.NewReader(reqBody))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+jwt)
+	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	var env struct {
+		Result json.RawMessage `json:"result"`
+		Error  json.RawMessage `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &env), "%s response is not JSON: %s", method, raw)
+	result := ""
+	if len(env.Error) == 0 && len(env.Result) > 0 && string(env.Result) != "null" {
+		result = string(env.Result)
+	}
+	return resp.StatusCode, result, string(raw)
+}
+
+// symmetryNodeRPC sends one JSON-RPC request straight to the e2e node.
+func symmetryNodeRPC(t *testing.T, method string, params []any) (json.RawMessage, error) {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
+	require.NoError(t, err)
+	resp, err := (&http.Client{Timeout: 10 * time.Second}).Post(e2eNodeURL(), "application/json", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Result json.RawMessage `json:"result"`
+		Error  *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	if out.Error != nil {
+		return nil, errors.New(out.Error.Message)
+	}
+	return out.Result, nil
+}
+
 // requireSymmetryNode fails fast, with a clear cause, when the e2e node the
 // symmetry servers forward eth_call to is not reachable.
 func requireSymmetryNode(t *testing.T) {
@@ -486,6 +613,31 @@ func createApprovedDisclosureGrant(t *testing.T, database *db.DB, orgID, request
 		`INSERT INTO disclosure_grants (id, request_id, grant_token_hash, scope, granted_at, expires_at)
 		 VALUES ($1, $2, $3, '{}', NOW(), NOW() + INTERVAL '1 day')`,
 		grantID, requestID, "symmetry-fixture-"+grantID)
+	require.NoError(t, err)
+}
+
+// createDisclosureGrant records an approved disclosure request by requesterDID
+// on targetUserID in orgID at the given level, and its grant (expiring at
+// expires; revoked when revoked is set).
+func createDisclosureGrant(t *testing.T, database *db.DB, orgID, requesterDID, targetUserID, level string, expires time.Time, revoked bool) {
+	t.Helper()
+	ctx := context.Background()
+	scope := `{"disclosure_level":"` + level + `"}`
+	requestID := uuid.New().String()
+	_, err := database.Conn().ExecContext(ctx,
+		`INSERT INTO disclosure_requests (id, requester_did, target_user_id, org_id, scope, reason, status, requested_at)
+		 VALUES ($1, $2, $3, $4, $5::jsonb, 'symmetry fixture', 'approved', NOW())`,
+		requestID, requesterDID, targetUserID, orgID, scope)
+	require.NoError(t, err)
+	var revokedAt any
+	if revoked {
+		revokedAt = time.Now().Add(-time.Minute)
+	}
+	grantID := uuid.New().String()
+	_, err = database.Conn().ExecContext(ctx,
+		`INSERT INTO disclosure_grants (id, request_id, grant_token_hash, scope, granted_at, expires_at, revoked_at)
+		 VALUES ($1, $2, $3, $4::jsonb, NOW() - INTERVAL '1 hour', $5, $6)`,
+		grantID, requestID, "symmetry-fixture-"+grantID, scope, expires, revokedAt)
 	require.NoError(t, err)
 }
 

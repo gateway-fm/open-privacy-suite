@@ -352,8 +352,14 @@ func TestReadProfile_Strict_DisclosureGrantSurvives(t *testing.T) {
 	require.Len(t, granted, 1)
 	assert.Equal(t, rpTx1, strings.ToLower(granted[0].Hash))
 
+	// The same Full grant admits the same transaction on JSON-RPC (RD-1353):
+	// one shared decision; a tx outside the grant stays null.
 	p := f.rpProcessor(rbac.ReadProfileStrict)
 	raw := rpEnvelope(t, rpTxObject(rpTx1, rpE, rpData))
 	out := f.call(t, p, auditor, "eth_getTransactionByHash", []any{rpTx1}, raw)
-	assert.Equal(t, "null", string(rpResult(t, out)), "RPC has no disclosure-grant path")
+	var tx map[string]any
+	require.NoError(t, json.Unmarshal(rpResult(t, out), &tx), "%s", out)
+	assert.Equal(t, rpE, tx["from"], "JSON-RPC returns the grant subject's tx: %s", out)
+	out = f.call(t, p, auditor, "eth_getTransactionByHash", []any{rpTx2}, rpEnvelope(t, rpTxObject(rpTx2, rpQ, "0x")))
+	assert.Equal(t, "null", string(rpResult(t, out)), "a tx of a user not under the grant: %s", out)
 }

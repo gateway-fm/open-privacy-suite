@@ -509,6 +509,29 @@ func (d *DB) getDisclosedAddressesForViewer(ctx context.Context, viewerDID strin
 	return addrs, nil
 }
 
+// FullDisclosureGrantAddresses implements rbac.FullDisclosureGrantResolver:
+// each address an active, unscoped disclosure grant of the viewer covers at the
+// Full level, mapped to the ids of those grants. It reads the same grant rows
+// as the visibility merge of GetBatchVisibility (disclosedGrantRows: same
+// org-membership scoping, RD-1308 org pin, RD-1318 impersonation mark and
+// level mapping), restricted to Full grants whose scope sets no date range and
+// no contract addresses: a scoped grant is honoured on its own grant pages,
+// which apply the scope, and never as a regular read. Errors propagate;
+// callers deny on error.
+func (d *DB) FullDisclosureGrantAddresses(ctx context.Context, viewerDID string) (map[string][]string, error) {
+	rows, err := d.disclosedGrantRows(ctx, viewerDID)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string][]string)
+	for _, r := range rows {
+		if r.Level == explorer.VisibilityFull && !r.Scoped {
+			out[r.Address] = append(out[r.Address], r.GrantID)
+		}
+	}
+	return out, nil
+}
+
 // disclosedGrantedAddress is the per-address view of an active disclosure grant
 // the viewer holds. Address is the lowercased ETH address; Level is the
 // visibility ceiling the grant's scope.disclosure_level resolves to (see
@@ -516,6 +539,17 @@ func (d *DB) getDisclosedAddressesForViewer(ctx context.Context, viewerDID strin
 type disclosedGrantedAddress struct {
 	Address string
 	Level   explorer.VisibilityLevel
+}
+
+// disclosedGrantRow is one (grant, covered address) pair of an active
+// disclosure grant the viewer holds.
+type disclosedGrantRow struct {
+	Address string // lower-case
+	GrantID string
+	Level   explorer.VisibilityLevel
+	// Scoped: the grant's scope restricts a date range or a set of contract
+	// addresses (or carries a malformed restriction — fail closed).
+	Scoped bool
 }
 
 // getDisclosedAddressesWithLevels returns each active disclosure-grant address
@@ -530,13 +564,46 @@ type disclosedGrantedAddress struct {
 // Under an impersonation (disclosure.WithoutViewerGrants) it returns nothing:
 // the grants belong to the viewer, not to the admin viewing as them (RD-1318).
 func (d *DB) getDisclosedAddressesWithLevels(ctx context.Context, viewerDID string) ([]disclosedGrantedAddress, error) {
+	rows, err := d.disclosedGrantRows(ctx, viewerDID)
+	if err != nil {
+		return nil, err
+	}
+	// De-dupe by address while keeping the MAX level — handles the multi-grant
+	// case (same viewer, same target address, two grants of different levels).
+	byAddr := make(map[string]explorer.VisibilityLevel)
+	for _, r := range rows {
+		if existing, ok := byAddr[r.Address]; !ok || visibilityRank(r.Level) > visibilityRank(existing) {
+			byAddr[r.Address] = r.Level
+		}
+	}
+	out := make([]disclosedGrantedAddress, 0, len(byAddr))
+	for addr, lvl := range byAddr {
+		out = append(out, disclosedGrantedAddress{Address: addr, Level: lvl})
+	}
+	return out, nil
+}
+
+// disclosedGrantRows returns one row per (active disclosure grant of the
+// viewer, address its subject owns): the grant is unrevoked and unexpired, the
+// viewer requested it, the subject's address link is live, and the viewer is a
+// current member of the org the request was made in (M13). An impersonated
+// read pinned to one org (RD-1308) counts only grants requested in that org;
+// under the impersonation mark (RD-1318) there are none.
+func (d *DB) disclosedGrantRows(ctx context.Context, viewerDID string) ([]disclosedGrantRow, error) {
 	if viewerDID == "" || disclosure.ViewerGrantsSuppressed(ctx) {
 		return nil, nil
 	}
 
 	query := `
-		SELECT LOWER(eal.eth_address),
-		       COALESCE(g.scope->>'disclosure_level', '')
+		SELECT DISTINCT LOWER(eal.eth_address),
+		       g.id::text,
+		       COALESCE(g.scope->>'disclosure_level', ''),
+		       CASE
+		         WHEN COALESCE(jsonb_typeof(g.scope->'date_range'), 'null') <> 'null' THEN true
+		         WHEN COALESCE(jsonb_typeof(g.scope->'addresses'), 'null') = 'null' THEN false
+		         WHEN jsonb_typeof(g.scope->'addresses') <> 'array' THEN true
+		         ELSE jsonb_array_length(g.scope->'addresses') > 0
+		       END
 		FROM disclosure_grants g
 		JOIN disclosure_requests r ON g.request_id = r.id
 		JOIN users target_u ON r.target_user_id = target_u.id
@@ -568,26 +635,18 @@ func (d *DB) getDisclosedAddressesWithLevels(ctx context.Context, viewerDID stri
 	}
 	defer rows.Close()
 
-	// De-dupe by address while keeping the MAX level — handles the multi-grant
-	// case (same viewer, same target address, two grants of different levels).
-	byAddr := make(map[string]explorer.VisibilityLevel)
+	var out []disclosedGrantRow
 	for rows.Next() {
-		var addr, lvlStr string
-		if err := rows.Scan(&addr, &lvlStr); err != nil {
+		var r disclosedGrantRow
+		var lvlStr string
+		if err := rows.Scan(&r.Address, &r.GrantID, &lvlStr, &r.Scoped); err != nil {
 			return nil, err
 		}
-		lvl := disclosureLevelToVisibility(lvlStr)
-		if existing, ok := byAddr[addr]; !ok || visibilityRank(lvl) > visibilityRank(existing) {
-			byAddr[addr] = lvl
-		}
+		r.Level = disclosureLevelToVisibility(lvlStr)
+		out = append(out, r)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
-	}
-
-	out := make([]disclosedGrantedAddress, 0, len(byAddr))
-	for addr, lvl := range byAddr {
-		out = append(out, disclosedGrantedAddress{Address: addr, Level: lvl})
 	}
 	return out, nil
 }

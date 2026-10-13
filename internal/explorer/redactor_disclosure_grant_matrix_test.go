@@ -76,20 +76,34 @@ func expectedCounterpartyRender(level VisibilityLevel) string {
 // the supplied grant level + ReasonDisclosureGrant, the counterparty is
 // Hidden (no grant), and the viewer has no linked addresses. This is the
 // canonical "grant viewer is not a participant" fixture.
+//
+// A token-transfer row is a rendering of the Transfer event it derives from:
+// the fixture therefore also carries that event (granted -> counterparty, on
+// matrixToken, which the viewer holds a contract grant on) for the matrix tx
+// hashes, so a Full-grant row is decided by the shared event decision as on
+// JSON-RPC (RD-1353).
 func engineForGrant(t *testing.T, level VisibilityLevel) *RedactionEngine {
 	t.Helper()
-	return newEngineDetailed(
+	detailed := map[string]AddressVisibility{
+		grantedAddr:        {Level: level, Reason: ReasonDisclosureGrant, Visible: true},
+		privateCounterAddr: {Level: VisibilityHidden, Reason: ReasonNoAccess, Visible: false},
+		matrixToken:        {Level: VisibilityFull, Reason: ReasonRBACGroupMember, Visible: true},
+	}
+	engine := newEngineDetailed(
 		VisibilityMap{
 			grantedAddr:        level,
 			privateCounterAddr: VisibilityHidden,
+			matrixToken:        VisibilityFull,
 		},
-		map[string]AddressVisibility{
-			grantedAddr:        {Level: level, Reason: ReasonDisclosureGrant, Visible: true},
-			privateCounterAddr: {Level: VisibilityHidden, Reason: ReasonNoAccess, Visible: false},
-		},
+		detailed,
 		nil, // viewer has no linked addresses
 	)
+	withTransferEvents(engine, matrixToken, grantedAddr, privateCounterAddr, "0x01", "0xmatrix")
+	return engine
 }
+
+// matrixToken is the token contract the matrix transfers move.
+const matrixToken = "0xdddddddddddddddddddddddddddddddddddddddd"
 
 // ---------------------------------------------------------------------------
 // RedactTransactions × {full, pseudonymous, redacted}

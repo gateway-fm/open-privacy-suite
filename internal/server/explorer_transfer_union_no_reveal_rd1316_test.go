@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"privacy-proxy/internal/explorer"
+	"privacy-proxy/internal/rbac"
+	"privacy-proxy/internal/server/middleware"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -292,6 +294,18 @@ func TestExplorer_FullDisclosureGrantOnRecipient_RD1316(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, f.srv.isViewerAdmin(ctx, auditorDID), "precondition: the auditor is not an admin")
 
+	// The transfer row is a rendering of its Transfer event: the token has a
+	// registered ABI and the event is indexed, so the shared event decision
+	// admits it through the auditor's Full grant (RD-1353), with the
+	// production resolvers wired.
+	_, err = f.conn.Exec(`UPDATE contracts SET abi = $1 WHERE address = $2`, erc20ABI, rd1316Token)
+	require.NoError(t, err)
+	_, err = f.conn.Exec(`INSERT INTO logs (tx_hash, log_index, address, topic0, topic1, topic2, data, block_number)
+		SELECT $1, 1, $2, $3, $4, $5, $6, block_number FROM transactions WHERE hash = $1`,
+		f.hash, rd1316Token, rd1316TransferTopic, rd1316Topic(rd1316EOA), rd1316Topic(eveWallet), "0x"+fmt.Sprintf("%064x", 7))
+	require.NoError(t, err)
+	wireExplorerRedactor(f.srv.explorerRedactor, f.srv.db, f.srv.rbacAccessCtrl, f.srv.explorerStore, nil)
+
 	rr := f.get(t, auditorDID, "/transactions/"+f.hash)
 	require.Equal(t, http.StatusOK, rr.Code, "the grant subject's transfer keeps its parent tx: %s", rr.Body.String())
 	var tx explorer.Transaction
@@ -310,6 +324,24 @@ func TestExplorer_FullDisclosureGrantOnRecipient_RD1316(t *testing.T) {
 	assert.Equal(t, eveWallet, strings.ToLower(transfers[0].To))
 	assert.Equal(t, rd1316EOA, strings.ToLower(transfers[0].From), "the Full lens reveals the counterparty on the transfer row")
 	assert.Equal(t, explorer.ReasonNoAccess, transfers[0].AddressMetadata[rd1316EOA], "the lens reveal keeps the counterparty's own reason")
+
+	// The parent is kept by the transfer-participant union, at the viewer's
+	// own level, but the grant does not cover its sender or recipient: the
+	// JSON-RPC transaction read stays null for the auditor (the documented
+	// union exception, REDACTION_SPEC G27).
+	p := NewJSONRPCProcessor(JSONRPCProcessorConfig{
+		RBACAccessCtrl: f.srv.rbacAccessCtrl, RateLimiter: &noopRateLimiter{}, AccessLogger: f.srv.db,
+		CircuitBreaker: middleware.NewCircuitBreaker(), ConcurrencyLimiter: middleware.NewConcurrencyLimiter(50, 0),
+		TxVisibilityStore: f.srv.db, AddressVisibilityResolver: f.srv.db, DisclosureGrantResolver: f.srv.db,
+		ReadProfile: rbac.ReadProfileStandard,
+	})
+	txBody, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "result": map[string]any{
+		"hash": f.hash, "from": rd1316EOA, "to": rd1316Token, "input": rd1316Calldata, "value": "0x2a", "nonce": "0x7",
+	}})
+	require.NoError(t, err)
+	out := p.applyResponseFilter(ctx, &ProcessRequest{Method: rbac.MethodGetTransactionByHash, UserID: auditorDID, Params: []any{f.hash}},
+		&rbac.AccessCheckResult{Allowed: true, UserID: auditorID, OrgID: orgO}, txBody)
+	assert.Contains(t, string(out), `"result":null`, "the union keeps the explorer row only; JSON-RPC does not return the tx: %s", out)
 }
 
 // addMember creates a non-admin user holding a grant on each contract (via a

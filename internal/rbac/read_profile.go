@@ -19,8 +19,10 @@ import (
 //     `to`); an event is admitted only when its registered ABI identifies an
 //     indexed `address` parameter equal to one of the viewer's linked
 //     addresses. No read authority is inferred from the admin claim, visibleTo,
-//     the unlock, log entitlement or tx participation. The only surviving
-//     exception is an approved disclosure grant on the explorer.
+//     the unlock, log entitlement or tx participation. An approved Full
+//     disclosure grant is the consented exception, applied identically on
+//     JSON-RPC and the explorer under both profiles (TxEnvelopeFacts /
+//     LogEmitterFacts .FullDisclosureGrant).
 //
 // The zero value is ReadProfileUnset, which every decision treats as strict:
 // a component whose profile was never wired fails closed rather than open.

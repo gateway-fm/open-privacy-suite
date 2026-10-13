@@ -80,6 +80,20 @@ type LogEmitterFacts struct {
 	// parameter holds one of the viewer's linked addresses (see
 	// IndexedSelfMatcher). Mandatory under strict; ignored under standard.
 	IndexedSelf bool
+
+	// FullDisclosureGrant: the emitter's registered ABI identifies an indexed
+	// `address` parameter of the event that an approved, active Full
+	// disclosure grant of the viewer covers — the IndexedSelfMatcher applied to
+	// DisclosureGrants.Addresses(). Both profiles. False under View-as and
+	// admin dry-run.
+	FullDisclosureGrant bool
+
+	// GrantEventAllowed (allowlist mode only): topic0 matches an allowlisted
+	// rule whose param constraints are satisfied when the addresses of the
+	// viewer's Full disclosure grants count as the viewer's own (`must_be:
+	// self`); literal constraints apply unchanged. The grant changes whose
+	// events the viewer reads, never which events.
+	GrantEventAllowed bool
 }
 
 // LogPayloadPolicy is how an admitted log's payload (topics + data) is
@@ -117,13 +131,29 @@ func (p LogPayloadPolicy) String() string {
 type LogDecision struct {
 	Admit   bool
 	Payload LogPayloadPolicy
+	// DisclosureGrant: the verdict comes from the Full disclosure-grant branch.
+	// The log is masked like any other admission, except that the grant lens
+	// renders the parties the event names in its ABI-indexed address
+	// parameters (IndexedSelfMatcher.IndexedAddresses) as visible: the subject
+	// and their counterparties in this event. Such a reveal is recorded in the
+	// audit trail.
+	DisclosureGrant bool
 }
 
 // DecideLogEmitter is the single source of truth for "may this viewer see this
 // log, and with which payload?", shared by the RPC filter and the explorer
 // redactor. The read profile is a required argument (RD-1299).
 //
-// Strict profile (and an unset profile) — evaluated first: admit, masked,
+// Disclosure grant (both profiles): an event that names, in an ABI-indexed
+// `address` parameter, an address the viewer's Full disclosure grant covers
+// (FullDisclosureGrant) is admitted, masked with the grant lens
+// (LogDecision.DisclosureGrant), when the ABI and dynamic-payload gates pass
+// and the viewer's own grant on the emitter reaches the event (admin, wildcard
+// rules, or the allowlist with the grant subjects counting as the viewer —
+// GrantEventAllowed). See decideLogDisclosureGrant. It is evaluated before
+// every branch below except the standard-profile unlock.
+//
+// Strict profile (and an unset profile) — otherwise: admit, masked,
 // iff the viewer's linked address is an ABI-indexed `address` parameter of
 // the event (IndexedSelf) AND
 // the ABI and dynamic-payload gates pass AND the viewer holds a grant on the
@@ -136,12 +166,13 @@ type LogDecision struct {
 // both layers:
 //
 //  1. visibleTo unlock          → admit, full payload
-//  2. admin                     → admit, masked
-//  3. no resolvable ABI         → drop   (RD-875/889 embedded-address protection)
-//  4. M15 dynamic payload       → drop   (embedded-address protection)
-//  5. participant AND grant     → admit, masked (RD-1162, grant-bounded)
-//  6. no grant                  → drop   (RD-874/RD-1208 — grant eligibility is load-bearing)
-//  7. event_rules:
+//  2. Full disclosure grant     → admit, masked + grant lens (see above)
+//  3. admin                     → admit, masked
+//  4. no resolvable ABI         → drop   (RD-875/889 embedded-address protection)
+//  5. M15 dynamic payload       → drop   (embedded-address protection)
+//  6. participant AND grant     → admit, masked (RD-1162, grant-bounded)
+//  7. no grant                  → drop   (RD-874/RD-1208 — grant eligibility is load-bearing)
+//  8. event_rules:
 //     wildcard                → admit, masked
 //     allowlist               → admit, masked iff topic0 is allowlisted AND
 //     (param rules satisfied OR viewer in visibleTo); else drop
@@ -149,11 +180,13 @@ type LogDecision struct {
 //
 // Structural invariants (not left to each caller):
 //   - LogPayloadFull comes from the unlock branch only. Admin, participant,
-//     ordinary visibleTo and event rules never skip embedded-address masking.
-//   - The embedded-address protections (3, 4) are never relaxed by
-//     participation or visibleTo.
-//   - Both the participant path (5) and the ordinary event paths (7) require
-//     a grant on the emitter (RD-1208).
+//     ordinary visibleTo, the disclosure grant and event rules never skip
+//     embedded-address masking; the grant lens reveals only the parties the
+//     event names in ABI-indexed address parameters.
+//   - The embedded-address protections (4, 5) are never relaxed by
+//     participation, visibleTo or a disclosure grant.
+//   - The disclosure-grant path (2), the participant path (6) and the
+//     ordinary event paths (8) require a grant on the emitter (RD-1208).
 //
 // A policy profile that must switch the unlock off for some viewer does so by
 // clearing Unlocked before calling this function (or by a gate placed ahead of
@@ -161,10 +194,16 @@ type LogDecision struct {
 // must resolve every fact (ABI, M15, rules) even when Unlocked is set.
 func DecideLogEmitter(profile ReadProfile, f LogEmitterFacts) LogDecision {
 	if profile.Strict() {
+		if d, ok := decideLogDisclosureGrant(f); ok {
+			return d
+		}
 		return decideLogEmitterStrict(f)
 	}
 	if f.Unlocked {
 		return LogDecision{Admit: true, Payload: LogPayloadFull}
+	}
+	if d, ok := decideLogDisclosureGrant(f); ok {
+		return d
 	}
 	if f.IsAdmin {
 		return LogDecision{Admit: true, Payload: LogPayloadMasked}
@@ -196,6 +235,28 @@ func DecideLogEmitter(profile ReadProfile, f LogEmitterFacts) LogDecision {
 	default: // LogEventRulesDeny
 		return LogDecision{}
 	}
+}
+
+// decideLogDisclosureGrant is the disclosure-grant branch of DecideLogEmitter,
+// the same in both profiles: an event naming a subject of the viewer's Full
+// disclosure grant in an ABI-indexed address parameter is admitted, masked
+// with the grant lens, provided the embedded-address gates pass (resolvable
+// ABI, no dynamic payload) and the viewer's own grant on the emitter reaches
+// the event: admin authority, wildcard rules, or an allowlisted rule whose
+// param constraints hold with the grant subjects counting as the viewer
+// (GrantEventAllowed). The grant decides whose events the viewer reads, never
+// which events or on which contracts. ok is false when the branch does not
+// apply.
+func decideLogDisclosureGrant(f LogEmitterFacts) (LogDecision, bool) {
+	if !f.FullDisclosureGrant || !f.ABIResolvable || f.DynamicPayloadDropped || !f.HasGrant {
+		return LogDecision{}, false
+	}
+	reaches := f.IsAdmin || f.Rules == LogEventRulesWildcard ||
+		(f.Rules == LogEventRulesAllowlist && f.HasTopic0 && f.GrantEventAllowed)
+	if !reaches {
+		return LogDecision{}, false
+	}
+	return LogDecision{Admit: true, Payload: LogPayloadMasked, DisclosureGrant: true}, true
 }
 
 // decideLogEmitterStrict is the strict read profile's event predicate (see

@@ -267,6 +267,26 @@ Every disclosure endpoint returns generic error bodies — never the underlying 
 
 Operators triage from `slog.Error` / `slog.Warn` log lines, which carry the full error context (grant_id, request_id, underlying error). The client side intentionally cannot tell the difference between adjacent failure modes.
 
+### Regular Reads: Explorer and JSON-RPC
+
+A disclosure grant is the consented exception to the read privacy rules: the data owner approved it for one requester, it expires, and its reveals are audited. Outside the grant pages above, a grant applies to the grantee's regular reads, the same way in the block explorer and over JSON-RPC, under both [read profiles](/docs/security/strict-read-profile):
+
+| Grant level | Block explorer (transaction lists and pages, transfers, logs) | JSON-RPC (`eth_getTransactionByHash` and block-index variants, `eth_getTransactionReceipt`, `eth_getBlockByNumber` / `eth_getBlockByHash`, `eth_getBlockReceipts`, `eth_getLogs`) |
+|---|---|---|
+| `full` | The owner's transactions — the ones they sent or received — in full: both parties, value, calldata, nonce, and a deployment's created contract. Events and token transfers that name the owner in an indexed `address` parameter, with the other parties of that event shown | The same transactions and receipts, returned in full, and the same events with the same addresses |
+| `pseudonymous` | Rows involving the owner, with every party as a stable alias (`Address-XXXX`) | Nothing: JSON-RPC cannot return an alias, so the grant opens no JSON-RPC read |
+| `redacted` | Rows involving the owner, with every party as `[PRIVATE]` (timing and value only) | Nothing |
+
+Bounds that always apply:
+
+- **Events need contract access.** The grantee sees the owner's events only on contracts the grantee holds a grant on, and only when the grantee's event rules reach the event — `must_be: self` rules count the owner as the grantee, literal values still apply. An address carried in the event data (not an indexed parameter) keeps the grantee's own visibility. A token-transfer row follows its Transfer event.
+- **Only the owner's own transactions.** A transaction someone else sent — for example a relayer that moves tokens to the owner — is not opened by the grant; the owner's Transfer event in it is.
+- **Scoped grants.** A grant with a `date_range` or `addresses` scope applies on its grant pages, where the scope is enforced, and opens no regular explorer read and no JSON-RPC read.
+- **No new methods.** A grant never adds an RPC method to the grantee's group allowlist, and never opens `debug_traceTransaction`.
+- **Grantee only.** A grant never applies under View as user or an admin dry-run (see above).
+
+Every regular read that reveals data through a `full` grant writes one entry to the RBAC audit log (`resource_type` `disclosure_grant`): the grantee, the endpoint or RPC method, the transaction hash when the request names one, how many rows or objects were revealed, and the ids of the grants used. Addresses are never written to the audit log. Include these entries in access reviews of disclosure grants.
+
 ## Audit Trail
 
 Every access to disclosed data is logged:

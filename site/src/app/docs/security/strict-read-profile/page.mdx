@@ -13,7 +13,7 @@ export const metadata = {
 | Value | Policy |
 |-------|--------|
 | `standard` (default) | The policy described in [Response Filtering](/docs/security/response-filtering) and [Privacy Requirements](/docs/security/privacy-requirements). Contract and org admins can read transactions sent to their contracts and all events of their contracts, `visibleTo` shares a transaction with its listed recipients, and the per-contract `visibleTo` unlock shares full event payloads. |
-| `strict` | A transaction or receipt reaches only a **transaction participant**. An event reaches only a party that one of its **indexed address parameters** names. Administrative authority, `visibleTo` and participation grant no other read access. |
+| `strict` | A transaction or receipt reaches only a **transaction participant**. An event reaches only a party that one of its **indexed address parameters** names. Administrative authority, `visibleTo` and participation grant no other read access. An approved `full` [disclosure grant](/docs/disclosure) is the one consented exception, applied identically on JSON-RPC and the explorer. |
 
 Any other value, including a value of only spaces, refuses to start. When the environment variable is empty, the `CONFIG_FILE` value applies, and without one the profile is `standard`.
 
@@ -25,13 +25,13 @@ A **participant** is a viewer whose linked address is the transaction's `from` o
 
 | Data | Who receives it under `strict` | Everyone else |
 |------|-------------------------------|---------------|
-| Transaction object: `eth_getTransactionByHash`, `eth_getTransactionByBlockHashAndIndex`, `eth_getTransactionByBlockNumberAndIndex`, full-object `eth_getBlockByHash` / `eth_getBlockByNumber` | Participants | `null`, or omitted from the block |
-| Receipt: `eth_getTransactionReceipt`, `eth_getBlockReceipts` | Participants | `null`, or omitted from the list |
-| Explorer transaction pages, transaction lists, block and address feeds, counts and statistics | Participants | Not found (404) / not listed / not counted |
-| Internal calls: explorer internal transactions | Participants of the parent transaction | Not listed |
+| Transaction object: `eth_getTransactionByHash`, `eth_getTransactionByBlockHashAndIndex`, `eth_getTransactionByBlockNumberAndIndex`, full-object `eth_getBlockByHash` / `eth_getBlockByNumber` | Participants, and holders of a `full` disclosure grant over the sender or recipient | `null`, or omitted from the block |
+| Receipt: `eth_getTransactionReceipt`, `eth_getBlockReceipts` | Participants, and holders of a `full` disclosure grant over the sender or recipient | `null`, or omitted from the list |
+| Explorer transaction pages, transaction lists, block and address feeds, counts and statistics | Participants, and holders of a `full` disclosure grant over the sender or recipient (a `pseudonymous` or `redacted` grant shows the row through its lens, without real addresses) | Not found (404) / not listed / not counted |
+| Internal calls: explorer internal transactions | Participants of the parent transaction, and holders of a `full` disclosure grant over its sender or recipient | Not listed |
 | `debug_traceTransaction` | Participants, as the top-level call frame only: the call tracer without internal frames or logs. Any other tracer or tracer setting is refused (HTTP 400) | Not found (HTTP 404), the same answer as for an unknown transaction hash |
-| Events: `eth_getLogs`, the logs in a receipt, explorer log endpoints | A viewer named by an indexed `address` parameter of the event (see below) | Removed |
-| Token transfers (explorer) | A viewer the underlying Transfer event names, under the same rule as events. The viewer's own side is shown. The other side is shown only when it is visible to the viewer by itself, such as a contract or the zero address; another user's address shows as `[PRIVATE]`. The amount is shown | Not listed |
+| Events: `eth_getLogs`, the logs in a receipt, explorer log endpoints | A viewer named by an indexed `address` parameter of the event (see below), and the holder of a `full` disclosure grant over a user it names that way | Removed |
+| Token transfers (explorer) | A viewer the underlying Transfer event names, under the same rule as events. The viewer's own side is shown. The other side is shown only when it is visible to the viewer by itself, such as a contract or the zero address; another user's address shows as `[PRIVATE]`. Under a `full` disclosure grant over a party, both parties are shown when the Transfer event is returned to the viewer. The amount is shown | Not listed |
 | Token-transfer count and category on an explorer transaction row | Not shown to anyone. The count would reveal how many transfers the event rule hides; the transfers view lists the ones the viewer may see | Not shown |
 | Search suggestions for a transaction hash | Viewers who may open that transaction | Not suggested |
 
@@ -84,7 +84,14 @@ Addresses of other users embedded in an admitted event stay masked, as under `st
 | Admin test-request of a transaction, receipt, log or block read | Returns the node's answer | Refused (HTTP 403) before the node is called, and recorded in the access log. Address-state reads are still served |
 | `debug_traceTransaction` | The call tree (`callTracer`) for a participant, an admin of the contract the transaction called, or a `visibleTo` recipient, and only when the caller has access to every contract in the returned call tree. Any other caller with trace access is refused (HTTP 403) | The top-level call frame only (see above), for a participant. Anyone else gets not found |
 
-The only access strict keeps beyond participation and indexed addresses is an approved [selective disclosure](/docs/disclosure) grant on the Explorer Data API. A disclosure grant does not add JSON-RPC access.
+### Disclosure grants under strict
+
+An approved [selective disclosure](/docs/disclosure) grant stays in force under `strict`. It is the consented exception: the user approved it for one requester, it expires, and every reveal through it is recorded in the audit log. It applies identically on JSON-RPC and the explorer:
+
+- A `full` grant over a user opens that user's transactions and receipts (the ones they sent or received) and the events that name them in an indexed `address` parameter, on every surface in the table above. In such an event the other parties it names that way are shown too; an address in the event data keeps the viewer's own visibility. Events still require a contract grant on the emitting contract whose event rules reach the event, with the granted user counting as the viewer for `must_be: self` rules.
+- A `pseudonymous` or `redacted` grant shows rows in the explorer through its lens, never with real addresses, and opens nothing on JSON-RPC.
+- A grant scoped to a date range or to specific contracts applies on its grant pages only.
+- A grant never adds an RPC method to the viewer's allowlist, never opens `debug_traceTransaction`, and does not apply under View as user or an admin dry-run.
 
 ---
 

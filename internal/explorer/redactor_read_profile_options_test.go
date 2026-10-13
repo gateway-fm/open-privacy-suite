@@ -54,10 +54,14 @@ func readProfileOptionEngine(profile rbac.ReadProfile, grantLevel *VisibilityLev
 		db.detailed[sbToken] = AddressVisibility{Address: sbToken, Level: *grantLevel, Reason: ReasonDisclosureGrant, Visible: true}
 	}
 	engine := NewRedactionEngine(nil, db, profile)
+	engine.SetDisclosureGrantResolver(grantResolverFromDetailed(db.detailed))
+	// The Transfer event the transfer row derives from (RD-1353: a Full-grant
+	// row follows the shared event decision).
+	withTransferEvents(engine, sbToken, sbOther, sbToken, sbHash(0))
 	to := sbToken
-	engine.SetTxDataResolver(&countingTxData{txs: map[string]*Transaction{
+	engine.txDataResolver.(*countingTxData).txs = map[string]*Transaction{
 		sbHash(0): {Hash: sbHash(0), From: sbOther, To: &to},
-	}})
+	}
 	return engine
 }
 
@@ -139,7 +143,7 @@ func TestRedactors_StrictGrantLensIgnoresShareOptions(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					if !reflect.DeepEqual(got, baseline) || *stats != *baselineStats {
+					if !reflect.DeepEqual(got, baseline) || !reflect.DeepEqual(*stats, *baselineStats) {
 						t.Fatalf("strict options must preserve the approved lens and audit result: got %+v stats=%+v, want %+v stats=%+v", got, stats, baseline, baselineStats)
 					}
 				})

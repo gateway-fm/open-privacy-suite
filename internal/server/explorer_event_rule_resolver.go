@@ -66,6 +66,11 @@ func wireExplorerRedactor(redactor *explorer.RedactionEngine, store rbac.Store, 
 	if store != nil {
 		redactor.SetABIResolver(newDBABIResolver(store))
 		redactor.SetDynamicPayloadAllowedResolver(newDBDynamicPayloadAllowedResolver(store))
+		// RD-1353: the viewer's Full disclosure grants, from the same lookup
+		// the JSON-RPC filters use (*db.DB in production).
+		if grants, ok := store.(rbac.FullDisclosureGrantResolver); ok {
+			redactor.SetDisclosureGrantResolver(grants)
+		}
 	}
 	if accessCtrl != nil {
 		redactor.SetAdminContractsResolver(newDBAdminContractsResolver(accessCtrl))

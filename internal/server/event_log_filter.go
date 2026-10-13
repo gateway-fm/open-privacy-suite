@@ -162,7 +162,9 @@ func filterLogsWithEventRules(
 	// Single-pass: FilterEventLogsDetailed handles both event-rule and default
 	// address-based filtering depending on whether EventRules is configured,
 	// and attaches each admitted log's payload policy for the renderer.
-	finalLogs := render(rbac.FilterEventLogsDetailed(profile, rawLogs, perms, userAddresses, abiProvider, visCtx, isAdminByContract))
+	admitted := rbac.FilterEventLogsDetailed(profile, rawLogs, perms, userAddresses, abiProvider, visCtx, isAdminByContract)
+	recordGrantLogReveals(responseGrants(visCtx), admitted)
+	finalLogs := render(admitted)
 	if finalLogs == nil {
 		finalLogs = []json.RawMessage{}
 	}
@@ -303,6 +305,7 @@ func decideReceipt(
 	to := strings.ToLower(receipt.To)
 	txHash := strings.ToLower(receipt.TransactionHash)
 	isParticipant := isTxParticipant(userAddresses, receipt.From, receipt.To)
+	grants := responseGrants(visCtx)
 
 	// visibleTo check: is the viewer listed in THIS receipt's tx visibleTo?
 	isVisibleTo := false
@@ -353,6 +356,9 @@ func decideReceipt(
 		InVisibleTo:   isVisibleTo,
 		IsAdminOnTo:   isAdminOnTo,
 		IsDeployment:  to == "",
+		// A Full disclosure grant over the receipt's from/to; looked up only
+		// when participation does not settle it.
+		FullDisclosureGrant: !isParticipant && grants.CoversTx(receipt.From, receipt.To),
 	}
 	// Decide before the log pass when the logs cannot change the answer: if
 	// not even an unbounded entitled-log count admits the envelope (a block
@@ -367,8 +373,11 @@ func decideReceipt(
 
 	// Filter the logs once. applyEventRulesToReceipt calls the shared engine
 	// and returns how many logs the viewer is entitled to — the RD-1183
-	// envelope-admission signal.
-	result, entitledLogs := applyEventRulesToReceipt(profile, raw, perms, userAddresses, abiProvider, logVisCtx, isAdminByContract, render)
+	// envelope-admission signal, which a log admitted only through a
+	// disclosure grant never contributes to — and how many logs the grant
+	// revealed.
+	result, counts := applyEventRulesToReceipt(profile, raw, perms, userAddresses, abiProvider, logVisCtx, isAdminByContract, render)
+	entitledLogs := counts.entitled
 
 	// Envelope admission (rbac.DecideTxEnvelope):
 	//   - standard receipt: participant / visibleTo / admin, or RD-1183: a
@@ -382,15 +391,63 @@ func decideReceipt(
 	if !rbac.DecideTxEnvelope(profile, facts) {
 		return nil, false
 	}
+	// Audit trail: the envelope when only the grant admits it, and every log
+	// the grant returned.
+	if rbac.TxEnvelopeRevealedByGrant(profile, facts) {
+		grants.RecordReveal(receipt.From, receipt.To)
+	}
+	for _, parties := range counts.grantLogs {
+		grants.RecordReveal(parties...)
+	}
 	return result, true
+}
+
+// receiptLogCounts summarises the log pass over one receipt.
+type receiptLogCounts struct {
+	// entitled: logs admitted on the viewer's own entitlement (RD-1183) —
+	// every admitted log except one admitted only through a disclosure grant.
+	entitled int
+	// grantLogs: for each log whose verdict came from the disclosure grant,
+	// the parties its grant lens reveals.
+	grantLogs [][]string
+}
+
+// responseGrants returns the per-response disclosure-grant set carried by
+// visCtx (nil = none).
+func responseGrants(visCtx *rbac.TxVisibilityContext) *rbac.DisclosureGrants {
+	if visCtx == nil {
+		return nil
+	}
+	return visCtx.DisclosureGrants
+}
+
+// grantLogParties returns, for each admitted log whose verdict came from a
+// disclosure grant, the parties its grant lens reveals.
+func grantLogParties(admitted []rbac.AdmittedLog) [][]string {
+	var out [][]string
+	for _, a := range admitted {
+		if a.DisclosureGrant {
+			out = append(out, a.GrantLensAddresses)
+		}
+	}
+	return out
+}
+
+// recordGrantLogReveals records each admitted log whose verdict came from a
+// disclosure grant as one reveal on grants.
+func recordGrantLogReveals(grants *rbac.DisclosureGrants, admitted []rbac.AdmittedLog) {
+	for _, parties := range grantLogParties(admitted) {
+		grants.RecordReveal(parties...)
+	}
 }
 
 // applyEventRulesToReceipt extracts logs from a receipt, applies event rule
 // filtering, and puts the filtered logs back. It returns the filtered receipt
-// JSON and the number of logs the viewer is entitled to after filtering — the
-// RD-1183 envelope-admission signal.
+// JSON and the log counts: how many logs the viewer is entitled to on their
+// own after filtering — the RD-1183 envelope-admission signal — and how many
+// a disclosure grant revealed.
 //
-// Every error / no-logs branch returns a count of 0 so a non-participant is
+// Every error / no-logs branch returns zero counts so a non-participant is
 // NEVER admitted (RD-1183) on a fail-closed receipt or one with no logs field:
 // the count-0 paths must map to a null envelope for such a viewer, not to an
 // unfiltered receipt.
@@ -403,23 +460,23 @@ func applyEventRulesToReceipt(
 	visCtx *rbac.TxVisibilityContext,
 	isAdminByContract map[string]bool,
 	render admittedLogRenderer,
-) (json.RawMessage, int) {
+) (json.RawMessage, receiptLogCounts) {
 	if render == nil {
 		render = rawAdmittedLogs
 	}
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(rawReceipt, &m); err != nil {
-		return receiptWithEmptyLogs(rawReceipt), 0 // fail-closed
+		return receiptWithEmptyLogs(rawReceipt), receiptLogCounts{} // fail-closed
 	}
 
 	rawLogs, ok := m["logs"]
 	if !ok {
-		return rawReceipt, 0 // no logs field — nothing to filter, no entitlement
+		return rawReceipt, receiptLogCounts{} // no logs field — nothing to filter, no entitlement
 	}
 
 	var arr []json.RawMessage
 	if err := json.Unmarshal(rawLogs, &arr); err != nil {
-		return receiptWithEmptyLogs(rawReceipt), 0 // fail-closed
+		return receiptWithEmptyLogs(rawReceipt), receiptLogCounts{} // fail-closed
 	}
 
 	admitted := rbac.FilterEventLogsDetailed(profile, arr, perms, userAddresses, abiProvider, visCtx, isAdminByContract)
@@ -430,7 +487,7 @@ func applyEventRulesToReceipt(
 
 	newLogs, err := json.Marshal(rendered)
 	if err != nil {
-		return receiptWithEmptyLogs(rawReceipt), 0 // fail-closed
+		return receiptWithEmptyLogs(rawReceipt), receiptLogCounts{} // fail-closed
 	}
 	m["logs"] = newLogs
 
@@ -440,11 +497,19 @@ func applyEventRulesToReceipt(
 
 	out, err := json.Marshal(m)
 	if err != nil {
-		return receiptWithEmptyLogs(rawReceipt), 0 // fail-closed
+		return receiptWithEmptyLogs(rawReceipt), receiptLogCounts{} // fail-closed
 	}
 	// Entitlement is the admission count: a log the renderer could not render
 	// still proves the viewer is entitled to part of this receipt (RD-1183).
-	return out, len(admitted)
+	// A log admitted only through a disclosure grant is not the viewer's own
+	// entitlement: the grant admits the envelope only over the tx's from/to.
+	counts := receiptLogCounts{grantLogs: grantLogParties(admitted)}
+	for _, a := range admitted {
+		if !a.ViaGrantOnly {
+			counts.entitled++
+		}
+	}
+	return out, counts
 }
 
 // scopeTxVisibilityTo returns a copy of visCtx whose visibleTo listings are

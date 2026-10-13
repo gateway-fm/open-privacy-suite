@@ -1548,6 +1548,9 @@ func setupTestServerForExplorerTransactions(t *testing.T) (*Server, *db.DB, *sql
 		explorerStore:     explorerStore,
 		explorerRedactor:  explorer.NewRedactionEngine(explorerStore, database, rbac.ReadProfileStandard),
 	}
+	// The disclosure-grant lookup is part of the production read decision
+	// (newExplorerRedactor wires it): without it no Full grant admits a row.
+	srv.explorerRedactor.SetDisclosureGrantResolver(database)
 
 	t.Cleanup(func() {
 		srv.rbacAccessCtrl.Stop()

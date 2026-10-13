@@ -108,7 +108,18 @@ func addrSetFromLinked(addrs []string) map[string]bool {
 // A null or error result passes through, and an admitted transaction is
 // returned, rebuilt from the parsed members only; any shape that cannot be
 // evaluated fails closed to null.
+//
+// This exported form applies no disclosure grant; the /rpc path uses
+// filterTransactionByHash with the viewer's grants.
 func FilterTransactionByHash(profile rbac.ReadProfile, responseBody []byte, userAddresses []string, isAdminOnTo bool, inVisibleTo func() bool) []byte {
+	return filterTransactionByHash(profile, responseBody, userAddresses, isAdminOnTo, inVisibleTo, nil)
+}
+
+// filterTransactionByHash is FilterTransactionByHash with the viewer's Full
+// disclosure grants for this response (nil = none): a grant over the tx's
+// `from` or `to` admits it (rbac.TxEnvelopeFacts.FullDisclosureGrant), and an
+// admission only the grant makes is recorded on grants for the audit trail.
+func filterTransactionByHash(profile rbac.ReadProfile, responseBody []byte, userAddresses []string, isAdminOnTo bool, inVisibleTo func() bool, grants *rbac.DisclosureGrants) []byte {
 	var resp struct {
 		JSONRPC string           `json:"jsonrpc"`
 		ID      json.RawMessage  `json:"id"`
@@ -143,10 +154,15 @@ func FilterTransactionByHash(profile rbac.ReadProfile, responseBody []byte, user
 		IsParticipant: isTxParticipant(userAddresses, tx.From, tx.To),
 		IsAdminOnTo:   isAdminOnTo,
 	}
+	// The grant lookup runs only when participation does not settle it.
+	facts.FullDisclosureGrant = !facts.IsParticipant && grants.CoversTx(tx.From, tx.To)
 	if !facts.IsParticipant && !facts.IsAdminOnTo && !profile.Strict() && inVisibleTo != nil {
 		facts.InVisibleTo = inVisibleTo()
 	}
 	if rbac.DecideTxEnvelope(profile, facts) {
+		if rbac.TxEnvelopeRevealedByGrant(profile, facts) {
+			grants.RecordReveal(tx.From, tx.To)
+		}
 		return rpcResponseFromParsed(resp.ID, resp.Result, nil)
 	}
 	return nullResult(responseBody)
@@ -203,7 +219,17 @@ var zeroSizeJSON = json.RawMessage(`"0x0"`)
 // the gas footprint of other users' txs in the same block. We mirror logsBloom
 // and always return 0x0; users who need their own gas can get it from the
 // per-tx receipts they already have access to.
+//
+// This exported form applies no disclosure grant; the /rpc path uses
+// filterBlockTransactions with the viewer's grants.
 func FilterBlockTransactions(profile rbac.ReadProfile, responseBody []byte, userAddresses []string, originalFull bool) []byte {
+	return filterBlockTransactions(profile, responseBody, userAddresses, originalFull, nil)
+}
+
+// filterBlockTransactions is FilterBlockTransactions with the viewer's Full
+// disclosure grants for this response (nil = none): an entry whose `from` or
+// `to` a grant covers is kept, and recorded on grants for the audit trail.
+func filterBlockTransactions(profile rbac.ReadProfile, responseBody []byte, userAddresses []string, originalFull bool, grants *rbac.DisclosureGrants) []byte {
 	var resp struct {
 		JSONRPC string           `json:"jsonrpc"`
 		ID      json.RawMessage  `json:"id"`
@@ -275,10 +301,15 @@ func FilterBlockTransactions(profile rbac.ReadProfile, responseBody []byte, user
 					if err := json.Unmarshal(rawTx, &tx); err != nil {
 						continue
 					}
-					if rbac.DecideTxEnvelope(profile, rbac.TxEnvelopeFacts{
+					facts := rbac.TxEnvelopeFacts{
 						Surface:       rbac.TxSurfaceBlockEntry,
 						IsParticipant: isTxParticipant(userAddresses, tx.From, tx.To),
-					}) {
+					}
+					facts.FullDisclosureGrant = !facts.IsParticipant && grants.CoversTx(tx.From, tx.To)
+					if rbac.DecideTxEnvelope(profile, facts) {
+						if rbac.TxEnvelopeRevealedByGrant(profile, facts) {
+							grants.RecordReveal(tx.From, tx.To)
+						}
 						if !originalFull {
 							hashStr, _ := json.Marshal(tx.Hash)
 							filtered = append(filtered, hashStr)
@@ -391,7 +422,16 @@ func FilterBlockReceipts(
 
 // FilterBlockTransactionCount takes a response to eth_getBlockByNumber or Hash
 // (which we rewrite into fetching the full block) and counts only the user's transactions.
+// It applies no disclosure grant; the /rpc path uses filterBlockTransactionCount.
 func FilterBlockTransactionCount(responseBody []byte, userAddresses []string) []byte {
+	return filterBlockTransactionCount(rbac.ReadProfileStrict, responseBody, userAddresses, nil)
+}
+
+// filterBlockTransactionCount counts the block entries the block listing
+// returns to the viewer — rbac.DecideTxEnvelope for TxSurfaceBlockEntry, the
+// same decision as filterBlockTransactions, including a Full disclosure grant —
+// so the count always equals the length of the viewer's listing.
+func filterBlockTransactionCount(profile rbac.ReadProfile, responseBody []byte, userAddresses []string, grants *rbac.DisclosureGrants) []byte {
 	var resp struct {
 		JSONRPC string           `json:"jsonrpc"`
 		ID      json.RawMessage  `json:"id"`
@@ -428,7 +468,6 @@ func FilterBlockTransactionCount(responseBody []byte, userAddresses []string) []
 		}
 	}
 
-	addrSet := addrSetFromLinked(userAddresses)
 	count := 0
 	for _, rawTx := range rawTxs {
 		var tx struct {
@@ -438,9 +477,12 @@ func FilterBlockTransactionCount(responseBody []byte, userAddresses []string) []
 		if err := json.Unmarshal(rawTx, &tx); err != nil {
 			continue
 		}
-		from := strings.ToLower(tx.From)
-		to := strings.ToLower(tx.To)
-		if addrSet[from] || (to != "" && addrSet[to]) {
+		participant := isTxParticipant(userAddresses, tx.From, tx.To)
+		if rbac.DecideTxEnvelope(profile, rbac.TxEnvelopeFacts{
+			Surface:             rbac.TxSurfaceBlockEntry,
+			IsParticipant:       participant,
+			FullDisclosureGrant: !participant && grants.CoversTx(tx.From, tx.To),
+		}) {
 			count++
 		}
 	}
