@@ -4517,6 +4517,8 @@ paths:
     get:
       description: Returns the disclosure access audit trail for a grant — each event
         records when the grant's data was viewed, by whom, and what resource was accessed.
+        The requester must remain an active member of the request organization. Non-full
+        grants omit viewer IPs and address-bearing summaries; this read is also recorded.
         Requires a valid grant token (X-Disclosure-Token header or token query parameter)
         that must belong to the grant named in the path — a token for a different
         grant is rejected (403).
@@ -4572,6 +4574,12 @@ paths:
                 $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
           description: source address not on the private network, or token does not
             match the grant
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
+          description: grant unavailable to the current requester or organization
         "500":
           content:
             application/json:
@@ -4645,6 +4653,12 @@ paths:
                 $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
           description: source address not on the private network, or token does not
             match the grant
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
+          description: grant unavailable to the current requester or organization
         "500":
           content:
             application/json:
@@ -4718,6 +4732,12 @@ paths:
                 $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
           description: source address not on the private network, or token does not
             match the grant
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
+          description: grant unavailable to the current requester or organization
         "500":
           content:
             application/json:
@@ -4832,6 +4852,12 @@ paths:
                 $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
           description: source address not on the private network, or token does not
             match the grant
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
+          description: grant unavailable to the current requester or organization
         "500":
           content:
             application/json:
@@ -4977,7 +5003,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
-          description: invalid body, or org_id required (ambiguous multi-org caller)
+          description: invalid body or scope, or org_id required (ambiguous multi-org
+            caller)
         "401":
           content:
             application/json:
@@ -12369,7 +12396,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/privacy-proxy_internal_apimodels.APIError'
-          description: request cannot be approved (e.g. not pending or expired)
+          description: malformed body, invalid or widened scope, or request cannot
+            be approved
         "401":
           content:
             application/json:
