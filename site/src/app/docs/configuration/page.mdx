@@ -39,7 +39,7 @@ COMPLIANCE_DEFAULT_MODE = "enforce"
 **`version` is required.** The file must declare a top-level `version` (currently `1`). The proxy refuses to start on a missing or unsupported version, so a file written for a future schema fails loudly instead of being silently mis-read.
 
 <Callout variant="danger" title="Secrets are not allowed in the config file">
-Secrets — `JWT_SECRET`, `JWT_REFRESH_SECRET`, `JWT_SECRET_PREVIOUS`, `JWT_REFRESH_SECRET_PREVIOUS`, `ADMIN_API_TOKEN`, `OPERATOR_API_TOKEN`, `AZURE_AD_CLIENT_SECRET`, `DATABASE_URL`, `AUDIT_DATABASE_URL`, `AUDIT_ADMIN_DATABASE_URL`, `EXPLORER_DATABASE_URL`, `REDIS_URL` / `REDIS_PASSWORD`, `RPC_API_KEY`, `RPC_API_KEY_ENCRYPTION_KEY`, `OAUTH_FIRST_PARTY_CLIENTS` — must live in your environment or secrets manager, never in a plaintext config file. **The proxy refuses to start if it finds one of these in the file**, naming the offending key. Inject secrets via the environment, which overrides the file anyway.
+Secrets — `JWT_SECRET`, `JWT_REFRESH_SECRET`, `JWT_SECRET_PREVIOUS`, `JWT_REFRESH_SECRET_PREVIOUS`, `ADMIN_API_TOKEN`, `OPERATOR_API_TOKEN`, `AZURE_AD_CLIENT_SECRET`, `DATABASE_URL`, `AUDIT_DATABASE_URL`, `AUDIT_ADMIN_DATABASE_URL`, `EXPLORER_DATABASE_URL`, `REDIS_URL` / `REDIS_PASSWORD`, `RPC_API_KEY`, `RPC_API_KEY_ENCRYPTION_KEY`, `OAUTH_FIRST_PARTY_CLIENTS`, `CROSS_ORG_AUTHORIZATION_ORACLE_TOKEN` — must live in your environment or secrets manager, never in a plaintext config file. **The proxy refuses to start if it finds one of these in the file**, naming the offending key. Inject secrets via the environment, which overrides the file anyway.
 </Callout>
 
 A fully-commented template lives at `config.example.toml` in the repository root — copy and trim it:
@@ -173,6 +173,22 @@ Existing grants survive the transfer, including the `privacy_proxy_app` append-o
 <Callout variant="danger" title="Never expose ADMIN_API_TOKEN to the frontend">
   Do not pass `ADMIN_API_TOKEN` as a Vite build arg or environment variable to the frontend. Vite bakes `VITE_*` vars into the static JS bundle, making them visible to every browser visitor. For browser-based admin access, use JWT authentication (login grants admin claim via RBAC). For bootstrap, use `curl` with `X-Admin-Token` directly against the backend API.
 </Callout>
+
+### Cross-org authorization oracle
+
+`POST /api/v1/admin/cross-org-authorization-oracle` lets one trusted infrastructure service ask whether a subject may make
+an RPC call, before it is signed (see [RBAC](/docs/rbac#cross-organization-authorization-oracle)). It is disabled by default.
+
+<EnvTable vars={[
+  { name: "CROSS_ORG_AUTHORIZATION_ORACLE_MODE", default: "disabled", description: "disabled (the endpoint answers 404), verdict_only (decision and coarse reason only) or full_simulation (an allow also returns the raw, unredacted trace and logs). Prefer verdict_only where the operator must not be able to access tenant data." },
+  { name: "CROSS_ORG_AUTHORIZATION_ORACLE_TOKEN", default: "(required when enabled)", description: "Secret sent by the caller in X-Cross-Org-Authorization-Oracle-Token. Must differ from ADMIN_API_TOKEN and OPERATOR_API_TOKEN. Keep it in the environment or a secrets manager; the config file rejects it." },
+  { name: "CROSS_ORG_AUTHORIZATION_ORACLE_ORG_IDS", default: "(required when enabled)", description: "Comma-separated organization IDs the oracle may evaluate. This allowlist is the consent boundary: the token holder may query any member of any listed organization. The oracle never consults an organization outside it and answers indeterminate instead." },
+]} />
+
+The oracle has no request quota: one global concurrency cap (`MAX_CONCURRENT_REQUESTS` requests in flight) and a
+5-second trace timeout protect the proxy and the node. Request-rate limits belong to the upstream RPC proxy: oracle traces
+use the subject organization's RPC API key (or `RPC_API_KEY`), so they count against that key's quota. Enabling the oracle
+writes a `cross_org_oracle.enabled` entry to the RBAC audit log at startup; the proxy refuses to start if it cannot.
 
 ---
 

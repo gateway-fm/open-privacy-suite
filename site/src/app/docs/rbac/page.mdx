@@ -14,6 +14,15 @@ The Open Privacy Suite implements a **multi-tenant RBAC** system that protects b
 node access. Organizations define fine-grained permissions for users accessing JSON-RPC methods and
 smart contracts.
 
+<Callout type="warning" title="Cross-organization authorization oracle">
+The cross-org oracle is disabled by default. Enabling it requires a dedicated
+`CROSS_ORG_AUTHORIZATION_ORACLE_TOKEN`, distinct from admin/operator tokens,
+and an explicit `CROSS_ORG_AUTHORIZATION_ORACLE_ORG_IDS` allowlist. Calls use
+`POST /api/v1/admin/cross-org-authorization-oracle` and the
+`X-Cross-Org-Authorization-Oracle-Token` header. Even `verdict_only` reveals
+policy information and must be treated as a cross-tenant trust boundary.
+</Callout>
+
 **Key features:**
 
 - **Multi-tenant** -- multiple independent organizations with isolated permission sets
@@ -129,6 +138,57 @@ Banning revokes the target's refresh tokens immediately, and a banned user is re
 In the dashboard the Ban control on your own account is inert and states the reason — as a tooltip on the user list row, and as help text beside the toggle on the user detail page. Both remain reachable by keyboard, so the explanation is not mouse-only. As always the server-side check is the boundary; the UI only avoids offering an action that would fail.
 
 To ban an admin, have another admin in the same organization do it, or use the full admin token.
+
+---
+
+## Cross-Organization Authorization Oracle
+
+`POST /api/v1/admin/cross-org-authorization-oracle` lets an explicitly trusted service test a JSON-RPC operation before submission.
+It is disabled by default. When enabled, use the dedicated `CROSS_ORG_AUTHORIZATION_ORACLE_TOKEN` in the
+`X-Cross-Org-Authorization-Oracle-Token` header. Admin, operator, and JWT credentials cannot use this endpoint.
+
+The request identifies one subject by DID or linked Ethereum address. An optional `org_id` selects the organization;
+a registered target is evaluated in its owner organization, as on live RPC. A supplied `from` address must link to the subject.
+
+The response has a `decision` of `allow`, `deny` or `indeterminate`:
+
+| Decision | Meaning | What the caller should do |
+| --- | --- | --- |
+| `allow` | Policy was evaluated and allows the call. | Proceed to signing. |
+| `deny` (reason `denied`) | Policy was evaluated inside the oracle scope and refuses the call. | Block. |
+| `indeterminate` (reason `outside_oracle_scope`) | Part of the evaluation is outside the allowlisted organizations: the subject, the requested organization, the target or a nested call. | Do not block on the oracle; warn and let the live call decide. Report recurring cases to the operator. |
+| `indeterminate` (reason `not_simulated`) | The method may execute EVM code that the oracle does not simulate. | Same as above. |
+
+The oracle never consults an organization outside `CROSS_ORG_AUTHORIZATION_ORACLE_ORG_IDS`, including whether the subject
+is a member of one, and every policy input comes from allowlisted memberships only. A nested contract creation without a
+deploy claim in an allowlisted organization is therefore `indeterminate`, since the claim may exist elsewhere. An unlinked
+address and a member of a non-allowlisted organization get the same answer. `indeterminate`
+never weakens security: live RPC still enforces the full policy. In `verdict_only` mode the response contains only the decision
+and its coarse reason; `full_simulation` additionally returns the trace artifacts on `allow`.
+
+**Authority scope.** The token holder may query any member of any allowlisted organization: the allowlist, set by the
+operator, is the consent boundary. In `full_simulation` mode the caller receives the raw trace and logs for those members,
+unredacted by design. Where the operator must not be able to access tenant data, use `verdict_only`. Per-organization
+consent is planned as follow-up work. See [Configuration](/docs/configuration#cross-org-authorization-oracle) for the settings.
+
+The endpoint checks RBAC and nested EVM calls with `debug_traceCall`, using the same evaluation phases as live RPC and admin
+dry-run (organization selection, sender binding, RBAC, trace with the live block-parameter check, compliance). As on live RPC,
+a targeted `eth_createAccessList` keeps its entry-point check only. Write operations also use a side-effect-free compliance preview.
+The preview does not send a transaction, write a compliance log, or consume a travel-rule record.
+
+The upstream node must support `debug_traceCall`. The endpoint fails closed when tracing is unavailable or exceeds five seconds.
+Traces use the subject organization's upstream RPC API key (or the default key), so oracle load counts against that key's upstream quota. There is no oracle request quota: one global concurrency cap (`MAX_CONCURRENT_REQUESTS` requests in flight) and a 5-second trace timeout protect the proxy and the node. An upstream `429` is returned as `429` with its `Retry-After`.
+`debug_traceCall` and `debug_traceTransaction` are not supported as the operation (`400`).
+
+Every request that reaches evaluation writes exactly one entry to the hash-chained RBAC audit log (action
+`cross_org_oracle.query`), covered by the [audit integrity](/docs/security/audit-integrity) verifier. The entry has no
+organization, so it is operator-only and never appears in a tenant's audit view, even when the request names that
+organization. It records the subject, the requested and evaluated organizations, the method, a hash of the params, the
+decision, the internal reason and, for `indeterminate`, the specific out-of-scope organization or contract. A `429` or `503`
+after evaluation started is recorded too. If the entry cannot be written, no answer is returned (`500`). Early `400`s
+(malformed body, subject or method) and the concurrency-cap `429` write no entry.
+
+This endpoint predicts privacy and compliance acceptance. It does not predict EVM success, gas use, nonce validity, or later state changes.
 
 ---
 
@@ -313,7 +373,7 @@ A user can belong to multiple groups. Across memberships:
 
 ### Time-boxed memberships (access windows)
 
-A membership can carry an optional **expiry**. When you add a member — via the admin API (`expires_at`, an RFC3339 timestamp) or the dashboard's **Access window** selector (24 hours / 7 days / 30 days / a custom date) — access is granted only until that moment. Once the window passes, the membership stops contributing any methods, claims, or data visibility and is cleaned up automatically; the user falls back to whatever their remaining memberships allow (typically none). Leave the window unset for a permanent membership.
+A membership can carry an optional **expiry**. When you add a member — via the admin API (`expires_at`, an RFC3339 timestamp) or the dashboard's **Access window** selector (24 hours / 7 days / 30 days / a custom date) — access is granted only until that moment. Once the window passes, the membership stops contributing any methods, claims, or data visibility and is cleaned up automatically; the user falls back to whatever their remaining memberships allow (typically none). This holds on every access path, including organization resolution and nested-call (trace) checks, even before the cleanup job removes the row. Leave the window unset for a permanent membership.
 
 This is the mechanism for **time-limited observer access** — for example a regulator or auditor onboarded into a read-only group for a fixed engagement window, after which their access ends on its own. Revocation applies to both direct RPC and the Block Explorer. To revoke before the window ends, remove the membership (effective immediately).
 
@@ -625,7 +685,8 @@ Mutating methods (`eth_sendTransaction`, `eth_sendRawTransaction`) are translate
 
 ### Operational requirements
 
-- The upstream node must expose `debug_traceCall` for mutating-method dry-run to work (Geth: `--http.api debug`). If unavailable, mutating calls return a clear error; non-mutating methods continue to work.
+- The upstream node must expose `debug_traceCall` for dry-run of `eth_call` and of mutating methods (Geth: `--http.api debug`). If it does not, those dry-runs return `502` with "node does not support debug_traceCall"; the other read methods continue to work. A trace timeout or transient upstream failure returns `503`.
+- Dry-run traces `eth_call` even when live `eth_call` tracing (`RUNTIME_TRACING_ETH_CALL_ENABLED`) is disabled, to stay inside the path organization. Its verdict can therefore be stricter than live: `indeterminate` where the live call is allowed. A call whose nested execution reaches another organization's contract returns `indeterminate`; a direct call to another organization's contract stays `deny`.
 - All dry-run calls are recorded in the `impersonation_log` table with the actor's DID, the impersonated user's DID, the method, a SHA-256 hash of the params (raw params are never persisted), the decision, and a correlation ID. Operators are expected to forward this log to their SIEM via the existing `audit-forwarder` integration.
 - Dry-run results have no side effects on chain state, no caching that would survive past the request, and no JWT minting at any point. The "impersonated" identity exists only inside one request handler.
 - Disclosure grants the user holds never apply to a dry-run: a grant is approved for the grantee only, so addresses it would disclose stay redacted in the answer (see [Selective Disclosure](/docs/disclosure)).

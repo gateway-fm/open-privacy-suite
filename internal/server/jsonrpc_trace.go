@@ -148,8 +148,9 @@ func (p *JSONRPCProcessor) validateWithTracing(ctx context.Context, req *Process
 		}
 	}
 
-	// Get user's org memberships
-	memberships, err := p.rbacAccessCtrl.Store().ListUserMembershipsWithDetails(ctx, user.ID)
+	// Get user's org memberships (active only — an expired time-boxed grant
+	// must not authorize nested calls into its former organization).
+	memberships, err := p.rbacAccessCtrl.Store().ListActiveUserMembershipsWithDetails(ctx, user.ID)
 	if err != nil {
 		return nil, &ProcessError{
 			StatusCode: http.StatusForbidden,
@@ -487,73 +488,32 @@ func (p *JSONRPCProcessor) validateEthCallWithTracingInOrg(ctx context.Context, 
 	// than silently rebinding) preserves the audit trail of spoof
 	// attempts: the access_log row records the attempted `from` and
 	// the deny.
-	userAddrs, addrErr := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)
+	linked, addrErr := senderLinked(ctx, p.rbacAccessCtrl.Store(), req.UserID, from)
 	if addrErr != nil {
 		slog.Warn("eth_call trace: linked-address lookup failed",
 			slog.String("user", req.UserID), slog.Any("err", addrErr))
 		return &ProcessError{StatusCode: http.StatusForbidden, Message: ethCallDenyTracerError, Reason: ReasonTracingUnavailable}
 	}
-	if from != "" {
-		fromLC := strings.ToLower(from)
-		match := false
-		for _, a := range userAddrs {
-			if strings.ToLower(a) == fromLC {
-				match = true
-				break
-			}
-		}
-		if !match {
-			slog.Info("eth_call trace: user-supplied from rejected (not in linked addresses)",
-				slog.String("user", req.UserID), slog.String("from", from))
-			return &ProcessError{StatusCode: http.StatusBadRequest, Message: ethCallDenyInvalidRequest, Reason: ReasonSenderNotLinked}
-		}
+	if !linked {
+		slog.Info("eth_call trace: user-supplied from rejected (not in linked addresses)",
+			slog.String("user", req.UserID), slog.String("from", from))
+		return &ProcessError{StatusCode: http.StatusBadRequest, Message: ethCallDenyInvalidRequest, Reason: ReasonSenderNotLinked}
 	}
 
 	// Org memberships → for ValidateTrace's cross-org check. Admin dry-run
 	// pins this to the path org; the normal RPC path retains the user's complete
-	// membership set.
-	userOrgIDs := make(map[string]bool)
-	userHasDeploy := false
+	// membership set, and runtime contract creation needs the deploy claim in
+	// the org the request was authorised in (without a resolved org, direct
+	// callers fall back to the stored group claims of live memberships).
+	scope := evaluationScope{kind: authorizationScopeAllActiveMemberships, orgID: req.resolvedOrgID}
 	if orgID != "" {
-		perms, permErr := p.rbacAccessCtrl.GetEffectivePermissionsByIDs(ctx, user.ID, orgID)
-		if permErr != nil || perms == nil {
-			slog.Warn("eth_call trace: pinned-org permission lookup failed",
-				slog.String("user_uuid", user.ID), slog.String("org_id", orgID), slog.Any("err", permErr))
-			return &ProcessError{StatusCode: http.StatusForbidden, Message: ethCallDenyTracerError, Reason: ReasonTracingUnavailable}
-		}
-		userOrgIDs[orgID] = true
-		userHasDeploy = effectivePermissionsHasDeployClaim(perms)
-	} else {
-		memberships, membershipErr := p.rbacAccessCtrl.Store().ListUserMembershipsWithDetails(ctx, user.ID)
-		if membershipErr != nil {
-			slog.Warn("eth_call trace: membership lookup failed",
-				slog.String("user_uuid", user.ID), slog.Any("err", membershipErr))
-			return &ProcessError{StatusCode: http.StatusForbidden, Message: ethCallDenyTracerError, Reason: ReasonTracingUnavailable}
-		}
-		// Expired memberships grant nothing: neither an org for the
-		// cross-org rule nor a deploy claim.
-		memberships = liveMemberships(memberships)
-		for _, m := range memberships {
-			if m.Group != nil {
-				userOrgIDs[m.Group.OrgID] = true
-			}
-		}
-		// Runtime contract creation needs the deploy claim in the org the
-		// request was authorised in, exactly as CheckAccess decides it
-		// (EffectivePermissions: org-admin groups get every claim, expired
-		// memberships none). Without a resolved org (direct callers), fall
-		// back to the stored group claims of live memberships.
-		if req.resolvedOrgID != "" {
-			perms, permErr := p.rbacAccessCtrl.GetEffectivePermissionsByIDs(ctx, user.ID, req.resolvedOrgID)
-			if permErr != nil || perms == nil {
-				slog.Warn("eth_call trace: resolved-org permission lookup failed",
-					slog.String("user_uuid", user.ID), slog.String("org_id", req.resolvedOrgID), slog.Any("err", permErr))
-				return &ProcessError{StatusCode: http.StatusForbidden, Message: ethCallDenyTracerError, Reason: ReasonTracingUnavailable}
-			}
-			userHasDeploy = effectivePermissionsHasDeployClaim(perms)
-		} else {
-			userHasDeploy = p.userHasDeployClaim(ctx, memberships)
-		}
+		scope = evaluationScope{kind: authorizationScopeOrgLocal, orgID: orgID}
+	}
+	userOrgIDs, userHasDeploy, scopeErr := traceOrgScope(ctx, p.rbacAccessCtrl, user, scope)
+	if scopeErr != nil {
+		slog.Warn("eth_call trace: org scope lookup failed",
+			slog.String("user_uuid", user.ID), slog.String("org_id", scope.orgID), slog.Any("err", scopeErr))
+		return &ProcessError{StatusCode: http.StatusForbidden, Message: ethCallDenyTracerError, Reason: ReasonTracingUnavailable}
 	}
 
 	// Per-call timeout. Distinct from the 30s send-side TraceTimeout.
@@ -732,7 +692,7 @@ func (p *JSONRPCProcessor) processDebugTrace(ctx context.Context, req *ProcessRe
 		p.logAccess(ctx, req, http.StatusUnauthorized)
 		return &ProcessResult{Error: &ProcessError{StatusCode: http.StatusUnauthorized, Message: "failed to get user"}}
 	}
-	memberships, err := p.rbacAccessCtrl.Store().ListUserMembershipsWithDetails(ctx, user.ID)
+	memberships, err := p.rbacAccessCtrl.Store().ListActiveUserMembershipsWithDetails(ctx, user.ID)
 	if err != nil {
 		p.logAccess(ctx, req, http.StatusInternalServerError)
 		return &ProcessResult{Error: &ProcessError{StatusCode: http.StatusInternalServerError, Message: "failed to get memberships"}}
@@ -1709,8 +1669,8 @@ func (p *JSONRPCProcessor) validateRawTxWithPreparedTrace(ctx context.Context, r
 		}
 	}
 
-	// Get user's org memberships
-	memberships, err := p.rbacAccessCtrl.Store().ListUserMembershipsWithDetails(ctx, user.ID)
+	// Get user's org memberships (active only).
+	memberships, err := p.rbacAccessCtrl.Store().ListActiveUserMembershipsWithDetails(ctx, user.ID)
 	if err != nil {
 		return nil, &ProcessError{
 			StatusCode: http.StatusForbidden,
@@ -1814,21 +1774,7 @@ func (p *JSONRPCProcessor) validateRawTxWithPreparedTrace(ctx context.Context, r
 
 // userHasDeployClaim checks whether any of the user's memberships grant the deploy claim.
 func (p *JSONRPCProcessor) userHasDeployClaim(ctx context.Context, memberships []*rbac.MembershipWithDetails) bool {
-	for _, m := range memberships {
-		if m.Membership == nil {
-			continue
-		}
-		access, err := p.rbacAccessCtrl.Store().GetGroupAccess(ctx, m.Membership.GroupID)
-		if err != nil || access == nil {
-			continue
-		}
-		for _, c := range access.Claims {
-			if c == rbac.ClaimDeploy || c == rbac.ClaimAdmin {
-				return true
-			}
-		}
-	}
-	return false
+	return membershipsHaveDeployClaim(ctx, p.rbacAccessCtrl.Store(), memberships)
 }
 
 // liveMemberships drops expired (time-boxed) memberships, which grant nothing

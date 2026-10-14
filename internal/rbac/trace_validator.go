@@ -87,6 +87,7 @@ type TraceValidationResult struct {
 	Reason        string         // User-facing reason for denial (single opaque string to prevent enumeration)
 	DenialKind    DenialKind     // Structured denial classification for audit/logging — never reaches the response body
 	DeniedTarget  string         // Address that caused denial (if any) — never reaches the response body
+	DeniedOrgID   string         // Owner of DeniedTarget for DenialKindOutOfScope — never reaches the response body
 	CreateTargets []CreateTarget // Contract addresses created during trace execution
 	// ClientAccessTargets contains granted organization-owned nested frames.
 	// Precompile, shared-infrastructure and creation frames use their existing
@@ -110,6 +111,7 @@ const (
 	DenialKindDelegateSharedInfra DenialKind = "delegatecall_shared_infra"      // M6: DELEGATECALL into shared infrastructure
 	DenialKindCodehashMismatch    DenialKind = "shared_infra_codehash_mismatch" // M5: shared_infrastructure bytecode rotated since attestation
 	DenialKindIntraOrgUngranted   DenialKind = "intra_org_ungranted"            // RD-1053: same-org target the caller has no contract grant for (intra-org scoping on)
+	DenialKindOutOfScope          DenialKind = "out_of_scope_org"               // target owned by an org the evaluator may not consult (WithEvaluationScope)
 )
 
 // TraceOption configures optional behaviour of ValidateTrace. It exists so
@@ -125,6 +127,16 @@ type traceOptions struct {
 	clientTraceGrants    bool
 	freshCreations       map[string]bool
 	noCodeRecipients     map[string]bool
+	inScope              func(orgID string) bool
+}
+
+// WithEvaluationScope limits the organizations the validator may judge. A
+// frame owned by an organization for which inScope is false is not denied as
+// foreign: validation continues, so an in-scope denial still wins, and the
+// result is DenialKindOutOfScope when nothing else denies. Membership in an
+// out-of-scope organization is never consulted.
+func WithEvaluationScope(inScope func(orgID string) bool) TraceOption {
+	return func(o *traceOptions) { o.inScope = inScope }
 }
 
 // WithCreatedContractsAsOwn is for traces of contract-creation code (an
@@ -264,6 +276,8 @@ func (v *TraceValidator) ValidateTrace(
 		}, nil
 	}
 
+	var outOfScope outOfScopeFrame
+
 	// Rule 1: Handle runtime CREATE/CREATE2 operations
 	var createTargets []CreateTarget
 	freshCreated := map[string]bool{}
@@ -290,6 +304,10 @@ func (v *TraceValidator) ValidateTrace(
 			ownerOrgID, err := v.store.GetContractOwnerOrgID(ctx, addr)
 			if err != nil {
 				return nil, fmt.Errorf("failed to get contract owner for created address: %w", err)
+			}
+			if ownerOrgID != "" && !userOrgIDs[ownerOrgID] && o.inScope != nil && !o.inScope(ownerOrgID) {
+				outOfScope = outOfScope.first(addr, ownerOrgID)
+				continue
 			}
 			if ownerOrgID != "" && !userOrgIDs[ownerOrgID] {
 				slog.Debug("runtime create denied: address owned by another org", "address", addr, "user_orgs", userOrgIDs)
@@ -381,7 +399,8 @@ func (v *TraceValidator) ValidateTrace(
 		}
 		if sharedRow != nil {
 			if target.Type == "DELEGATECALL" || target.Type == "CALLCODE" {
-				slog.Debug("trace denied: DELEGATECALL into shared infrastructure",
+				slog.Debug("trace denied: context-sharing call into shared infrastructure",
+					"call_type", target.Type,
 					"address", addr)
 				return &TraceValidationResult{
 					Allowed:      false,
@@ -496,6 +515,10 @@ func (v *TraceValidator) ValidateTrace(
 		if err != nil {
 			return nil, fmt.Errorf("failed to get contract owner: %w", err)
 		}
+		if ownerOrgID != "" && o.inScope != nil && !o.inScope(ownerOrgID) {
+			outOfScope = outOfScope.first(addr, ownerOrgID)
+			continue
+		}
 		if ownerOrgID != "" {
 			slog.Debug("trace denied: call target owned by another org", "address", addr)
 			return &TraceValidationResult{
@@ -524,11 +547,31 @@ func (v *TraceValidator) ValidateTrace(
 		}, nil
 	}
 
+	if outOfScope.address != "" {
+		return &TraceValidationResult{
+			Allowed:       false,
+			Reason:        ErrContractAccessDenied,
+			DenialKind:    DenialKindOutOfScope,
+			DeniedTarget:  outOfScope.address,
+			DeniedOrgID:   outOfScope.orgID,
+			CreateTargets: createTargets,
+		}, nil
+	}
 	return &TraceValidationResult{
 		Allowed:             true,
 		CreateTargets:       createTargets,
 		ClientAccessTargets: clientAccessTargets,
 	}, nil
+}
+
+// outOfScopeFrame records the first frame owned by an out-of-scope org.
+type outOfScopeFrame struct{ address, orgID string }
+
+func (f outOfScopeFrame) first(address, orgID string) outOfScopeFrame {
+	if f.address != "" {
+		return f
+	}
+	return outOfScopeFrame{address: address, orgID: orgID}
 }
 
 // isPreregisteredForAnyOrg reports whether addr is a pending (precomputed,

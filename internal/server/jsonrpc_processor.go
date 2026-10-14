@@ -216,6 +216,13 @@ type ProcessError struct {
 	// admin view, and — for opt-in verbose callers (Part A) — surfaced on the
 	// wire. Empty for non-denial or unclassified errors. Never raw error text.
 	Reason string
+	// TraceDenialKind preserves the validator's internal classification for
+	// projections such as org-local dry-run. It is never serialized directly.
+	TraceDenialKind rbac.DenialKind
+	// TraceDeniedTarget and TraceDeniedOrgID carry the denied frame and, for
+	// an out-of-scope frame, its owner, for audit records only.
+	TraceDeniedTarget string
+	TraceDeniedOrgID  string
 }
 
 func (e *ProcessError) Error() string {
@@ -752,7 +759,7 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 	}
 
 	// Check RBAC access
-	result, err := p.rbacAccessCtrl.CheckAccess(ctx, accessReq)
+	evaluation, err := evaluateAccessRequest(ctx, p.rbacAccessCtrl, accessReq)
 	if err != nil {
 		slog.Error("RBAC access check failed", "method", req.Method, "error", err)
 		p.recordRPCOutcome(req.Method, "error", start)
@@ -764,6 +771,7 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 			},
 		}
 	}
+	result := evaluation.AccessResult
 
 	// RD-1135: stamp the resolved org onto subsequent access-log rows (RBAC
 	// denial, concurrency/rate-limit, trace denials, success). Write-once.
@@ -1398,7 +1406,7 @@ func (p *JSONRPCProcessor) checkCompliance(ctx context.Context, req *ProcessRequ
 	}
 
 	compStart := time.Now()
-	compResult, compErr := p.complianceChecker.Check(ctx, &compliance.CheckRequest{
+	compResult, compErr := complianceVerdict(ctx, p.complianceChecker, evaluationCommit, &compliance.CheckRequest{
 		OrgID:         orgID,
 		UserID:        userID,
 		From:          from,
@@ -1568,7 +1576,7 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 	}
 
 	// Check RBAC access
-	result, err := p.rbacAccessCtrl.CheckAccess(ctx, accessReq)
+	evaluation, err := evaluateAccessRequest(ctx, p.rbacAccessCtrl, accessReq)
 	if err != nil {
 		slog.Error("RBAC access check failed", "method", req.Method, "error", err)
 		p.recordRPCOutcome(req.Method, "error", start)
@@ -1580,6 +1588,7 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 			},
 		}
 	}
+	result := evaluation.AccessResult
 
 	// RD-1135: stamp the resolved org onto subsequent access-log rows (RBAC
 	// denial, concurrency/rate-limit, trace denials, success). Write-once.
@@ -1709,7 +1718,7 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 				Error: &ProcessError{StatusCode: http.StatusForbidden, Message: sendTraceDenyTracerError, Reason: ReasonTracingUnavailable},
 			}
 		}
-		memberships, err := p.rbacAccessCtrl.Store().ListUserMembershipsWithDetails(ctx, user.ID)
+		memberships, err := p.rbacAccessCtrl.Store().ListActiveUserMembershipsWithDetails(ctx, user.ID)
 		if err != nil {
 			p.recordRPCOutcome(req.Method, "send_trace_denied", start)
 			req.denialReason = ReasonTracingUnavailable // RD-1137

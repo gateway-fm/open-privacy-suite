@@ -825,7 +825,7 @@ Dry-run and the View-as RPC mirror (`/impersonate/:did/in/:org_id/rpc`) carry a 
 | Admin exemption (`viewerAdminContracts`) | admin claim in the contract's owning org | contracts owned by the scope org only |
 | visibleTo shares (`txVisibilityForViewer`) | every `tx_visible_to` row listing the user | rows whose `org_id` (the org the send was authorised under) is the scope org |
 | visibleTo unlock (`rbac.UnlockableContracts`) | flagged contracts the user is eligible on | shared helper includes flagged contracts owned by the scope org only |
-| Nested-call gate for `eth_call` (RD-915) | all the user's orgs | the scope org (dry-run already pinned it; the mirror now does too). Like the user's own call, it runs for a targeted call only while runtime `eth_call` tracing is on, and always for a creation-shaped call, which is refused when the runtime tracer is unavailable (RD-1323). |
+| Nested-call gate for `eth_call` (RD-915) | all the user's active orgs | the scope org. Dry-run traces every `eth_call` (*Org-local `eth_call` trace* below). On the mirror, like the user's own call, it runs for a targeted call only while runtime `eth_call` tracing is on, and always for a creation-shaped call, which is refused when the runtime tracer is unavailable (RD-1323). |
 | Embedded-address redaction (`GetBatchVisibility*`) | Full through any of the user's groups, and applicable disclosure grants | Full through the scope org's groups only. The user's disclosure grants never apply: both surfaces carry the RD-1318 mark (§3.7.2, §6), and the grant lookup is additionally restricted to grants requested in the scope org |
 | Transaction envelope (`applyViewerOrgScopeEnvelope`) | participant / visibleTo / admin rules | additionally `null` when `to`, a receipt's `contractAddress`, or the contract a deployment transaction creates (derived from sender + nonce) is owned by another org — even for the user's own transaction |
 
@@ -839,9 +839,13 @@ The View-as RPC mirror serves exactly the methods whose path is pinned, listed e
 
 Both write-method shapes are rewritten to `debug_traceCall` against the upstream node — current state, no commit. The `callTracer` preset with `withLog: true` returns nested call frames + emitted logs; the handler walks the frames, extracts logs, and returns them as `logs_emitted`. `logs_visible_to_user` is the subset the user would see in that transaction's receipt: the handler builds the receipt the node would return (sender and target from the trace's top frame, a random per-request transaction hash, the emitted logs) and runs it through the production receipt filter under the same org pin (`dryRunTraceLogsVisibleToUser`) — participant admission (RD-1162), event rules, the admin exemption and the embedded-address field redaction (RD-1214) included. A receipt the user could not read yields no visible logs.
 
+A send also runs the side-effect-free compliance preview (`CheckPreview`) after the trace passes: it writes no compliance log and consumes no travel-rule record, and a blocked transfer answers `deny` with reason `compliance` (`503` when the preview is unavailable). A supplied `from` must be one of the user's linked addresses, as on the live path; otherwise the answer is `deny` (`sender_not_linked`).
+
 `eth_sendRawTransaction` is RLP-decoded via the same production helper (`decodeRawTransaction` in `internal/server/jsonrpc_processor.go`) used by the real-call path. Sender is recovered from the signature using the chain-id-aware signer; the trace then runs against `(from, to, data, value)` exactly as a real raw-tx call would. A malformed signed blob returns a clean decode error rather than a silent pass.
 
-If the upstream node doesn't expose `debug_*`, write-method dry-run returns "node does not support debug_traceCall — dry-run for write methods unavailable." Read-method dry-run continues to work.
+Dry-run of `eth_call` is traced too (*Org-local `eth_call` trace* below), so it also requires `debug_traceCall`. If the upstream node does not expose it, dry-run of `eth_call` and of write methods returns `502` with "node does not support debug_traceCall" (audited as `trace_unsupported`); a trace timeout or transient upstream failure returns `503`. The other read methods continue to work.
+
+**Org-local `eth_call` trace.** Dry-run traces every `eth_call`, even when live `eth_call` tracing is disabled, and stops at the first frame owned by another organization. Without the trace, an org admin could see output computed by another organization's contract. A direct call to another organization's contract stays `deny`; a nested frame there answers `decision: "indeterminate"` with reason `external_scope_required`, without evaluating the foreign policy. The verdict can therefore be stricter than live (`indeterminate` where live allows). `impersonation_log.response_decision` records the wire outcome when it differs from the coarse `decision` bucket.
 
 ### Audit log (`impersonation_log`)
 
@@ -850,6 +854,7 @@ Migration **046** adds the dedicated table. Every dry-run writes one row with:
 - `actor_did` — the calling admin's DID (from JWT)
 - `impersonated_did` — the user being dry-run-as
 - `org_id`, `method`, `params_hash` (sha256, never raw params), `decision`, `reason`, `correlation_id`, `created_at`
+- `response_decision` (migration 072) — the wire outcome when it differs from the coarse `decision` bucket, i.e. `indeterminate`; `decision` keeps its legacy allow/deny/error values
 
 The hash means private addresses or signed-tx blobs in params never persist; reviewers correlate against external request logs. Retention is operator-side; SIEM forwarding (`internal/audit/siem.go`) handles tamper evidence.
 
@@ -858,6 +863,36 @@ The hash means private addresses or signed-tx blobs in params never persist; rev
 - Dashboard "View as user" / browse-as flow — Phase 2, deferred (see RD-872).
 - Tier-3 admin / Read-Only Admin / super-admin dry-run — explicit NO. Each adds real attack surface that the tier-2-only argument doesn't cover.
 - JWT minting / impersonation tokens — never. The synthetic principal is a per-request struct; if it leaked, it would be a bug.
+
+### Live access-path changes (PR #466)
+
+- **Expired memberships grant nothing on any path.** `CheckAccess` (org resolution, deny attribution), the `eth_call`, send-side and client-trace validators and the explorer visibility queries all use active memberships only, before the cleanup job removes the row. `TestAccessVisibilitySymmetry` pins the live case.
+- Org confinement of dry-run and the View-as mirror comes from the view scope above. A user's own `/rpc/:org_id` call is not confined: a registered target is evaluated in its owner organization (RD-1308).
+
+---
+
+## 8.1 Cross-org authorization oracle
+
+`POST /api/v1/admin/cross-org-authorization-oracle` answers, for one explicitly trusted infrastructure caller, whether a subject (DID or linked address) may make a JSON-RPC call. It is a pre-signing convenience, not an enforcement point: live RPC still decides.
+
+**Modes** (`CROSS_ORG_AUTHORIZATION_ORACLE_MODE`): `disabled` (default, `404`), `verdict_only` (decision and coarse reason), `full_simulation` (an `allow` also returns `artifacts`: the raw, unredacted `callTracer` trace and its logs, by design). The caller authenticates with `X-Cross-Org-Authorization-Oracle-Token`; admin, operator and JWT credentials are refused.
+
+**Scope rule.** The oracle may judge only the organizations in `CROSS_ORG_AUTHORIZATION_ORACLE_ORG_IDS`. That operator allowlist is the consent boundary: the token holder may query any member of any listed organization. Every policy input (memberships, the evaluated organization, the deploy claim, trace ownership) comes from allowlisted organizations only, and the oracle never consults an organization outside it, including whether the subject is a member of one. A registered target is evaluated in its owner organization, as on live RPC; `CheckAccess` runs pinned to that organization through `OrgID` and the view scope. The trace validator runs with `rbac.WithEvaluationScope`: a frame owned outside the allowlist does not deny, validation continues so an in-scope denial still wins, and the result is `out_of_scope_org`.
+
+**Answers.** `decision` is one of:
+
+| Decision | Reason | When |
+|---|---|---|
+| `allow` | — | evaluated in scope and allowed |
+| `deny` | `denied` | evaluated in scope and refused (RBAC, sender binding, nested call into an allowlisted org the subject is not in, compliance preview) |
+| `indeterminate` | `outside_oracle_scope` | requested or resolved org, target or a nested frame outside the allowlist; an address linked to zero or several identities; no allowlisted membership; a nested `CREATE` without an in-scope deploy claim |
+| `indeterminate` | `not_simulated` | a non-catalog method the oracle does not trace (it may execute EVM code) |
+
+An unlinked address and a member of a non-allowlisted organization get byte-identical answers. The wire reason never names an organization, contract or membership; the specific out-of-scope org, contract or frame goes to the audit entry. `debug_traceCall` / `debug_traceTransaction` as the operation is a `400`. A targeted `eth_createAccessList` keeps its entry-point check only, as on live RPC.
+
+**Trace requirement.** EVM execution methods are simulated with `debug_traceCall` (5 s timeout) using the subject organization's upstream API key, with the live block-parameter check. Sends also run the side-effect-free compliance preview. A trace failure or timeout is `503`, an upstream `429` is `429` with its `Retry-After`; neither is ever a policy answer. One global concurrency key caps oracle requests in flight at `MAX_CONCURRENT_REQUESTS`; there is no request quota.
+
+**Audit.** Every request that reaches evaluation writes exactly one `cross_org_oracle.query` entry to the hash-chained `rbac_audit_log`, with `org_id` NULL (operator-only, never in a tenant view). If it cannot be written the answer is withheld (`500`). Early `400`s and the concurrency-cap `429` write no entry. `indeterminate` answers are counted per reason in `privacyproxy_cross_org_oracle_indeterminate_total`.
 
 ---
 

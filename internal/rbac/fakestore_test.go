@@ -188,6 +188,9 @@ func (fakeStore) ListUserMembershipsInOrg(context.Context, string, string) ([]*M
 func (fakeStore) ListUserMembershipsWithDetails(context.Context, string) ([]*MembershipWithDetails, error) {
 	return nil, nil
 }
+func (fakeStore) ListActiveUserMembershipsWithDetails(context.Context, string) ([]*MembershipWithDetails, error) {
+	return nil, nil
+}
 func (fakeStore) ListGroupMembers(context.Context, string) ([]*UserMembership, error) {
 	return nil, nil
 }

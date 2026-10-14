@@ -122,6 +122,18 @@ func TestAccessVisibilitySymmetry(t *testing.T) {
 	createUserInGroup(t, database, "did:sym:orgb-wallet", readerBGID)
 	require.NoError(t, database.SystemLinkEthAddress(ctx, "did:sym:orgb-wallet", foreignEOA))
 
+	// An expired (time-boxed) membership in grantedGroup grants nothing: the
+	// user keeps an active, grant-less orgA membership so the denial below is
+	// the ordinary RBAC one.
+	expiredGID := createGroup(t, database, orgAID, "sym-a-expired-active", nil, false)
+	expiredUser := createUserInGroup(t, database, "did:sym:expired", expiredGID)
+	expiredAt := time.Now().Add(-time.Hour)
+	require.NoError(t, database.CreateMembership(ctx, &rbac.UserMembership{
+		ID: uuid.New().String(), UserID: expiredUser, GroupID: grantedGID,
+		Source: rbac.MembershipSourceAdmin, ExpiresAt: &expiredAt,
+	}))
+	attachAllowedMethods(t, database, expiredGID, []string{"eth_call", "eth_getBalance", "eth_getCode"})
+
 	// Add eth_call to every group's AllowedMethods so method allowlist never blocks.
 	for _, gid := range []string{grantedGID, adminGID, deployGID, orgAdminGID, readerBGID} {
 		attachAllowedMethods(t, database, gid, []string{"eth_call", "eth_getBalance", "eth_getCode"})
@@ -179,6 +191,8 @@ func TestAccessVisibilitySymmetry(t *testing.T) {
 		{"orgA tier 3 admin → orgB non-granted contract", "did:sym:t3admin", contractB2, false},
 		// Org admin vs another user's wallet: both deny + non-Full (§2.1).
 		{"org admin → another user's EOA", "did:sym:orgadmin", foreignEOA, false},
+		// Expired membership: the grant it carried no longer applies (live path).
+		{"expired grantedGroup member → granted own-org contract", "did:sym:expired", contractA1, false},
 	}
 
 	// Start the servers on the seeded database and mint each viewer's JWT with

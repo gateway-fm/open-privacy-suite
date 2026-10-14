@@ -6,6 +6,11 @@ big.Int
 data
 iden3comm.AttachData
 iden3comm.Attachment
+internal_server.policyCheckRPCBlock
+internal_server.policyCheckArtifacts
+internal_server.policyCheckRequest
+internal_server.policyCheckResponse
+internal_server.policyCheckSubject
 privacy-proxy_internal_apimodels.APIError
 privacy-proxy_internal_apimodels.APIMessage
 privacy-proxy_internal_apimodels.AddressTransactionsResponse
