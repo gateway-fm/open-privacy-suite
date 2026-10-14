@@ -25,7 +25,7 @@ import (
 // only echoed back for display; with no JWT the response is the empty set.
 //
 // @Summary      Addresses viewable by the resolved viewer
-// @Description  Lists the viewer's own linked addresses plus addresses disclosed to them via active disclosure grants. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: the viewer DID comes from a validated JWT (or the impersonation override) — never from a query param — and for non-full grants the disclosed address is a pseudonym or "[PRIVATE]", never the real address. Fail-closed: with no resolvable viewer, only empty lists are returned. Under the View-as mirror no disclosed addresses are listed: the target's grants are not available to the admin viewing as them.
+// @Description  Lists the viewer's own linked addresses plus addresses disclosed to them via active disclosure grants. The requester must remain a current member of the grant's organization. Grant scope is enforced on the server, and successful reads are audited. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: the viewer DID comes from a validated JWT (or the impersonation override) — never from a query param — and for non-full grants the disclosed address is a pseudonym or "[PRIVATE]", never the real address. Fail-closed: with no resolvable viewer, only empty lists are returned. Under the View-as mirror no disclosed addresses are listed: the target's grants are not available to the admin viewing as them.
 // @Tags         Explorer
 // @Produce      json
 // @Param        wallet query string false "Viewer wallet address (0x-prefixed hex), echoed back for display only. The viewer identity is resolved solely from the JWT — a wallet value never resolves a DID (RD-1164 #7)." example(0x0000000000000000000000000000000000000001)
@@ -36,7 +36,7 @@ import (
 func (s *Server) getViewableAddresses(c *gin.Context) {
 	wallet := c.Query("wallet")
 
-	// SECURITY: Resolve viewer DID from JWT (validated) or wallet (DB-verified).
+	// SECURITY: Resolve viewer DID only from validated authentication.
 	// DID is never accepted directly from query params.
 	viewerDID := s.getViewerDIDFromRequest(c)
 
@@ -100,6 +100,13 @@ func (s *Server) getViewableAddresses(c *gin.Context) {
 		return
 	}
 	response.DisclosedAddresses = grants
+	counts := make(map[string]int)
+	for _, address := range grants {
+		counts[address.GrantID]++
+	}
+	for grantID, count := range counts {
+		s.recordGrantRead(c, grantID, disclosure.ActionListAddresses, disclosure.ResourceAddresses, count)
+	}
 
 	c.JSON(http.StatusOK, response)
 }
@@ -119,9 +126,22 @@ func (s *Server) getDisclosedAddressesForViewer(ctx context.Context, viewerDID s
 		JOIN users u ON r.target_user_id = u.id
 		WHERE r.requester_did = $1
 		AND g.revoked_at IS NULL
-		AND g.expires_at > NOW()`
+		AND g.expires_at > NOW()
+		AND r.status = 'approved'
+		AND EXISTS (
+			SELECT 1 FROM users viewer
+			JOIN user_memberships m ON m.user_id = viewer.id
+			JOIN groups gr ON gr.id = m.group_id
+			WHERE viewer.external_id = $1 AND gr.org_id = r.org_id
+			AND (m.expires_at IS NULL OR m.expires_at > NOW())
+		)`
+	args := []any{viewerDID}
+	if org, pinned := viewerOrgScope(ctx); pinned {
+		query += " AND r.org_id::text = $2"
+		args = append(args, org)
+	}
 
-	rows, err := s.db.Conn().QueryContext(ctx, query, viewerDID)
+	rows, err := s.db.Conn().QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -148,22 +168,24 @@ func (s *Server) getDisclosedAddressesForViewer(ctx context.Context, viewerDID s
 			return nil, err
 		}
 
-		// Parse scope JSON to determine disclosure level
+		// Invalid legacy scope dimensions never widen consent. Empty/unknown
+		// levels render as redacted rather than the former Full default.
 		var scopeData disclosure.Scope
-		disclosureLevel := "full" // Default to full
-		if err := json.Unmarshal(scope, &scopeData); err == nil {
-			if scopeData.DisclosureLevel != "" {
-				disclosureLevel = string(scopeData.DisclosureLevel)
-			}
+		if err := json.Unmarshal(scope, &scopeData); err != nil {
+			continue
 		}
+		scopeData, err = scopeData.ForRead()
+		if err != nil {
+			continue
+		}
+		disclosureLevel := string(scopeData.EffectiveLevel())
 
 		for _, addr := range targetAddresses {
 			// Generate opaque address ID for routing (hash-based)
-			addressID := explorer.GenerateAddressID(addr.EthAddress, grantID)
+			addressID := s.grantAddressID(addr.EthAddress, grantID)
 
 			disclosed := apimodels.DisclosedAddress{
 				AddressID:       addressID,
-				OwnerDID:        targetDID,
 				DisclosureLevel: disclosureLevel,
 				GrantID:         grantID,
 				ExpiresAt:       &expiresAt,
@@ -172,6 +194,7 @@ func (s *Server) getDisclosedAddressesForViewer(ctx context.Context, viewerDID s
 			// SECURITY: Only include real address for full disclosure
 			switch disclosureLevel {
 			case "full":
+				disclosed.OwnerDID = targetDID
 				disclosed.Address = addr.EthAddress
 				disclosed.ENSName = addr.ENSName
 			case "pseudonymous":
@@ -189,17 +212,16 @@ func (s *Server) getDisclosedAddressesForViewer(ctx context.Context, viewerDID s
 		}
 	}
 
-	return result, nil
+	return result, rows.Err()
 }
 
 // resolveAddressID resolves an opaque address_id back to the real address
 // GET /api/v1/explorer/grant/:grant_id/resolve/:address_id
 // This is an internal API for the explorer backend to fetch data for disclosed addresses.
-// SECURITY: This endpoint is localhost-only and returns the real address for backend use.
-// The explorer backend must apply appropriate redaction before sending to the frontend.
+// SECURITY: Only a Full grant returns the real address; all rendering is enforced here.
 //
 // @Summary      Resolve a grant-scoped address_id
-// @Description  Resolves an opaque address_id (issued by viewable-addresses) back to grant-scoped disclosure data for the explorer backend. Private network only (serves the explorer backend); not reachable through the public ingress. The response is scoped to the grant's disclosure level: the real address is returned ONLY for a "full" grant; a "pseudonymous" grant returns a stable pseudonym and no real address; other levels return neither. Fail-closed: a revoked or expired grant, or an address_id that does not belong to the grant, yields 403/404. Under the View-as mirror it always returns 404: the target's grants are not available to the admin viewing as them.
+// @Description  Resolves an opaque address_id (issued by viewable-addresses) back to grant-scoped disclosure data for the explorer backend. The requester must remain a current member of the grant's organization. Grant scope is enforced on the server, and successful reads are audited. Private network only (serves the explorer backend); not reachable through the public ingress. The response is scoped to the grant's disclosure level: the real address is returned ONLY for a "full" grant; a "pseudonymous" grant returns a stable pseudonym and no real address; other levels return neither. Fail-closed: a revoked or expired grant, or an address_id that does not belong to the grant, yields 403/404. Under the View-as mirror it always returns 404: the target's grants are not available to the admin viewing as them.
 // @Tags         Explorer
 // @Produce      json
 // @Param        grant_id path string true "Disclosure grant ID"
@@ -207,7 +229,7 @@ func (s *Server) getDisclosedAddressesForViewer(ctx context.Context, viewerDID s
 // @Success      200 {object} apimodels.ResolveAddressResponse
 // @Failure      400 {object} apimodels.APIError "grant_id and address_id are required"
 // @Failure      401 {object} apimodels.APIError "authentication required"
-// @Failure      403 {object} apimodels.APIError "grant has been revoked or has expired"
+// @Failure      403 {object} apimodels.APIError "grant is inactive or its scope does not permit this data"
 // @Failure      404 {object} apimodels.APIError "grant or address not found for this grant"
 // @Failure      500 {object} apimodels.APIError "lookup failed"
 // @Router       /api/v1/explorer/grant/{grant_id}/resolve/{address_id} [get]
@@ -220,82 +242,21 @@ func (s *Server) resolveAddressID(c *gin.Context) {
 		return
 	}
 
-	// RD-1318: an impersonating admin never acts as the grantee. Uniform 404
-	// before any lookup, so View-as cannot even probe which grants exist.
-	if !disclosureGrantsApply(c) {
-		respondNotFound(c, "grant not found")
+	gw, ok := s.explorerGrant(c, false)
+	if !ok {
 		return
 	}
-
-	// Look up the grant with its request
-	grantWithRequest, err := s.db.GetDisclosureGrantWithRequest(c.Request.Context(), grantID)
-	if err != nil || grantWithRequest == nil {
-		respondNotFound(c, "grant not found")
-		return
-	}
-
-	grant := grantWithRequest.Grant
-	request := grantWithRequest.Request
-
-	// SECURITY (RD-1164 #10): grantee verification — the viewer's DID must match
-	// the grant's requester_did. Without it, any caller who knows a grant_id +
-	// address_id could resolve the real address of a `full` grant they do not
-	// hold. Mirrors getGrantActivityLogs; uniform 404 avoids grant enumeration.
-	viewerDID := s.getViewerDIDFromRequest(c)
-	if viewerDID == "" {
-		respondUnauthorized(c, "authentication required")
-		return
-	}
-	if request.RequesterDID != viewerDID {
-		respondNotFound(c, "grant not found")
-		return
-	}
-
-	// Check grant is still valid
-	if grant.RevokedAt != nil {
-		respondForbidden(c, "grant has been revoked")
-		return
-	}
-	if grant.ExpiresAt.Before(time.Now()) {
-		respondForbidden(c, "grant has expired")
-		return
-	}
-
-	// Get target DID from the request
-	targetUser, err := s.db.GetUser(c.Request.Context(), request.TargetUserID)
-	if err != nil || targetUser == nil {
-		respondInternalError(c, "failed to get target user")
-		return
-	}
-	targetDID := targetUser.ExternalID
-
-	// Get all addresses for the target DID
-	addresses, err := s.db.GetEthAddressesByDID(c.Request.Context(), targetDID)
+	grant := gw.Grant
+	realAddress, err := s.grantSubjectAddress(c.Request.Context(), gw, addressID)
 	if err != nil {
-		respondInternalError(c, "failed to get addresses")
+		respondInternalError(c, "failed to resolve address")
 		return
 	}
-
-	// Find the address matching the address_id
-	var realAddress string
-	for _, addr := range addresses {
-		computedID := explorer.GenerateAddressID(addr.EthAddress, grantID)
-		if computedID == addressID {
-			realAddress = addr.EthAddress
-			break
-		}
-	}
-
 	if realAddress == "" {
 		respondNotFound(c, "address not found for this grant")
 		return
 	}
-
-	// Get disclosure level from grant scope
-	disclosureLevel := "full"
-	if grant.Scope.DisclosureLevel != "" {
-		disclosureLevel = string(grant.Scope.DisclosureLevel)
-	}
+	disclosureLevel := string(grant.Scope.EffectiveLevel())
 
 	response := apimodels.ResolveAddressResponse{
 		DisclosureLevel: disclosureLevel,
@@ -315,6 +276,7 @@ func (s *Server) resolveAddressID(c *gin.Context) {
 		response.Pseudonym = s.pseudonym(realAddress)
 	}
 
+	s.recordGrantRead(c, grantID, disclosure.ActionResolveAddress, disclosure.ResourceAddresses, 1)
 	c.JSON(http.StatusOK, response)
 }
 
@@ -351,45 +313,15 @@ func (s *Server) pseudonym(address string) string {
 // page while walking the feed cursor (RD-1149/RD-1167), so in-scope rows
 // beyond the first page are reachable.
 func filterTxsByGrantScope(txs []explorer.Transaction, scope disclosure.Scope) []explorer.Transaction {
-	if scope.DateRange == nil && len(scope.Addresses) == 0 {
-		return txs
-	}
-
-	var scopeAddrs map[string]bool
-	if len(scope.Addresses) > 0 {
-		scopeAddrs = make(map[string]bool, len(scope.Addresses))
-		for _, a := range scope.Addresses {
-			scopeAddrs[strings.ToLower(a)] = true
-		}
-	}
-
-	var start, end int64
-	if scope.DateRange != nil {
-		start = scope.DateRange.Start.Unix()
-		end = scope.DateRange.End.Unix()
-	}
-
 	out := make([]explorer.Transaction, 0, len(txs))
 	for _, tx := range txs {
-		if scope.DateRange != nil {
-			// Fail closed: a tx with a missing (0) or out-of-range block
-			// timestamp is excluded rather than disclosed.
-			ts := int64(tx.BlockTimestamp)
-			if ts == 0 || ts < start || ts > end {
-				continue
-			}
+		to := ""
+		if tx.HasRecipient() {
+			to = *tx.To
 		}
-		if scopeAddrs != nil {
-			from := strings.ToLower(tx.From)
-			to := ""
-			if tx.To != nil {
-				to = strings.ToLower(*tx.To)
-			}
-			if !scopeAddrs[from] && !scopeAddrs[to] {
-				continue
-			}
+		if scope.CoversTransaction(tx.From, to, int64(tx.BlockTimestamp)) {
+			out = append(out, tx)
 		}
-		out = append(out, tx)
 	}
 	return out
 }
@@ -424,7 +356,17 @@ func (s *Server) collectGrantScopeTxs(ctx context.Context, address string, scope
 			return inScope, "", nil
 		}
 		scanned += len(txs)
-		inScope = append(inScope, filterTxsByGrantScope(txs, scope)...)
+		// The indexer's address feed also includes parents of Transfer events.
+		// A grant discloses only transactions whose from/to is the subject,
+		// matching the detail endpoint. Keep the raw cursor and scan count so
+		// skipped transfer-only parents never prevent reaching eligible rows.
+		subjectTxs := make([]explorer.Transaction, 0, len(txs))
+		for _, tx := range txs {
+			if strings.EqualFold(tx.From, address) || (tx.HasRecipient() && strings.EqualFold(*tx.To, address)) {
+				subjectTxs = append(subjectTxs, tx)
+			}
+		}
+		inScope = append(inScope, filterTxsByGrantScope(subjectTxs, scope)...)
 		if next == "" {
 			return inScope, "", nil // feed exhausted — nothing left to resume
 		}
@@ -443,7 +385,7 @@ func (s *Server) collectGrantScopeTxs(ctx context.Context, address string, scope
 // The explorer backend receives pre-pseudonymized data and cannot reverse it.
 //
 // @Summary      Grant-scoped transactions for a disclosed address
-// @Description  Returns transactions for a disclosed address, rendered at the grant's disclosure level. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the grant: "full" reveals real addresses, hashes and values; "pseudonymous" replaces addresses with stable pseudonyms and hides values and hashes; "redacted" (or any unknown level) shows only direction, gas, status and timing with "[PRIVATE]" counterparties. Fail-closed: a revoked or expired grant, or an address_id that does not belong to the grant, yields 403/404. Under the View-as mirror it always returns 404: the target's grants are not available to the admin viewing as them.
+// @Description  Returns transactions for a disclosed address, rendered at the grant's disclosure level. The requester must remain a current member of the grant's organization. Grant scope is enforced on the server, and successful reads are audited. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the grant: "full" reveals real addresses, hashes and values; "pseudonymous" replaces addresses with stable pseudonyms and hides values and hashes; "redacted" (including an empty or unknown stored level) shows only direction, gas, status and timing with "[PRIVATE]" counterparties. Fail-closed: a revoked or expired grant, or an address_id that does not belong to the grant, yields 403/404. Under the View-as mirror it always returns 404: the target's grants are not available to the admin viewing as them.
 // @Tags         Explorer
 // @Produce      json
 // @Param        grant_id path string true "Disclosure grant ID"
@@ -454,7 +396,7 @@ func (s *Server) collectGrantScopeTxs(ctx context.Context, address string, scope
 // @Success      200 {object} apimodels.GrantTransactionsResponse
 // @Failure      400 {object} apimodels.APIError "grant_id and address_id are required, or the pagination cursor is malformed"
 // @Failure      401 {object} apimodels.APIError "authentication required"
-// @Failure      403 {object} apimodels.APIError "grant has been revoked or has expired"
+// @Failure      403 {object} apimodels.APIError "grant is inactive or its scope does not permit this data"
 // @Failure      404 {object} apimodels.APIError "grant or address not found for this grant"
 // @Failure      500 {object} apimodels.APIError "explorer store not configured or lookup failed"
 // @Router       /api/v1/explorer/grant/{grant_id}/{address_id}/transactions [get]
@@ -472,78 +414,22 @@ func (s *Server) getGrantTransactions(c *gin.Context) {
 		return
 	}
 
-	// RD-1318: an impersonating admin never acts as the grantee (see
-	// resolveAddressID).
-	if !disclosureGrantsApply(c) {
-		respondNotFound(c, "grant not found")
+	gw, ok := s.explorerGrant(c, false)
+	if !ok {
 		return
 	}
-
-	// Look up the grant with its request
-	grantWithRequest, err := s.db.GetDisclosureGrantWithRequest(c.Request.Context(), grantID)
-	if err != nil || grantWithRequest == nil {
-		respondNotFound(c, "grant not found")
+	grant := gw.Grant
+	if !grant.Scope.AllowsTransactionHistory() {
+		respondForbidden(c, "grant scope does not include transaction_history")
 		return
 	}
-
-	grant := grantWithRequest.Grant
-	request := grantWithRequest.Request
-
-	// SECURITY (RD-1164 #10): grantee verification FIRST — the viewer's DID must
-	// match the grant's requester_did, else any caller with a grant_id +
-	// address_id could read a `full` grant's real transactions. Checked before
-	// revoked/expired so grant state is never revealed to a non-grantee. Mirrors
-	// getGrantActivityLogs.
+	disclosureLevel := string(grant.Scope.EffectiveLevel())
 	viewerDID := s.getViewerDIDFromRequest(c)
-	if viewerDID == "" {
-		respondUnauthorized(c, "authentication required")
-		return
-	}
-	if request.RequesterDID != viewerDID {
-		respondNotFound(c, "grant not found")
-		return
-	}
-
-	// Check grant is still valid
-	if grant.RevokedAt != nil {
-		respondForbidden(c, "grant has been revoked")
-		return
-	}
-	if grant.ExpiresAt.Before(time.Now()) {
-		respondForbidden(c, "grant has expired")
-		return
-	}
-
-	// Get disclosure level
-	disclosureLevel := "full"
-	if grant.Scope.DisclosureLevel != "" {
-		disclosureLevel = string(grant.Scope.DisclosureLevel)
-	}
-
-	// Get target user and their addresses
-	targetUser, err := s.db.GetUser(c.Request.Context(), request.TargetUserID)
-	if err != nil || targetUser == nil {
-		respondInternalError(c, "failed to get target user")
-		return
-	}
-	targetDID := targetUser.ExternalID
-
-	addresses, err := s.db.GetEthAddressesByDID(c.Request.Context(), targetDID)
+	realAddress, err := s.grantSubjectAddress(c.Request.Context(), gw, addressID)
 	if err != nil {
-		respondInternalError(c, "failed to get addresses")
+		respondInternalError(c, "failed to resolve address")
 		return
 	}
-
-	// Find the real address by matching address_id
-	var realAddress string
-	for _, addr := range addresses {
-		computedID := explorer.GenerateAddressID(addr.EthAddress, grantID)
-		if computedID == addressID {
-			realAddress = addr.EthAddress
-			break
-		}
-	}
-
 	if realAddress == "" {
 		respondNotFound(c, "address not found for this grant")
 		return
@@ -599,6 +485,7 @@ func (s *Server) getGrantTransactions(c *gin.Context) {
 	for _, tx := range txs {
 		gt := apimodels.GrantTransaction{
 			BlockNumber:    tx.BlockNumber,
+			TxIndex:        tx.TxIndex,
 			BlockTimestamp: tx.BlockTimestamp,
 			GasUsed:        tx.GasUsed,
 			Status:         tx.Status,
@@ -641,7 +528,7 @@ func (s *Server) getGrantTransactions(c *gin.Context) {
 				gt.From = "Mine"
 				labels["Mine"] = "mine"
 			} else {
-				ext := generateExternalPseudonym(tx.From, grantID)
+				ext := s.externalPseudonym(tx.From, grantID)
 				gt.From = ext
 				labels[ext] = "external"
 			}
@@ -653,7 +540,7 @@ func (s *Server) getGrantTransactions(c *gin.Context) {
 					gt.To = "Mine"
 					labels["Mine"] = "mine"
 				} else {
-					ext := generateExternalPseudonym(*tx.To, grantID)
+					ext := s.externalPseudonym(*tx.To, grantID)
 					gt.To = ext
 					labels[ext] = "external"
 				}
@@ -684,6 +571,7 @@ func (s *Server) getGrantTransactions(c *gin.Context) {
 		grantTxs = []apimodels.GrantTransaction{}
 	}
 
+	s.recordGrantRead(c, grantID, disclosure.ActionViewTransactions, disclosure.ResourceTransactions, len(grantTxs))
 	c.JSON(http.StatusOK, apimodels.GrantTransactionsResponse{
 		Transactions:    grantTxs,
 		DisclosureLevel: disclosureLevel,
@@ -704,7 +592,7 @@ func (s *Server) getGrantTransactions(c *gin.Context) {
 //   - Uniform 404 for "not found" and "not your grant" to prevent enumeration.
 //
 // @Summary      Grant-scoped activity logs
-// @Description  Returns activity-log entries (method, status code, timestamp only) for a disclosure grant the caller holds. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered: a valid JWT is required, the viewer DID must match the grant's requester, the grant scope must include activity_logs or full_disclosure, and only entries inside the grant's validity window are returned. Fail-closed: anonymous callers are rejected, and "grant missing"/"not your grant"/"expired" all return the same 404 to prevent enumeration. Under the View-as mirror it always returns 404: the target's grants are not available to the admin viewing as them.
+// @Description  Returns activity-log entries (method, status code, timestamp only) for a disclosure grant the caller holds. The requester must remain a current member of the grant's organization. Grant scope is enforced on the server, and successful reads are audited. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered: a valid JWT is required, the viewer DID must match the grant's requester, the grant scope must include activity_logs or full_disclosure, and only entries inside the grant's validity window are returned. Fail-closed: anonymous callers are rejected, and "grant missing"/"not your grant"/"expired" all return the same 404 to prevent enumeration. Under the View-as mirror it always returns 404: the target's grants are not available to the admin viewing as them.
 // @Tags         Explorer
 // @Produce      json
 // @Param        grant_id path string true "Disclosure grant ID"
@@ -713,7 +601,7 @@ func (s *Server) getGrantTransactions(c *gin.Context) {
 // @Success      200 {object} apimodels.GrantActivityLogsResponse
 // @Failure      400 {object} apimodels.APIError "grant_id is required"
 // @Failure      401 {object} apimodels.APIError "authentication required"
-// @Failure      403 {object} apimodels.APIError "grant scope does not include activity_logs"
+// @Failure      403 {object} apimodels.APIError "grant scope does not permit activity logs or restricts addresses"
 // @Failure      404 {object} apimodels.APIError "grant not found (also returned for a grant that is not yours or has expired)"
 // @Failure      500 {object} apimodels.APIError "lookup failed"
 // @Router       /api/v1/explorer/grant/{grant_id}/activity [get]
@@ -724,54 +612,12 @@ func (s *Server) getGrantActivityLogs(c *gin.Context) {
 		return
 	}
 
-	// 1. JWT required -- reject anonymous
-	viewerDID := s.getViewerDIDFromRequest(c)
-	if viewerDID == "" {
-		respondUnauthorized(c, "authentication required")
+	gw, ok := s.explorerGrant(c, true)
+	if !ok {
 		return
 	}
-
-	// RD-1318: an impersonating admin never acts as the grantee (see
-	// resolveAddressID).
-	if !disclosureGrantsApply(c) {
-		respondNotFound(c, "grant not found")
-		return
-	}
-
-	// 2. Look up the grant with its request
-	grantWithRequest, err := s.db.GetDisclosureGrantWithRequest(c.Request.Context(), grantID)
-	if err != nil || grantWithRequest == nil {
-		// Uniform 404 prevents enumeration
-		respondNotFound(c, "grant not found")
-		return
-	}
-
-	grant := grantWithRequest.Grant
-	request := grantWithRequest.Request
-
-	// 3. Grant holder verification: viewer DID must match requester_did
-	if request.RequesterDID != viewerDID {
-		// Same 404 -- do not reveal that the grant exists
-		respondNotFound(c, "grant not found")
-		return
-	}
-
-	// 4. Check grant is still active (not expired, not revoked)
-	if grant.RevokedAt != nil || grant.ExpiresAt.Before(time.Now()) {
-		respondNotFound(c, "grant not found")
-		return
-	}
-
-	// 5. Scope check: must include "activity_logs" or "full_disclosure"
-	hasScope := false
-	for _, m := range grant.Scope.Methods {
-		if m == "activity_logs" || m == "full_disclosure" {
-			hasScope = true
-			break
-		}
-	}
-	if !hasScope {
-		respondForbidden(c, "grant scope does not include activity_logs")
+	if !gw.Grant.Scope.AllowsActivityLogs() || len(gw.Grant.Scope.Addresses) != 0 {
+		respondForbidden(c, "grant scope does not permit these activity logs")
 		return
 	}
 
@@ -808,6 +654,7 @@ func (s *Server) getGrantActivityLogs(c *gin.Context) {
 		})
 	}
 
+	s.recordGrantRead(c, grantID, disclosure.ActionViewLogs, disclosure.ResourceAccessLogs, len(entries))
 	c.JSON(http.StatusOK, apimodels.GrantActivityLogsResponse{
 		Logs:   entries,
 		Total:  total,

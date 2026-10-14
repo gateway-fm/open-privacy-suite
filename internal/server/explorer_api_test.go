@@ -144,8 +144,7 @@ func linkEthAddressToUser(t *testing.T, database *db.DB, did, address string) {
 
 // ensureDefaultOrgMembership idempotently provisions a default org + group and
 // places the requester DID into that group. Disclosure-grant tests need this
-// because getDisclosedAddressesForViewer / ViewerHasFullDisclosureGrant now
-// require the viewer to be a member of the disclosure's org (M13 fix).
+// because the grant API requires the viewer to be a member of the disclosure's org.
 //
 // Safe to call repeatedly within a test: org/group/user/membership inserts use
 // ON CONFLICT DO NOTHING, and the membership lookup is via external_id so the
@@ -498,11 +497,11 @@ func TestCalculateAddressVisibility_AllScenarios(t *testing.T) {
 	// Test with grant separately (needs setup)
 	t.Run("disclosed address with grant", func(t *testing.T) {
 		_ = createDisclosureGrant(t, database, testViewerDID, targetUserID, time.Now().Add(24*time.Hour))
-		// G17 reverted: disclosure grants now upgrade visibility in all views.
+		// Disclosure grants affect only the grant API.
 		result := srv.calculateAddressVisibilityWithDID(ctx, testViewerDID, testTargetAddress)
-		assert.True(t, result.Visible)
-		assert.Equal(t, VisibilityFull, result.Level)
-		assert.Equal(t, ReasonDisclosureGrant, result.Reason)
+		assert.False(t, result.Visible)
+		assert.Equal(t, VisibilityHidden, result.Level)
+		assert.Equal(t, ReasonNoAccess, result.Reason)
 	})
 }
 
@@ -1073,10 +1072,12 @@ func TestResolveAddressID_PseudonymousIncludesPseudonym(t *testing.T) {
 }
 
 func TestResolveAddressID_InvalidGrantID(t *testing.T) {
-	srv, _ := setupTestServerForExplorer(t)
+	srv, database := setupTestServerForExplorer(t)
 	router := setupExplorerRouterWithResolve(srv)
 
 	req := httptest.NewRequest("GET", "/api/v1/explorer/grant/invalid-grant-id/resolve/some-address-id", nil)
+	createTestUserForExplorer(t, database, testViewerDID)
+	addBearerToken(t, req, srv, testViewerDID)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
@@ -1738,25 +1739,8 @@ func TestExplorerTransactions_ParticipantSeesOwnTransaction(t *testing.T) {
 	assert.Equal(t, addrB, strings.ToLower(*txs[0].To))
 }
 
-// TestExplorerTransactions_GrantVisibleInRegularExplorer pins the row-
-// survival behaviour for a disclosure-grant viewer when the granted target's
-// counterparty is otherwise-private to the viewer. Per the matrix in
-// /docs/security/privacy-requirements §"Row-survival rules per surface":
-//
-//	`GET /transactions` (list) | full grant | pseudonymous | redacted |
-//	keep + real                 | keep + lens | keep + [PRIVATE]        |
-//
-// Pre-fix (Bug A) G10 dropped the row whenever the counterparty was
-// non-identifiable, even though the grant explicitly authorised the viewer
-// to see the granted target's activity. Post-fix the row survives under
-// the grant's authority and field-level rendering follows the grant's
-// level: Full reveals the counterparty (regulatory subpoena reveal,
-// audit-logged), Pseudonymous renders both as Address-XXXX (PR #282
-// lens), Redacted renders both as [PRIVATE] (proof-of-activity audit).
-//
-// Non-grant viewers still hit the original G10 drop — the change is
-// scoped strictly to the grant code path.
-func TestExplorerTransactions_GrantVisibleInRegularExplorer(t *testing.T) {
+// Disclosure grants do not admit transactions through regular Explorer reads.
+func TestExplorerTransactions_GrantInvisibleInRegularExplorer(t *testing.T) {
 	srv, database, conn := setupTestServerForExplorerTransactions(t)
 	router := setupExplorerTransactionsRouter(srv)
 
@@ -1787,8 +1771,7 @@ func TestExplorerTransactions_GrantVisibleInRegularExplorer(t *testing.T) {
 	txHash := "0xtx_grant_1"
 	seedExplorerTransaction(t, conn, blockNum, txHash, addrB, addrC)
 
-	// Request as viewer A — the Full grant on B keeps the row and
-	// promotes C's address from Hidden to Full (regulatory reveal).
+	// Viewer A's disclosure grant must not admit the row or reveal either party.
 	req := httptest.NewRequest("GET", "/api/v1/explorer/transactions", nil)
 	addBearerToken(t, req, srv, didA)
 	w := httptest.NewRecorder()
@@ -1797,10 +1780,7 @@ func TestExplorerTransactions_GrantVisibleInRegularExplorer(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 
 	txs := parseTransactionsResponse(t, w.Body.Bytes())
-	require.Len(t, txs, 1, "full-grant viewer must see the granted target's tx even when the counterparty is private — matrix row-survival")
-	require.Equal(t, addrB, txs[0].From, "granted target rendered as real address")
-	require.NotNil(t, txs[0].To)
-	require.Equal(t, addrC, *txs[0].To, "Full grant promotes the counterparty to real address (subpoena reveal)")
+	require.Empty(t, txs, "disclosure grants must not admit regular transactions")
 
 	// Viewer without grant must NOT see the tx — G10 unchanged for non-grant viewers.
 	didD := "did:d:nogrant"

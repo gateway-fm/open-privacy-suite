@@ -1491,6 +1491,79 @@
                         "description": "only for full disclosure",
                         "type": "string"
                     },
+                    "tx_index": {
+                        "description": "TxIndex is the transaction's position in its block, at every level, so\na client can order disclosed rows among other rows and de-duplicate a\nrow that carries no hash (RD-1353).",
+                        "type": "integer"
+                    },
+                    "value": {
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "privacy-proxy_internal_apimodels.GrantTransactionDetail": {
+                "properties": {
+                    "block_number": {
+                        "type": "integer"
+                    },
+                    "block_timestamp": {
+                        "type": "integer"
+                    },
+                    "contract_address": {
+                        "type": "string"
+                    },
+                    "direction": {
+                        "description": "\"in\", \"out\", \"self\"",
+                        "type": "string"
+                    },
+                    "disclosure_level": {
+                        "type": "string"
+                    },
+                    "error": {
+                        "type": "string"
+                    },
+                    "from": {
+                        "type": "string"
+                    },
+                    "gas_limit": {
+                        "type": "integer"
+                    },
+                    "gas_price": {
+                        "type": "integer"
+                    },
+                    "gas_used": {
+                        "type": "integer"
+                    },
+                    "input_data": {
+                        "type": "string"
+                    },
+                    "max_fee_per_gas": {
+                        "type": "integer"
+                    },
+                    "max_priority_fee_per_gas": {
+                        "type": "integer"
+                    },
+                    "nonce": {
+                        "type": "integer"
+                    },
+                    "revert_reason": {
+                        "type": "string"
+                    },
+                    "status": {
+                        "type": "integer"
+                    },
+                    "to": {
+                        "type": "string"
+                    },
+                    "tx_hash": {
+                        "type": "string"
+                    },
+                    "tx_index": {
+                        "type": "integer"
+                    },
+                    "tx_type": {
+                        "type": "integer"
+                    },
                     "value": {
                         "type": "string"
                     }
@@ -3289,14 +3362,22 @@
                     "view_logs",
                     "view_transactions",
                     "view_summary",
-                    "export_report"
+                    "export_report",
+                    "view_transaction",
+                    "list_addresses",
+                    "resolve_address",
+                    "view_events"
                 ],
                 "type": "string",
                 "x-enum-varnames": [
                     "ActionViewLogs",
                     "ActionViewTransactions",
                     "ActionViewSummary",
-                    "ActionExportReport"
+                    "ActionExportReport",
+                    "ActionViewTransaction",
+                    "ActionListAddresses",
+                    "ActionResolveAddress",
+                    "ActionViewEvents"
                 ]
             },
             "privacy-proxy_internal_disclosure.Grant": {
@@ -3492,14 +3573,18 @@
                     "access_logs",
                     "transactions",
                     "summary",
-                    "report"
+                    "report",
+                    "addresses",
+                    "events"
                 ],
                 "type": "string",
                 "x-enum-varnames": [
                     "ResourceAccessLogs",
                     "ResourceTransactions",
                     "ResourceSummary",
-                    "ResourceReport"
+                    "ResourceReport",
+                    "ResourceAddresses",
+                    "ResourceEvents"
                 ]
             },
             "privacy-proxy_internal_disclosure.Scope": {
@@ -3519,7 +3604,7 @@
                         "$ref": "#/components/schemas/privacy-proxy_internal_disclosure.DisclosureLevel"
                     },
                     "methods": {
-                        "description": "Specific RPC methods to disclose",
+                        "description": "Data categories: activity_logs, transaction_history, full_disclosure",
                         "items": {
                             "type": "string"
                         },
@@ -4074,7 +4159,6 @@
             "privacy-proxy_internal_explorer.VisibilityReason": {
                 "enum": [
                     "own_address",
-                    "disclosure_grant",
                     "public_address",
                     "no_access",
                     "rbac_group_member",
@@ -4084,7 +4168,6 @@
                 "type": "string",
                 "x-enum-varnames": [
                     "ReasonOwnAddress",
-                    "ReasonDisclosureGrant",
                     "ReasonPublicAddress",
                     "ReasonNoAccess",
                     "ReasonRBACGroupMember",
@@ -6517,7 +6600,7 @@
         },
         "/api/v1/admin/disclosure/grants/{grant_id}/logs": {
             "get": {
-                "description": "Returns the target user's RPC activity log entries authorized by a disclosure grant. Requires a valid grant token (X-Disclosure-Token header or token query parameter) that must belong to the grant named in the path — a token for a different grant is rejected (403). Results are bounded to the grant's scope and time window; each access is itself recorded as a disclosure event.",
+                "description": "Returns the target user's RPC activity log entries authorized by a disclosure grant. Requires a valid grant token (X-Disclosure-Token header or token query parameter) that must belong to the grant named in the path — a token for a different grant is rejected (403). The requester must remain an active member of the request organization. Requires activity_logs or full_disclosure; address-filtered activity is denied because activity records cannot establish that filter. Results honor the scope date range. Non-full grants omit IP addresses. Each read is recorded as a disclosure event.",
                 "parameters": [
                     {
                         "description": "Disclosure grant ID",
@@ -6814,7 +6897,7 @@
         },
         "/api/v1/admin/disclosure/grants/{grant_id}/summary": {
             "get": {
-                "description": "Returns aggregated activity statistics (request counts, per-method breakdown, date range) for the target user's activity authorized by a disclosure grant. Requires a valid grant token (X-Disclosure-Token header or token query parameter) that must belong to the grant named in the path — a token for a different grant is rejected (403). The access is recorded as a disclosure event.",
+                "description": "Returns aggregated activity statistics (request counts, per-method breakdown, date range) for the target user's activity authorized by a disclosure grant. Requires a valid grant token (X-Disclosure-Token header or token query parameter) that must belong to the grant named in the path — a token for a different grant is rejected (403). The requester must remain a current member of the request organization. Requires activity_logs or full_disclosure; address-filtered activity is denied. Reads, including cached reports, are recorded as disclosure events.",
                 "parameters": [
                     {
                         "description": "Disclosure grant ID",
@@ -16181,7 +16264,7 @@
         },
         "/api/v1/explorer/grant/{grant_id}/activity": {
             "get": {
-                "description": "Returns activity-log entries (method, status code, timestamp only) for a disclosure grant the caller holds. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered: a valid JWT is required, the viewer DID must match the grant's requester, the grant scope must include activity_logs or full_disclosure, and only entries inside the grant's validity window are returned. Fail-closed: anonymous callers are rejected, and \"grant missing\"/\"not your grant\"/\"expired\" all return the same 404 to prevent enumeration. Under the View-as mirror it always returns 404: the target's grants are not available to the admin viewing as them.",
+                "description": "Returns activity-log entries (method, status code, timestamp only) for a disclosure grant the caller holds. The requester must remain a current member of the grant's organization. Grant scope is enforced on the server, and successful reads are audited. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered: a valid JWT is required, the viewer DID must match the grant's requester, the grant scope must include activity_logs or full_disclosure, and only entries inside the grant's validity window are returned. Fail-closed: anonymous callers are rejected, and \"grant missing\"/\"not your grant\"/\"expired\" all return the same 404 to prevent enumeration. Under the View-as mirror it always returns 404: the target's grants are not available to the admin viewing as them.",
                 "parameters": [
                     {
                         "description": "Disclosure grant ID",
@@ -16250,7 +16333,7 @@
                                 }
                             }
                         },
-                        "description": "grant scope does not include activity_logs"
+                        "description": "grant scope does not permit activity logs or restricts addresses"
                     },
                     "404": {
                         "content": {
@@ -16281,7 +16364,7 @@
         },
         "/api/v1/explorer/grant/{grant_id}/resolve/{address_id}": {
             "get": {
-                "description": "Resolves an opaque address_id (issued by viewable-addresses) back to grant-scoped disclosure data for the explorer backend. Private network only (serves the explorer backend); not reachable through the public ingress. The response is scoped to the grant's disclosure level: the real address is returned ONLY for a \"full\" grant; a \"pseudonymous\" grant returns a stable pseudonym and no real address; other levels return neither. Fail-closed: a revoked or expired grant, or an address_id that does not belong to the grant, yields 403/404. Under the View-as mirror it always returns 404: the target's grants are not available to the admin viewing as them.",
+                "description": "Resolves an opaque address_id (issued by viewable-addresses) back to grant-scoped disclosure data for the explorer backend. The requester must remain a current member of the grant's organization. Grant scope is enforced on the server, and successful reads are audited. Private network only (serves the explorer backend); not reachable through the public ingress. The response is scoped to the grant's disclosure level: the real address is returned ONLY for a \"full\" grant; a \"pseudonymous\" grant returns a stable pseudonym and no real address; other levels return neither. Fail-closed: a revoked or expired grant, or an address_id that does not belong to the grant, yields 403/404. Under the View-as mirror it always returns 404: the target's grants are not available to the admin viewing as them.",
                 "parameters": [
                     {
                         "description": "Disclosure grant ID",
@@ -16341,7 +16424,7 @@
                                 }
                             }
                         },
-                        "description": "grant has been revoked or has expired"
+                        "description": "grant is inactive or its scope does not permit this data"
                     },
                     "404": {
                         "content": {
@@ -16372,7 +16455,7 @@
         },
         "/api/v1/explorer/grant/{grant_id}/{address_id}/transactions": {
             "get": {
-                "description": "Returns transactions for a disclosed address, rendered at the grant's disclosure level. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the grant: \"full\" reveals real addresses, hashes and values; \"pseudonymous\" replaces addresses with stable pseudonyms and hides values and hashes; \"redacted\" (or any unknown level) shows only direction, gas, status and timing with \"[PRIVATE]\" counterparties. Fail-closed: a revoked or expired grant, or an address_id that does not belong to the grant, yields 403/404. Under the View-as mirror it always returns 404: the target's grants are not available to the admin viewing as them.",
+                "description": "Returns transactions for a disclosed address, rendered at the grant's disclosure level. The requester must remain a current member of the grant's organization. Grant scope is enforced on the server, and successful reads are audited. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the grant: \"full\" reveals real addresses, hashes and values; \"pseudonymous\" replaces addresses with stable pseudonyms and hides values and hashes; \"redacted\" (including an empty or unknown stored level) shows only direction, gas, status and timing with \"[PRIVATE]\" counterparties. Fail-closed: a revoked or expired grant, or an address_id that does not belong to the grant, yields 403/404. Under the View-as mirror it always returns 404: the target's grants are not available to the admin viewing as them.",
                 "parameters": [
                     {
                         "description": "Disclosure grant ID",
@@ -16457,7 +16540,7 @@
                                 }
                             }
                         },
-                        "description": "grant has been revoked or has expired"
+                        "description": "grant is inactive or its scope does not permit this data"
                     },
                     "404": {
                         "content": {
@@ -16481,6 +16564,111 @@
                     }
                 },
                 "summary": "Grant-scoped transactions for a disclosed address",
+                "tags": [
+                    "Explorer"
+                ]
+            }
+        },
+        "/api/v1/explorer/grant/{grant_id}/{address_id}/transactions/{tx_hash}": {
+            "get": {
+                "description": "Returns a transaction involving the disclosed address within an active Full grant's consented date and address scope. The authenticated requester must remain a member of the grant's organization. Pseudonymous and redacted grants, a transaction outside scope, and View-as return 404. Transactions require transaction_history or full_disclosure permission. The access is audited. Private network only; not reachable through public ingress.",
+                "parameters": [
+                    {
+                        "description": "Disclosure grant ID",
+                        "in": "path",
+                        "name": "grant_id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Opaque address identifier from viewable-addresses",
+                        "in": "path",
+                        "name": "address_id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Transaction hash (0x-prefixed, 32 bytes)",
+                        "in": "path",
+                        "name": "tx_hash",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.GrantTransactionDetail"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "invalid transaction hash"
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "authentication required"
+                    },
+                    "403": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "inactive grant or transaction history not permitted"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "grant or transaction not available"
+                    },
+                    "500": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "lookup failed"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Grant-scoped transaction detail",
                 "tags": [
                     "Explorer"
                 ]
@@ -17721,7 +17909,7 @@
         },
         "/api/v1/explorer/viewable-addresses": {
             "get": {
-                "description": "Lists the viewer's own linked addresses plus addresses disclosed to them via active disclosure grants. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: the viewer DID comes from a validated JWT (or the impersonation override) — never from a query param — and for non-full grants the disclosed address is a pseudonym or \"[PRIVATE]\", never the real address. Fail-closed: with no resolvable viewer, only empty lists are returned. Under the View-as mirror no disclosed addresses are listed: the target's grants are not available to the admin viewing as them.",
+                "description": "Lists the viewer's own linked addresses plus addresses disclosed to them via active disclosure grants. The requester must remain a current member of the grant's organization. Grant scope is enforced on the server, and successful reads are audited. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: the viewer DID comes from a validated JWT (or the impersonation override) — never from a query param — and for non-full grants the disclosed address is a pseudonym or \"[PRIVATE]\", never the real address. Fail-closed: with no resolvable viewer, only empty lists are returned. Under the View-as mirror no disclosed addresses are listed: the target's grants are not available to the admin viewing as them.",
                 "parameters": [
                     {
                         "description": "Viewer wallet address (0x-prefixed hex), echoed back for display only. The viewer identity is resolved solely from the JWT — a wallet value never resolves a DID (RD-1164 #7).",

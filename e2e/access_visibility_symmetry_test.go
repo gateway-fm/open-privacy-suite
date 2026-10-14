@@ -36,9 +36,8 @@ import (
 // real server running each profile must answer eth_call for every case
 // exactly as the access table says, the same under strict as under standard.
 // Under strict the test also bounds the explorer list allowlist: it may
-// contain only the viewer's own linked addresses and approved disclosure-grant
-// addresses, never an address the viewer sees through a contract grant or an
-// admin role.
+// contain only the viewer's own linked addresses. Contract grants, disclosure
+// grants and admin roles do not extend it.
 func TestAccessVisibilitySymmetry(t *testing.T) {
 	ctx := context.Background()
 
@@ -128,8 +127,8 @@ func TestAccessVisibilitySymmetry(t *testing.T) {
 	}
 
 	// Linked EOAs (one per viewer) and one approved disclosure grant, so the
-	// strict allowlist bound below is checked against non-empty own and grant
-	// sets. The disclosure subject is an orgA member with no contract grant;
+	// strict allowlist bound below distinguishes ownership from grants. The
+	// disclosure subject is an orgA member with no contract grant;
 	// the granted user holds an approved disclosure grant on the subject.
 	subjectGID := createGroup(t, database, orgAID, "sym-a-subject", nil, false)
 	subjectUser := createUserInGroup(t, database, "did:sym:subject", subjectGID)
@@ -145,9 +144,6 @@ func TestAccessVisibilitySymmetry(t *testing.T) {
 		require.NoError(t, database.SystemLinkEthAddress(ctx, did, addr))
 	}
 	createApprovedDisclosureGrant(t, database, orgAID, "did:sym:granted", subjectUser)
-	disclosedAddrs := map[string][]string{
-		"did:sym:granted": {ownAddrs["did:sym:subject"]},
-	}
 
 	controller := rbac.NewAccessController(database, 1*time.Minute)
 
@@ -179,6 +175,7 @@ func TestAccessVisibilitySymmetry(t *testing.T) {
 		{"orgA tier 3 admin → orgB non-granted contract", "did:sym:t3admin", contractB2, false},
 		// Org admin vs another user's wallet: both deny + non-Full (§2.1).
 		{"org admin → another user's EOA", "did:sym:orgadmin", foreignEOA, false},
+		{"disclosure grantee → subject EOA", "did:sym:granted", ownAddrs["did:sym:subject"], false},
 	}
 
 	// Start the servers on the seeded database and mint each viewer's JWT with
@@ -262,10 +259,9 @@ func TestAccessVisibilitySymmetry(t *testing.T) {
 
 	// Strict explorer allowlist bound: the SQL-level allowlist that lists,
 	// counts and stats use under strict holds only the viewer's own linked
-	// addresses and approved disclosure-grant addresses. Grant- or
-	// admin-driven Full visibility (contractA1 for the granted user, every
+	// addresses. Disclosure grants, contract grants and admin-driven Full visibility (contractA1 for the granted user, every
 	// orgA contract for the org admin) must stay out.
-	t.Run("strict/explorer allowlist is own plus disclosure-grant addresses", func(t *testing.T) {
+	t.Run("strict/explorer allowlist is own addresses only", func(t *testing.T) {
 		registered, err := database.GetAllRegisteredAddresses(ctx)
 		require.NoError(t, err)
 		linked, err := database.GetAllLinkedEOAAddresses(ctx)
@@ -278,9 +274,6 @@ func TestAccessVisibilitySymmetry(t *testing.T) {
 			if own, ok := ownAddrs[did]; ok {
 				bound[strings.ToLower(own)] = true
 			}
-			for _, a := range disclosedAddrs[did] {
-				bound[strings.ToLower(a)] = true
-			}
 
 			detailed, err := database.GetBatchVisibilityDetailed(ctx, did, universe)
 			require.NoError(t, err)
@@ -290,9 +283,9 @@ func TestAccessVisibilitySymmetry(t *testing.T) {
 			for _, a := range allow {
 				a = strings.ToLower(a)
 				got[a] = true
-				require.True(t, bound[a], "viewer %q: strict allowlist entry %s is neither an own address nor a disclosure-grant address (allowlist %v)", did, a, allow)
+				require.True(t, bound[a], "viewer %q: strict allowlist entry %s is not an own address (allowlist %v)", did, a, allow)
 			}
-			// Not vacuous: own and disclosure-grant addresses are listed.
+			// Not vacuous: own addresses are listed.
 			for a := range bound {
 				require.True(t, got[a], "viewer %q: strict allowlist is missing %s (allowlist %v)", did, a, allow)
 			}

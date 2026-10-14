@@ -21,7 +21,7 @@ type OwnAddress struct {
 type DisclosedAddress struct {
 	Address         string     `json:"address"`    // Pseudonym for pseudonymous, "[PRIVATE]" for redacted, real for full
 	AddressID       string     `json:"address_id"` // Opaque identifier for routing (hash of real address)
-	OwnerDID        string     `json:"owner_did"`
+	OwnerDID        string     `json:"owner_did,omitempty"`
 	DisclosureLevel string     `json:"disclosure_level"`
 	GrantID         string     `json:"grant_id"`
 	ExpiresAt       *time.Time `json:"expires_at,omitempty"`
@@ -80,12 +80,44 @@ type GrantTransaction struct {
 	TxHash         *string `json:"tx_hash,omitempty"` // only for full disclosure
 	BlockNumber    uint64  `json:"block_number"`
 	BlockTimestamp uint64  `json:"block_timestamp,omitempty"`
-	Direction      string  `json:"direction"` // "in", "out", "self"
-	From           string  `json:"from"`
-	To             string  `json:"to,omitempty"`
-	Value          string  `json:"value"`
-	GasUsed        uint64  `json:"gas_used"`
-	Status         int     `json:"status"`
+	// TxIndex is the transaction's position in its block, at every level, so
+	// a client can order disclosed rows among other rows and de-duplicate a
+	// row that carries no hash (RD-1353).
+	TxIndex   int    `json:"tx_index"`
+	Direction string `json:"direction"` // "in", "out", "self"
+	From      string `json:"from"`
+	To        string `json:"to,omitempty"`
+	Value     string `json:"value"`
+	GasUsed   uint64 `json:"gas_used"`
+	Status    int    `json:"status"`
+}
+
+// GrantTransactionDetail is the response for
+// GET /api/v1/explorer/grant/:grant_id/:address_id/transactions/:tx_hash: one
+// transaction of the disclosed address, inside the grant's scope, at the
+// "full" disclosure level (the only level the endpoint serves).
+type GrantTransactionDetail struct {
+	TxHash               string  `json:"tx_hash"`
+	BlockNumber          uint64  `json:"block_number"`
+	BlockTimestamp       uint64  `json:"block_timestamp"`
+	TxIndex              int     `json:"tx_index"`
+	Direction            string  `json:"direction"` // "in", "out", "self"
+	From                 string  `json:"from"`
+	To                   string  `json:"to,omitempty"`
+	ContractAddress      string  `json:"contract_address,omitempty"`
+	Value                string  `json:"value"`
+	GasUsed              uint64  `json:"gas_used"`
+	GasPrice             uint64  `json:"gas_price"`
+	GasLimit             *uint64 `json:"gas_limit,omitempty"`
+	MaxFeePerGas         *uint64 `json:"max_fee_per_gas,omitempty"`
+	MaxPriorityFeePerGas *uint64 `json:"max_priority_fee_per_gas,omitempty"`
+	Nonce                *uint64 `json:"nonce,omitempty"`
+	TxType               int     `json:"tx_type"`
+	InputData            string  `json:"input_data"`
+	Status               int     `json:"status"`
+	Error                *string `json:"error,omitempty"`
+	RevertReason         *string `json:"revert_reason,omitempty"`
+	DisclosureLevel      string  `json:"disclosure_level"`
 }
 
 // GrantActivityLogsResponse is the response for GET /api/v1/explorer/grant/:grant_id/activity

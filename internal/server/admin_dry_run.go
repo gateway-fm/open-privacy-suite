@@ -12,7 +12,6 @@ import (
 	"strings"
 
 	"privacy-proxy/internal/apimodels"
-	"privacy-proxy/internal/disclosure"
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
 	"privacy-proxy/internal/tracer"
@@ -107,10 +106,7 @@ var dryRunTraceMethods = map[string]bool{
 // @Security     AdminToken
 // @Router       /api/v1/admin/orgs/{org_id}/dry-run [post]
 func (s *Server) handleDryRun(c *gin.Context) {
-	// RD-1318: the impersonated user's disclosure grants never apply to the
-	// admin running the dry-run (the grants belong to the grantee). Marked on
-	// the request itself so every helper reading c.Request.Context() inherits it.
-	c.Request = c.Request.WithContext(disclosure.WithoutViewerGrants(c.Request.Context()))
+
 	ctx := c.Request.Context()
 	orgID := c.Param("org_id")
 	ctx = withViewerOrgScope(ctx, orgID)

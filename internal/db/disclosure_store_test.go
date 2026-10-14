@@ -841,14 +841,11 @@ func TestDisclosureActivityData(t *testing.T) {
 
 	t.Run("GetActivityLogs_WithMethodScope", func(t *testing.T) {
 		scope := &disclosure.Scope{
-			Methods: []string{"eth_call"},
+			Methods: []string{disclosure.MethodActivityLogs},
 		}
 		logs, err := database.GetActivityLogs(ctx, testUserDID, scope, 100, 0)
 		require.NoError(t, err)
-		// Should only return eth_call logs
-		for _, log := range logs {
-			assert.Equal(t, "eth_call", log.Method)
-		}
+		assert.Len(t, logs, 10, "activity_logs authorizes the data category, not one RPC name")
 	})
 
 	t.Run("GetActivityLogs_WithDateRange", func(t *testing.T) {
@@ -885,7 +882,7 @@ func TestDisclosureActivityData(t *testing.T) {
 
 		assert.Equal(t, 10, summary.TotalRequests)
 		assert.True(t, summary.SuccessfulCount >= 6) // Most are 200
-		assert.True(t, summary.FailedCount >= 2)    // Some are 400
+		assert.True(t, summary.FailedCount >= 2)     // Some are 400
 		assert.Equal(t, 2, summary.UniqueMethodCount)
 		assert.Contains(t, summary.MethodBreakdown, "eth_call")
 		assert.Contains(t, summary.MethodBreakdown, "eth_getBalance")
@@ -893,16 +890,15 @@ func TestDisclosureActivityData(t *testing.T) {
 
 	t.Run("GetActivitySummary_WithScope", func(t *testing.T) {
 		scope := &disclosure.Scope{
-			Methods: []string{"eth_call"},
+			Methods: []string{disclosure.MethodActivityLogs},
 		}
 		summary, err := database.GetActivitySummary(ctx, testUserDID, scope)
 		require.NoError(t, err)
 		require.NotNil(t, summary)
 
-		// Should only count eth_call
-		assert.Equal(t, 1, summary.UniqueMethodCount)
+		assert.Equal(t, 2, summary.UniqueMethodCount)
 		assert.Contains(t, summary.MethodBreakdown, "eth_call")
-		assert.NotContains(t, summary.MethodBreakdown, "eth_getBalance")
+		assert.Contains(t, summary.MethodBreakdown, "eth_getBalance")
 	})
 }
 

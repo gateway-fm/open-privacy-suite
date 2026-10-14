@@ -38,7 +38,6 @@ const (
 	VisibilityHidden       = explorer.VisibilityHidden
 
 	ReasonOwnAddress      = explorer.ReasonOwnAddress
-	ReasonDisclosureGrant = explorer.ReasonDisclosureGrant
 	ReasonPublicAddress   = explorer.ReasonPublicAddress
 	ReasonNoAccess        = explorer.ReasonNoAccess
 	ReasonRBACGroupMember = explorer.ReasonRBACGroupMember
@@ -88,6 +87,7 @@ func (s *Server) bindExplorerEndpoints(rg *gin.RouterGroup) {
 	rg.GET("/grant/:grant_id/resolve/:address_id", s.resolveAddressID)
 	// Grant-scoped transactions for a disclosed address
 	rg.GET("/grant/:grant_id/:address_id/transactions", s.getGrantTransactions)
+	rg.GET("/grant/:grant_id/:address_id/transactions/:tx_hash", s.getGrantTransaction)
 	// Grant-scoped activity logs (user-facing, JWT required)
 	rg.GET("/grant/:grant_id/activity", s.getGrantActivityLogs)
 
@@ -202,72 +202,11 @@ func (s *Server) calculateAddressVisibilityWithDID(ctx context.Context, viewerDI
 	}
 }
 
-// viewerHasFullDisclosureGrant checks if the authenticated viewer has an active
-// full-disclosure grant on the target address. This is used by address-specific
-// endpoints to allow full disclosure recipients to view address pages.
-//
-// NOTE: GetBatchVisibility now includes disclosure grants (G17 reverted), so this
-// check is a secondary fallback for address-specific endpoints where the target
-// address is already known from the URL path.
-func (s *Server) viewerHasFullDisclosureGrant(ctx context.Context, viewerDID, targetAddress string) bool {
-	if viewerDID == "" || targetAddress == "" {
-		return false
-	}
-	has, err := s.db.ViewerHasFullDisclosureGrant(ctx, viewerDID, targetAddress)
-	if err != nil {
-		return false
-	}
-	return has
-}
-
-// addressVisibleOrFullGrant returns true if the address is visible via standard
-// RBAC/ownership checks OR the viewer has a full disclosure grant on it.
-// Used by address-specific endpoints (not transaction lists) to upgrade visibility.
-func (s *Server) addressVisibleOrFullGrant(ctx context.Context, viewerDID, address string) bool {
-	// RD-1028: no wallet parameter. Viewer identity is the resolved DID from
-	// getViewerDIDFromRequest (which honours the impersonation override); the
-	// removed ?wallet= path was a viewer-impersonation oracle.
+// addressVisible reports ordinary ownership or RBAC access to an address.
+// Disclosure grants are evaluated only by the grant API.
+func (s *Server) addressVisible(ctx context.Context, viewerDID, address string) bool {
 	visibility := s.calculateAddressVisibilityWithDID(ctx, viewerDID, address)
-	if visibility.Level != VisibilityHidden && visibility.Level != VisibilityRedacted {
-		return true
-	}
-	// Fallback: check disclosure grants for the specific address the viewer
-	// navigated to. GetBatchVisibility should already handle this, but this
-	// ensures coverage for edge cases.
-	return s.viewerHasFullDisclosureGrant(ctx, viewerDID, address)
-}
-
-// addDisclosureAddressToFilter returns a copy of the visibility filter with the
-// disclosure address added to the visible set. This ensures that transaction
-// counts and filtered queries include transactions involving the disclosed address.
-//
-// L4: pre-fix both the constructor (filter==nil) and copy paths dropped
-// VisibleTxHashes — disclosed-address views silently suppressed the
-// viewer's visibleTo-shared txs. Now both code paths preserve every
-// VisibilityFilter field.
-func (s *Server) addDisclosureAddressToFilter(filter *explorer.VisibilityFilter, address string) *explorer.VisibilityFilter {
-	if filter == nil {
-		return &explorer.VisibilityFilter{
-			AllPrivate:       true,
-			VisibleAddresses: []string{address},
-		}
-	}
-	// Check if already present
-	for _, addr := range filter.VisibleAddresses {
-		if addr == address {
-			return filter
-		}
-	}
-	// Copy to avoid mutating the original — including VisibleTxHashes.
-	newFilter := &explorer.VisibilityFilter{
-		AllPrivate:       filter.AllPrivate,
-		VisibleAddresses: make([]string, len(filter.VisibleAddresses)+1),
-		VisibleTxHashes:  append([]string(nil), filter.VisibleTxHashes...),
-		ListedTxHashes:   append([]string(nil), filter.ListedTxHashes...),
-	}
-	copy(newFilter.VisibleAddresses, filter.VisibleAddresses)
-	newFilter.VisibleAddresses[len(filter.VisibleAddresses)] = address
-	return newFilter
+	return visibility.Level != VisibilityHidden && visibility.Level != VisibilityRedacted
 }
 
 // redactOptsFromFilter builds RedactOpts from a VisibilityFilter, passing
@@ -322,18 +261,6 @@ func (s *Server) buildRedactOptsForViewer(ctx context.Context, viewerDID string)
 // into RedactOpts and ensures a RedactStats is attached whenever any
 // audit-relevant code path may fire. Keeping this in one place means every
 // opts builder gets identical treatment.
-//
-// Two reveal classes require auditing:
-//   - AdminUserTxsRevealed — only when the elevated org-admin audit view
-//     is in effect (admin + ORG_ADMIN_VIEW_USER_TXS).
-//   - GrantFullReveals — whenever a Full disclosure grant promotes a
-//     counterparty's address above its base (regulatory subpoena reveal).
-//     Independent of the admin flag — Full-grant holders are typically
-//     auditors / regulators acting under a subpoena, not org admins.
-//
-// Both counters live on the same RedactStats so callers only thread one
-// pointer through opts; auditAdminUserTxView and auditGrantFullReveal
-// inspect their respective fields.
 func (s *Server) applyAdminTxView(opts *explorer.RedactOpts) {
 	// Strict wins (RD-1299): the audit view never applies under the strict
 	// read profile, whatever ORG_ADMIN_VIEW_USER_TXS says.
@@ -350,11 +277,6 @@ func (s *Server) applyAdminTxView(opts *explorer.RedactOpts) {
 // records WHO (admin DID), WHAT (access), WHERE (endpoint label + target),
 // HOW MANY rows, and the client IP — addresses are never logged here because
 // the view itself never exposes them.
-//
-// This call sites also doubles as the audit-log hook for Full-grant
-// counterparty reveals (stats.GrantFullReveals > 0). Two reveal classes,
-// one Stats pointer threaded through every redactor — emit a separate
-// audit entry for each class actually triggered.
 func (s *Server) auditAdminUserTxView(c *gin.Context, viewerDID, endpoint, target string, stats *explorer.RedactStats) {
 	if stats == nil {
 		return
@@ -373,58 +295,10 @@ func (s *Server) auditAdminUserTxView(c *gin.Context, viewerDID, endpoint, targe
 			},
 			IPAddress: c.ClientIP(),
 		}
-		if target != "" {
-			entry.ResourceID = &target
-		}
 		if err := s.db.CreateAuditLog(c.Request.Context(), entry); err != nil {
 			slog.Error("failed to write admin-user-tx-view audit log",
 				"viewer", viewerDID, "endpoint", endpoint, "error", err)
 		}
-	}
-	s.auditGrantFullReveal(c, viewerDID, endpoint, target, stats)
-}
-
-// auditGrantFullReveal writes one rbac_audit_log entry per redactor pass
-// where a Full disclosure grant promoted at least one counterparty's
-// address from a private level (Hidden / Redacted / Pseudonymous) to Full.
-// This is a regulatory-subpoena reveal: the viewer holds an approved
-// Full-level grant and the redactor has just disclosed an otherwise-
-// private counterparty's real address. The compliance trail captures
-// WHO (viewer DID — the grant requester), WHERE (endpoint + target), HOW
-// MANY counterparties were revealed, and the client IP.
-//
-// The address material itself is never logged — the audit row is a
-// volume / locus signal, not a content record. Investigators chasing a
-// specific reveal correlate via (actor, endpoint, target_tx_hash,
-// timestamp) against the disclosure_grants table.
-//
-// Resource type is the disclosure-grant (not explorer_user_txs) so audit
-// reviewers can pivot from a grant ID to every reveal it produced.
-// ResourceName is the endpoint label. The target tx hash or address lives
-// in NewValue; ResourceID is a UUID column and cannot hold those values.
-//
-// Best-effort, matching the other audit-log call sites: a write failure
-// is logged loudly but does not fail the read.
-func (s *Server) auditGrantFullReveal(c *gin.Context, viewerDID, endpoint, target string, stats *explorer.RedactStats) {
-	if stats == nil || stats.GrantFullReveals == 0 {
-		return
-	}
-	entry := &rbac.AuditLogEntry{
-		ActorExternalID: viewerDID,
-		Action:          rbac.AuditActionAccess,
-		ResourceType:    rbac.ResourceTypeDisclosureGrant,
-		ResourceName:    endpoint,
-		NewValue: map[string]any{
-			"endpoint":                endpoint,
-			"target":                  target,
-			"counterparties_revealed": stats.GrantFullReveals,
-			"reveal_class":            "disclosure_grant_full_counterparty",
-		},
-		IPAddress: c.ClientIP(),
-	}
-	if err := s.db.CreateAuditLog(c.Request.Context(), entry); err != nil {
-		slog.Error("failed to write grant-full-reveal audit log",
-			"viewer", viewerDID, "endpoint", endpoint, "error", err)
 	}
 }
 
@@ -733,33 +607,11 @@ func (s *Server) buildVisibilityFilter(ctx context.Context, viewerDID string, vi
 		return filter
 	}
 
-	// SQL-allowlist membership covers two row-survival paths:
-	//   1. VisibilityFull addresses — the viewer can see the real address,
-	//      so rows mentioning them MUST survive the allowlist.
-	//   2. Disclosure-grant addresses at non-Full levels (Pseudonymous /
-	//      Redacted) — the matrix in /docs/security/privacy-requirements
-	//      §"Disclosure Levels" requires rows mentioning the granted party
-	//      to surface in /transactions and /transfers (under the grant's
-	//      lens). Field-level rendering still hides the actual addresses
-	//      via applyRedaction; the SQL-level inclusion only affects which
-	//      rows reach the redactor. Without this, a row whose tx.from is
-	//      Bob@Pseudonymous and tx.to is a private contract would be
-	//      pre-dropped by the allowlist before the redactor's grant lens
-	//      could run — breaking the by-hash/list coherence invariant for
-	//      grant-only viewers.
-	//
-	// The detailed lookup is required because we only want to include
-	// grant-driven non-Full addresses, not RBAC-resolved ones (which can
-	// never be Pseudonymous / Redacted in current resolution but we keep
-	// the guard tight for future-proofing). visibilityRank order means
-	// Full grants already register as VisibilityFull above and would
-	// take this path too — the explicit grant lookup catches the
-	// non-Full grant cells.
+	// Detailed reasons distinguish ownership from contract/admin visibility.
 	visMapDetailed, _ := s.db.GetBatchVisibilityDetailed(ctx, viewerDID, allAddrs)
 
 	// RD-1299 strict read profile: rows survive only for the viewer's own
-	// linked addresses (a transaction participant) and approved disclosure
-	// grants — no contract/admin visibility, no visibleTo shares, no RD-1009
+	// linked addresses (a transaction participant) — no contract/admin visibility, no visibleTo shares, no RD-1009
 	// transfer-participant union — so lists, counts and stats match the
 	// participant rule the redactor and the RPC apply.
 	if s.readProfile().Strict() {
@@ -767,22 +619,12 @@ func (s *Server) buildVisibilityFilter(ctx context.Context, viewerDID string, vi
 	}
 
 	visibleSet := make(map[string]bool, len(visMap))
-	// fullVisible holds ONLY the addresses the viewer sees at Full. It drives
-	// the transfer-participant union below (RD-1079); the pseudonymous/redacted
-	// grant addresses are added to visibleSet for SQL address-survival but must
-	// not drive a full-reveal union.
+	// Full addresses may survive ordinary SQL filtering.
 	fullVisible := make([]string, 0, len(visMap))
 	for addr, level := range visMap {
 		if level == explorer.VisibilityFull {
 			visibleSet[addr] = true
 			fullVisible = append(fullVisible, addr)
-		}
-	}
-	for addr, meta := range visMapDetailed {
-		if meta.Reason == explorer.ReasonDisclosureGrant &&
-			(meta.Level == explorer.VisibilityPseudonymous ||
-				meta.Level == explorer.VisibilityRedacted) {
-			visibleSet[addr] = true
 		}
 	}
 	visible := make([]string, 0, len(visibleSet))
@@ -814,37 +656,15 @@ func (s *Server) buildVisibilityFilter(ctx context.Context, viewerDID string, vi
 	// redactOptsFromFilter) keeps the redactor's bothHidden branch from dropping
 	// the row across the list / by-hash / internal / logs surfaces.
 	//
-	// RD-1079: drive the union ONLY with addresses the viewer sees at FULL
-	// (`fullVisible`), NOT the pseudonymous/redacted disclosure-grant addresses
-	// that were also added to `visible` for SQL address-survival.
-	//
-	// RD-1316: the union keeps rows, it never reveals an identity — the
-	// redactor reveals only for ListedTxHashes (genuine shares) and renders a
-	// union-only row at the viewer's own visibility. Drivers:
-	//   - a viewer exempt from the G10 drop (isViewerAdmin: org admin or admin
-	//     claim): every Full address. Their /transfers keeps any transfer with
-	//     one identifiable side, so /transactions must keep its parent.
-	//   - anyone else, whose /transfers applies G10 (both sides identifiable,
-	//     unless a participant or grant lens applies) and the event-access strip:
-	//     (1) their own addresses (the parent is the viewer's own activity)
-	//         and (2) Full disclosure-grant subjects (a Full grant covers the
-	//         subject's transfer-linked txs; G25 limits this to Full): kept
-	//         whether or not the transfer row itself survives the event-access
-	//         strip;
-	//     (3) for coherence only, and so bounded by the transfer rows the
-	//         viewer actually sees: transfers whose two sides are both Full or
-	//         public (the zero address, a precompile), on a token the viewer
-	//         has event access to — mints and burns of a visible contract's
-	//         tokens, and transfers between two visible contracts.
-	//     A transfer with a hidden side does not survive G10 for them, so its
-	//     parent (another user's one-side-hidden tx) is not kept either; the
-	//     RPC returns null for it.
+	// Admins use all Full addresses as transfer-union drivers. Other viewers
+	// use their own addresses; the bounded both-sides-visible scan below
+	// separately preserves coherence for transfers they can already see.
 	unionDrivers := fullVisible
 	if len(fullVisible) > 0 && !viewerIsAdmin {
 		unionDrivers = make([]string, 0, len(fullVisible))
 		for addr, meta := range visMapDetailed {
 			if meta.Level == explorer.VisibilityFull &&
-				(meta.Reason == explorer.ReasonOwnAddress || meta.Reason == explorer.ReasonDisclosureGrant) {
+				meta.Reason == explorer.ReasonOwnAddress {
 				unionDrivers = append(unionDrivers, addr)
 			}
 		}
@@ -903,9 +723,8 @@ func (s *Server) buildVisibilityFilter(ctx context.Context, viewerDID string, vi
 }
 
 // strictVisibilityFilter completes the SQL allowlist for the strict read
-// profile: only the viewer's own linked addresses and addresses under an
-// approved disclosure grant (explorer.StrictAllowlist, which the cross-layer
-// TestAccessVisibilitySymmetry bounds). A failed visibility lookup (empty map)
+// profile: only the viewer's own linked addresses (explorer.StrictAllowlist).
+// TestAccessVisibilitySymmetry enforces this bound. A failed lookup (empty map)
 // leaves the allowlist empty, which hides everything (fail closed).
 func strictVisibilityFilter(filter *explorer.VisibilityFilter, detailed map[string]explorer.AddressVisibility) *explorer.VisibilityFilter {
 	filter.VisibleAddresses = append(filter.VisibleAddresses, explorer.StrictAllowlist(detailed)...)
@@ -1321,9 +1140,9 @@ func (s *Server) getExplorerAddressStats(c *gin.Context) {
 	}
 	address := c.Param("address")
 
-	// Pre-authorization check: Can they see this address via RBAC or full disclosure grant?
+	// Pre-authorization check: Can they see this address through ownership or RBAC?
 	viewerDID := s.getViewerDIDFromRequest(c)
-	if !s.addressVisibleOrFullGrant(c.Request.Context(), viewerDID, address) {
+	if !s.addressVisible(c.Request.Context(), viewerDID, address) {
 		respondNotFound(c, "address not found") // Masking forbidden as not found to avoid info leaks
 		return
 	}
@@ -1395,9 +1214,9 @@ func (s *Server) getExplorerAddressTransactions(c *gin.Context) {
 		}
 	}
 
-	// Pre-authorization check: Can they see this address via RBAC or full disclosure grant?
+	// Pre-authorization check: Can they see this address through ownership or RBAC?
 	viewerDID := s.getViewerDIDFromRequest(c)
-	if !s.addressVisibleOrFullGrant(c.Request.Context(), viewerDID, address) {
+	if !s.addressVisible(c.Request.Context(), viewerDID, address) {
 		respondNotFound(c, "address not found") // Masking forbidden as not found
 		return
 	}
@@ -1867,7 +1686,7 @@ func (s *Server) getExplorerAddressBalance(c *gin.Context) {
 	address := strings.ToLower(c.Param("address"))
 
 	viewerDID := s.getViewerDIDFromRequest(c)
-	if !s.addressVisibleOrFullGrant(c.Request.Context(), viewerDID, address) {
+	if !s.addressVisible(c.Request.Context(), viewerDID, address) {
 		respondNotFound(c, "address not found")
 		return
 	}
@@ -1919,7 +1738,7 @@ func (s *Server) getExplorerAddressCode(c *gin.Context) {
 	address := strings.ToLower(c.Param("address"))
 
 	viewerDID := s.getViewerDIDFromRequest(c)
-	if !s.addressVisibleOrFullGrant(c.Request.Context(), viewerDID, address) {
+	if !s.addressVisible(c.Request.Context(), viewerDID, address) {
 		respondNotFound(c, "address not found")
 		return
 	}
@@ -1972,7 +1791,7 @@ func (s *Server) getExplorerAddressTokenBalances(c *gin.Context) {
 	address := strings.ToLower(c.Param("address"))
 
 	viewerDID := s.getViewerDIDFromRequest(c)
-	if !s.addressVisibleOrFullGrant(c.Request.Context(), viewerDID, address) {
+	if !s.addressVisible(c.Request.Context(), viewerDID, address) {
 		respondNotFound(c, "address not found")
 		return
 	}
@@ -2045,7 +1864,7 @@ func (s *Server) getExplorerAddressTransfers(c *gin.Context) {
 	address := strings.ToLower(c.Param("address"))
 
 	viewerDID := s.getViewerDIDFromRequest(c)
-	if !s.addressVisibleOrFullGrant(c.Request.Context(), viewerDID, address) {
+	if !s.addressVisible(c.Request.Context(), viewerDID, address) {
 		respondNotFound(c, "address not found")
 		return
 	}
@@ -2117,7 +1936,7 @@ func (s *Server) getExplorerAddressInternal(c *gin.Context) {
 	address := strings.ToLower(c.Param("address"))
 
 	viewerDID := s.getViewerDIDFromRequest(c)
-	if !s.addressVisibleOrFullGrant(c.Request.Context(), viewerDID, address) {
+	if !s.addressVisible(c.Request.Context(), viewerDID, address) {
 		respondNotFound(c, "address not found")
 		return
 	}
@@ -2176,7 +1995,7 @@ func (s *Server) getExplorerAddressLogs(c *gin.Context) {
 	address := strings.ToLower(c.Param("address"))
 
 	viewerDID := s.getViewerDIDFromRequest(c)
-	if !s.addressVisibleOrFullGrant(c.Request.Context(), viewerDID, address) {
+	if !s.addressVisible(c.Request.Context(), viewerDID, address) {
 		respondNotFound(c, "address not found")
 		return
 	}
@@ -2231,7 +2050,7 @@ func (s *Server) getExplorerAddressContract(c *gin.Context) {
 	address := strings.ToLower(c.Param("address"))
 
 	viewerDID := s.getViewerDIDFromRequest(c)
-	if !s.addressVisibleOrFullGrant(c.Request.Context(), viewerDID, address) {
+	if !s.addressVisible(c.Request.Context(), viewerDID, address) {
 		respondNotFound(c, "address not found")
 		return
 	}
@@ -2281,7 +2100,7 @@ func (s *Server) getExplorerAddressIsContract(c *gin.Context) {
 	address := strings.ToLower(c.Param("address"))
 
 	viewerDID := s.getViewerDIDFromRequest(c)
-	if !s.addressVisibleOrFullGrant(c.Request.Context(), viewerDID, address) {
+	if !s.addressVisible(c.Request.Context(), viewerDID, address) {
 		respondNotFound(c, "address not found")
 		return
 	}
