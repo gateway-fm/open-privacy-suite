@@ -6,7 +6,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -397,7 +396,7 @@ func (s *Server) auditAdminUserTxView(c *gin.Context, viewerDID, endpoint, targe
 // The address material itself is never logged — the audit row is a
 // volume / locus signal, not a content record. Investigators chasing a
 // specific reveal correlate via (actor, endpoint, target_tx_hash,
-// timestamp) and the grant ids recorded in the entry.
+// timestamp) against the disclosure_grants table.
 //
 // Resource type is the disclosure-grant (not explorer_user_txs) so audit
 // reviewers can pivot from a grant ID to every reveal it produced.
@@ -419,27 +418,14 @@ func (s *Server) auditGrantFullReveal(c *gin.Context, viewerDID, endpoint, targe
 			"endpoint":                endpoint,
 			"target":                  target,
 			"counterparties_revealed": stats.GrantFullReveals,
-			"grant_ids":               sortedGrantIDs(stats.GrantIDs),
 			"reveal_class":            "disclosure_grant_full_counterparty",
 		},
 		IPAddress: c.ClientIP(),
 	}
-	auditCtx, cancel := grantRevealAuditContext(c.Request.Context())
-	defer cancel()
-	if err := s.db.CreateAuditLog(auditCtx, entry); err != nil {
+	if err := s.db.CreateAuditLog(c.Request.Context(), entry); err != nil {
 		slog.Error("failed to write grant-full-reveal audit log",
 			"viewer", viewerDID, "endpoint", endpoint, "error", err)
 	}
-}
-
-// sortedGrantIDs returns the grant ids of a RedactStats, sorted.
-func sortedGrantIDs(ids map[string]bool) []string {
-	out := make([]string, 0, len(ids))
-	for id := range ids {
-		out = append(out, id)
-	}
-	sort.Strings(out)
-	return out
 }
 
 // isViewerAdmin checks if the viewer has admin-level access in any org.
@@ -1842,7 +1828,6 @@ func (s *Server) getExplorerTransactionLogs(c *gin.Context) {
 	if redacted == nil {
 		redacted = []explorer.Log{}
 	}
-	s.auditGrantFullReveal(c, viewerDID, "transaction_logs", hash, logOpts.Stats)
 	c.JSON(http.StatusOK, redacted)
 }
 
@@ -2212,10 +2197,7 @@ func (s *Server) getExplorerAddressLogs(c *gin.Context) {
 		logs = []explorer.Log{}
 	}
 	viewerDID = s.getViewerDIDFromRequest(c)
-	// Stats only: no visibleTo listing on this feed (RD-1309); the grant-lens
-	// reveals are counted for the audit trail (RD-1353).
-	logStats := &explorer.RedactStats{}
-	redacted, err := s.explorerRedactor.RedactLogsWithOpts(c.Request.Context(), logs, viewerDID, &explorer.RedactOpts{Stats: logStats})
+	redacted, err := s.explorerRedactor.RedactLogs(c.Request.Context(), logs, viewerDID)
 	if err != nil {
 		respondInternalErrorAndLog(c, "redaction failed",
 			"explorer: redaction failed",
@@ -2226,7 +2208,6 @@ func (s *Server) getExplorerAddressLogs(c *gin.Context) {
 		redacted = []explorer.Log{}
 	}
 	// Never expose raw DB total — it reveals how many rows were redacted (private data)
-	s.auditGrantFullReveal(c, viewerDID, "address_logs", address, logStats)
 	c.JSON(http.StatusOK, gin.H{"data": redacted, "total": len(redacted)})
 }
 
@@ -2425,8 +2406,7 @@ func (s *Server) getExplorerLogs(c *gin.Context) {
 		logs = []explorer.Log{}
 	}
 	viewerDID := s.getViewerDIDFromRequest(c)
-	logStats := &explorer.RedactStats{}
-	redacted, err := s.explorerRedactor.RedactLogsWithOpts(c.Request.Context(), logs, viewerDID, &explorer.RedactOpts{Stats: logStats})
+	redacted, err := s.explorerRedactor.RedactLogs(c.Request.Context(), logs, viewerDID)
 	if err != nil {
 		respondInternalErrorAndLog(c, "redaction failed",
 			"explorer: redaction failed",
@@ -2436,7 +2416,6 @@ func (s *Server) getExplorerLogs(c *gin.Context) {
 	if redacted == nil {
 		redacted = []explorer.Log{}
 	}
-	s.auditGrantFullReveal(c, viewerDID, "logs", "", logStats)
 	c.JSON(http.StatusOK, redacted)
 }
 

@@ -82,13 +82,6 @@ type TxVisibilityContext struct {
 	// sender via a batched upstream eth_getTransactionByHash. Empty/nil = no
 	// participant admission (backward compatible).
 	ParticipantTxHashes map[string]bool
-
-	// DisclosureGrants is the viewer's Full disclosure-grant set for this
-	// response (ResolveDisclosureGrants, resolved once per response). A log
-	// whose ABI-indexed address parameter names a covered address is decided
-	// by the disclosure-grant branch of DecideLogEmitter. Set under both read
-	// profiles; nil = no grant.
-	DisclosureGrants *DisclosureGrants
 }
 
 // logEntry is the minimal structure needed to inspect an Ethereum log for
@@ -174,18 +167,6 @@ func FilterEventLogs(
 type AdmittedLog struct {
 	Raw     json.RawMessage
 	Payload LogPayloadPolicy
-	// DisclosureGrant: the verdict came from the Full disclosure-grant branch
-	// (LogDecision.DisclosureGrant) — audited as a grant reveal.
-	DisclosureGrant bool
-	// GrantLensAddresses (set with DisclosureGrant): the parties the event
-	// names in its ABI-indexed address parameters (lower-case). The renderer
-	// shows them as visible — the grant lens — and masks every other embedded
-	// address as usual.
-	GrantLensAddresses []string
-	// ViaGrantOnly: without the disclosure grant the log would not have been
-	// admitted at all. Such a log is not the viewer's own entitlement, so it
-	// never admits a receipt envelope through log entitlement (RD-1183).
-	ViaGrantOnly bool
 }
 
 // FilterEventLogsDetailed is FilterEventLogs returning, for every admitted log,
@@ -217,24 +198,6 @@ func FilterEventLogsDetailed(
 	var selfMatcher *IndexedSelfMatcher
 	if strict {
 		selfMatcher = NewIndexedSelfMatcher()
-	}
-	// Disclosure-grant subjects (both profiles), matched with the same
-	// indexed-address matcher as IndexedSelf. grantSelf is the viewer's own
-	// addresses plus the subjects: the "self" a must_be:self rule tests when
-	// the grant decides.
-	var grantAddrs, grantSelf map[string]bool
-	var grantMatcher *IndexedSelfMatcher
-	if visCtx != nil {
-		if grantAddrs = visCtx.DisclosureGrants.Addresses(); len(grantAddrs) > 0 {
-			grantMatcher = NewIndexedSelfMatcher()
-			grantSelf = make(map[string]bool, len(addrSet)+len(grantAddrs))
-			for a := range addrSet {
-				grantSelf[a] = true
-			}
-			for a := range grantAddrs {
-				grantSelf[a] = true
-			}
-		}
 	}
 
 	filtered := make([]AdmittedLog, 0, len(logs))
@@ -298,9 +261,6 @@ func FilterEventLogsDetailed(
 		if strict {
 			facts.IndexedSelf = selfMatcher.Match(contractABI, entry.Topics, entry.Data, addrSet)
 		}
-		// Disclosure grant: an ABI-indexed address parameter names a subject
-		// of the viewer's Full grant. Without a resolvable ABI it never does.
-		facts.FullDisclosureGrant = grantMatcher.Match(contractABI, entry.Topics, entry.Data, grantAddrs)
 
 		// event_rules resolution — only needed when a grant exists (the engine
 		// drops no-grant emitters before consulting rules).
@@ -318,21 +278,13 @@ func FilterEventLogsDetailed(
 						topic0 := strings.ToLower(entry.Topics[0])
 						facts.EventAllowed = eventAllowed(topic0, entry, rules, addrSet, contractAddr, abiProvider)
 						facts.Topic0Allowlisted = eventTopic0Matches(topic0, rules)
-						if facts.FullDisclosureGrant {
-							facts.GrantEventAllowed = eventAllowed(topic0, entry, rules, grantSelf, contractAddr, abiProvider)
-						}
 					}
 				}
 			}
 		}
 
 		if d := DecideLogEmitter(profile, facts); d.Admit {
-			a := AdmittedLog{Raw: rawLog, Payload: d.Payload, DisclosureGrant: d.DisclosureGrant}
-			if d.DisclosureGrant {
-				a.GrantLensAddresses = grantMatcher.IndexedAddresses(contractABI, entry.Topics, entry.Data)
-				a.ViaGrantOnly = !DecideLogEmitterAccess(profile, withoutDisclosureGrant(facts))
-			}
-			filtered = append(filtered, a)
+			filtered = append(filtered, AdmittedLog{Raw: rawLog, Payload: d.Payload})
 		}
 	}
 
@@ -868,11 +820,4 @@ func findEventByTopic0(contractABI string, topic0 string) *abi.Event {
 		}
 	}
 	return nil
-}
-
-// withoutDisclosureGrant returns f with the disclosure-grant fact cleared: the
-// viewer's own verdict on the log.
-func withoutDisclosureGrant(f LogEmitterFacts) LogEmitterFacts {
-	f.FullDisclosureGrant = false
-	return f
 }

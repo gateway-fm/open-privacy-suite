@@ -419,15 +419,9 @@ func TestRedactInternalTransactions_UnionDoesNotKeepPrivateFrames_RD1316(t *test
 // not through the union.
 func TestRedactTransfers_FullGrantCounterpartyViaLensNotUnion_RD1316(t *testing.T) {
 	const grantee = "0x1316000000000000000000000000000000000e02"
-	// The auditor holds a contract grant on the token: the shared event
-	// decision admits the Transfer naming the grant subject (RD-1353).
-	extra := map[string]AddressVisibility{
-		grantee:     {Level: VisibilityFull, Reason: ReasonDisclosureGrant, Visible: true},
-		rd1316Token: {Level: VisibilityFull, Reason: ReasonRBACGroupMember, Visible: true},
-	}
-	engine := rd1316Engine(extra)
-	engine.SetDisclosureGrantResolver(grantResolverFromDetailed(extra))
-	withTransferEvents(engine, rd1316Token, rd1316EOA, grantee, rd1316Hash)
+	engine := rd1316Engine(map[string]AddressVisibility{
+		grantee: {Level: VisibilityFull, Reason: ReasonDisclosureGrant, Visible: true},
+	})
 	stats := &RedactStats{}
 	opts := unionOpts(false)
 	opts.Stats = stats

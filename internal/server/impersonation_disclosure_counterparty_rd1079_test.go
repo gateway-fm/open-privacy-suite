@@ -26,11 +26,7 @@ func TestImpersonation_DisclosureCounterparty_NoAdminBleed_RD1079(t *testing.T) 
 
 	_, err := conn.ExecContext(ctx, extendedExplorerSchemaRD1009)
 	require.NoError(t, err, "create token_transfers table")
-	_, err = conn.ExecContext(ctx, explorerCoherenceExtraSchema)
-	require.NoError(t, err, "create logs table")
-	t.Cleanup(func() {
-		_, _ = conn.ExecContext(ctx, "DROP TABLE IF EXISTS token_transfers; DROP TABLE IF EXISTS logs; DROP TABLE IF EXISTS internal_transactions")
-	})
+	t.Cleanup(func() { _, _ = conn.ExecContext(ctx, "DROP TABLE IF EXISTS token_transfers") })
 
 	// Router mirroring impersonationGateMiddleware + adminAuth: header-driven
 	// subject (authenticated admin) and override (impersonated target).
@@ -66,14 +62,13 @@ func TestImpersonation_DisclosureCounterparty_NoAdminBleed_RD1079(t *testing.T) 
 	const token = "0xdaadd00000000000000000000000000000000001"
 	contractID := uuid.New().String()
 	_, err = conn.ExecContext(ctx,
-		"INSERT INTO contracts (id, org_id, address, name, abi) VALUES ($1, $2, $3, $4, $5)",
-		contractID, orgID, token, "Stablecoin Token", erc20ABI)
+		"INSERT INTO contracts (id, org_id, address, name) VALUES ($1, $2, $3, $4)",
+		contractID, orgID, token, "Stablecoin Token")
 	require.NoError(t, err)
-	// Wildcard event_rules → group members get token event access, so the
-	// transfer survives RedactTransfers' per-contract event-access strip and
-	// the shared event decision admits the Transfer it derives from.
+	// Non-empty event_rules → group members get token event access, so the
+	// transfer survives RedactTransfers' per-contract event-access strip.
 	_, err = conn.ExecContext(ctx,
-		`INSERT INTO contract_grants (id, contract_id, group_id, event_rules) VALUES ($1, $2, $3, '"*"'::jsonb)`,
+		`INSERT INTO contract_grants (id, contract_id, group_id, event_rules) VALUES ($1, $2, $3, '["*"]'::jsonb)`,
 		uuid.New().String(), contractID, groupID)
 	require.NoError(t, err)
 
@@ -122,14 +117,6 @@ func TestImpersonation_DisclosureCounterparty_NoAdminBleed_RD1079(t *testing.T) 
 		VALUES ($1, 0, $2, $3, $4, 100, $5)`,
 		txHash, token, charlieEOA, eveEOA, blockNum)
 	require.NoError(t, err)
-	// The Transfer event the row derives from, and the production resolvers.
-	_, err = conn.ExecContext(ctx, `
-		INSERT INTO logs (tx_hash, log_index, address, topic0, topic1, topic2, data, block_number)
-		VALUES ($1, 0, $2, $3, $4, $5, $6, $7)`,
-		txHash, token, "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
-		zeroPadAddrToTopic(charlieEOA), zeroPadAddrToTopic(eveEOA), "0x"+strings.Repeat("0", 62)+"64", blockNum)
-	require.NoError(t, err)
-	wireExplorerRedactor(srv.explorerRedactor, database, srv.rbacAccessCtrl, srv.explorerStore, nil)
 
 	fetch := func(subject, override string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/explorer/addresses/"+eveEOA+"/transfers", nil)

@@ -959,7 +959,6 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		Metrics:                   m,
 		TxVisibilityStore:         database,
 		AddressVisibilityResolver: database,
-		DisclosureGrantResolver:   database,
 		RPCAPIKeyHeader:           cfg.RPCAPIKeyHeader,
 		ComplianceChecker:         s.complianceChecker,
 		EnhancedAuditLogger:       auditDB,

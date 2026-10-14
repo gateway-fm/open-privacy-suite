@@ -178,7 +178,6 @@ func (f *rpFixture) rpProcessor(profile rbac.ReadProfile) *JSONRPCProcessor {
 		ConcurrencyLimiter:        middleware.NewConcurrencyLimiter(50, 0),
 		TxVisibilityStore:         f.db,
 		AddressVisibilityResolver: f.db,
-		DisclosureGrantResolver:   f.db,
 		ReadProfile:               profile,
 	})
 }

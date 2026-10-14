@@ -3640,21 +3640,7 @@ func newEngineDetailed(visMap VisibilityMap, detailedMap map[string]AddressVisib
 		visMap:      visMap,
 		detailedMap: detailedMap,
 		linkedAddrs: linkedAddrs,
-	}, disclosureGrantResolver: grantResolverFromDetailed(detailedMap)}
-}
-
-// grantResolverFromDetailed is the disclosure-grant lookup consistent with a
-// fake visibility map: every address the map shows at Full through a
-// disclosure grant is covered by a Full grant (production derives both from
-// one grant lookup).
-func grantResolverFromDetailed(detailed map[string]AddressVisibility) *stubGrantResolver {
-	r := &stubGrantResolver{addrs: map[string][]string{}}
-	for a, v := range detailed {
-		if v.Reason == ReasonDisclosureGrant && v.Level == VisibilityFull {
-			r.addrs[strings.ToLower(a)] = []string{"grant-" + strings.ToLower(a)}
-		}
-	}
-	return r
+	}}
 }
 
 func TestRedactTransactions_AddressMetadata_OwnAddress(t *testing.T) {

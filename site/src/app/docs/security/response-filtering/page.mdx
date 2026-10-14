@@ -120,8 +120,6 @@ Transaction data can be fetched by hash or by block position. All three methods 
 
 Non-participants receive `null`, which is indistinguishable from querying a transaction hash that does not exist. This prevents information leakage even through the presence/absence of a response.
 
-**Disclosure grants.** A viewer holding an approved `full` [disclosure grant](/docs/disclosure) over a user receives that user's transactions — the ones the user sent or received — exactly as the user does, on every transaction, receipt and block method on this page, and the user's events through `eth_getLogs` and receipt logs (see Event Logs below). This is the same decision the block explorer applies to the same viewer, under both read profiles, and every such reveal is recorded in the audit log. `pseudonymous` and `redacted` grants open nothing on JSON-RPC, and no grant applies under View as user or an admin dry-run.
-
 ---
 
 ## Transaction Receipts (eth\_getTransactionReceipt)
@@ -134,12 +132,11 @@ Transaction receipts contain execution results including status, gas used, and -
 |------------------------|----------|
 | Yes | Receipt (but logs are filtered to only show those involving the user, and `logsBloom` is zeroed) |
 | No, but entitled to ≥1 of the tx's logs under their event rules | Receipt, with the `logs` array filtered to only those entitled logs (`logsBloom` zeroed) |
-| No, but holds a `full` disclosure grant over the sender or recipient | Receipt (deployments included), with its `logs` filtered by the viewer's own event rules plus the events that name the granted user |
 | No, and entitled to none of the tx's logs | `null` |
 
 Even when a user is a participant, the receipt's `logs` array is filtered using the same rules as `eth_getLogs` (see below), and the `logsBloom` is zeroed out to prevent leaking the total number or presence of redacted logs. Note that "the same rules as `eth_getLogs`" includes the own-transaction rule below: a participant sees every log of their own transaction that was emitted by a contract they have access to — including events that do not carry their address (e.g. an event keyed by a business identifier).
 
-A viewer who is **not** a participant (and not in the tx's `visibleTo`, and not an admin) but who **is** entitled to at least one of the transaction's logs under their group's event rules — for example a payment's payee admitted to a `PaymentCreated` event by a `must_be:self` rule on an indexed party parameter — also receives the receipt, with its `logs` filtered to exactly those entitled logs. The `logs` themselves reveal nothing new — the viewer already receives them from `eth_getLogs` (which returns each log's `transactionHash`). Admitting the receipt envelope does additionally expose the envelope fields `from`, `to`, `status`, and `gasUsed`, which `eth_getLogs` does not return; this is the same disclosure posture as a `visibleTo` recipient, who receives the full receipt for a transaction they are named on. It is justified by the viewer's proven log-entitlement (they are a party to at least one of the transaction's events). **Contract-deployment receipts are excluded** from this admission — they are returned only to participants/`visibleTo`/admins and `full` disclosure-grant holders, so the deploy receipt's top-level `contractAddress` is never exposed this way. An event the viewer receives only through a disclosure grant does not count as log-entitlement: a grant returns a receipt only when it covers the transaction's sender or recipient.
+A viewer who is **not** a participant (and not in the tx's `visibleTo`, and not an admin) but who **is** entitled to at least one of the transaction's logs under their group's event rules — for example a payment's payee admitted to a `PaymentCreated` event by a `must_be:self` rule on an indexed party parameter — also receives the receipt, with its `logs` filtered to exactly those entitled logs. The `logs` themselves reveal nothing new — the viewer already receives them from `eth_getLogs` (which returns each log's `transactionHash`). Admitting the receipt envelope does additionally expose the envelope fields `from`, `to`, `status`, and `gasUsed`, which `eth_getLogs` does not return; this is the same disclosure posture as a `visibleTo` recipient, who receives the full receipt for a transaction they are named on. It is justified by the viewer's proven log-entitlement (they are a party to at least one of the transaction's events). **Contract-deployment receipts are excluded** from this admission — they are returned only to participants/`visibleTo`/admins, so the deploy receipt's top-level `contractAddress` is never exposed this way.
 
 ---
 
@@ -193,8 +190,6 @@ For this event:
 A user with linked address `0xAlice` would see Transfer logs where `0xAlice` is either the sender or recipient. Transfers between two other parties are filtered out.
 
 ### Embedded address redaction within a kept log
-
-**Disclosure grants.** A viewer holding an approved `full` disclosure grant over a user also receives the events that name that user in an indexed `address` parameter — on contracts the viewer holds a grant on, when the viewer's event rules reach the event with the user counting as the viewer for `must_be: self` rules (literal values still apply). In such an event the other parties it names in indexed `address` parameters are shown as well; an address carried in the event data keeps the viewer's own visibility. The block explorer returns the same events with the same addresses.
 
 Keeping a log entry does not mean returning it verbatim. A single event can carry several addresses — a sender, a recipient, and other parties — and a user entitled to see the event because *one* of those addresses is theirs is not necessarily entitled to see the others. Once a log is kept, every embedded address the user is not entitled to see — in the indexed topics **and** in the ABI-decoded event data — is zeroed out (`0x000…0`). Only the addresses the user can see are returned in the clear: their own linked addresses, addresses in contracts they hold a grant on, public addresses, and addresses shared with them by a disclosure grant.
 
@@ -399,10 +394,10 @@ A DID listed in `visibleTo` whose group does not allow the relevant method is de
 |--------|---------------------|--------------------------|
 | `eth_getStorageAt` | Admin: all slots; Non-admin: EIP-1967 / EIP-2535 proxy slots only | Blocked (no access to the contract) |
 | `eth_getProof` | Admin: any keys; Non-admin: every key must be an EIP-1967 / EIP-2535 proxy slot (empty key list allowed) | Blocked (no access to the contract) |
-| `eth_getTransactionByHash` | Full transaction | `null` (or full tx if viewer is in `visibleTo` or holds a `full` disclosure grant over a party) |
-| `eth_getTransactionByBlockHashAndIndex` | Full transaction | `null` (or full tx if viewer is in `visibleTo` or holds a `full` disclosure grant over a party) |
-| `eth_getTransactionByBlockNumberAndIndex` | Full transaction | `null` (or full tx if viewer is in `visibleTo` or holds a `full` disclosure grant over a party) |
-| `eth_getTransactionReceipt` | Receipt with filtered logs | `null` (or receipt with filtered logs if viewer is in `visibleTo` or holds a `full` disclosure grant over a party) |
+| `eth_getTransactionByHash` | Full transaction | `null` (or full tx if viewer is in `visibleTo`) |
+| `eth_getTransactionByBlockHashAndIndex` | Full transaction | `null` (or full tx if viewer is in `visibleTo`) |
+| `eth_getTransactionByBlockNumberAndIndex` | Full transaction | `null` (or full tx if viewer is in `visibleTo`) |
+| `eth_getTransactionReceipt` | Receipt with filtered logs | `null` (or receipt with filtered logs if viewer is in `visibleTo`) |
 | `eth_getBlockByHash` (`fullTxObjects=true`) | Full block with all txs | Non-participant txs removed from array |
 | `eth_getBlockByHash` (`fullTxObjects=false`) | Hashes of user's txs | Non-participant hashes removed from array |
 | `eth_getBlockByNumber` (`fullTxObjects=true`) | Full block with all txs | Non-participant txs removed from array |

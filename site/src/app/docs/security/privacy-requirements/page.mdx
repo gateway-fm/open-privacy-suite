@@ -111,16 +111,7 @@ Block-level data is always public. Blocks are consensus-layer infrastructure, no
 A viewer holding an approved disclosure **grant** sees the granted target's
 addresses subject to the grant's `scope.disclosure_level`. The level controls
 the substitution applied to every address field on every response surface — not
-just the auditor dashboard. A grant is the consented exception to the privacy
-rules: the target approved it, it expires, and every reveal through a `full`
-grant is recorded in the audit log. A `full` grant applies identically on
-JSON-RPC and in the block explorer, under both read profiles; `pseudonymous`
-and `redacted` grants apply in the block explorer only, because JSON-RPC
-cannot render an alias. A grant applies to these regular views only when its
-scope covers the target's transaction history (no date range, no contract
-list, and methods empty or including `transaction_history` or
-`full_disclosure`); any other grant is used only through its grant pages.
-The mapping:
+just the auditor dashboard. The mapping:
 
 | `disclosure_level` | `VisibilityLevel` (internal) | What the auditor sees for the granted address |
 |---|---|---|
@@ -144,10 +135,8 @@ the raw address.
 | `GET /address/:addr` — tx list (rows for granted target) | Real address | `Address-XXXX` (granted party + all counterparties under lens) | `[PRIVATE]` (timing-only audit) | 404 / 403 |
 | Token transfer rows (`/transfers`) | Real address | `Address-XXXX` (granted party + counterparty) | `[PRIVATE]` | `[PRIVATE]` or row dropped |
 | Event logs — emitter address | Real address | `Address-XXXX` | `[PRIVATE]`; topics + `data` zeroed | Log denied or `[PRIVATE]` |
-| Event logs — indexed address topics | Real address for the granted target, and for every other party the event names in an indexed `address` parameter (its counterparties in that event) | Topic slot zeroed (`0x000…000`) — see note | Topic slot zeroed | Topic slot zeroed |
-| Event logs — non-indexed `address` ABI params in `data` | Real address for the granted target; any other address keeps the viewer's own visibility | Zeroed (the alias is a human-readable string, not an address, so it can't occupy a 32-byte slot) | Zeroed | Zeroed |
-| JSON-RPC: `eth_getTransactionByHash` and block-index variants, `eth_getTransactionReceipt`, `eth_getBlockByNumber` / `eth_getBlockByHash`, `eth_getBlockReceipts` — a tx the granted target sent or received | Returned in full, as in the explorer | `null` / omitted | `null` / omitted | `null` / omitted |
-| JSON-RPC: `eth_getLogs` and receipt logs — an event naming the granted target in an indexed `address` parameter | Returned with the same addresses as the explorer's event logs (above) | Not returned through the grant | Not returned through the grant | Not returned |
+| Event logs — indexed address topics | Real address | Topic slot zeroed (`0x000…000`) — see note | Topic slot zeroed | Topic slot zeroed |
+| Event logs — non-indexed `address` ABI params in `data` | Real address | Zeroed (the alias is a human-readable string, not an address, so it can't occupy a 32-byte slot) | Zeroed | Zeroed |
 | Holder list (`/address/:contract/holders`) | Real holder address | `Address-XXXX` row | `[PRIVATE]` row | Row dropped |
 | Auditor dashboard (`PrivacyDashboard → Disclosed Addresses`) | Real address | `Address-XXXX` | `[PRIVATE]` | Empty list |
 | Granted-address page (`/grant/:grantId/:addressId`) — all parties | Real address (granted target shown, counterparties as real) | `Address-XXXX` granted target + `External-XXXX` counterparty (deterministic per `(addr, grant_id)`) + `Mine` for viewer-linked addresses | `[PRIVATE]` for every party | 404 |
@@ -203,9 +192,9 @@ Outcomes:
 |---|---|---|---|---|---|---|
 | `GET /transactions` (list) | keep + real | keep + real | drop | keep + real | keep + lens | keep + `[PRIVATE]` (timing-only audit) |
 | `GET /transactions/:hash` (by-hash) | keep + real | keep + real | 404 | keep + real | keep + lens | keep + `[PRIVATE]` |
-| `GET /transactions/:hash/transfers` | keep + real | keep + real | drop | keep + real, when the Transfer event is returned to the viewer (see below) | keep + lens | keep + `[PRIVATE]` |
+| `GET /transactions/:hash/transfers` | keep + real | keep + real | drop | keep + real | keep + lens | keep + `[PRIVATE]` |
 | `GET /transactions/:hash/internal` | keep + real | keep + real | drop | inherits parent (keep) | inherits parent (keep + lens) | inherits parent (keep + `[PRIVATE]`) |
-| `GET /transactions/:hash/logs` | keep (participant override) | keep (emitting-contract visible) | drop (emitting contract Hidden) | keep + real for the event's indexed parties, when the viewer holds a grant on the emitting contract whose event rules reach the event | keep + lens | drop (Hidden) / keep + zeroed (Redacted) |
+| `GET /transactions/:hash/logs` | keep (participant override) | keep (emitting-contract visible) | drop (emitting contract Hidden) | keep + real (grant on emitting contract) | keep + lens | drop (Hidden) / keep + zeroed (Redacted) |
 | `GET /block/:n` → embedded txs | per-tx participant check | per-tx visibility check | drop | keep + real | keep + lens | keep + `[PRIVATE]` |
 
 **Where the "inherits parent" rows come from.** The internal-tx / transfer
@@ -308,25 +297,17 @@ any one of them is a privacy or UX regression:
 5. **Disclosure-grant rows survive regardless of counterparty privacy.**
    When the viewer holds an active disclosure grant on either tx party
    (any level: `full`, `pseudonymous`, `redacted`), the row survives
-   in `/transactions`, `/transactions/:hash` and `/internal`
-   regardless of the counterparty's own visibility.
-   Field-level rendering follows the grant level: `full` shows the
-   whole transaction — both parties, value, calldata, nonce, and a
-   deployment's created contract — exactly as JSON-RPC returns it to
-   the same viewer (audited — `rbac_audit_log` with
+   in `/transactions`, `/transactions/:hash`, `/transfers`, and
+   `/internal` regardless of the counterparty's own visibility.
+   Field-level rendering follows the grant level: `full` reveals
+   the counterparty's real address (audited as a regulatory subpoena
+   reveal — `RedactStats.GrantFullReveals` → `rbac_audit_log` with
    `resource_type=disclosure_grant`); `pseudonymous` renders both
    parties under the `Address-XXXX` lens; `redacted` renders both
    as `[PRIVATE]` with `value` preserved (proof-of-activity audit
    lens). Participants and `visibleTo` recipients bypass the grant
    lens — they already know the counterparty via their own wallet.
-   A token-transfer row under a `full` grant is a rendering of its
-   Transfer event: it is shown, with both parties, exactly when that
-   event is returned to the viewer — the viewer holds a grant on the
-   token whose event rules reach the event, counting the granted
-   target as the viewer for `must_be: self` rules — so the explorer
-   and `eth_getLogs` agree. `pseudonymous` and `redacted` transfer
-   rows keep their lens and need only event access to the token.
-   Pinned by integration tests.
+   Pinned by an integration test.
 6. **A row kept for coherence reveals nothing new.**
    When a viewer gets a transaction only because of one of its token
    transfers (for an org admin, a transfer involving any org contract;

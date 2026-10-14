@@ -2,7 +2,6 @@ package db
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 
 	"privacy-proxy/internal/disclosure"
@@ -510,27 +509,6 @@ func (d *DB) getDisclosedAddressesForViewer(ctx context.Context, viewerDID strin
 	return addrs, nil
 }
 
-// FullDisclosureGrantAddresses implements rbac.FullDisclosureGrantResolver:
-// each address an active disclosure grant of the viewer covers at the Full
-// level, for regular reads, mapped to the ids of those grants. It reads the
-// same grant rows as the visibility merge of GetBatchVisibility
-// (disclosedGrantRows: org-membership scoping, RD-1308 org pin, RD-1318
-// impersonation mark, regular-read scope, level mapping), restricted to Full.
-// Errors propagate; callers deny on error.
-func (d *DB) FullDisclosureGrantAddresses(ctx context.Context, viewerDID string) (map[string][]string, error) {
-	rows, err := d.disclosedGrantRows(ctx, viewerDID)
-	if err != nil {
-		return nil, err
-	}
-	out := make(map[string][]string)
-	for _, r := range rows {
-		if r.Level == explorer.VisibilityFull {
-			out[r.Address] = append(out[r.Address], r.GrantID)
-		}
-	}
-	return out, nil
-}
-
 // disclosedGrantedAddress is the per-address view of an active disclosure grant
 // the viewer holds. Address is the lowercased ETH address; Level is the
 // visibility ceiling the grant's scope.disclosure_level resolves to (see
@@ -538,62 +516,6 @@ func (d *DB) FullDisclosureGrantAddresses(ctx context.Context, viewerDID string)
 type disclosedGrantedAddress struct {
 	Address string
 	Level   explorer.VisibilityLevel
-}
-
-// disclosedGrantRow is one (grant, covered address) pair of an active
-// disclosure grant the viewer holds, eligible for regular reads.
-type disclosedGrantRow struct {
-	Address string // lower-case
-	GrantID string
-	Level   explorer.VisibilityLevel
-}
-
-// regularReadScope reports whether a grant's scope covers the subject's regular
-// reads — their transactions and events in the explorer and over JSON-RPC: no
-// date range, no contract-address list, and a method list that is empty or
-// includes "transaction_history" or "full_disclosure". A grant restricted
-// otherwise (for example to "activity_logs", the subject's RPC request log) is
-// used only through its own grant pages. A scope that does not parse, or a
-// restriction of the wrong shape, fails closed.
-func regularReadScope(raw []byte) bool {
-	var scope struct {
-		Methods   json.RawMessage `json:"methods"`
-		Addresses json.RawMessage `json:"addresses"`
-		DateRange json.RawMessage `json:"date_range"`
-	}
-	if err := json.Unmarshal(raw, &scope); err != nil {
-		return false
-	}
-	if !jsonAbsentOrNull(scope.DateRange) {
-		return false
-	}
-	if !jsonAbsentOrNull(scope.Addresses) {
-		var addrs []json.RawMessage
-		if err := json.Unmarshal(scope.Addresses, &addrs); err != nil || len(addrs) > 0 {
-			return false
-		}
-	}
-	if jsonAbsentOrNull(scope.Methods) {
-		return true
-	}
-	var methods []string
-	if err := json.Unmarshal(scope.Methods, &methods); err != nil {
-		return false
-	}
-	if len(methods) == 0 {
-		return true
-	}
-	for _, m := range methods {
-		if m == "transaction_history" || m == "full_disclosure" {
-			return true
-		}
-	}
-	return false
-}
-
-// jsonAbsentOrNull reports whether a JSON member was absent or null.
-func jsonAbsentOrNull(raw json.RawMessage) bool {
-	return len(raw) == 0 || string(raw) == "null"
 }
 
 // getDisclosedAddressesWithLevels returns each active disclosure-grant address
@@ -608,42 +530,13 @@ func jsonAbsentOrNull(raw json.RawMessage) bool {
 // Under an impersonation (disclosure.WithoutViewerGrants) it returns nothing:
 // the grants belong to the viewer, not to the admin viewing as them (RD-1318).
 func (d *DB) getDisclosedAddressesWithLevels(ctx context.Context, viewerDID string) ([]disclosedGrantedAddress, error) {
-	rows, err := d.disclosedGrantRows(ctx, viewerDID)
-	if err != nil {
-		return nil, err
-	}
-	// De-dupe by address while keeping the MAX level — handles the multi-grant
-	// case (same viewer, same target address, two grants of different levels).
-	byAddr := make(map[string]explorer.VisibilityLevel)
-	for _, r := range rows {
-		if existing, ok := byAddr[r.Address]; !ok || visibilityRank(r.Level) > visibilityRank(existing) {
-			byAddr[r.Address] = r.Level
-		}
-	}
-	out := make([]disclosedGrantedAddress, 0, len(byAddr))
-	for addr, lvl := range byAddr {
-		out = append(out, disclosedGrantedAddress{Address: addr, Level: lvl})
-	}
-	return out, nil
-}
-
-// disclosedGrantRows returns one row per (active disclosure grant of the
-// viewer, address its subject owns) that applies to regular reads: the grant
-// is unrevoked and unexpired, the viewer requested it, the subject's address
-// link is live, the viewer is a current member of the org the request was made
-// in (M13), and its scope covers regular reads (regularReadScope). An
-// impersonated read pinned to one org (RD-1308) counts only grants requested
-// in that org; under the impersonation mark (RD-1318) there are none.
-func (d *DB) disclosedGrantRows(ctx context.Context, viewerDID string) ([]disclosedGrantRow, error) {
 	if viewerDID == "" || disclosure.ViewerGrantsSuppressed(ctx) {
 		return nil, nil
 	}
 
 	query := `
-		SELECT DISTINCT LOWER(eal.eth_address),
-		       g.id::text,
-		       COALESCE(g.scope->>'disclosure_level', ''),
-		       g.scope::text
+		SELECT LOWER(eal.eth_address),
+		       COALESCE(g.scope->>'disclosure_level', '')
 		FROM disclosure_grants g
 		JOIN disclosure_requests r ON g.request_id = r.id
 		JOIN users target_u ON r.target_user_id = target_u.id
@@ -675,21 +568,26 @@ func (d *DB) disclosedGrantRows(ctx context.Context, viewerDID string) ([]disclo
 	}
 	defer rows.Close()
 
-	var out []disclosedGrantRow
+	// De-dupe by address while keeping the MAX level — handles the multi-grant
+	// case (same viewer, same target address, two grants of different levels).
+	byAddr := make(map[string]explorer.VisibilityLevel)
 	for rows.Next() {
-		var r disclosedGrantRow
-		var lvlStr, scope string
-		if err := rows.Scan(&r.Address, &r.GrantID, &lvlStr, &scope); err != nil {
+		var addr, lvlStr string
+		if err := rows.Scan(&addr, &lvlStr); err != nil {
 			return nil, err
 		}
-		if !regularReadScope([]byte(scope)) {
-			continue
+		lvl := disclosureLevelToVisibility(lvlStr)
+		if existing, ok := byAddr[addr]; !ok || visibilityRank(lvl) > visibilityRank(existing) {
+			byAddr[addr] = lvl
 		}
-		r.Level = disclosureLevelToVisibility(lvlStr)
-		out = append(out, r)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
+	}
+
+	out := make([]disclosedGrantedAddress, 0, len(byAddr))
+	for addr, lvl := range byAddr {
+		out = append(out, disclosedGrantedAddress{Address: addr, Level: lvl})
 	}
 	return out, nil
 }

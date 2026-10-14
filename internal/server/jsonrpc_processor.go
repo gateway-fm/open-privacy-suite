@@ -75,12 +75,6 @@ type JSONRPCProcessor struct {
 	// always wires it via JSONRPCProcessorConfig.AddressVisibilityResolver.
 	addrVisResolver addressVisibilityResolver
 
-	// grantResolver looks up the viewer's Full disclosure grants, once per
-	// response, for the shared read decisions (rbac.ResolveDisclosureGrants).
-	// Wired to *db.DB — the same lookup the explorer's visibility resolution
-	// merges. nil = no disclosure grant applies (fail closed).
-	grantResolver rbac.FullDisclosureGrantResolver
-
 	// readProfile is the deployment-wide read privacy profile (RD-1299),
 	// fixed at construction from PRIVACY_READ_PROFILE. Every response filter
 	// takes it as a required argument. The zero value (unset) is enforced as
@@ -267,12 +261,10 @@ type JSONRPCProcessorConfig struct {
 	// (RD-1214); empty RPCAPIKeyHeader = proxy.DefaultAPIKeyHeader; nil
 	// ComplianceChecker = travel rule off; nil EnhancedAuditLogger = basic
 	// access logging; nil AuditBuffer = synchronous chained audit write
-	// (RD-1112 async off); nil VisibilityKick = reconciler backstop tick only;
-	// nil DisclosureGrantResolver = no disclosure grant applies to a read.
+	// (RD-1112 async off); nil VisibilityKick = reconciler backstop tick only.
 	Metrics                   *metrics.Metrics
 	TxVisibilityStore         rbac.TxVisibilityProvider
 	AddressVisibilityResolver addressVisibilityResolver
-	DisclosureGrantResolver   rbac.FullDisclosureGrantResolver
 	RPCAPIKeyHeader           string
 	ComplianceChecker         *compliance.Checker
 	EnhancedAuditLogger       EnhancedAccessLogger
@@ -311,7 +303,6 @@ func NewJSONRPCProcessor(cfg JSONRPCProcessorConfig) *JSONRPCProcessor {
 		metrics:                cfg.Metrics,
 		txVisibilityStore:      cfg.TxVisibilityStore,
 		addrVisResolver:        cfg.AddressVisibilityResolver,
-		grantResolver:          cfg.DisclosureGrantResolver,
 		complianceChecker:      cfg.ComplianceChecker,
 		enhancedLogger:         cfg.EnhancedAuditLogger,
 		hashChain:              cfg.HashChain,
@@ -1148,26 +1139,7 @@ func viewerUUID(result *rbac.AccessCheckResult) string {
 //   - eth_getTransactionByBlockHashAndIndex / eth_getTransactionByBlockNumberAndIndex: null for non-participants
 //   - eth_getBlockByHash / eth_getBlockByNumber: remove non-participant txs from block
 //   - eth_getBlockReceipts: remove non-participant receipts from array
-//
-// A viewer's approved Full disclosure grant is an input of every one of these
-// decisions (rbac.TxEnvelopeFacts.FullDisclosureGrant,
-// rbac.LogEmitterFacts.FullDisclosureGrant): it is resolved ONCE per response
-// (rbac.ResolveDisclosureGrants — nothing under View-as or dry-run, nothing on
-// a lookup error), and a response that reveals anything through it is
-// recorded in the audit trail (auditDisclosureGrantReveals).
 func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *ProcessRequest, result *rbac.AccessCheckResult, responseBody []byte) []byte {
-	if !readProfileGovernsResponse(req.Method) {
-		return responseBody
-	}
-	grants := rbac.ResolveDisclosureGrants(ctx, p.grantResolver, req.UserID)
-	out := p.filterGovernedResponse(ctx, req, result, responseBody, grants)
-	p.auditDisclosureGrantReveals(ctx, req, grants)
-	return out
-}
-
-// filterGovernedResponse applies the response filter of one governed read
-// method (see applyResponseFilter) with the viewer's disclosure grants.
-func (p *JSONRPCProcessor) filterGovernedResponse(ctx context.Context, req *ProcessRequest, result *rbac.AccessCheckResult, responseBody []byte, grants *rbac.DisclosureGrants) []byte {
 	// Resolve method alias so chain-specific methods (e.g. linea_getTransactionExclusionStatusV1)
 	// inherit the same response filtering as their standard equivalents.
 	m := rbac.ResolveMethodAlias(req.Method)
@@ -1197,9 +1169,9 @@ func (p *JSONRPCProcessor) filterGovernedResponse(ctx context.Context, req *Proc
 				}
 			}
 		}
-		return filterTransactionByHash(p.readProfile, responseBody, addrs, isAdminOnTo, func() bool {
+		return FilterTransactionByHash(p.readProfile, responseBody, addrs, isAdminOnTo, func() bool {
 			return p.isResponseTxVisibleTo(ctx, req.UserID, responseBody)
-		}, grants)
+		})
 
 	case strings.EqualFold(m, rbac.MethodGetTransactionReceipt):
 		addrs, err := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)
@@ -1207,7 +1179,7 @@ func (p *JSONRPCProcessor) filterGovernedResponse(ctx context.Context, req *Proc
 			addrs = nil // DB error — proceed with nil addrs, visCtx handles visibleTo
 		}
 		perms := p.resolvePermsForFilter(ctx, result)
-		visCtx := withDisclosureGrants(p.standardTxVisibilityContext(ctx, req.UserID, responseBody), req.UserID, grants)
+		visCtx := p.standardTxVisibilityContext(ctx, req.UserID, responseBody)
 		// Org-scoped admin map covers both the receipt-envelope bypass
 		// (for receipt.to) and the per-log admin bypass (for each log's
 		// emitting contract). Filter handles the lookup.
@@ -1249,7 +1221,6 @@ func (p *JSONRPCProcessor) filterGovernedResponse(ctx context.Context, req *Proc
 				visCtx.ParticipantTxHashes = participants
 			}
 		}
-		visCtx = withDisclosureGrants(visCtx, req.UserID, grants)
 		// Org-scoped admin-bypass map, indexed by each log's emitting
 		// contract. Takes the internal user UUID (result.UserID), not
 		// the JWT DID — viewerAdminContracts queries user_memberships
@@ -1278,15 +1249,15 @@ func (p *JSONRPCProcessor) filterGovernedResponse(ctx context.Context, req *Proc
 				originalFull = isFull
 			}
 		}
-		return filterBlockTransactions(p.readProfile, responseBody, addrs, originalFull, grants)
+		return FilterBlockTransactions(p.readProfile, responseBody, addrs, originalFull)
 
 	case strings.EqualFold(m, "eth_getBlockTransactionCountByHash"),
 		strings.EqualFold(m, "eth_getBlockTransactionCountByNumber"):
 		addrs, err := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)
 		if err != nil {
-			addrs = nil // fail closed: no participant match
+			return FilterBlockTransactionCount(responseBody, nil)
 		}
-		return filterBlockTransactionCount(p.readProfile, responseBody, addrs, grants)
+		return FilterBlockTransactionCount(responseBody, addrs)
 
 	case strings.EqualFold(m, rbac.MethodGetBlockReceipts):
 		addrs, err := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)
@@ -1300,7 +1271,7 @@ func (p *JSONRPCProcessor) filterGovernedResponse(ctx context.Context, req *Proc
 		// gates, event rules, RD-1162 own-tx logs, RD-1214 masking and the
 		// RD-874 unlock payload.
 		perms := p.resolvePermsForFilter(ctx, result)
-		visCtx := withDisclosureGrants(p.standardTxVisibilityContext(ctx, req.UserID, responseBody), req.UserID, grants)
+		visCtx := p.standardTxVisibilityContext(ctx, req.UserID, responseBody)
 		adminMap := p.viewerAdminContracts(ctx, viewerUUID(result), extractContractAddressesFromResponse(responseBody))
 		abiProv := p.contractABIProvider(ctx)
 		return FilterBlockReceipts(p.readProfile, responseBody, addrs, perms, abiProv, visCtx, adminMap, p.logFieldRenderer(ctx, req.UserID, abiProv))

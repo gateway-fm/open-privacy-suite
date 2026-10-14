@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
-	"log/slog"
 	"reflect"
 	"strconv"
 	"strings"
@@ -258,7 +257,6 @@ type RedactionEngine struct {
 	dynamicPayloadAllowedResolver DynamicPayloadAllowedResolver
 	logParticipantStore           LogParticipantStore
 	txDataResolver                TxDataResolver
-	disclosureGrantResolver       rbac.FullDisclosureGrantResolver
 	pseudonymKey                  []byte // RD-1164 #8: HMAC key for address pseudonyms (nil = unkeyed HMAC, still non-reversible)
 
 	// readProfile is the deployment-wide read privacy profile (RD-1299),
@@ -409,24 +407,6 @@ type TxDataBatchResolver interface {
 // row (fail closed); the standard profile never consults it.
 func (r *RedactionEngine) SetTxDataResolver(res TxDataResolver) {
 	r.txDataResolver = res
-}
-
-// SetDisclosureGrantResolver wires the lookup of the viewer's Full disclosure
-// grants (in production *db.DB, the lookup the JSON-RPC filters use). Every
-// Redact* call resolves the grant set once through rbac.ResolveDisclosureGrants
-// — the shared fact builder — and feeds the grant fact to the shared decisions
-// (rbac.DecideTxEnvelope, rbac.DecideLogEmitter). Without it no Full grant
-// admits anything (fail closed); non-Full grants keep their lens, which reads
-// the visibility map.
-func (r *RedactionEngine) SetDisclosureGrantResolver(resolver rbac.FullDisclosureGrantResolver) {
-	r.disclosureGrantResolver = resolver
-}
-
-// disclosureGrants resolves the viewer's Full disclosure grants for one
-// redaction call (nil under View-as / dry-run, on a lookup error, or when the
-// viewer holds none).
-func (r *RedactionEngine) disclosureGrants(ctx context.Context, viewerDID string) *rbac.DisclosureGrants {
-	return rbac.ResolveDisclosureGrants(ctx, r.disclosureGrantResolver, viewerDID)
 }
 
 // resolveContractABI returns the resolved ABI JSON for an address, or
@@ -725,9 +705,6 @@ type RedactStats struct {
 	// privacy (no Full grants in this pass) keeps this at zero — the
 	// counter is only meaningful for grant-driven reveals.
 	GrantFullReveals int
-	// GrantIDs holds the ids of the disclosure grants the GrantFullReveals
-	// were made through, for the audit entry.
-	GrantIDs map[string]bool
 }
 
 // adminAuditView reports whether the elevated org-admin audit view applies
@@ -744,19 +721,10 @@ func (o RedactOpts) recordAdminReveal() {
 }
 
 // recordGrantFullReveal bumps the grant-driven counterparty reveal counter when
-// stats tracking is enabled, attributing the reveal to the given grant ids.
-func (o RedactOpts) recordGrantFullReveal(grantIDs ...[]string) {
-	if o.Stats == nil {
-		return
-	}
-	o.Stats.GrantFullReveals++
-	for _, ids := range grantIDs {
-		for _, id := range ids {
-			if o.Stats.GrantIDs == nil {
-				o.Stats.GrantIDs = make(map[string]bool)
-			}
-			o.Stats.GrantIDs[id] = true
-		}
+// stats tracking is enabled.
+func (o RedactOpts) recordGrantFullReveal() {
+	if o.Stats != nil {
+		o.Stats.GrantFullReveals++
 	}
 }
 
@@ -825,28 +793,6 @@ func disclosureGrantLevel(v AddressVisibility) (VisibilityLevel, bool) {
 	return v.Level, true
 }
 
-// lensGrantLevel returns the disclosure-grant level a row party is seen
-// through: Full when the shared Full-grant fact covers it (full, from
-// rbac.ResolveDisclosureGrants — the same fact the JSON-RPC filters use),
-// otherwise a pseudonymous or redacted grant level from the visibility map (the
-// explorer-only lens), otherwise none. A Full level in the visibility map
-// without the shared fact counts for nothing (fail closed).
-func lensGrantLevel(addr string, full *rbac.DisclosureGrants, v AddressVisibility) (VisibilityLevel, bool) {
-	if full.Covers(addr) {
-		return VisibilityFull, true
-	}
-	return nonFullGrantLevel(v)
-}
-
-// nonFullGrantLevel is disclosureGrantLevel restricted to the pseudonymous and
-// redacted levels: the explorer-only lens, which never reveals a real address.
-func nonFullGrantLevel(v AddressVisibility) (VisibilityLevel, bool) {
-	if lvl, ok := disclosureGrantLevel(v); ok && lvl != VisibilityFull {
-		return lvl, true
-	}
-	return VisibilityHidden, false
-}
-
 // RedactTransactions applies privacy rules to a list of transactions.
 // Optional RedactOpts can override drop behavior for visibleTo transactions.
 func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transaction, viewerDID string, opts ...RedactOpts) ([]Transaction, error) {
@@ -863,11 +809,10 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 	adminAuditView := ropts.adminAuditView()
 
 	// RD-1299 strict read profile: a transaction is returned only to its
-	// participant (tx from/to) or the holder of a Full disclosure grant over
-	// them, as on the RPC (rbac.DecideTxEnvelope). The admin claim, the admin
-	// audit view, visibleTo shares, the RD-1009 transfer-participant union and
-	// calldata/log-derived participation grant nothing; a pseudonymous or
-	// redacted grant keeps its explorer-only lens row.
+	// participant (tx from/to), as on the RPC (rbac.DecideTxEnvelope). The
+	// admin claim, the admin audit view, visibleTo shares, the RD-1009
+	// transfer-participant union and calldata/log-derived participation grant
+	// nothing; the only surviving exception is an approved disclosure grant.
 	strict := r.readProfile.Strict()
 	if strict {
 		visibleHashes = nil
@@ -931,10 +876,6 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 			logParticipantTxs = found
 		}
 	}
-
-	// The viewer's Full disclosure grants: the shared fact builder, resolved
-	// at most once for the page (RD-1353).
-	grants := r.disclosureGrants(ctx, viewerDID)
 
 	// 3. Apply redactions
 	var redactedTxs []Transaction
@@ -1003,15 +944,15 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 			}
 		}
 
-		// Disclosure grants (RD-1353). A Full grant over the tx's from or to is
-		// the shared fact of rbac.DecideTxEnvelope (DisclosureGrants.CoversTx,
-		// the same builder the JSON-RPC filters use): it admits the row and
-		// shows the transaction as its subject sees it — the counterparty is
-		// revealed (audit-logged via GrantFullReveals). Pseudonymous and
-		// redacted grants (read from the visibility map) keep the
-		// explorer-only lens: the row survives, but the counterparty renders as
-		// a pseudonym or [PRIVATE], never as its real address (G25). When a
-		// Full grant covers either party, the Full lens wins.
+		// Disclosure-grant lens: when this tx is visible to the viewer via a
+		// disclosure grant on one party, the counterparty's effective render
+		// is determined by the grant's level — never by the counterparty's
+		// own (privacy-default Hidden) base visibility. The /docs/security/
+		// privacy-requirements §"Disclosure Levels" matrix is the source of
+		// truth; this block applies all three cells (full / pseudonymous /
+		// redacted) symmetrically. Pre-fix only the pseudonymous demotion
+		// existed (PR #282); full was missing — counterparty leaked as
+		// [PRIVATE] — and redacted dropped the row via G10 / bothHidden.
 		//
 		// Participant-override wins: if the viewer is a direct participant
 		// in the tx (their own linked address is from / to / log-participant /
@@ -1019,65 +960,55 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 		// lens is moot. visibleTo (explicit share via hash) wins for the
 		// same reason.
 		//
-		// txVisibleViaGrant drives the row-survival bypass below
-		// (G10 / bothHidden / deployHidden) for every grant level; field
+		// txVisibleViaGrant flag drives the row-survival bypass below
+		// (G10 / bothHidden / deployHidden) — the spec keeps the row for
+		// every grant level; only field-level rendering differs. Field
 		// rendering remains via the standard applyRedaction path on the
 		// resolved fromLevel / toLevel, so Full → real address,
 		// Pseudonymous → Address-XXXX, Redacted → [PRIVATE].
-		txTo := ""
-		if tx.HasRecipient() {
-			txTo = *tx.To
-		}
-		fullGrant := false
 		txVisibleViaGrant := false
 		if !viewerIsParticipant && !txVisibleToViewer {
-			fullGrant = grants.CoversTx(tx.From, txTo)
+			fromVis := visibilityMapDetailed[strings.ToLower(tx.From)]
+			var toVis AddressVisibility
+			if tx.HasRecipient() {
+				toVis = visibilityMapDetailed[strings.ToLower(*tx.To)]
+			}
+			fromGrantLvl, fromIsGrant := disclosureGrantLevel(fromVis)
+			toGrantLvl, toIsGrant := disclosureGrantLevel(toVis)
+			txVisibleViaGrant = fromIsGrant || toIsGrant
+
+			// Counterparty rendering — apply the grant's lens level to the
+			// non-granted side. Full PROMOTES the counterparty (reveals the
+			// real address — regulatory subpoena reveal, audit-logged below
+			// via GrantFullReveals); Pseudonymous DEMOTES Full counterparties
+			// (existing PR #282 behaviour, preserved); Redacted SETS the
+			// counterparty to Redacted so it renders as [PRIVATE] while the
+			// row stays visible (proof-of-activity audit lens).
 			revealedCounterpartyByFullGrant := false
-			if fullGrant {
-				txVisibleViaGrant = true
-				if fromLevel != VisibilityFull {
-					fromLevel = VisibilityFull
-					revealedCounterpartyByFullGrant = revealedCounterpartyByFullGrant || !grants.Covers(tx.From)
+			if fromIsGrant && tx.HasRecipient() {
+				if newLvl, promoted := counterpartyLensLevel(fromGrantLvl, toLevel); newLvl != toLevel {
+					toLevel = newLvl
+					if promoted {
+						revealedCounterpartyByFullGrant = true
+					}
 				}
-				if tx.HasRecipient() && toLevel != VisibilityFull {
-					toLevel = VisibilityFull
-					revealedCounterpartyByFullGrant = revealedCounterpartyByFullGrant || !grants.Covers(txTo)
-				}
-			} else {
-				fromVis := visibilityMapDetailed[strings.ToLower(tx.From)]
-				var toVis AddressVisibility
-				if tx.HasRecipient() {
-					toVis = visibilityMapDetailed[strings.ToLower(txTo)]
-				}
-				fromGrantLvl, fromIsGrant := nonFullGrantLevel(fromVis)
-				toGrantLvl, toIsGrant := nonFullGrantLevel(toVis)
-				txVisibleViaGrant = fromIsGrant || toIsGrant
-				// Counterparty rendering — the non-Full lens on the non-granted
-				// side: Pseudonymous DEMOTES a Full counterparty (PR #282
-				// behaviour, preserved); Redacted SETS the counterparty to
-				// Redacted so it renders as [PRIVATE] while the row stays
-				// visible (proof-of-activity audit lens).
-				if fromIsGrant && tx.HasRecipient() {
-					toLevel, _ = counterpartyLensLevel(fromGrantLvl, toLevel)
-				}
-				if toIsGrant {
-					fromLevel, _ = counterpartyLensLevel(toGrantLvl, fromLevel)
+			}
+			if toIsGrant {
+				if newLvl, promoted := counterpartyLensLevel(toGrantLvl, fromLevel); newLvl != fromLevel {
+					fromLevel = newLvl
+					if promoted {
+						revealedCounterpartyByFullGrant = true
+					}
 				}
 			}
 			if revealedCounterpartyByFullGrant {
-				ropts.recordGrantFullReveal(grants.GrantIDs(tx.From), grants.GrantIDs(txTo))
+				ropts.recordGrantFullReveal()
 			}
 		}
 
-		// Strict read profile: the shared decision (participant, or a Full
-		// disclosure grant over from/to) admits the row; a pseudonymous or
-		// redacted grant keeps its explorer-only lens row.
-		lensOnlyGrant := txVisibleViaGrant && !fullGrant
-		if strict && !lensOnlyGrant && !rbac.DecideTxEnvelope(r.readProfile, rbac.TxEnvelopeFacts{
-			Surface:             rbac.TxSurfaceTransaction,
-			IsParticipant:       viewerIsParticipant,
-			FullDisclosureGrant: fullGrant,
-		}) {
+		// Strict read profile: only a participant or an approved disclosure
+		// grant admits the row.
+		if strict && !viewerIsParticipant && !txVisibleViaGrant {
 			continue
 		}
 
@@ -1175,11 +1106,7 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 		if tx.ContractAddress != nil && *tx.ContractAddress != "" {
 			caBase := visibilityMap[strings.ToLower(*tx.ContractAddress)]
 			caLevel := caBase
-			// A Full disclosure grant over the deployer shows the deployment as
-			// its subject sees it, the created address included (JSON-RPC
-			// returns it in the receipt, and it follows from the sender and
-			// nonce the row shows).
-			if (strict && viewerIsParticipant) || fullGrant || ((viewerIsParticipant || txVisibleToViewer) && isNonIdentifiable(caLevel)) {
+			if (strict && viewerIsParticipant) || ((viewerIsParticipant || txVisibleToViewer) && isNonIdentifiable(caLevel)) {
 				caLevel = VisibilityFull
 			}
 			if caLevel == VisibilityFull || caLevel == VisibilityPseudonymous {
@@ -1378,48 +1305,30 @@ func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []Token
 	// same decision eth_getLogs applies. Its counterparty is rendered at its own
 	// visibility (as the log's embedded address is masked), its amount kept (a
 	// value, not an address). Admin, the audit view, visibleTo and the RD-1009
-	// union grant nothing.
-	//
-	// RD-1353, both profiles: a row whose Transfer event the shared decision
-	// admits through a Full disclosure grant (rbac.LogDecision.DisclosureGrant
-	// — the event names a grant subject, and the viewer's own grant and rules
-	// on the token reach it) renders as that event does under the grant lens:
-	// both parties shown, amount kept, audited. A Full grant keeps no row on its
-	// own. Pseudonymous and redacted grants keep the explorer-only lens.
+	// union grant nothing; an approved disclosure grant still applies its lens.
 	strict := r.readProfile.Strict()
+	var strictAdmitted map[string]bool
 	if strict {
 		viewerIsAdminT = false
 		adminAuditView = false
 		ropts.ListedTxHashes = nil
-	}
-	grants := r.disclosureGrants(ctx, viewerDID)
-	var logDecisions map[string]keptLogVerdict
-	if strict || len(grants.Addresses()) > 0 {
-		logDecisions, err = r.transferLogDecisions(ctx, transfers, viewerDID, grants)
+		strictAdmitted, err = r.strictAdmittedTransferLogs(ctx, transfers, viewerDID)
 		if err != nil {
-			if strict {
-				return nil, err
-			}
-			// Standard: the events only matter for a Full-grant reveal.
-			// Without them no row is revealed through the grant, and the
-			// page is served under the ordinary rules (fail closed).
-			slog.Warn("explorer: transfer events unavailable; no disclosure-grant reveal on this page", "error", err)
-			logDecisions = nil
+			return nil, err
 		}
 	}
 
 	var result []TokenTransfer
-	// exempt[i] marks result[i] as admitted by the shared event decision
-	// (strict, or a Full grant), which already covers event access; it is not
-	// re-filtered by GetBatchEventAccess.
+	// exempt[i] marks result[i] as admitted by the strict event decision, which
+	// already covers event access; it is not re-filtered by GetBatchEventAccess.
 	var exempt []bool
 	for _, t := range transfers {
 		viewerIsFrom := t.From != "" && viewerAddrs[strings.ToLower(t.From)]
 		viewerIsTo := t.To != "" && viewerAddrs[strings.ToLower(t.To)]
 		viewerIsParticipant := viewerIsFrom || viewerIsTo
-		verdict := logDecisions[transferLogKey(t.TxHash, t.LogIndex)]
-		strictRow := strict && verdict.decision.Admit
+		strictRow := false
 		if strict {
+			strictRow = strictAdmitted[transferLogKey(t.TxHash, t.LogIndex)]
 			// No counterparty reveal under strict: the row renders like the
 			// masked log it derives from.
 			viewerIsParticipant = false
@@ -1454,46 +1363,41 @@ func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []Token
 			}
 		}
 
-		// Disclosure grants (see RedactTransactions for the full rationale).
-		// Full: the row of an event the shared decision admitted through the
-		// grant shows both parties (the grant lens of that event), counted for
-		// the audit trail when it reveals an otherwise-private party.
-		// Pseudonymous / redacted: the explorer-only lens — Pseudonymous
-		// demotes a Full counterparty (PR #282 behaviour preserved), Redacted
-		// sets the counterparty to Redacted so the row stays with [PRIVATE]
-		// addresses (proof-of-activity). Participant / visibleTo overrides win.
+		// Disclosure-grant lens (same shape as RedactTransactions, see the
+		// matching block there for the full rationale). Applies the matrix
+		// in /docs/security/privacy-requirements §"Disclosure Levels"
+		// uniformly: Full promotes the counterparty (regulatory reveal,
+		// audit-logged), Pseudonymous demotes a Full counterparty (PR #282
+		// behaviour preserved), Redacted sets the counterparty to Redacted
+		// so the row stays with [PRIVATE] addresses (proof-of-activity).
+		// Participant / visibleTo overrides win.
 		txVisibleViaGrant := false
-		grantRow := false
-		// The row's parties the event's grant lens reveals: only a side the
-		// event itself names in an indexed address parameter is shown, so a
-		// row that does not match its event reveals nothing through it.
-		fromInLens, toInLens := inLens(verdict.lens, t.From), inLens(verdict.lens, t.To)
 		if !viewerIsParticipant && !txVisibleToViewer {
-			if verdict.decision.Admit && verdict.decision.DisclosureGrant && (fromInLens || toInLens) {
-				grantRow = true
-				txVisibleViaGrant = true
-				revealed := false
-				if fromInLens && fromLevel != VisibilityFull {
-					fromLevel, revealed = VisibilityFull, true
+			fromVis := visMapDetailed[strings.ToLower(t.From)]
+			toVis := visMapDetailed[strings.ToLower(t.To)]
+			fromGrantLvl, fromIsGrant := disclosureGrantLevel(fromVis)
+			toGrantLvl, toIsGrant := disclosureGrantLevel(toVis)
+			txVisibleViaGrant = fromIsGrant || toIsGrant
+
+			revealedCounterpartyByFullGrant := false
+			if fromIsGrant {
+				if newLvl, promoted := counterpartyLensLevel(fromGrantLvl, toLevel); newLvl != toLevel {
+					toLevel = newLvl
+					if promoted {
+						revealedCounterpartyByFullGrant = true
+					}
 				}
-				if toInLens && toLevel != VisibilityFull {
-					toLevel, revealed = VisibilityFull, true
+			}
+			if toIsGrant {
+				if newLvl, promoted := counterpartyLensLevel(toGrantLvl, fromLevel); newLvl != fromLevel {
+					fromLevel = newLvl
+					if promoted {
+						revealedCounterpartyByFullGrant = true
+					}
 				}
-				if revealed {
-					ropts.recordGrantFullReveal(grants.GrantIDs(t.From), grants.GrantIDs(t.To))
-				}
-			} else {
-				fromVis := visMapDetailed[strings.ToLower(t.From)]
-				toVis := visMapDetailed[strings.ToLower(t.To)]
-				fromGrantLvl, fromIsGrant := nonFullGrantLevel(fromVis)
-				toGrantLvl, toIsGrant := nonFullGrantLevel(toVis)
-				txVisibleViaGrant = fromIsGrant || toIsGrant
-				if fromIsGrant {
-					toLevel, _ = counterpartyLensLevel(fromGrantLvl, toLevel)
-				}
-				if toIsGrant {
-					fromLevel, _ = counterpartyLensLevel(toGrantLvl, fromLevel)
-				}
+			}
+			if revealedCounterpartyByFullGrant {
+				ropts.recordGrantFullReveal()
 			}
 		}
 
@@ -1576,7 +1480,7 @@ func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []Token
 				redacted.To = t.To
 			}
 			result = append(result, redacted)
-			exempt = append(exempt, grantRow)
+			exempt = append(exempt, false)
 			continue
 		}
 
@@ -1587,7 +1491,7 @@ func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []Token
 		setMeta(t.To, baseToLevel)
 
 		result = append(result, redacted)
-		exempt = append(exempt, grantRow)
+		exempt = append(exempt, false)
 	}
 
 	// Strip transfers where the viewer lacks event access to the token contract.
@@ -1620,32 +1524,19 @@ func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []Token
 	return result, nil
 }
 
-// inLens reports whether addr is one of the grant-lens parties (lower-case).
-func inLens(lens []string, addr string) bool {
-	a := strings.ToLower(addr)
-	for _, l := range lens {
-		if l == a {
-			return true
-		}
-	}
-	return false
-}
-
 // transferLogKey identifies the log a token-transfer row derives from.
 func transferLogKey(txHash string, logIndex int) string {
 	return strings.ToLower(txHash) + ":" + strconv.Itoa(logIndex)
 }
 
-// transferLogDecisions returns, keyed by (tx hash, log index), the shared
-// event decision (rbac.DecideLogEmitter, through RedactLogsWithOpts on the logs
-// themselves) for each log behind these transfer rows that the decision
-// admits: the strict event predicate (RD-1299) and, in both profiles, the
-// Full disclosure-grant branch (RD-1353). The page costs one log lookup
-// (batched when the data source supports it, else one per distinct
-// transaction) and ONE log-redaction pass over every row's log. No data source
-// → nothing is admitted (fail closed).
-func (r *RedactionEngine) transferLogDecisions(ctx context.Context, transfers []TokenTransfer, viewerDID string, grants *rbac.DisclosureGrants) (map[string]keptLogVerdict, error) {
-	admitted := make(map[string]keptLogVerdict)
+// strictAdmittedTransferLogs returns the (tx hash, log index) keys of the logs
+// behind these transfer rows that the strict event predicate admits for the
+// viewer, evaluated by RedactLogsWithOpts on the logs themselves (RD-1299). The
+// page costs one log lookup (batched when the data source supports it, else one
+// per distinct transaction) and ONE log-redaction pass over every row's log. No
+// data source → nothing is admitted (fail closed).
+func (r *RedactionEngine) strictAdmittedTransferLogs(ctx context.Context, transfers []TokenTransfer, viewerDID string) (map[string]bool, error) {
+	admitted := make(map[string]bool)
 	if r.txDataResolver == nil || viewerDID == "" {
 		return admitted, nil
 	}
@@ -1681,13 +1572,12 @@ func (r *RedactionEngine) transferLogDecisions(ctx context.Context, transfers []
 	if len(behind) == 0 {
 		return admitted, nil
 	}
-	// No stats: a reveal is counted once, on the transfer row.
-	kept, decisions, err := r.redactLogs(ctx, behind, viewerDID, nil, grants)
+	kept, err := r.RedactLogsWithOpts(ctx, behind, viewerDID, nil)
 	if err != nil {
 		return nil, err
 	}
-	for i, l := range kept {
-		admitted[transferLogKey(l.TxHash, l.LogIndex)] = decisions[i]
+	for _, l := range kept {
+		admitted[transferLogKey(l.TxHash, l.LogIndex)] = true
 	}
 	return admitted, nil
 }
@@ -1823,16 +1713,9 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 		}
 	}
 
-	// The viewer's Full disclosure grants: the shared fact builder, resolved
-	// at most once for the page (RD-1353).
-	grants := r.disclosureGrants(ctx, viewerDID)
-
 	var result []InternalTransaction
 	for _, t := range itxs {
 		ppSet, ppViewer := parentParticipantSet, viewerIsParentParticipant
-		// ppGrantIDs: set when the parent is admitted only through a Full
-		// disclosure grant, so its parties' reveal below is a grant reveal.
-		var ppGrantIDs [][]string
 		if strict {
 			parent := parents[strings.ToLower(t.TxHash)]
 			ppSet, ppViewer = map[string]bool{}, false
@@ -1843,21 +1726,10 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 				if parent.HasRecipient() {
 					ppSet[strings.ToLower(*parent.To)] = true
 				}
-				parentTo := ""
-				if parent.HasRecipient() {
-					parentTo = *parent.To
-				}
-				// The shared decision on the parent: its participant, or a Full
-				// disclosure grant over its from/to (RD-1353).
-				parentFacts := rbac.TxEnvelopeFacts{
-					Surface:             rbac.TxSurfaceTransaction,
-					IsParticipant:       (parent.From != "" && viewerAddrs[strings.ToLower(parent.From)]) || (parent.HasRecipient() && viewerAddrs[strings.ToLower(*parent.To)]),
-					FullDisclosureGrant: grants.CoversTx(parent.From, parentTo),
-				}
-				ppViewer = rbac.DecideTxEnvelope(r.readProfile, parentFacts)
-				if rbac.TxEnvelopeRevealedByGrant(r.readProfile, parentFacts) {
-					ppGrantIDs = [][]string{grants.GrantIDs(parent.From), grants.GrantIDs(parentTo)}
-				}
+				ppViewer = rbac.DecideTxEnvelope(r.readProfile, rbac.TxEnvelopeFacts{
+					Surface:       rbac.TxSurfaceTransaction,
+					IsParticipant: (parent.From != "" && viewerAddrs[strings.ToLower(parent.From)]) || (parent.HasRecipient() && viewerAddrs[strings.ToLower(*parent.To)]),
+				})
 			}
 		}
 		viewerIsFrom := t.From != "" && viewerAddrs[strings.ToLower(t.From)]
@@ -1919,51 +1791,28 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 		// promotes the non-parent side of a frame, so a deep
 		// `parentParty -> foreignOrgContract` frame keeps the foreign contract at
 		// its standing (Redacted/Hidden) level — no cross-org leak.
-		parentPartyRevealed := false
 		if fromIsParentParty && isNonIdentifiable(fromLevel) {
 			fromLevel = VisibilityFull
-			parentPartyRevealed = true
 		}
 		if toIsParentParty && isNonIdentifiable(toLevel) {
 			toLevel = VisibilityFull
-			parentPartyRevealed = true
-		}
-		if parentPartyRevealed && ppGrantIDs != nil {
-			// The parent's parties are shown because a Full grant admitted the
-			// parent: an audited grant reveal.
-			ropts.recordGrantFullReveal(ppGrantIDs...)
 		}
 
-		// Disclosure-grant lens on the frame's parties (same shape as
-		// RedactTransactions). A Full grant — the shared fact — over a frame
-		// party reveals its counterparty in the frame (audited); a
-		// pseudonymous or redacted grant applies the explorer-only lens. The
-		// Full lens wins. Participant and visibleTo overrides win.
+		// Disclosure-grant lens (same shape as RedactTransactions, see the
+		// matching block there for the full matrix-spec rationale).
+		// Participant and visibleTo overrides win.
 		txVisibleViaGrant := false
-		fullFrameGrant := false
 		if !viewerIsParticipant && !txVisibleToViewer {
-			hasTo := t.To != nil && *t.To != ""
-			frameTo := ""
-			var toVis AddressVisibility
-			if hasTo {
-				frameTo = *t.To
-				toVis = visMapDetailed[strings.ToLower(frameTo)]
-			}
 			fromVis := visMapDetailed[strings.ToLower(t.From)]
-			fromGrantLvl, fromIsGrant := lensGrantLevel(t.From, grants, fromVis)
-			toGrantLvl, toIsGrant := lensGrantLevel(frameTo, grants, toVis)
-			fullFrameGrant = (fromIsGrant && fromGrantLvl == VisibilityFull) || (toIsGrant && toGrantLvl == VisibilityFull)
-			if fullFrameGrant {
-				// The Full lens wins over a non-Full grant on the other party.
-				if fromGrantLvl != VisibilityFull {
-					fromIsGrant = false
-				}
-				if toGrantLvl != VisibilityFull {
-					toIsGrant = false
-				}
+			var toVis AddressVisibility
+			if t.To != nil && *t.To != "" {
+				toVis = visMapDetailed[strings.ToLower(*t.To)]
 			}
+			fromGrantLvl, fromIsGrant := disclosureGrantLevel(fromVis)
+			toGrantLvl, toIsGrant := disclosureGrantLevel(toVis)
 			txVisibleViaGrant = fromIsGrant || toIsGrant
 
+			hasTo := t.To != nil && *t.To != ""
 			revealedCounterpartyByFullGrant := false
 			if fromIsGrant && hasTo {
 				if newLvl, promoted := counterpartyLensLevel(fromGrantLvl, toLevel); newLvl != toLevel {
@@ -1982,7 +1831,7 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 				}
 			}
 			if revealedCounterpartyByFullGrant {
-				ropts.recordGrantFullReveal(grants.GrantIDs(t.From), grants.GrantIDs(frameTo))
+				ropts.recordGrantFullReveal()
 			}
 		}
 
@@ -1999,12 +1848,9 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 		// Grant override mirrors RedactTransactions: a disclosure grant on
 		// either party keeps the row regardless of bothHidden — required
 		// for the redacted-grant cell of the matrix.
-		// Strict: the frame is part of its parent — the shared decision on the
-		// parent (participant, or a Full grant over the parent's from/to)
-		// admits it; otherwise only a pseudonymous or redacted grant's
-		// explorer-only lens keeps it. A Full grant over a frame party alone
-		// does not admit a frame of someone else's transaction.
-		if strict && !ppViewer && (!txVisibleViaGrant || fullFrameGrant) {
+		// Strict: only a participant of the parent tx or an approved
+		// disclosure grant admits the frame.
+		if strict && !ppViewer && !txVisibleViaGrant {
 			continue
 		}
 
@@ -2212,29 +2058,6 @@ func RedactLogAddressFields(topics []*string, data string, contractABI json.RawM
 	}
 	redData := redactLogData(data, contractABI, topic0, visMap)
 	return redTopics, redData
-}
-
-// GrantLensVisibility returns visMap with the grant-lens parties of one log
-// set to VisibilityFull, for a log the shared decision admitted through a Full
-// disclosure grant (rbac.LogDecision.DisclosureGrant). lens holds the parties
-// the event names in its ABI-indexed address parameters
-// (rbac.IndexedSelfMatcher.IndexedAddresses): the grant subject and their
-// counterparties in this event. Every other embedded address keeps the
-// viewer's own level and is masked as usual. visMap is not modified; with an
-// empty lens it is returned as is. Both layers render a grant log through it,
-// so they reveal the same addresses.
-func GrantLensVisibility(visMap VisibilityMap, lens []string) VisibilityMap {
-	if len(lens) == 0 {
-		return visMap
-	}
-	out := make(VisibilityMap, len(visMap)+len(lens))
-	for a, l := range visMap {
-		out[a] = l
-	}
-	for _, a := range lens {
-		out[strings.ToLower(a)] = VisibilityFull
-	}
-	return out
 }
 
 // ExtractLogAddresses returns every embedded address (indexed topics +
@@ -2551,28 +2374,13 @@ func (r *RedactionEngine) RedactLogs(ctx context.Context, logs []Log, viewerDID 
 
 // RedactLogsWithOpts is RedactLogs with visibleTo support.
 func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, viewerDID string, opts *RedactOpts, participantAddrs ...string) ([]Log, error) {
-	out, _, err := r.redactLogs(ctx, logs, viewerDID, opts, r.disclosureGrants(ctx, viewerDID), participantAddrs...)
-	return out, err
-}
-
-// keptLogVerdict is the shared decision a kept log was admitted with and, for
-// a disclosure-grant admission, the parties its grant lens reveals.
-type keptLogVerdict struct {
-	decision rbac.LogDecision
-	lens     []string
-}
-
-// redactLogs is RedactLogsWithOpts returning, alongside each kept log, the
-// shared decision (rbac.DecideLogEmitter) it was admitted with. grants is the
-// caller's per-call disclosure-grant set (the shared fact builder's result).
-func (r *RedactionEngine) redactLogs(ctx context.Context, logs []Log, viewerDID string, opts *RedactOpts, grants *rbac.DisclosureGrants, participantAddrs ...string) ([]Log, []keptLogVerdict, error) {
 	var visibleTxHashes, listedTxHashes map[string]bool
 	if opts != nil {
 		visibleTxHashes = opts.VisibleTxHashes
 		listedTxHashes = opts.ListedTxHashes
 	}
 	if len(logs) == 0 {
-		return logs, nil, nil
+		return logs, nil
 	}
 
 	// Build set of viewer's own linked addresses. Propagate DB errors —
@@ -2585,7 +2393,7 @@ func (r *RedactionEngine) redactLogs(ctx context.Context, logs []Log, viewerDID 
 	if viewerDID != "" {
 		linked, err := r.db.GetLinkedAddresses(ctx, viewerDID)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		for _, a := range linked {
 			viewerAddrs[strings.ToLower(a)] = true
@@ -2609,7 +2417,7 @@ func (r *RedactionEngine) redactLogs(ctx context.Context, logs []Log, viewerDID 
 	// the previous GetBatchVisibility + GetBatchVisibilityDetailed pair.
 	visMapDetailed, err := r.db.GetBatchVisibilityDetailed(ctx, viewerDID, addrs)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	visMap := visibilityMapFromDetailed(visMapDetailed)
 	masterMeta := make(map[string]VisibilityReason)
@@ -2659,7 +2467,7 @@ func (r *RedactionEngine) redactLogs(ctx context.Context, logs []Log, viewerDID 
 		// Single fetch (RD-1123): derive level + reason from the detailed map.
 		extraVisMapDetailed, err := r.db.GetBatchVisibilityDetailed(ctx, viewerDID, extraAddrs)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		for k, v := range extraVisMapDetailed {
 			visMap[k] = v.Level
@@ -2706,7 +2514,7 @@ func (r *RedactionEngine) redactLogs(ctx context.Context, logs []Log, viewerDID 
 			// Single fetch (RD-1123): derive level + reason from the detailed map.
 			abiVisMapDetailed, err2 := r.db.GetBatchVisibilityDetailed(ctx, viewerDID, abiDataAddrs)
 			if err2 != nil {
-				return nil, nil, err2
+				return nil, err2
 			}
 			for k, v := range abiVisMapDetailed {
 				visMap[k] = v.Level
@@ -2805,27 +2613,8 @@ func (r *RedactionEngine) redactLogs(ctx context.Context, logs []Log, viewerDID 
 		selfMatcher = rbac.NewIndexedSelfMatcher()
 	}
 
-	// RD-1353: the viewer's Full disclosure grants (the shared fact builder,
-	// at most one lookup per call). A log whose ABI-indexed address parameter
-	// names a grant subject is decided by the grant branch of the shared
-	// decision, with the subjects counting as the viewer for must_be:self rules
-	// (grantSelf) — exactly as rbac.FilterEventLogsDetailed resolves it.
-	var grantAddrs, grantSelf map[string]bool
-	var grantMatcher *rbac.IndexedSelfMatcher
-	if grantAddrs = grants.Addresses(); len(grantAddrs) > 0 {
-		grantMatcher = rbac.NewIndexedSelfMatcher()
-		grantSelf = make(map[string]bool, len(viewerAddrs)+len(grantAddrs))
-		for a := range viewerAddrs {
-			grantSelf[a] = true
-		}
-		for a := range grantAddrs {
-			grantSelf[a] = true
-		}
-	}
-
 	// Phase 4: apply redactions.
 	var result []Log
-	var decisions []keptLogVerdict
 	for _, l := range logs {
 		contractAddrLower := strings.ToLower(l.Address)
 
@@ -2909,9 +2698,6 @@ func (r *RedactionEngine) redactLogs(ctx context.Context, logs []Log, viewerDID 
 		if strict {
 			facts.IndexedSelf = selfMatcher.Match(string(abiForCheck), collectLogTopics(l), l.Data, viewerAddrs)
 		}
-		// Disclosure grant (both profiles): the same indexed-address match on
-		// the grant subjects. No ABI → never matches.
-		facts.FullDisclosureGrant = grantMatcher.Match(string(abiForCheck), collectLogTopics(l), l.Data, grantAddrs)
 
 		// event_rules resolution (RD-888). When no checker is wired (legacy
 		// callers / tests) the gate is disabled — treat as wildcard; the grant
@@ -2954,9 +2740,6 @@ func (r *RedactionEngine) redactLogs(ctx context.Context, logs []Log, viewerDID 
 							break
 						}
 					}
-					if facts.FullDisclosureGrant {
-						facts.GrantEventAllowed = grantRulesAllow(l, contractAddr, topic0Lower, res.Rules, grantSelf, contractABIs)
-					}
 				}
 			}
 		} else {
@@ -2967,11 +2750,6 @@ func (r *RedactionEngine) redactLogs(ctx context.Context, logs []Log, viewerDID 
 		if !decision.Admit {
 			continue
 		}
-		var lens []string
-		if decision.DisclosureGrant {
-			lens = grantMatcher.IndexedAddresses(string(abiForCheck), collectLogTopics(l), l.Data)
-		}
-		decisions = append(decisions, keptLogVerdict{decision: decision, lens: lens})
 
 		// Payload policy from the shared decision (RD-1300) — the SAME value the
 		// RPC renderer consumes. LogPayloadFull (the RD-874 visibleTo unlock:
@@ -2983,28 +2761,6 @@ func (r *RedactionEngine) redactLogs(ctx context.Context, logs []Log, viewerDID 
 			redacted.AddressMetadata = make(map[string]VisibilityReason)
 			result = append(result, redacted)
 			continue
-		}
-
-		// The Full-grant lens (RD-1353): the parties the event names in its
-		// ABI-indexed address parameters are shown — the subject and their
-		// counterparties in this event — exactly as the JSON-RPC renderer
-		// shows them (GrantLensVisibility). Every other embedded address keeps
-		// the viewer's own level. A lens that reveals an otherwise-private
-		// party is counted for the audit trail.
-		logVis := visMap
-		if decision.DisclosureGrant {
-			logVis = GrantLensVisibility(visMap, lens)
-			var revealedIDs [][]string
-			revealed := false
-			for _, a := range lens {
-				if visMap[a] != VisibilityFull {
-					revealed = true
-				}
-				revealedIDs = append(revealedIDs, grants.GrantIDs(a))
-			}
-			if revealed && opts != nil {
-				opts.recordGrantFullReveal(revealedIDs...)
-			}
 		}
 
 		redacted := l
@@ -3035,7 +2791,7 @@ func (r *RedactionEngine) redactLogs(ctx context.Context, logs []Log, viewerDID 
 		}
 
 		redacted.Address = r.applyRedaction(l.Address, level)
-		setMeta(l.Address, logVis[strings.ToLower(l.Address)])
+		setMeta(l.Address, visMap[strings.ToLower(l.Address)])
 
 		if level == VisibilityRedacted {
 			redacted.Topic0 = nil
@@ -3053,7 +2809,7 @@ func (r *RedactionEngine) redactLogs(ctx context.Context, logs []Log, viewerDID 
 			topicABI := contractABIs[strings.ToLower(l.Address)]
 			redTopics, redData := RedactLogAddressFields(
 				[]*string{l.Topic0, l.Topic1, l.Topic2, l.Topic3},
-				l.Data, topicABI, l.Topic0, logVis,
+				l.Data, topicABI, l.Topic0, visMap,
 			)
 			redacted.Topic0, redacted.Topic1, redacted.Topic2, redacted.Topic3 =
 				redTopics[0], redTopics[1], redTopics[2], redTopics[3]
@@ -3068,45 +2824,19 @@ func (r *RedactionEngine) redactLogs(ctx context.Context, logs []Log, viewerDID 
 					continue
 				}
 				if a, ok := extractTopicAddress(*t); ok {
-					setMeta(a, logVis[a])
+					setMeta(a, visMap[a])
 				}
 			}
 			if l.Data != "" && l.Topic0 != nil && len(topicABI) > 0 {
 				for _, a := range extractDataAddresses(l.Data, topicABI, l.Topic0) {
-					setMeta(a, logVis[a])
+					setMeta(a, visMap[a])
 				}
 			}
 		}
 
 		result = append(result, redacted)
 	}
-	return result, decisions, nil
-}
-
-// grantRulesAllow is the GrantEventAllowed fact on the explorer: an allowlisted
-// rule for topic0 whose param constraints hold when grantSelf (the viewer's
-// linked addresses plus the Full-grant subjects) is "self". Literal constraints
-// apply unchanged. Mirrors rbac.FilterEventLogsDetailed.
-func grantRulesAllow(l Log, contractAddr, topic0Lower string, rules []EventRuleInfo, grantSelf map[string]bool, contractABIs map[string]json.RawMessage) bool {
-	for _, rule := range rules {
-		if rule.Topic0 != topic0Lower {
-			continue
-		}
-		if len(rule.ParamRules) == 0 {
-			return true
-		}
-		var abiJSON string
-		if raw, ok := contractABIs[contractAddr]; ok {
-			abiJSON = string(raw)
-		}
-		if rbac.MatchesEventParamRules(
-			rbac.EventLogInputs{ContractAddress: contractAddr, Topics: collectLogTopics(l), Data: l.Data},
-			rule.ParamRules, grantSelf, abiJSON,
-		) {
-			return true
-		}
-	}
-	return false
+	return result, nil
 }
 
 // RedactAddress redacts a single address based on visibility for the viewer.

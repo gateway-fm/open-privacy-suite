@@ -50,11 +50,7 @@ func (p *JSONRPCProcessor) logFieldRenderer(ctx context.Context, viewerDID strin
 //     embedded address (indexed topics + ABI-decoded non-indexed data) the
 //     viewer is NOT entitled to see is zeroed — the field-level half of the
 //     RD-1214 unification, so eth_getLogs / eth_getTransactionReceipt return
-//     the same visible-address set the explorer would for the same viewer. A
-//     log admitted through a Full disclosure grant (AdmittedLog.DisclosureGrant)
-//     is masked through the grant lens: the parties it names in ABI-indexed
-//     address parameters are shown (explorer.GrantLensVisibility, as on the
-//     explorer).
+//     the same visible-address set the explorer would for the same viewer.
 //
 // Masking resolves visibility via p.addrVisResolver (the same
 // GetBatchVisibilityDetailed the explorer uses) and applies
@@ -149,13 +145,7 @@ func (p *JSONRPCProcessor) redactAdmittedLogs(ctx context.Context, viewerDID str
 		if !pl.ok {
 			continue
 		}
-		logVis := visMap
-		if a.DisclosureGrant {
-			// The Full-grant lens: the parties the event names in its
-			// ABI-indexed address parameters are shown, as on the explorer.
-			logVis = explorer.GrantLensVisibility(visMap, a.GrantLensAddresses)
-		}
-		redTopics, redData := explorer.RedactLogAddressFields(pl.topics, pl.data, pl.abi, pl.topic0, logVis)
+		redTopics, redData := explorer.RedactLogAddressFields(pl.topics, pl.data, pl.abi, pl.topic0, visMap)
 
 		topicStrs := make([]string, len(redTopics))
 		for j, t := range redTopics {
