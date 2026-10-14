@@ -24,7 +24,7 @@ func TestRedactAdmittedLogs_PolicyPerLog(t *testing.T) {
 	// Same content twice: identical input, different policy.
 	raw := rawLogJSON(t, emitter, []string{transfer, topicOf(third), topicOf(third)}, "0x")
 	// Every address resolves non-Full for this viewer.
-	p := &JSONRPCProcessor{addrVisResolver: &mockAddrVisResolver{vis: map[string]explorer.VisibilityLevel{}}}
+	p := &JSONRPCProcessor{readProfile: rbac.ReadProfileStandard, addrVisResolver: &mockAddrVisResolver{vis: map[string]explorer.VisibilityLevel{}}}
 
 	out := p.redactAdmittedLogs(context.Background(), "did:viewer", []rbac.AdmittedLog{
 		{Raw: raw, Payload: rbac.LogPayloadFull},
@@ -42,7 +42,7 @@ func TestRedactAdmittedLogs_PolicyPerLog(t *testing.T) {
 }
 
 func TestRedactAdmittedLogs_MaskedLogThatCannotBeParsedIsDropped(t *testing.T) {
-	p := &JSONRPCProcessor{addrVisResolver: &mockAddrVisResolver{vis: map[string]explorer.VisibilityLevel{}}}
+	p := &JSONRPCProcessor{readProfile: rbac.ReadProfileStandard, addrVisResolver: &mockAddrVisResolver{vis: map[string]explorer.VisibilityLevel{}}}
 	good := rawLogJSON(t, "0x1111111111111111111111111111111111111111", []string{"0x" + strings.Repeat("ab", 32)}, "0x")
 	out := p.redactAdmittedLogs(context.Background(), "did:viewer", []rbac.AdmittedLog{
 		{Raw: json.RawMessage(`"not-a-log-object"`), Payload: rbac.LogPayloadMasked},
@@ -55,7 +55,7 @@ func TestRedactAdmittedLogs_ResolverErrorMasksEverythingButFull(t *testing.T) {
 	emitter := "0x1111111111111111111111111111111111111111"
 	own := "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd"
 	raw := rawLogJSON(t, emitter, []string{"0x" + strings.Repeat("ab", 32), topicOf(own)}, "0x")
-	p := &JSONRPCProcessor{addrVisResolver: &mockAddrVisResolver{err: context.DeadlineExceeded}}
+	p := &JSONRPCProcessor{readProfile: rbac.ReadProfileStandard, addrVisResolver: &mockAddrVisResolver{err: context.DeadlineExceeded}}
 	out := p.redactAdmittedLogs(context.Background(), "did:viewer", []rbac.AdmittedLog{
 		{Raw: raw, Payload: rbac.LogPayloadFull},
 		{Raw: raw, Payload: rbac.LogPayloadMasked},
@@ -95,8 +95,8 @@ func TestFilterReceiptLogs_UnlockBoundToReceiptHash(t *testing.T) {
 		TxVisibility:        map[string][]string{receiptHash: {viewer}, otherHash: {viewer}},
 		UnlockableContracts: map[string]bool{flagged: true},
 	}
-	p := &JSONRPCProcessor{addrVisResolver: &mockAddrVisResolver{vis: map[string]explorer.VisibilityLevel{}}}
-	out := filterReceiptLogsWithEventRules(body, nil, perms, abiProv, visCtx, nil, p.logFieldRenderer(context.Background(), viewer, abiProv))
+	p := &JSONRPCProcessor{readProfile: rbac.ReadProfileStandard, addrVisResolver: &mockAddrVisResolver{vis: map[string]explorer.VisibilityLevel{}}}
+	out := filterReceiptLogsWithEventRules(rbac.ReadProfileStandard, body, nil, perms, abiProv, visCtx, nil, p.logFieldRenderer(context.Background(), viewer, abiProv))
 
 	var resp struct {
 		Result struct {

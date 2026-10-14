@@ -354,6 +354,7 @@ func TestDryRunAndViewAsRPC_DoNotUseTheUsersDisclosureGrants_RD1318(t *testing.T
 	t.Cleanup(stub.Close)
 	f.srv.proxy = proxy.New(stub.URL)
 	f.srv.jsonrpcProcessor = NewJSONRPCProcessor(JSONRPCProcessorConfig{
+		ReadProfile:               rbac.ReadProfileStandard,
 		RBACAccessCtrl:            f.srv.rbacAccessCtrl,
 		RateLimiter:               &noopRateLimiter{},
 		Proxy:                     f.srv.proxy,

@@ -2434,6 +2434,24 @@
                 },
                 "type": "object"
             },
+            "privacy-proxy_internal_apimodels.SystemReadProfileResponse": {
+                "properties": {
+                    "org_admin_view_user_txs": {
+                        "description": "OrgAdminViewUserTxs is whether the org-admin audit view is in effect\n(always false under the strict profile).",
+                        "type": "boolean"
+                    },
+                    "org_admin_view_user_txs_configured": {
+                        "description": "OrgAdminViewUserTxsConfigured is the configured ORG_ADMIN_VIEW_USER_TXS\nvalue, reported so an overridden setting is visible.",
+                        "type": "boolean"
+                    },
+                    "profile": {
+                        "description": "Profile is the enforced read profile: \"standard\" or \"strict\".",
+                        "example": "strict",
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
             "privacy-proxy_internal_apimodels.SystemToggleRequest": {
                 "properties": {
                     "enabled": {
@@ -10869,7 +10887,7 @@
         },
         "/api/v1/admin/orgs/{org_id}/dry-run": {
             "post": {
-                "description": "Evaluates \"what would this user see if they made this RPC call?\" in the path org, without mutating chain state. Read methods are forwarded, and the response goes through the same privacy filter as the user's own call, evaluated in the path org only: the user's contract grants, admin role and visibleTo shares from other organizations do not apply, and the user's disclosure grants never apply (a grant discloses to the grantee alone); a transaction or receipt the user may not read, or one sent to or deploying another organization's contract, comes back null; logs are filtered, and embedded addresses the user cannot see are redacted. Write methods (eth_sendTransaction / eth_sendRawTransaction) are translated to debug_traceCall so the RBAC verdict, the events the tx would emit, and the subset the user would see in its receipt can be inspected. If the user's view cannot be produced, nothing from the node is returned (500). Requires a tier-2 org-admin JWT of the path org: X-Admin-Token credentials (both the full super-admin token and the operator token) are explicitly rejected, since impersonation reads tenant data as the user. The impersonated user must exist and be a member of the path org, else an opaque 404. Every evaluation is written to the impersonation audit log fail-closed. Supported methods: eth_call, eth_getLogs, eth_getTransactionReceipt, eth_getTransactionByHash, eth_getBalance, eth_getCode, eth_getStorageAt, eth_blockNumber, eth_chainId, eth_sendTransaction, eth_sendRawTransaction.\nClient state/block override options are unsupported regardless of the selected user's role, including admins.",
+                "description": "Evaluates \"what would this user see if they made this RPC call?\" in the path org, without mutating chain state. Read methods are forwarded, and the response goes through the same privacy filter as the user's own call, evaluated in the path org only: the user's contract grants, admin role and visibleTo shares from other organizations do not apply, and the user's disclosure grants never apply (a grant discloses to the grantee alone); a transaction or receipt the user may not read, or one sent to or deploying another organization's contract, comes back null; logs are filtered, and embedded addresses the user cannot see are redacted. Write methods (eth_sendTransaction / eth_sendRawTransaction) are translated to debug_traceCall so the RBAC verdict, the events the tx would emit, and the subset the user would see in its receipt can be inspected. If the user's view cannot be produced, nothing from the node is returned (500). Requires a tier-2 org-admin JWT of the path org: X-Admin-Token credentials (both the full super-admin token and the operator token) are explicitly rejected, since impersonation reads tenant data as the user. The impersonated user must exist and be a member of the path org, else an opaque 404. Every evaluation is written to the impersonation audit log fail-closed. Under the strict read privacy profile (PRIVACY_READ_PROFILE=strict) read methods are refused with 403 before anything is forwarded (the refusal is audited), and a simulated send returns only the allow/deny verdict, without the trace or its logs. Supported methods: eth_call, eth_getLogs, eth_getTransactionReceipt, eth_getTransactionByHash, eth_getBalance, eth_getCode, eth_getStorageAt, eth_blockNumber, eth_chainId, eth_sendTransaction, eth_sendRawTransaction.\nClient state/block override options are unsupported regardless of the selected user's role, including admins.",
                 "parameters": [
                     {
                         "description": "Organization ID (UUID)",
@@ -10940,7 +10958,7 @@
                                 }
                             }
                         },
-                        "description": "source address not on the private network, or X-Admin-Token/operator credentials used (dry-run requires a tier-2 admin JWT)"
+                        "description": "source address not on the private network, X-Admin-Token/operator credentials used (dry-run requires a tier-2 admin JWT), or a read method under the strict read profile"
                     },
                     "404": {
                         "content": {
@@ -12993,6 +13011,52 @@
                 ]
             }
         },
+        "/api/v1/admin/system/read-profile": {
+            "get": {
+                "description": "Effective deployment-wide read privacy profile (PRIVACY_READ_PROFILE, fixed at startup) and the effective state of the org-admin audit view (ORG_ADMIN_VIEW_USER_TXS). Under \"strict\", transactions and receipts are returned only to a transaction participant and an event only when an indexed address parameter of its registered ABI is one of the viewer's linked addresses; the org-admin audit view is then always off, whatever ORG_ADMIN_VIEW_USER_TXS says. Read-only; any admin the middleware admits.",
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.SystemReadProfileResponse"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "missing or invalid admin token"
+                    },
+                    "403": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "source address not on the private network"
+                    }
+                },
+                "security": [
+                    {
+                        "AdminToken": []
+                    }
+                ],
+                "summary": "Get the read privacy profile",
+                "tags": [
+                    "Admin: system"
+                ]
+            }
+        },
         "/api/v1/admin/system/version": {
             "get": {
                 "description": "Build identity (version, commit, build time) of the running binary. Read-only; any admin token. Deliberately not exposed on /health or web3_clientVersion.",
@@ -13041,7 +13105,7 @@
         },
         "/api/v1/admin/test-request": {
             "post": {
-                "description": "Dashboard diagnostic: runs one method through RBAC, the same nested-call trace as /rpc (eth_call, eth_estimateGas, and eth_createAccessList without `to`), travel-rule compliance, and upstream forwarding, using a synthetic identity (\"test:dashboard\") or the subject of a supplied jwt_token. On an upstream JSON-RPC-level error the call still returns HTTP 200 with the error in the response body. Requires the private-network source gate (403 otherwise).\nClient state/block override options follow the RPC policy for every caller, including admins.",
+                "description": "Dashboard diagnostic: runs one method through RBAC, the same nested-call trace as /rpc (eth_call, eth_estimateGas, and eth_createAccessList without `to`), travel-rule compliance, and upstream forwarding, using a synthetic identity (\"test:dashboard\") or the subject of a supplied jwt_token. Under the strict read privacy profile (PRIVACY_READ_PROFILE=strict) transaction, receipt, log and block reads are refused with 403 before anything is forwarded. On an upstream JSON-RPC-level error the call still returns HTTP 200 with the error in the response body. Requires the private-network source gate (403 otherwise).\nClient state/block override options follow the RPC policy for every caller, including admins.",
                 "requestBody": {
                     "content": {
                         "application/json": {
@@ -13101,7 +13165,7 @@
                                 }
                             }
                         },
-                        "description": "RBAC, nested-call trace or compliance denied (network-gate rejections return the generic error envelope)"
+                        "description": "RBAC, nested-call trace or compliance denied, or a transaction, receipt, log or block read under the strict read profile (network-gate rejections return the generic error envelope)"
                     },
                     "500": {
                         "content": {
@@ -19155,7 +19219,7 @@
         },
         "/rpc": {
             "post": {
-                "description": "Single Ethereum JSON-RPC 2.0 request, method-allowlisted and RBAC-checked, with per-method response redaction. Batch (array) requests are rejected.\n\nMember names must be exact-case and unique: a request that repeats a member name, holds two names differing only in letter case in one object (at any depth), or uses a case variant of a JSON-RPC member (e.g. `Method`) is rejected with 400 before any access decision and never reaches the node; so is an `id` that is not a string, a number or null. For methods whose params the proxy checks (all but typed-data signing and named passthrough), so are a case variant of a standard request field inside params (e.g. `To`) and an object whose `data` and `input` differ. The node receives a request rebuilt from the members the proxy read (jsonrpc, id, method, params); `visibleTo`/`privateFor` and any other top-level members are never forwarded.\n\n`Authorization: Bearer \u003ctoken\u003e` is OPTIONAL: anonymous callers are restricted to the anonymous method allowlist; authenticated callers get per-method RBAC and response redaction based on their identity.\n\nClient state/block override options on call, gas-estimation, access-list, and trace methods are unsupported for all callers, including admins. Positional null/empty-object placeholders remain allowed; debug_traceCall override and replay-position config keys must be omitted. Ordinary calls remain subject to the normal access and node validation rules.\n\nThe transaction-sending methods (eth_sendTransaction / eth_sendRawTransaction) additionally accept a top-level `visibleTo` array (alias `privateFor`) of DIDs and/or linked ETH addresses, granting those viewers per-transaction visibility of the emitted event logs (RD-1163). It is accepted only for log-emitting contract calls.\n\nOrdinary upstream JSON-RPC errors retain their JSON-RPC error member. Transport, access and rate-limit failures use the non-200 statuses below. `POST /` and `POST /rpc` are the same operation.\n\nClient traces return only validated call-tree frames. The viewer's contract, function and argument permissions apply to returned calls, including delegated storage contexts. Internal-call values (a nested call's input, value, output and revert reason) are returned only to a viewer who may read the storage of the contract that produced them; otherwise they are omitted and named in the call's `redacted` array. Trace or upstream failures return opaque non-200 errors.",
+                "description": "Single Ethereum JSON-RPC 2.0 request, method-allowlisted and RBAC-checked, with per-method response redaction. Batch (array) requests are rejected.\n\nMember names must be exact-case and unique: a request that repeats a member name, holds two names differing only in letter case in one object (at any depth), or uses a case variant of a JSON-RPC member (e.g. `Method`) is rejected with 400 before any access decision and never reaches the node; so is an `id` that is not a string, a number or null. For methods whose params the proxy checks (all but typed-data signing and named passthrough), so are a case variant of a standard request field inside params (e.g. `To`) and an object whose `data` and `input` differ. The node receives a request rebuilt from the members the proxy read (jsonrpc, id, method, params); `visibleTo`/`privateFor` and any other top-level members are never forwarded.\n\n`Authorization: Bearer \u003ctoken\u003e` is OPTIONAL: anonymous callers are restricted to the anonymous method allowlist; authenticated callers get per-method RBAC and response redaction based on their identity.\n\nClient state/block override options on call, gas-estimation, access-list, and trace methods are unsupported for all callers, including admins. Positional null/empty-object placeholders remain allowed; debug_traceCall override and replay-position config keys must be omitted. Ordinary calls remain subject to the normal access and node validation rules.\n\nThe transaction-sending methods (eth_sendTransaction / eth_sendRawTransaction) additionally accept a top-level `visibleTo` array (alias `privateFor`) of DIDs and/or linked ETH addresses, granting those viewers per-transaction visibility of the emitted event logs (RD-1163). It is accepted only for log-emitting contract calls.\n\nOrdinary upstream JSON-RPC errors retain their JSON-RPC error member. Transport, access and rate-limit failures use the non-200 statuses below. `POST /` and `POST /rpc` are the same operation.\n\nClient call traces and standard-profile mined traces return validated call-tree frames. The viewer's contract, function and argument permissions apply to returned calls, including delegated storage contexts. Internal-call values (a nested call's input, value, output and revert reason) are returned only to a viewer who may read the storage of the contract that produced them; otherwise they are omitted and named in the call's `redacted` array. Strict-profile mined traces return only a linked transaction participant's top frame, without internal calls or logs, subject to organization ownership checks. Trace or upstream failures return opaque non-200 errors.",
                 "parameters": [
                     {
                         "description": "Organization the access decision resolves against (only on /rpc/{org_id})",
@@ -19225,7 +19289,7 @@
                                 }
                             }
                         },
-                        "description": "runtime-trace, trace-access (debug_traceTransaction for a non-participant or a missing transaction) or compliance denial"
+                        "description": "runtime-trace, standard-profile trace-access (debug_traceTransaction for a non-participant or a missing transaction) or compliance denial"
                     },
                     "404": {
                         "content": {
@@ -19235,7 +19299,7 @@
                                 }
                             }
                         },
-                        "description": "method not allowed for the caller (denials are masked as method not found)"
+                        "description": "method not allowed for the caller (denials are masked as method not found), or a strict-profile mined trace unavailable to the caller"
                     },
                     "413": {
                         "content": {
@@ -19291,7 +19355,7 @@
         },
         "/rpc/{org_id}": {
             "post": {
-                "description": "Single Ethereum JSON-RPC 2.0 request, method-allowlisted and RBAC-checked, with per-method response redaction. Batch (array) requests are rejected.\n\nMember names must be exact-case and unique: a request that repeats a member name, holds two names differing only in letter case in one object (at any depth), or uses a case variant of a JSON-RPC member (e.g. `Method`) is rejected with 400 before any access decision and never reaches the node; so is an `id` that is not a string, a number or null. For methods whose params the proxy checks (all but typed-data signing and named passthrough), so are a case variant of a standard request field inside params (e.g. `To`) and an object whose `data` and `input` differ. The node receives a request rebuilt from the members the proxy read (jsonrpc, id, method, params); `visibleTo`/`privateFor` and any other top-level members are never forwarded.\n\n`Authorization: Bearer \u003ctoken\u003e` is OPTIONAL: anonymous callers are restricted to the anonymous method allowlist; authenticated callers get per-method RBAC and response redaction based on their identity.\n\nClient state/block override options on call, gas-estimation, access-list, and trace methods are unsupported for all callers, including admins. Positional null/empty-object placeholders remain allowed; debug_traceCall override and replay-position config keys must be omitted. Ordinary calls remain subject to the normal access and node validation rules.\n\nThe transaction-sending methods (eth_sendTransaction / eth_sendRawTransaction) additionally accept a top-level `visibleTo` array (alias `privateFor`) of DIDs and/or linked ETH addresses, granting those viewers per-transaction visibility of the emitted event logs (RD-1163). It is accepted only for log-emitting contract calls.\n\nOrdinary upstream JSON-RPC errors retain their JSON-RPC error member. Transport, access and rate-limit failures use the non-200 statuses below. `POST /` and `POST /rpc` are the same operation.\n\nClient traces return only validated call-tree frames. The viewer's contract, function and argument permissions apply to returned calls, including delegated storage contexts. Internal-call values (a nested call's input, value, output and revert reason) are returned only to a viewer who may read the storage of the contract that produced them; otherwise they are omitted and named in the call's `redacted` array. Trace or upstream failures return opaque non-200 errors.",
+                "description": "Single Ethereum JSON-RPC 2.0 request, method-allowlisted and RBAC-checked, with per-method response redaction. Batch (array) requests are rejected.\n\nMember names must be exact-case and unique: a request that repeats a member name, holds two names differing only in letter case in one object (at any depth), or uses a case variant of a JSON-RPC member (e.g. `Method`) is rejected with 400 before any access decision and never reaches the node; so is an `id` that is not a string, a number or null. For methods whose params the proxy checks (all but typed-data signing and named passthrough), so are a case variant of a standard request field inside params (e.g. `To`) and an object whose `data` and `input` differ. The node receives a request rebuilt from the members the proxy read (jsonrpc, id, method, params); `visibleTo`/`privateFor` and any other top-level members are never forwarded.\n\n`Authorization: Bearer \u003ctoken\u003e` is OPTIONAL: anonymous callers are restricted to the anonymous method allowlist; authenticated callers get per-method RBAC and response redaction based on their identity.\n\nClient state/block override options on call, gas-estimation, access-list, and trace methods are unsupported for all callers, including admins. Positional null/empty-object placeholders remain allowed; debug_traceCall override and replay-position config keys must be omitted. Ordinary calls remain subject to the normal access and node validation rules.\n\nThe transaction-sending methods (eth_sendTransaction / eth_sendRawTransaction) additionally accept a top-level `visibleTo` array (alias `privateFor`) of DIDs and/or linked ETH addresses, granting those viewers per-transaction visibility of the emitted event logs (RD-1163). It is accepted only for log-emitting contract calls.\n\nOrdinary upstream JSON-RPC errors retain their JSON-RPC error member. Transport, access and rate-limit failures use the non-200 statuses below. `POST /` and `POST /rpc` are the same operation.\n\nClient call traces and standard-profile mined traces return validated call-tree frames. The viewer's contract, function and argument permissions apply to returned calls, including delegated storage contexts. Internal-call values (a nested call's input, value, output and revert reason) are returned only to a viewer who may read the storage of the contract that produced them; otherwise they are omitted and named in the call's `redacted` array. Strict-profile mined traces return only a linked transaction participant's top frame, without internal calls or logs, subject to organization ownership checks. Trace or upstream failures return opaque non-200 errors.",
                 "parameters": [
                     {
                         "description": "Organization the access decision resolves against (only on /rpc/{org_id})",
@@ -19361,7 +19425,7 @@
                                 }
                             }
                         },
-                        "description": "runtime-trace, trace-access (debug_traceTransaction for a non-participant or a missing transaction) or compliance denial"
+                        "description": "runtime-trace, standard-profile trace-access (debug_traceTransaction for a non-participant or a missing transaction) or compliance denial"
                     },
                     "404": {
                         "content": {
@@ -19371,7 +19435,7 @@
                                 }
                             }
                         },
-                        "description": "method not allowed for the caller (denials are masked as method not found)"
+                        "description": "method not allowed for the caller (denials are masked as method not found), or a strict-profile mined trace unavailable to the caller"
                     },
                     "413": {
                         "content": {

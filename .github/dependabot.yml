@@ -1,25 +1,48 @@
 version: 2
 updates:
+  # Version updates are batched into one PR per ecosystem per month. Security
+  # fixes do not wait for this schedule: they arrive through the Aikido triage
+  # and the CI gates (govulncheck in CI, the dependency-advisory audit in Node
+  # approvals), which fail as soon as an advisory affects a pinned version.
+
+  # Besu plugin build. Libraries that Besu provides at runtime are compileOnly
+  # here, and the bundled gRPC artifacts must match Besu's gRPC. All of them
+  # move only with an upgrade of the supported Besu distribution, never on
+  # their own, so Dependabot does not propose them.
   - package-ecosystem: "gradle"
     directory: "/node-approvals/besu"
     schedule:
-      interval: "weekly"
-    # Provided dependencies must stay aligned with the supported Besu distribution.
-    open-pull-requests-limit: 5
+      interval: "monthly"
+    ignore:
+      - dependency-name: "org.hyperledger.besu:*"
+      - dependency-name: "org.hyperledger.besu.internal:*"
+      - dependency-name: "info.picocli:picocli"
+      - dependency-name: "org.slf4j:slf4j-api"
+      - dependency-name: "com.fasterxml.jackson.core:*"
+      - dependency-name: "org.bouncycastle:*"
+      - dependency-name: "io.netty:*"
+      - dependency-name: "io.grpc:*"
+    groups:
+      besu-plugin-build:
+        patterns:
+          - "*"
+
   # Reth resolves path dependencies from a separately pinned upstream checkout.
   # The scheduled Node approvals workflow audits that Cargo.lock after preparation.
+
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "weekly"
+      interval: "monthly"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
 
-  # Go module dependencies. Previously only github-actions were tracked, so
-  # module CVEs (e.g. golang-jwt CVE-2025-30204) sat unnoticed. Grouped to keep
-  # PR volume manageable; the CI vuln job gates on reachable vulnerabilities.
   - package-ecosystem: "gomod"
     directory: "/"
     schedule:
-      interval: "weekly"
+      interval: "monthly"
     groups:
       go-dependencies:
         patterns:

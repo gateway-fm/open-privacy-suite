@@ -172,6 +172,7 @@ func newTraceProcessor(t *testing.T, ts *testServerRBAC, c *traceCanary) *JSONRP
 	rt := tracer.NewRuntimeTracer(tracer.RuntimeTracerConfig{NodeURL: c.srv.URL, Enabled: true, Timeout: 5 * time.Second})
 	t.Cleanup(rt.Stop)
 	proc := NewJSONRPCProcessor(JSONRPCProcessorConfig{
+		ReadProfile:        rbac.ReadProfileStandard,
 		RBACAccessCtrl:     ts.rbacAccessCtrl,
 		RateLimiter:        &noopRateLimiter{},
 		Proxy:              proxy.New(c.srv.URL),

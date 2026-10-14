@@ -681,8 +681,9 @@ func proxyCallTracerConfig() map[string]any {
 type debugTracePlan struct {
 	upstreamReq   []byte             // proxy-built callTracer JSON-RPC request
 	orgIDs        map[string]bool    // orgs to validate the trace tree against
-	userHasDeploy bool               // real deploy-claim status (CREATE gate)
+	userHasDeploy bool               // creation-frame admission for this plan
 	traceOpts     []rbac.TraceOption // client trace grant scoping
+	topFrameOnly  bool               // strict mined-transaction projection
 }
 
 // processDebugTrace applies the corresponding read method's access checks,
@@ -764,6 +765,14 @@ func (p *JSONRPCProcessor) processDebugTrace(ctx context.Context, req *ProcessRe
 	//    debug_traceCall override keys were already refused above with the
 	//    opaque 404; this check also refuses them (400) in a
 	//    debug_traceTransaction config.
+	if p.readProfile.Strict() && traceMethod == "debug_traceTransaction" {
+		if _, ok := p.strictTraceForwardBody(req); !ok {
+			perr := &ProcessError{StatusCode: http.StatusBadRequest, Message: strictTraceUnsupportedConfig, Reason: ReasonInvalidRequestShape}
+			req.denialReason = perr.Reason
+			p.logAccess(ctx, req, perr.StatusCode)
+			return &ProcessResult{Error: perr}
+		}
+	}
 	if perr := vetDebugTraceConfig(traceMethod, req.Params); perr != nil {
 		req.denialReason = perr.Reason
 		p.logAccess(ctx, req, perr.StatusCode)
@@ -955,15 +964,19 @@ func (p *JSONRPCProcessor) gateDebugTraceCall(ctx context.Context, req *ProcessR
 //     single-org) resolution and the allowlist in that org — so the replay is
 //     scoped to the org the request names (the View-as RPC mirror refuses
 //     trace methods before processing, RD-1308);
-//   - the viewer must be a participant (linked address == from|to), an admin
-//     of the tx's `to` contract in that org, or a visibleTo recipient;
+//   - strict admits linked sender/recipient participants; standard also admits
+//     an admin of the tx's `to` contract in that org or a visibleTo recipient;
 //   - a `to` contract registered to another org is refused before the trace.
 //
-// A non-existent tx and a non-visible tx collapse to the same opaque 403 (no
-// existence oracle). Fail-closed on every lookup error.
+// A missing and a non-visible transaction receive the same profile-specific
+// error: 404 under strict, 403 under standard. Lookup failures deny access.
 func (p *JSONRPCProcessor) gateDebugTraceTransaction(ctx context.Context, req *ProcessRequest, user *rbac.User) (*debugTracePlan, *ProcessError) {
 	txHash, _ := req.Params[0].(string) // vetDebugTraceConfig validated 0x + 64 hex
 	hidden := &ProcessError{StatusCode: http.StatusForbidden, Message: traceDenyAccess, Reason: ReasonTraceAccessDenied}
+	if p.readProfile.Strict() {
+		hidden.StatusCode = http.StatusNotFound
+		hidden.Message = "transaction not found"
+	}
 
 	accessReq := &rbac.AccessCheckRequest{
 		UserExternalID: req.UserID,
@@ -1016,6 +1029,19 @@ func (p *JSONRPCProcessor) gateDebugTraceTransaction(ctx context.Context, req *P
 	}
 	if !p.viewerCanSeeMinedTx(ctx, req, user.ID, orgID, from, to, txHash) {
 		return nil, hidden
+	}
+	if p.readProfile.Strict() {
+		body, mErr := buildTraceRequest("debug_traceTransaction", []any{txHash, map[string]any{
+			"tracer":       "callTracer",
+			"tracerConfig": map[string]any{"onlyTopCall": true, "withLog": false},
+		}})
+		if mErr != nil {
+			return nil, &ProcessError{StatusCode: http.StatusInternalServerError, Message: traceDenyTracerError, Reason: ReasonInternalError}
+		}
+		// A known participant receives the mined transaction's top frame.
+		// Historical creation is admitted independently of a current deploy
+		// claim; ownership validation still applies to the returned frame.
+		return &debugTracePlan{upstreamReq: body, orgIDs: orgIDs, userHasDeploy: true, topFrameOnly: true}, nil
 	}
 
 	// The top-level `to` must be a contract the viewer may access: the same
@@ -1093,6 +1119,12 @@ func (p *JSONRPCProcessor) clientTraceGrantScope(ctx context.Context, userUUID s
 // against the plan's org scope, and returns the re-marshaled sanitized frame —
 // so the bytes returned are exactly the frames validated.
 func (p *JSONRPCProcessor) forwardAndValidateTrace(ctx context.Context, req *ProcessRequest, plan *debugTracePlan) (json.RawMessage, *ProcessError) {
+	unavailable := func(status int, message, reason string) *ProcessError {
+		if plan.topFrameOnly {
+			return &ProcessError{StatusCode: http.StatusNotFound, Message: "transaction not found", Reason: ReasonTraceAccessDenied}
+		}
+		return &ProcessError{StatusCode: status, Message: message, Reason: reason}
+	}
 	traceAPIKey := p.defaultRPCAPIKey
 	traceAPIKeyHeader := p.resolveAPIKeyHeader()
 	if p.circuitBreaker != nil && p.circuitBreaker.IsOpen(traceAPIKey) {
@@ -1118,14 +1150,14 @@ func (p *JSONRPCProcessor) forwardAndValidateTrace(ctx context.Context, req *Pro
 	}
 	if err != nil {
 		slog.Warn("jsonrpc: trace forward failed", "method", req.Method, "err", err)
-		return nil, &ProcessError{StatusCode: http.StatusBadGateway, Message: "failed to forward trace request", Reason: ReasonUpstreamError}
+		return nil, unavailable(http.StatusBadGateway, "failed to forward trace request", ReasonUpstreamError)
 	}
 	if statusCode == http.StatusTooManyRequests {
 		return nil, &ProcessError{StatusCode: http.StatusTooManyRequests, Message: "upstream rate limited, retry in 1s", Reason: ReasonRateLimited}
 	}
 	if statusCode != http.StatusOK {
 		slog.Warn("jsonrpc: trace upstream returned unsuccessful status", "method", req.Method, "status", statusCode)
-		return nil, &ProcessError{StatusCode: http.StatusBadGateway, Message: traceDenyTracerError, Reason: ReasonUpstreamError}
+		return nil, unavailable(http.StatusBadGateway, traceDenyTracerError, ReasonUpstreamError)
 	}
 
 	var rpcResp struct {
@@ -1137,21 +1169,40 @@ func (p *JSONRPCProcessor) forwardAndValidateTrace(ctx context.Context, req *Pro
 	}
 	if jerr := json.Unmarshal(responseBody, &rpcResp); jerr != nil {
 		slog.Warn("jsonrpc: trace upstream returned malformed response", "method", req.Method)
-		return nil, &ProcessError{StatusCode: http.StatusBadGateway, Message: traceDenyTracerError, Reason: ReasonUpstreamError}
+		return nil, unavailable(http.StatusBadGateway, traceDenyTracerError, ReasonUpstreamError)
 	}
 	if rpcResp.Error != nil {
 		// Never echo the node error (it can carry a method/JS-eval detail).
 		slog.Warn("jsonrpc: trace upstream error", "method", req.Method, "code", rpcResp.Error.Code)
-		return nil, &ProcessError{StatusCode: http.StatusForbidden, Message: traceDenyTracerError, Reason: ReasonTracingUnavailable}
+		return nil, unavailable(http.StatusForbidden, traceDenyTracerError, ReasonTracingUnavailable)
 	}
 
-	sanitized, parsed, perr := tracer.ParseStrictCallTrace(rpcResp.Result)
+	traceBody := rpcResp.Result
+	if plan.topFrameOnly {
+		var root map[string]json.RawMessage
+		if err := json.Unmarshal(traceBody, &root); err != nil || root == nil {
+			return nil, unavailable(http.StatusForbidden, traceDenyTracerError, ReasonTracingUnavailable)
+		}
+		for name := range root {
+			if strings.EqualFold(name, "calls") {
+				delete(root, name)
+			}
+		}
+		traceBody, err = json.Marshal(root)
+		if err != nil {
+			return nil, unavailable(http.StatusForbidden, traceDenyTracerError, ReasonTracingUnavailable)
+		}
+	}
+	sanitized, parsed, perr := tracer.ParseStrictCallTrace(traceBody)
 	if perr != nil {
 		if errors.Is(perr, tracer.ErrTraceDepthExceeded) {
-			return nil, &ProcessError{StatusCode: http.StatusForbidden, Message: traceDenyCrossOrg, Reason: ReasonTraceDepthExceeded}
+			return nil, unavailable(http.StatusForbidden, traceDenyCrossOrg, ReasonTraceDepthExceeded)
 		}
 		slog.Warn("jsonrpc: trace result is not a well-formed callTracer tree", "method", req.Method, "err", perr)
-		return nil, &ProcessError{StatusCode: http.StatusForbidden, Message: traceDenyTracerError, Reason: ReasonTracingUnavailable}
+		return nil, unavailable(http.StatusForbidden, traceDenyTracerError, ReasonTracingUnavailable)
+	}
+	if plan.topFrameOnly && !p.strictTraceAllowed(ctx, req.UserID, parsed) {
+		return nil, &ProcessError{StatusCode: http.StatusNotFound, Message: "transaction not found", Reason: ReasonTraceAccessDenied}
 	}
 
 	validationResult, vErr := p.traceValidator.ValidateTrace(ctx, plan.orgIDs, parsed, plan.userHasDeploy, plan.traceOpts...)
@@ -1171,8 +1222,10 @@ func (p *JSONRPCProcessor) forwardAndValidateTrace(ctx context.Context, req *Pro
 		}
 		return nil, &ProcessError{StatusCode: http.StatusForbidden, Message: traceDenyCrossOrg, Reason: reason}
 	}
-	if perr := p.validateClientTraceFrameAccess(ctx, req, plan.orgIDs, validationResult.ClientAccessTargets); perr != nil {
-		return nil, perr
+	if !plan.topFrameOnly {
+		if perr := p.validateClientTraceFrameAccess(ctx, req, plan.orgIDs, validationResult.ClientAccessTargets); perr != nil {
+			return nil, perr
+		}
 	}
 	return sanitized, nil
 }
@@ -1576,8 +1629,9 @@ func (p *JSONRPCProcessor) fetchTxParties(ctx context.Context, req *ProcessReque
 
 // viewerCanSeeMinedTx mirrors the eth_getTransactionByHash visibility predicate
 // (REDACTION_SPEC §3.8) within the pinned org: participant (linked address ==
-// from|to), admin of the tx's `to` contract in orgID, or a visibleTo
-// recipient. userUUID is the internal user id (NOT the DID). Fail-closed.
+// from|to). Standard also admits an admin of the tx's `to` contract in orgID
+// or a visibleTo recipient. userUUID is the internal user id (NOT the DID).
+// Lookup failures deny access.
 func (p *JSONRPCProcessor) viewerCanSeeMinedTx(ctx context.Context, req *ProcessRequest, userUUID, orgID, from, to, txHash string) bool {
 	addrs, err := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)
 	if err != nil {
@@ -1598,6 +1652,11 @@ func (p *JSONRPCProcessor) viewerCanSeeMinedTx(ctx context.Context, req *Process
 		if _, ok := set[to]; ok {
 			return true
 		}
+	}
+	if p.readProfile.Strict() {
+		return false
+	}
+	if to != "" {
 		// Admin of the tx's `to` contract, in the pinned org only.
 		owner, oErr := p.rbacAccessCtrl.Store().GetContractOwnerOrgID(ctx, to)
 		if oErr == nil && owner == orgID {

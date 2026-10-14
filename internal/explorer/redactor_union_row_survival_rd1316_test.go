@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"privacy-proxy/internal/rbac"
 )
 
 // RD-1316 verifies parent-row inclusion at the viewer's ordinary address
@@ -62,7 +64,7 @@ func rd1316Engine(extra map[string]AddressVisibility) *RedactionEngine {
 	for k, v := range extra {
 		detailed[k] = v
 	}
-	return &RedactionEngine{db: &rd1316DB{detailed: detailed}}
+	return &RedactionEngine{db: &rd1316DB{detailed: detailed}, readProfile: rbac.ReadProfileStandard}
 }
 
 // unionOpts is what redactOptsFromFilter produces for a hash that is in the

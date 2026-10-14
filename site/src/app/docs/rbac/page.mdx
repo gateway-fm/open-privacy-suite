@@ -178,11 +178,11 @@ way as the method it mirrors:
   - a `from` that is not one of the caller's linked addresses is refused.
 - **`debug_traceTransaction`** follows the same access checks as `eth_getTransactionByHash`.
   A user in more than one organization must use `/rpc/:org_id`, and a banned or unverified user
-  is refused. A transaction is replayed only for its sender or recipient, an admin of the
+  is refused. Under the standard read profile, a transaction is replayed only for its sender or recipient, an admin of the
   contract it called, or a recipient it was shared with. Anyone else is denied, and a
   transaction that does not exist is denied in exactly the same way.
 
-The proxy returns only the **call tree** (the `callTracer` output), and only when the
+For `debug_traceCall` and standard-profile `debug_traceTransaction`, the proxy returns only the **call tree** (the `callTracer` output), and only when the
 caller has access to **every** contract the trace passes through, in the organization the
 request is for. A trace into a contract the caller has no access to is denied, even if the
 entry contract is accessible. Function and argument restrictions apply to internal calls as
@@ -191,7 +191,16 @@ calls use the caller's permissions on the proxy, and the implementation must sti
 organization check. Validated precompiles, shared infrastructure and contract creation retain
 their existing access rules.
 
-A request with no tracer configured gets the call tree. Explicit requests for any other output
+Under the strict read profile, `debug_traceTransaction` returns only the top frame, without
+internal calls or logs, to an authenticated linked sender or recipient. Current contract
+grants and deploy/admin claims do not add readers or remove a participant's top frame.
+The returned frame must still pass the organization ownership checks; an unregistered
+call target remains unavailable. The proxy verifies participation against both the transaction
+lookup and the returned root frame. A nonparticipant and a missing transaction both receive
+404 `transaction not found`.
+
+A request with no tracer configured uses the profile's callTracer preset. Strict mined traces
+also accept only `onlyTopCall:true` and `withLog:false` as caller options. Explicit requests for any other output
 are rejected:
 
 - `prestateTracer`;
@@ -572,6 +581,10 @@ Responses:
 Tier-2 org admins can ask the proxy "what would user X see if they made this RPC call?" without ever creating an impersonation token, mutating chain state, or exposing any data they don't already have.
 
 <ApiEndpoint method="POST" path="/api/orgs/:org_id/dry-run" description="Dry-run an RPC call as another user (admin diagnostic)" />
+
+<Callout variant="info" title="Strict read profile">
+  With `PRIVACY_READ_PROFILE=strict`, dry-run of a read method is refused with 403 (and audited) because it would show the member's own chain data to the admin; a dry-run of a send still returns the allow/deny verdict, without the simulated trace or its logs. See [Strict Read Profile](/docs/security/strict-read-profile).
+</Callout>
 
 ### Who can call it
 

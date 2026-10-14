@@ -55,7 +55,7 @@ func TestRPCExplorerLogParity_RD1214(t *testing.T) {
 
 	accessCtrl := rbac.NewAccessController(database, time.Minute)
 	t.Cleanup(accessCtrl.Stop)
-	engine := explorer.NewRedactionEngine(noopContractStore{}, database)
+	engine := explorer.NewRedactionEngine(noopContractStore{}, database, rbac.ReadProfileStandard)
 	wireExplorerRedactor(engine, database, accessCtrl, noopLogParticipantStore{}, nil)
 
 	transfer := "0x" + topicHex("Transfer(address,address,uint256)")
@@ -65,7 +65,7 @@ func TestRPCExplorerLogParity_RD1214(t *testing.T) {
 	// The RPC uses p.addrVisResolver (the same *db.DB) for the field step; a
 	// real ABI keeps the deny-when-no-ABI gate out of the way so the entry
 	// verdict turns on the grant, matching the explorer's ABI resolver.
-	p := &JSONRPCProcessor{addrVisResolver: database}
+	p := &JSONRPCProcessor{readProfile: rbac.ReadProfileStandard, addrVisResolver: database}
 	abiProv := mapABIProvider{
 		strings.ToLower(emitter): erc20ABI,
 	}
@@ -85,7 +85,7 @@ func TestRPCExplorerLogParity_RD1214(t *testing.T) {
 			emitter: {Claims: []rbac.Claim{}, EventRules: &rbac.EventRulesField{Wildcard: true}},
 		}}
 		raw := []json.RawMessage{rawLogJSON(t, emitter, []string{transfer, ownTopic, thirdTopic}, "0x")}
-		admitted := rbac.FilterEventLogs(raw, perms, []string{viewerOwn}, abiProv, nil, nil)
+		admitted := rbac.FilterEventLogs(rbac.ReadProfileStandard, raw, perms, []string{viewerOwn}, abiProv, nil, nil)
 		require.Len(t, admitted, 1, "RPC must admit the granted log (parity of the entry decision)")
 		rpcOut := p.redactEmbeddedLogAddresses(ctx, viewerDID, admitted, abiProv)
 
@@ -124,7 +124,7 @@ func TestRPCExplorerLogParity_RD1214(t *testing.T) {
 		perms := &rbac.EffectivePermissions{ContractAccess: map[string]rbac.ContractAccess{}}
 		raw := []json.RawMessage{rawLogJSON(t, foreign, []string{transfer, thirdTopic}, "0x")}
 		abiProvForeign := mapABIProvider{strings.ToLower(foreign): erc20ABI}
-		admitted := rbac.FilterEventLogs(raw, perms, []string{viewerOwn}, abiProvForeign, nil, nil)
+		admitted := rbac.FilterEventLogs(rbac.ReadProfileStandard, raw, perms, []string{viewerOwn}, abiProvForeign, nil, nil)
 		require.Empty(t, admitted, "RPC must DROP a foreign-org emitter's log — symmetric with the explorer (RD-1009/RD-1208)")
 	})
 }
@@ -159,9 +159,9 @@ func TestRPCExplorerLogParity_VisibleToUnlock_RD1300(t *testing.T) {
 
 	accessCtrl := rbac.NewAccessController(database, time.Minute)
 	t.Cleanup(accessCtrl.Stop)
-	engine := explorer.NewRedactionEngine(noopContractStore{}, database)
+	engine := explorer.NewRedactionEngine(noopContractStore{}, database, rbac.ReadProfileStandard)
 	wireExplorerRedactor(engine, database, accessCtrl, noopLogParticipantStore{}, nil)
-	p := &JSONRPCProcessor{rbacAccessCtrl: accessCtrl, txVisibilityStore: database, addrVisResolver: database}
+	p := &JSONRPCProcessor{readProfile: rbac.ReadProfileStandard, rbacAccessCtrl: accessCtrl, txVisibilityStore: database, addrVisResolver: database}
 
 	sig := "0x" + topicHex("PaymentMade(address,address,uint256)")
 	payerTopic := zeroPadAddrToTopic(payer)
@@ -184,7 +184,7 @@ func TestRPCExplorerLogParity_VisibleToUnlock_RD1300(t *testing.T) {
 		visCtx := p.buildTxVisibilityContext(ctx, viewerDID, body)
 		perms := &rbac.EffectivePermissions{ContractAccess: map[string]rbac.ContractAccess{emitter: {EventRules: &rbac.EventRulesField{Wildcard: true}}}}
 		abiProv := mapABIProvider{emitter: paymentABI}
-		admitted := rbac.FilterEventLogsDetailed([]json.RawMessage{raw}, perms, nil, abiProv, visCtx, nil)
+		admitted := rbac.FilterEventLogsDetailed(rbac.ReadProfileStandard, []json.RawMessage{raw}, perms, nil, abiProv, visCtx, nil)
 		out := p.redactAdmittedLogs(ctx, viewerDID, admitted, abiProv)
 		require.Len(t, out, 1)
 		var m struct {

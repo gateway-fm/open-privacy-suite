@@ -33,6 +33,8 @@ import (
 	"strings"
 	"testing"
 
+	"privacy-proxy/internal/rbac"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 )
@@ -379,7 +381,8 @@ func TestUserSeesOwnTx_Integration_EndToEnd(t *testing.T) {
 	// (we don't need to bring up the full rbac.DB for this test — the
 	// rbac DB is exercised by the symmetry tests in internal/server).
 	engine := &RedactionEngine{
-		store: store,
+		readProfile: rbac.ReadProfileStandard,
+		store:       store,
 		db: &mockDB{
 			linkedAddrs: []string{viewer},
 			visMap: VisibilityMap{

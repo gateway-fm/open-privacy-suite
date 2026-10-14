@@ -205,6 +205,7 @@ func TestReceiptLogEntitlement_FullRPCPath_RD1183(t *testing.T) {
 	serverURL := fmt.Sprintf("http://localhost:%d", port)
 
 	cfg := &config.Config{
+		ReadProfile:           rbac.ReadProfileStandard,
 		NodeURL:               upstream.URL,
 		DatabaseURL:           dbURL,
 		AuditDatabaseURL:      dbURL,

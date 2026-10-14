@@ -54,8 +54,9 @@ func setupTestServerForSharedInfra(t *testing.T) *testServerSharedInfra {
 	_, _ = conn.ExecContext(context.Background(), "DELETE FROM shared_infrastructure")
 
 	cfg := &config.Config{
-		NodeURL: "http://localhost:8545",
-		BaseURL: "http://localhost:8080",
+		ReadProfile: rbac.ReadProfileStandard,
+		NodeURL:     "http://localhost:8545",
+		BaseURL:     "http://localhost:8080",
 	}
 	jwtSvc, err := auth.NewJWTService("test-secret", "test-refresh", 30*time.Minute, 24*time.Hour)
 	require.NoError(t, err)

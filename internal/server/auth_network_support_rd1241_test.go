@@ -14,6 +14,7 @@ import (
 	"privacy-proxy/internal/apimodels"
 	privadoauth "privacy-proxy/internal/auth"
 	"privacy-proxy/internal/config"
+	"privacy-proxy/internal/rbac"
 
 	"github.com/gin-gonic/gin"
 	"github.com/iden3/iden3comm/v2/protocol"
@@ -221,7 +222,7 @@ func TestHandleAuthProviders_ReportsNetworks(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			s := &Server{config: &config.Config{Environment: "development"}}
+			s := &Server{config: &config.Config{ReadProfile: rbac.ReadProfileStandard, Environment: "development"}}
 			if tc.verifier != nil {
 				s.privadoVerifier = tc.verifier
 			}

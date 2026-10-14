@@ -292,12 +292,9 @@ func (s *Server) explorerReconnectLoop(dbURL string, rbacDB *db.DB, indexerURL s
 		}
 		s.explorerMu.Lock()
 		s.explorerStore = backend
-		s.explorerRedactor = explorer.NewRedactionEngine(backend, rbacDB)
-		// Wire ABI / admin / event-rule / log-participant resolvers so the
-		// explorer redactor mirrors RPC-layer decisions (RD-875 / RD-889 /
-		// RD-890 / RD-939 / event-rule wiring fix). One call site, one
-		// helper — see wireExplorerRedactor for why this is consolidated.
-		wireExplorerRedactor(s.explorerRedactor, rbacDB, s.rbacAccessCtrl, backend, s.config.ExplorerPseudonymKey)
+		// Same construction path as startup (newExplorerRedactor): the
+		// configured read profile and every resolver wired.
+		s.explorerRedactor = s.newExplorerRedactor(backend, rbacDB)
 		s.explorerMu.Unlock()
 		slog.Info("explorer backend connected — explorer endpoints now available")
 		return
@@ -686,7 +683,6 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		azureStateStore:    azureStateStore,
 		metrics:            m,
 		explorerStore:      explorerBackend,
-		explorerRedactor:   explorer.NewRedactionEngine(explorerBackend, database),
 		redisCloser:        redisCloser,
 	}
 	// RD-889: wire the unified ABI resolver so the explorer redactor
@@ -702,7 +698,11 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	// Approval, ApprovalForAll, TransferSingle/Batch, Deposit,
 	// Withdrawal). Closes the over-redaction bug where custom-selector
 	// mints to the viewer left them unable to see their own tx.
-	wireExplorerRedactor(s.explorerRedactor, database, s.rbacAccessCtrl, explorerBackend, cfg.ExplorerPseudonymKey)
+	s.explorerRedactor = s.newExplorerRedactor(explorerBackend, database)
+
+	// RD-1299: record the enforced read privacy profile (and warn when strict
+	// overrides ORG_ADMIN_VIEW_USER_TXS) so the effective policy is in the log.
+	s.logReadProfile()
 
 	// Start background explorer DB reconnection if initial connection failed
 	if cfg.ExplorerDatabaseURL != "" && explorerSQL == nil {
@@ -972,6 +972,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 			Timeout: cfg.EthCallTraceTimeout,
 		},
 		IntraOrgGrantTracingEnabled: cfg.RuntimeTracingIntraOrgGrantsEnabled,
+		ReadProfile:                 cfg.ReadProfile,
 	})
 
 	// RD-858: scheduled audit hash-chain integrity verifier. Default
@@ -1276,6 +1277,10 @@ func (s *Server) setupRouter() *gin.Engine {
 			// RD-1023: build identity of the running binary. Read-only,
 			// admin-gated; intentionally not on /health or web3_clientVersion.
 			system.GET("/version", s.handleGetVersion)
+
+			// RD-1299: effective read privacy profile (PRIVACY_READ_PROFILE)
+			// and the effective org-admin audit view. Read-only, any admin.
+			system.GET("/read-profile", s.handleGetReadProfile)
 		}
 	}
 
@@ -1344,7 +1349,7 @@ const MaxRequestBodySize = 1 << 20 // 1MB
 // @Description
 // @Description  Ordinary upstream JSON-RPC errors retain their JSON-RPC error member. Transport, access and rate-limit failures use the non-200 statuses below. `POST /` and `POST /rpc` are the same operation.
 // @Description
-// @Description  Client traces return only validated call-tree frames. The viewer's contract, function and argument permissions apply to returned calls, including delegated storage contexts. Internal-call values (a nested call's input, value, output and revert reason) are returned only to a viewer who may read the storage of the contract that produced them; otherwise they are omitted and named in the call's `redacted` array. Trace or upstream failures return opaque non-200 errors.
+// @Description  Client call traces and standard-profile mined traces return validated call-tree frames. The viewer's contract, function and argument permissions apply to returned calls, including delegated storage contexts. Internal-call values (a nested call's input, value, output and revert reason) are returned only to a viewer who may read the storage of the contract that produced them; otherwise they are omitted and named in the call's `redacted` array. Strict-profile mined traces return only a linked transaction participant's top frame, without internal calls or logs, subject to organization ownership checks. Trace or upstream failures return opaque non-200 errors.
 // @Tags         JSON-RPC
 // @Accept       json
 // @Produce      json
@@ -1353,8 +1358,8 @@ const MaxRequestBodySize = 1 << 20 // 1MB
 // @Success      200 {object} apimodels.JSONRPCResponseEnvelope "JSON-RPC response; may carry a JSON-RPC-level error member"
 // @Failure      400 {object} apimodels.APIError "unreadable body, malformed, ambiguous (duplicate or case-variant members) or batch JSON-RPC, invalid visibleTo, or an unsupported tracer/config (a tracer other than callTracer, withLog or malformed trace params)"
 // @Failure      401 {object} apimodels.APIError "identity required but unresolved on a trace method (debug_traceCall / debug_traceTransaction)"
-// @Failure      403 {object} apimodels.APIError "runtime-trace, trace-access (debug_traceTransaction for a non-participant or a missing transaction) or compliance denial"
-// @Failure      404 {object} apimodels.APIError "method not allowed for the caller (denials are masked as method not found)"
+// @Failure      403 {object} apimodels.APIError "runtime-trace, standard-profile trace-access (debug_traceTransaction for a non-participant or a missing transaction) or compliance denial"
+// @Failure      404 {object} apimodels.APIError "method not allowed for the caller (denials are masked as method not found), or a strict-profile mined trace unavailable to the caller"
 // @Failure      413 {object} apimodels.APIError "request body too large"
 // @Failure      429 {object} apimodels.APIError "concurrency limit, signed-approval simulation budget, or upstream rate limit"
 // @Failure      500 {object} apimodels.APIError "trace-validation or compliance-check error"
@@ -2053,7 +2058,7 @@ func (s *Server) getStatus(c *gin.Context) {
 // result plus latency.
 //
 // @Summary      Test a JSON-RPC request
-// @Description  Dashboard diagnostic: runs one method through RBAC, the same nested-call trace as /rpc (eth_call, eth_estimateGas, and eth_createAccessList without `to`), travel-rule compliance, and upstream forwarding, using a synthetic identity ("test:dashboard") or the subject of a supplied jwt_token. On an upstream JSON-RPC-level error the call still returns HTTP 200 with the error in the response body. Requires the private-network source gate (403 otherwise).
+// @Description  Dashboard diagnostic: runs one method through RBAC, the same nested-call trace as /rpc (eth_call, eth_estimateGas, and eth_createAccessList without `to`), travel-rule compliance, and upstream forwarding, using a synthetic identity ("test:dashboard") or the subject of a supplied jwt_token. Under the strict read privacy profile (PRIVACY_READ_PROFILE=strict) transaction, receipt, log and block reads are refused with 403 before anything is forwarded. On an upstream JSON-RPC-level error the call still returns HTTP 200 with the error in the response body. Requires the private-network source gate (403 otherwise).
 // @Description  Client state/block override options follow the RPC policy for every caller, including admins.
 // @Tags         Admin: ops
 // @Accept       json
@@ -2062,7 +2067,7 @@ func (s *Server) getStatus(c *gin.Context) {
 // @Success      200 {object} apimodels.TestRequestResponse "forwarded result (or an upstream JSON-RPC error message) plus latency"
 // @Failure      400 {object} apimodels.APIError "invalid request body, invalid JWT, or a trace method (debug_traceCall / debug_traceTransaction are not supported here; send them to /rpc or /rpc/{org_id}); an invalid call shape refused by the nested-call trace returns a TestRequestResponse"
 // @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
-// @Failure      403 {object} apimodels.TestRequestResponse "RBAC, nested-call trace or compliance denied (network-gate rejections return the generic error envelope)"
+// @Failure      403 {object} apimodels.TestRequestResponse "RBAC, nested-call trace or compliance denied, or a transaction, receipt, log or block read under the strict read profile (network-gate rejections return the generic error envelope)"
 // @Failure      500 {object} apimodels.TestRequestResponse "access-check or trace-validation error"
 // @Failure      502 {object} apimodels.TestRequestResponse "failed to reach the upstream node"
 // @Security     AdminToken
@@ -2115,6 +2120,19 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 			return
 		}
 		testIdentity = claims.Subject
+	}
+
+	// RD-1299: test-request returns the node's answer without the /rpc
+	// response filter. Under the strict read profile an administrator's
+	// authority never becomes read access to chain data, so the methods whose
+	// response the profile governs are refused before anything is forwarded.
+	if s.readProfile().Strict() && readProfileGovernsResponse(input.Method) {
+		auditDB.LogAccess(c.Request.Context(), testIdentity, input.Method, http.StatusForbidden, c.ClientIP())
+		c.JSON(http.StatusForbidden, apimodels.TestRequestResponse{
+			Error:    "transaction, receipt, log and block reads are not available via test-request under the strict read privacy profile",
+			Identity: testIdentity,
+		})
+		return
 	}
 
 	// Resolve the access-control alias exactly as the live /rpc path does

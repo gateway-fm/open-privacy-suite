@@ -47,7 +47,7 @@ func TestFilterEventLogsDetailed_UnlockIsPerLogTuple(t *testing.T) {
 		log(flagged, listed), // 5: duplicate of 0 → full
 		log(other, later),    // 6: other emitter, unlisted → wildcard, masked
 	}
-	got := FilterEventLogsDetailed(in, perms, nil, abiProv, visCtx, nil)
+	got := FilterEventLogsDetailed(ReadProfileStandard, in, perms, nil, abiProv, visCtx, nil)
 	want := []AdmittedLog{
 		{Raw: in[0], Payload: LogPayloadFull},
 		{Raw: in[1], Payload: LogPayloadMasked},
@@ -60,7 +60,7 @@ func TestFilterEventLogsDetailed_UnlockIsPerLogTuple(t *testing.T) {
 	}
 
 	// FilterEventLogs is exactly the raw half of the detailed result.
-	raws := FilterEventLogs(in, perms, nil, abiProv, visCtx, nil)
+	raws := FilterEventLogs(ReadProfileStandard, in, perms, nil, abiProv, visCtx, nil)
 	if len(raws) != len(got) {
 		t.Fatalf("FilterEventLogs returned %d logs, detailed %d", len(raws), len(got))
 	}
@@ -87,7 +87,7 @@ func TestFilterEventLogsDetailed_UnlockRequiresExactListedDID(t *testing.T) {
 		UnlockableContracts: map[string]bool{flagged: true},
 	}
 	in := []json.RawMessage{json.RawMessage(`{"address":"` + flagged + `","topics":["0xabc0000000000000000000000000000000000000000000000000000000000000"],"data":"0x","transactionHash":"` + tx + `"}`)}
-	if got := FilterEventLogsDetailed(in, perms, nil, &testABIProvider{abis: map[string]string{flagged: staticABI}}, visCtx, nil); len(got) != 0 {
+	if got := FilterEventLogsDetailed(ReadProfileStandard, in, perms, nil, &testABIProvider{abis: map[string]string{flagged: staticABI}}, visCtx, nil); len(got) != 0 {
 		t.Fatalf("a case-variant DID must not unlock, got %s", fmtAdmitted(got))
 	}
 }
@@ -103,7 +103,7 @@ func TestFilterEventLogsDetailed_NilPermsFailsClosed(t *testing.T) {
 		UnlockableContracts: map[string]bool{flagged: true},
 	}
 	in := []json.RawMessage{json.RawMessage(`{"address":"` + flagged + `","topics":[],"data":"0x","transactionHash":"` + tx + `"}`)}
-	if got := FilterEventLogsDetailed(in, nil, nil, nil, visCtx, nil); len(got) != 0 {
+	if got := FilterEventLogsDetailed(ReadProfileStandard, in, nil, nil, nil, visCtx, nil); len(got) != 0 {
 		t.Fatalf("nil perms must admit nothing, got %s", fmtAdmitted(got))
 	}
 }

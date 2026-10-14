@@ -187,6 +187,7 @@ services:
       # Org-admin volume/timing audit view of user↔user txs (value preserved,
       # addresses stay [PRIVATE], reveals audit-logged). Default off = strict privacy.
       - ORG_ADMIN_VIEW_USER_TXS=${ORG_ADMIN_VIEW_USER_TXS:-false}
+      - PRIVACY_READ_PROFILE=${PRIVACY_READ_PROFILE:-}
       # Indexer integration — this is what flips Open Privacy Suite's explorer
       # backend from direct SQL to gRPC. The explorer postgres variable is
       # still accepted for standalone fallback (ABI writes, indexer

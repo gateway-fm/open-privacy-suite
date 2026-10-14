@@ -16,6 +16,10 @@ Tier-2 org admins can answer "what does this user see right now?" without engine
 
 The mechanism is a parallel URL tree on the Open Privacy Suite that always names an explicit organization: `/api/v1/admin/impersonate/<target_did>/in/<org_id>/…`. The block-explorer dashboard wraps it in a "View as user" button + amber banner. No user-shaped JWT is ever minted; the admin's own session keeps its admin identity throughout.
 
+<Callout variant="warning" title="Not available under the strict read profile">
+  With `PRIVACY_READ_PROFILE=strict`, every View-as request (explorer and RPC) is refused with 403 after the admin checks, and the attempt is written to the impersonation audit log. Viewing as a member would show the admin that member's own transactions, receipts and events. See [Strict Read Profile](/docs/security/strict-read-profile).
+</Callout>
+
 ---
 
 ## Which org you view as

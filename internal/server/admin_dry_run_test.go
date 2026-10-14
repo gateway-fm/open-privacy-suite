@@ -47,6 +47,7 @@ func setupDryRunTestServer(t *testing.T) *dryRunTestServer {
 	// runs its response filter as the impersonated user (RD-1308), and
 	// withholds read responses when it is missing.
 	ts.jsonrpcProcessor = NewJSONRPCProcessor(JSONRPCProcessorConfig{
+		ReadProfile:               rbac.ReadProfileStandard,
 		RBACAccessCtrl:            ts.rbacAccessCtrl,
 		RateLimiter:               &noopRateLimiter{},
 		AccessLogger:              ts.db,

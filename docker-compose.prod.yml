@@ -99,6 +99,7 @@ services:
       # Org admins get a volume/timing audit view of user↔user txs (value preserved,
       # addresses stay [PRIVATE], every reveal audit-logged). Default off = strict privacy.
       - ORG_ADMIN_VIEW_USER_TXS=${ORG_ADMIN_VIEW_USER_TXS:-false}
+      - PRIVACY_READ_PROFILE=${PRIVACY_READ_PROFILE:-}
       - EXTRA_RPC_NAMESPACES_FILE=${EXTRA_RPC_NAMESPACES_FILE:-}
       - JWT_SECRET=${JWT_SECRET:-}
       - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET:-}

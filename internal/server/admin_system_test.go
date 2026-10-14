@@ -41,6 +41,7 @@ func setupSystemAdminTestServer(t *testing.T) *testServerRBAC {
 	// Build a minimal processor — we only need ethCallTracing state
 	// management, not the trace path itself.
 	proc := NewJSONRPCProcessor(JSONRPCProcessorConfig{
+		ReadProfile:        rbac.ReadProfileStandard,
 		RBACAccessCtrl:     ts.rbacAccessCtrl,
 		RateLimiter:        &noopRateLimiter{},
 		Proxy:              &proxy.Proxy{},

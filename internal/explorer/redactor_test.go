@@ -89,19 +89,19 @@ func (m *mockContractStore) GetContract(_ context.Context, address string) (*Con
 }
 
 func newEngine(visMap VisibilityMap) *RedactionEngine {
-	return &RedactionEngine{store: nil, db: &mockDB{visMap: visMap}}
+	return &RedactionEngine{readProfile: rbac.ReadProfileStandard, store: nil, db: &mockDB{visMap: visMap}}
 }
 
 func newEngineWithLinkedAddrs(visMap VisibilityMap, linkedAddrs []string) *RedactionEngine {
-	return &RedactionEngine{store: nil, db: &mockDB{visMap: visMap, linkedAddrs: linkedAddrs}}
+	return &RedactionEngine{readProfile: rbac.ReadProfileStandard, store: nil, db: &mockDB{visMap: visMap, linkedAddrs: linkedAddrs}}
 }
 
 func newEngineWithStore(visMap VisibilityMap, store ContractStore) *RedactionEngine {
-	return &RedactionEngine{store: store, db: &mockDB{visMap: visMap}}
+	return &RedactionEngine{readProfile: rbac.ReadProfileStandard, store: store, db: &mockDB{visMap: visMap}}
 }
 
 func newEngineErr(err error) *RedactionEngine {
-	return &RedactionEngine{store: nil, db: &mockDB{err: err}}
+	return &RedactionEngine{readProfile: rbac.ReadProfileStandard, store: nil, db: &mockDB{err: err}}
 }
 
 // eventTopic0 computes keccak256 of an event signature, returning "0x"-prefixed hex.
@@ -3411,7 +3411,7 @@ func TestRedactTransactions_AnonymousViewerContractCreationScenario(t *testing.T
 			publicEOA2:      VisibilityFull,   // public address
 		},
 	}
-	engine := NewRedactionEngine(nil, db)
+	engine := NewRedactionEngine(nil, db, rbac.ReadProfileStandard)
 
 	to1 := publicEOA2
 	txs := []Transaction{
@@ -3446,7 +3446,7 @@ func TestRedactTransactions_ContractCreationHiddenDeployer(t *testing.T) {
 			deployerAddr: VisibilityHidden,
 		},
 	}
-	engine := NewRedactionEngine(nil, db)
+	engine := NewRedactionEngine(nil, db, rbac.ReadProfileStandard)
 
 	txs := []Transaction{
 		{
@@ -3475,7 +3475,7 @@ func TestRedactTransactions_ContractCreationVisibleDeployer(t *testing.T) {
 			deployerAddr: VisibilityFull,
 		},
 	}
-	engine := NewRedactionEngine(nil, db)
+	engine := NewRedactionEngine(nil, db, rbac.ReadProfileStandard)
 
 	txs := []Transaction{
 		{
@@ -3504,7 +3504,7 @@ func TestRedactTransactions_ContractAddress_RedactedForNonParticipant_RD1143(t *
 		deployer: VisibilityFull,
 		contract: VisibilityRedacted,
 	}}
-	engine := NewRedactionEngine(nil, db)
+	engine := NewRedactionEngine(nil, db, rbac.ReadProfileStandard)
 	txs := []Transaction{{Hash: "0xdeploy", From: deployer, To: nil, ContractAddress: strPtr(contract)}}
 	result, err := engine.RedactTransactions(context.Background(), txs, "did:eve")
 	if err != nil {
@@ -3550,7 +3550,7 @@ func TestRedactTransactions_ContractAddress_AdminFlagDoesNotReveal_RD1143(t *tes
 		deployer: VisibilityHidden,
 		contract: VisibilityRedacted, // admin has NO org access to it
 	}}
-	engine := NewRedactionEngine(nil, db)
+	engine := NewRedactionEngine(nil, db, rbac.ReadProfileStandard)
 	txs := []Transaction{{Hash: "0xdeploy", From: deployer, To: nil, Value: "42", ContractAddress: strPtr(contract)}}
 	result, err := engine.RedactTransactions(context.Background(), txs, "did:admin",
 		RedactOpts{ViewerIsAdmin: true, OrgAdminViewUserTxs: true})
@@ -3581,7 +3581,7 @@ func TestRedactTransactions_ContractAddress_AdminWithContractAccessSeesReal_RD11
 		deployer: VisibilityHidden, // deployer EOA private to the admin
 		contract: VisibilityFull,   // admin has org access to the contract
 	}}
-	engine := NewRedactionEngine(nil, db)
+	engine := NewRedactionEngine(nil, db, rbac.ReadProfileStandard)
 	txs := []Transaction{{Hash: "0xdeploy", From: deployer, To: nil, ContractAddress: strPtr(contract)}}
 	result, err := engine.RedactTransactions(context.Background(), txs, "did:admin",
 		RedactOpts{ViewerIsAdmin: true, OrgAdminViewUserTxs: true})
@@ -3636,7 +3636,7 @@ func (m *mockDBDetailed) GetBatchEventAccess(_ context.Context, _ string, _ []st
 }
 
 func newEngineDetailed(visMap VisibilityMap, detailedMap map[string]AddressVisibility, linkedAddrs []string) *RedactionEngine {
-	return &RedactionEngine{store: nil, db: &mockDBDetailed{
+	return &RedactionEngine{readProfile: rbac.ReadProfileStandard, store: nil, db: &mockDBDetailed{
 		visMap:      visMap,
 		detailedMap: detailedMap,
 		linkedAddrs: linkedAddrs,
@@ -3835,7 +3835,7 @@ func TestRedactTransactions_ContractCreationRedactedDeployer(t *testing.T) {
 			deployerAddr: VisibilityRedacted,
 		},
 	}
-	engine := NewRedactionEngine(nil, db)
+	engine := NewRedactionEngine(nil, db, rbac.ReadProfileStandard)
 
 	txs := []Transaction{
 		{
@@ -4085,7 +4085,7 @@ func TestRedactTransactions_G10_CalldataParticipantStillSees(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func newEngineWithEventAccess(visMap VisibilityMap, eventAccess map[string]bool) *RedactionEngine {
-	return &RedactionEngine{store: nil, db: &mockDB{visMap: visMap, eventAccessMap: eventAccess}}
+	return &RedactionEngine{readProfile: rbac.ReadProfileStandard, store: nil, db: &mockDB{visMap: visMap, eventAccessMap: eventAccess}}
 }
 
 func TestRedactTransactions_TokenTransferStrippedWithoutEventAccess(t *testing.T) {

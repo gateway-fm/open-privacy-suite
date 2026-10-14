@@ -106,6 +106,7 @@ func setupEnvelopeHarness(t *testing.T) *envelopeHarness {
 // the canary node.
 func newEnvelopeCanaryProcessor(ts *testServerRBAC, node *envelopeCanaryNode) *JSONRPCProcessor {
 	return NewJSONRPCProcessor(JSONRPCProcessorConfig{
+		ReadProfile:        rbac.ReadProfileStandard,
 		RBACAccessCtrl:     ts.rbacAccessCtrl,
 		RateLimiter:        &noopRateLimiter{},
 		Proxy:              proxy.New(node.srv.URL),

@@ -64,7 +64,7 @@ func TestDecideLogEmitterAccess(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := DecideLogEmitterAccess(tc.facts); got != tc.admit {
+			if got := DecideLogEmitterAccess(ReadProfileStandard, tc.facts); got != tc.admit {
 				t.Errorf("DecideLogEmitterAccess(%+v) = %v, want %v", tc.facts, got, tc.admit)
 			}
 		})
@@ -118,11 +118,11 @@ func TestDecideLogEmitter_PayloadPolicy(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := DecideLogEmitter(tc.facts)
+			got := DecideLogEmitter(ReadProfileStandard, tc.facts)
 			if got != tc.want {
 				t.Errorf("DecideLogEmitter(%+v) = %+v, want %+v", tc.facts, got, tc.want)
 			}
-			if DecideLogEmitterAccess(tc.facts) != got.Admit {
+			if DecideLogEmitterAccess(ReadProfileStandard, tc.facts) != got.Admit {
 				t.Errorf("DecideLogEmitterAccess must equal DecideLogEmitter(...).Admit for %+v", tc.facts)
 			}
 		})

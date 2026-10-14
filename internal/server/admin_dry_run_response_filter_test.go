@@ -129,6 +129,7 @@ func setupDRFFixture(t *testing.T) *drfFixture {
 	up := proxy.New(stub.URL)
 	ts.proxy = up
 	f.proc = NewJSONRPCProcessor(JSONRPCProcessorConfig{
+		ReadProfile:               rbac.ReadProfileStandard,
 		RBACAccessCtrl:            ts.rbacAccessCtrl,
 		RateLimiter:               &noopRateLimiter{},
 		Proxy:                     up,

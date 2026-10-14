@@ -227,6 +227,7 @@ func setupCreate2EnvWithReadTracing(t *testing.T, enabled bool) *create2TestEnv 
 	serverURL := fmt.Sprintf("http://localhost:%d", port)
 
 	cfg := &config.Config{
+		ReadProfile: rbac.ReadProfileStandard,
 		NodeURL:     anvilURL,
 		DatabaseURL: dbURL,
 		// RD-1147: co-locate the audit schema in this testcontainer DB for e2e

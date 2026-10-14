@@ -226,6 +226,17 @@ func (p *JSONRPCProcessor) buildTxVisibilityContext(ctx context.Context, userDID
 	}
 }
 
+// standardTxVisibilityContext is buildTxVisibilityContext for the read
+// filters: under the strict read profile it returns nil without the lookup,
+// because the strict transaction and event decisions ignore visibleTo
+// listings and the unlock (RD-1299).
+func (p *JSONRPCProcessor) standardTxVisibilityContext(ctx context.Context, userDID string, responseBody []byte) *rbac.TxVisibilityContext {
+	if p.readProfile.Strict() {
+		return nil
+	}
+	return p.buildTxVisibilityContext(ctx, userDID, responseBody)
+}
+
 // buildVisibleToUnlockableMap returns the (lowercased address → true) map
 // of contracts where the per-contract `allow_visibleto_unlock` flag is
 // set AND the viewer is unlock-eligible — rbac.UnlockableContracts, the
@@ -452,6 +463,23 @@ func extractContractAddressesFromResponse(responseBody []byte) []string {
 		add(receipt.To)
 		for _, l := range receipt.Logs {
 			add(l.Address)
+		}
+	}
+
+	// Try as an array of receipts (eth_getBlockReceipts): each receipt's `to`
+	// and its logs' emitting contracts.
+	var receipts []struct {
+		To   string `json:"to"`
+		Logs []struct {
+			Address string `json:"address"`
+		} `json:"logs"`
+	}
+	if err := json.Unmarshal(resp.Result, &receipts); err == nil {
+		for _, r := range receipts {
+			add(r.To)
+			for _, l := range r.Logs {
+				add(l.Address)
+			}
 		}
 	}
 

@@ -139,6 +139,34 @@ They are not scans of the entire Besu distribution, optional third-party plugins
 native libraries or deployment infrastructure. Upstream clients and deployment images also need
 their normal security maintenance.
 
+### Advisory follow-up, 13 October 2026
+
+Go advisories published late on 8 October, after the follow-up above, fail `govulncheck` on Go
+1.26.6 with `golang.org/x/net` v0.58.0: eleven reports in `net/http`, `crypto/tls`, `html/template`,
+`net/textproto`/`mime/multipart` and `x/net/http2` (GO-2026-6599, -6600, -6603, -6605, -6607, -6608,
+-6610 to -6613 and -6617). The toolchain moves to **Go 1.26.9** in both `go.mod` files, CI and the
+backend image, and `golang.org/x/net` to **v0.60.0**. `govulncheck` v1.5.0 on Go 1.26.9 reports no
+reachable or imported-package vulnerabilities; the module-level GO-2026-5932 notice above is
+unchanged.
+
+Reth's lockfile moves `quinn-proto` from 0.11.15 to **0.11.19**. Version 0.11.18 fixes five
+denial-of-service advisories: [unordered-read panic](https://rustsec.org/advisories/RUSTSEC-2026-0338.html),
+[unbounded connection-ID retirements](https://rustsec.org/advisories/RUSTSEC-2026-0339.html),
+[ACK-frequency panic](https://rustsec.org/advisories/RUSTSEC-2026-0340.html),
+[reassembly guard bypass](https://rustsec.org/advisories/RUSTSEC-2026-0341.html) and
+[empty-datagram buffer growth](https://rustsec.org/advisories/RUSTSEC-2026-0342.html).
+The 0.11.19 patch release, with the same dependencies, also fixes two upstream advisories not yet
+in OSV ([GHSA-53rm-773f-4q8c](https://github.com/quinn-rs/quinn/security/advisories/GHSA-53rm-773f-4q8c),
+[GHSA-wppq-2f6r-wfvm](https://github.com/quinn-rs/quinn/security/advisories/GHSA-wppq-2f6r-wfvm)).
+No exception is added. The crate is not compiled into the Reth extension: the lockfile records
+`quinn` through reqwest's weak `quinn?/rustls-aws-lc-rs` feature, while reqwest's `http3` feature
+(which would also add `h3` and `h3-quinn`) is not enabled. `cargo tree --target all -e all -i quinn-proto`
+prints nothing, and the resolved build graph is identical before and after the update. The update
+clears the lockfile gate; it does not change the shipped binary. The lockfile now has 855 registry
+packages (adding `rand_pcg` 0.10.2) and OSV reports no new findings. The Rust authentication
+benchmark's hash-pinned lockfile does not contain `quinn-proto`, is unchanged, and its 52 registry
+packages still have no findings.
+
 ## Validation record
 
 The [Besu verifier follow-up](../../poc/approval-performance/BESU-VERIFIER-2026-09-29.md)
