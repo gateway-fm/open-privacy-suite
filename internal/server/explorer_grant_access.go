@@ -102,6 +102,35 @@ func (s *Server) grantSubjectAddress(ctx context.Context, gw *disclosure.GrantWi
 	return "", nil
 }
 
+// recordGrantListRead retains one event per disclosed grant, while resolving
+// the viewer once and normally writing the list in one database statement.
+// Recovery for a concurrently deleted grant shares the same five-second budget.
+func (s *Server) recordGrantListRead(c *gin.Context, counts map[string]int) {
+	if len(counts) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), 5*time.Second)
+	defer cancel()
+	viewer, err := s.db.GetUserByExternalID(ctx, s.getViewerDIDFromRequest(c))
+	if err != nil || viewer == nil {
+		slog.Error("disclosure: audit viewer lookup failed", "err", err)
+		return
+	}
+	now, ip := time.Now(), c.ClientIP()
+	events := make([]disclosure.Event, 0, len(counts))
+	for grantID, count := range counts {
+		events = append(events, disclosure.Event{
+			GrantID: grantID, ViewerUserID: &viewer.ID,
+			Action: disclosure.ActionListAddresses, ResourceType: disclosure.ResourceAddresses,
+			DataSummary: &disclosure.DataSummary{RecordCount: count},
+			ViewerIP:    ip, AccessedAt: now,
+		})
+	}
+	if err := s.db.CreateDisclosureEvents(ctx, events); err != nil {
+		slog.Error("disclosure: access audit write incomplete", "grants", len(events), "err", err)
+	}
+}
+
 // recordGrantRead records data access against the grant UUID. The event carries
 // counts, never transaction hashes or hidden addresses. Audit failures are
 // logged; request cancellation cannot silently discard the evidence.

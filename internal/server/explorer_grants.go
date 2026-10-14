@@ -104,9 +104,7 @@ func (s *Server) getViewableAddresses(c *gin.Context) {
 	for _, address := range grants {
 		counts[address.GrantID]++
 	}
-	for grantID, count := range counts {
-		s.recordGrantRead(c, grantID, disclosure.ActionListAddresses, disclosure.ResourceAddresses, count)
-	}
+	s.recordGrantListRead(c, counts)
 
 	c.JSON(http.StatusOK, response)
 }
