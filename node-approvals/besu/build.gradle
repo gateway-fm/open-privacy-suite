@@ -1,7 +1,7 @@
 // OPS signed-approvals Besu plugin. Built against the Besu artifacts Lineth consumes.
 plugins {
   id 'java'
-  id 'com.google.protobuf' version '0.9.5'
+  id 'com.google.protobuf' version '0.10.0'
   id 'com.gradleup.shadow' version '9.2.2'
 }
 
@@ -18,7 +18,7 @@ def nettyVersion = '4.2.17.Final'
 def bouncycastleVersion = '1.84'
 // Besu does not ship protobuf-java; the plugin bundles it, relocated. protoc and the runtime must be
 // the same release: generated code checks its runtime version.
-def protobufVersion = '4.32.1'
+def protobufVersion = '4.36.2'
 
 repositories {
   mavenCentral()
