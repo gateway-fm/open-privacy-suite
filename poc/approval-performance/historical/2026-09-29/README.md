@@ -70,9 +70,11 @@ are histogram upper bounds; a JSON `null` bound means only the infinite bucket
 covered that percentile. Counter resets, incomplete runs, missing inputs and
 inconsistent histograms are errors. Each delivery histogram label set must have
 count, sum and infinite-bucket series in both snapshots, with matching bucket
-boundaries across targets and snapshots. An entirely absent histogram in both
-snapshots is valid for approvals-off runs. No new throughput or compatibility claim
-is inferred from reprocessing the saved evidence.
+boundaries across targets and snapshots. Confirmation counters must cover the
+same targets in both snapshots so missing baselines cannot inflate batch sizes.
+An entirely absent histogram in both snapshots is valid for approvals-off runs.
+No new throughput or compatibility claim is inferred from reprocessing the saved
+evidence.
 
 Validation:
 

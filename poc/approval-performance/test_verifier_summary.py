@@ -42,7 +42,8 @@ class VerifierEvidenceTests(unittest.TestCase):
         for target, count, total, lower in (("a", 8, .008, 8), ("b", 2, .020, 0)):
             prefix = "privacyproxy_approval_delivery_seconds_"
             rows.extend((f'{prefix}count{{target="{target}"}} {count * multiplier}',
-                         f'{prefix}sum{{target="{target}"}} {total * multiplier}'))
+                         f'{prefix}sum{{target="{target}"}} {total * multiplier}',
+                         f'privacyproxy_approval_confirmed_total{{target="{target}"}} {2 * count * multiplier}'))
             for bound, value in (("0.001", lower), ("0.01", count), ("+Inf", count)):
                 rows.append(f'{prefix}bucket{{target="{target}",le="{bound}"}} {value * multiplier}')
         return "\n".join(rows) + "\n"
@@ -51,6 +52,30 @@ class VerifierEvidenceTests(unittest.TestCase):
         result = self.summarize_snapshots(self.histogram(), self.histogram(2))
         self.assertAlmostEqual(result["approval_delivery"]["mean_ms"], 2.8)
         self.assertEqual(result["approval_delivery"]["histogram_count"], 10)
+        self.assertEqual(result["mean_approvals_per_batch"], 2)
+
+    def test_confirmation_series_must_match_histogram_targets(self):
+        before, after = self.histogram(10), self.histogram(11)
+        self.assertEqual(self.summarize_snapshots(before, after)["mean_approvals_per_batch"], 2)
+        for phase in ("before", "after", "both"):
+            for missing in ('_confirmed_total', '_confirmed_total{target="b"}'):
+                with self.subTest(phase=phase, missing=missing):
+                    snapshots = [before, after]
+                    for index, name in enumerate(("before", "after")):
+                        if phase in (name, "both"):
+                            snapshots[index] = "\n".join(row for row in snapshots[index].splitlines()
+                                                         if missing not in row)
+                    with self.assertRaisesRegex(ValueError, "confirmation series"):
+                        self.summarize_snapshots(*snapshots)
+        extra = 'privacyproxy_approval_confirmed_total{target="extra"} 10\n'
+        with self.assertRaisesRegex(ValueError, "confirmation series"):
+            self.summarize_snapshots(before + extra, after + extra)
+
+    def test_zero_confirmation_baseline_must_be_present(self):
+        before = "\n".join(row for row in self.histogram(0).splitlines()
+                           if '_confirmed_total{target="b"}' not in row)
+        with self.assertRaisesRegex(ValueError, "confirmation series"):
+            self.summarize_snapshots(before, self.histogram())
 
     def test_incomplete_histogram_snapshots_are_rejected(self):
         for phase in ("before", "after", "both"):

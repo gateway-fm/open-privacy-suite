@@ -137,6 +137,12 @@ def summarize_case(directory):
         raise ValueError("delivery histogram series differ between snapshots")
     if config.get("gate") and not histogram_keys:
         raise ValueError("missing delivery histogram for approvals-enabled run")
+    histogram_targets = {labels for name, labels in histogram_keys if name == PREFIX + "count"}
+    for snapshot in (before, after):
+        confirmation_targets = {labels for name, labels in snapshot
+                                if name == "privacyproxy_approval_confirmed_total"}
+        if confirmation_targets != histogram_targets:
+            raise ValueError("approval confirmation series must match delivery histogram targets in both snapshots")
     delta = counter_delta(before, after)
     count = total(delta, PREFIX + "count")
     receipts = read_json(directory / "receipts.json")
