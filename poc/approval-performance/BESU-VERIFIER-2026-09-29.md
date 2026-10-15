@@ -131,10 +131,13 @@ the candidate is
 Both use OPS binary
 `2dd3bbfcb5e818bd77c91b18254f8b0620592062fc8ed46816fc95091fba04fe`.
 
-Detailed evidence remains under `.tmp/besu-verifier-change/` in the feature worktree:
+Detailed evidence was retained under `.tmp/besu-verifier-change/` in the feature worktree:
 `performance/{jdk,bouncy-castle,approvals-off}/`, `scenarios/`, `http/` and the Gradle/audit
 logs. Large evidence files are compressed; stopped fixture chain state is removed.
-The preceding focused probes remain under `.tmp/besu-bottleneck/verification-probe/`.
+The preceding focused probes used `.tmp/besu-bottleneck/verification-probe/`.
+The old worktree's raw evidence is preserved in a private local archive when the
+worktree is retired. The [historical investigations and benchmark sources](historical/2026-09-29/README.md)
+are now versioned here, together with provenance and an offline summary command.
 
 The local comparison wrapper `run_transactions.py` runs the existing
 `poc/approval-performance/transactions.py` with a selected saved plugin JAR, isolated scratch
@@ -143,5 +146,6 @@ metric snapshots. It batches only **post-load receipt reads** (100 hashes per RP
 eight threads), not approval delivery or the timed transaction workload. The sequential
 `run_performance.py` wrapper selects original, candidate and gate-off cases and performs
 cleanup. Their checksums are included in compact evidence. Both wrappers and saved artifacts
-are retained locally; reruns need a fresh output directory. Build and compatibility commands
+are preserved locally; reruns need matching source, saved artifacts and a fresh
+output directory. Build and compatibility commands
 remain documented under [`node-approvals/`](../../node-approvals/README.md).

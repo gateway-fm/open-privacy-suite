@@ -20,7 +20,7 @@
       "status": ""
     },
     "loadgenerator": {
-      "path": str(Path.home() / "work/software/loadgenerator"),
+      "path": "~/work/software/loadgenerator",
       "commit": "d24667e23b010ded9a1d2e80f4d90741c6ab51f2",
       "branch": "docs/security-response-times",
       "status": ""
