@@ -60,7 +60,50 @@ def total(values, name):
     return sum(value for (metric, _), value in values.items() if metric == name)
 
 
+def validate_delivery_histogram(values):
+    """Validate each target before aggregation can hide missing or invalid data."""
+    histograms = {}
+    keys = set()
+    for (name, labels), value in values.items():
+        if name not in (PREFIX + "count", PREFIX + "sum", PREFIX + "bucket"):
+            continue
+        keys.add((name, labels))
+        if value < 0 or not math.isfinite(value):
+            raise ValueError("invalid delivery histogram value")
+        group = tuple((key, label) for key, label in labels if key != "le")
+        histogram = histograms.setdefault(group, {"buckets": {}})
+        if name == PREFIX + "bucket":
+            try:
+                bound = float(dict(labels)["le"])
+            except (KeyError, ValueError) as error:
+                raise ValueError("invalid delivery histogram bound") from error
+            if math.isnan(bound) or bound < 0 or bound in histogram["buckets"]:
+                raise ValueError("invalid delivery histogram bound")
+            histogram["buckets"][bound] = value
+        else:
+            if group != labels:
+                raise ValueError("unexpected le label on delivery histogram count or sum")
+            histogram[name.removeprefix(PREFIX)] = value
+    bucket_schema = None
+    for labels, histogram in histograms.items():
+        buckets = histogram["buckets"]
+        if "count" not in histogram or "sum" not in histogram or math.inf not in buckets:
+            raise ValueError(f"incomplete delivery histogram for {dict(labels)}: count, sum and +Inf required")
+        if buckets[math.inf] != histogram["count"]:
+            raise ValueError("delivery histogram does not cover its observation count")
+        if histogram["count"] == 0 and histogram["sum"] != 0:
+            raise ValueError("delivery histogram has a sum without observations")
+        ordered = sorted(buckets.items())
+        if any(a[1] > b[1] for a, b in zip(ordered, ordered[1:])):
+            raise ValueError("delivery histogram buckets are not cumulative")
+        if bucket_schema is not None and buckets.keys() != bucket_schema:
+            raise ValueError("delivery histogram bucket boundaries differ across targets")
+        bucket_schema = buckets.keys()
+    return keys
+
+
 def delivery_latency(delta):
+    validate_delivery_histogram(delta)
     count = total(delta, PREFIX + "count")
     if count == 0:
         return None
@@ -68,14 +111,8 @@ def delivery_latency(delta):
     for (name, labels), value in delta.items():
         if name == PREFIX + "bucket":
             bound = float(dict(labels)["le"])
-            if math.isnan(bound) or bound < 0:
-                raise ValueError("invalid delivery histogram bound")
             buckets[bound] += value
     ordered = sorted(buckets.items())
-    if not ordered or ordered[-1] != (math.inf, count):
-        raise ValueError("delivery histogram does not cover its observation count")
-    if any(a[1] > b[1] for a, b in zip(ordered, ordered[1:])):
-        raise ValueError("delivery histogram buckets are not cumulative")
     bounds = {}
     for label, fraction in (("p50", .5), ("p95", .95), ("p99", .99)):
         bound = next(bound for bound, value in ordered if value >= math.ceil(fraction * count))
@@ -93,14 +130,20 @@ def summarize_case(directory):
     report = read_json(directory / "transactions-report.json")
     if report.get("error") or report["status"]["status"] != "completed":
         raise ValueError(f"{directory.name}: run did not complete successfully")
+    config = read_json(directory / "verifier-config.json")
     before, after = [metrics(directory / f"metrics-{phase}.txt") for phase in ("before", "after")]
+    histogram_keys = validate_delivery_histogram(before)
+    if histogram_keys != validate_delivery_histogram(after):
+        raise ValueError("delivery histogram series differ between snapshots")
+    if config.get("gate") and not histogram_keys:
+        raise ValueError("missing delivery histogram for approvals-enabled run")
     delta = counter_delta(before, after)
     count = total(delta, PREFIX + "count")
     receipts = read_json(directory / "receipts.json")
     logs = read_json(directory / "transactions.json")
     missing = {row["hash"].lower() for row in receipts if row["receipt"] is None}
     statuses = {row["txHash"].lower(): row.get("status", "unknown") for row in logs if row.get("txHash")}
-    return {"case": directory.name, "config": read_json(directory / "verifier-config.json"),
+    return {"case": directory.name, "config": config,
             "receipts": report["receipts"],
             "generator": {key: report["status"].get(key) for key in
                           ("txSent", "txConfirmed", "txFailed", "status", "elapsedMs")},
