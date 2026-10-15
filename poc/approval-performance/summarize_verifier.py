@@ -16,6 +16,7 @@ import re
 
 CASES = ("jdk", "bouncy-castle", "approvals-off")
 PREFIX = "privacyproxy_approval_delivery_seconds_"
+LABEL = r'([a-zA-Z_][a-zA-Z0-9_]*)="((?:[^"\\\n]|\\[\\n"])*)"'
 
 
 def read_json(path):
@@ -27,7 +28,7 @@ def read_json(path):
 
 def metrics(path):
     """Keep individual series until after reset detection; aggregate in the report."""
-    values = collections.defaultdict(float)
+    values = {}
     with path.open() as stream:
         for line in stream:
             if not line.startswith(("privacyproxy_approval_", "ops_approval_")):
@@ -36,12 +37,22 @@ def metrics(path):
             if not match:
                 raise ValueError(f"malformed approval metric in {path.name}")
             name, labels, value = match.groups()
-            labels = dict(re.findall(r'(\w+)="((?:[^"\\]|\\.)*)"', labels or ""))
+            if labels and not re.fullmatch(rf'\s*{LABEL}(?:\s*,\s*{LABEL})*\s*,?\s*', labels):
+                raise ValueError(f"malformed approval metric labels in {path.name}: {name}")
+            pairs = re.findall(LABEL, labels or "")
+            labels = dict(pairs)
+            if len(labels) != len(pairs):
+                raise ValueError(f"duplicate approval metric label in {path.name}: {name}")
             value = float(value)
             if not math.isfinite(value):
                 raise ValueError(f"non-finite metric: {name}")
-            values[name, tuple(sorted(labels.items()))] += value
-    return dict(values)
+            if value < 0 and name.endswith(("_total", "_count", "_sum", "_bucket")):
+                raise ValueError(f"negative approval counter: {name}")
+            key = (name, tuple(sorted(labels.items())))
+            if key in values:
+                raise ValueError(f"duplicate approval metric in {path.name}: {name}")
+            values[key] = value
+    return values
 
 
 def counter_delta(before, after):

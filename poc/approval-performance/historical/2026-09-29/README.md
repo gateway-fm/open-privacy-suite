@@ -68,7 +68,8 @@ receipt verification; this offline command does not query the chain again.
 Delivery means are weighted by observation count across targets. Percentiles
 are histogram upper bounds; a JSON `null` bound means only the infinite bucket
 covered that percentile. Counter resets, incomplete runs, missing inputs and
-inconsistent histograms are errors. Each delivery histogram label set must have
+inconsistent histograms are errors. Duplicate series, malformed labels and
+negative counters are rejected. Each delivery histogram label set must have
 count, sum and infinite-bucket series in both snapshots, with matching bucket
 boundaries across targets and snapshots. Confirmation counters must cover the
 same targets in both snapshots so missing baselines cannot inflate batch sizes.

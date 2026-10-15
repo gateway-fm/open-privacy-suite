@@ -77,6 +77,48 @@ class VerifierEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "confirmation series"):
             self.summarize_snapshots(before, self.histogram())
 
+    def test_duplicate_metric_series_are_rejected(self):
+        for phase in ("before", "after"):
+            for suffix in ("_count", "_sum", "_bucket", "_confirmed_total"):
+                with self.subTest(phase=phase, suffix=suffix):
+                    snapshots = [self.histogram(), self.histogram(2)]
+                    index = 0 if phase == "before" else 1
+                    duplicate = next(row for row in snapshots[index].splitlines() if suffix in row)
+                    snapshots[index] += duplicate + "\n"
+                    with self.assertRaisesRegex(ValueError, "duplicate approval metric"):
+                        self.summarize_snapshots(*snapshots)
+
+    def test_duplicate_samples_with_reordered_labels_are_rejected(self):
+        after = self.histogram(2)
+        after += 'privacyproxy_approval_delivery_seconds_bucket{le="0.001",target="a"} 16\n'
+        with self.assertRaisesRegex(ValueError, "duplicate approval metric"):
+            self.summarize_snapshots(self.histogram(), after)
+
+    def test_repeated_counts_and_buckets_cannot_distort_mean(self):
+        after = self.histogram(2)
+        after += "\n".join(row for row in after.splitlines() if "_count" in row or "_bucket" in row) + "\n"
+        with self.assertRaisesRegex(ValueError, "duplicate approval metric"):
+            self.summarize_snapshots(self.histogram(), after)
+
+    def test_malformed_or_duplicate_labels_are_not_silently_discarded(self):
+        module = self.module()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "metrics.txt"
+            for labels in ('target="a",target="b"', 'target="a",broken',
+                           'target="a" target="b"', r'target="bad\q"'):
+                with self.subTest(labels=labels):
+                    path.write_text(f'privacyproxy_approval_confirmed_total{{{labels}}} 1\n')
+                    with self.assertRaisesRegex(ValueError, "approval metric label"):
+                        module.metrics(path)
+            path.write_text('privacyproxy_approval_confirmed_total{ target="a", } 1\n')
+            self.assertEqual(module.total(module.metrics(path), "privacyproxy_approval_confirmed_total"), 1)
+
+    def test_negative_confirmation_baseline_cannot_inflate_batch_size(self):
+        before = self.histogram(0).replace('_confirmed_total{target="b"} 0',
+                                          '_confirmed_total{target="b"} -20')
+        with self.assertRaisesRegex(ValueError, "negative approval counter"):
+            self.summarize_snapshots(before, self.histogram())
+
     def test_incomplete_histogram_snapshots_are_rejected(self):
         for phase in ("before", "after", "both"):
             for missing in ('sum{target="b"}', '_count', 'le="+Inf"',
