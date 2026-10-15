@@ -68,7 +68,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
         if: matrix.node == 'besu'
         with:
-          gradle-version: '9.0.0'
+          gradle-version: '9.2.1'
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable, explicitly selected toolchain
         if: matrix.node == 'reth'
         with:

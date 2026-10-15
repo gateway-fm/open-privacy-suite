@@ -22,7 +22,7 @@ delivery ports and signing secrets must be restricted. See [operations](OPERATIO
 
 | Integration | Supported upstream | Toolchain | Artifact |
 |---|---|---|---|
-| Besu | 26.8.1, Maven 26.8.1-d97cbd6 | Temurin 25.0.4.1+1, Gradle 9.0.0 | `ops-besu-approvals-0.1.0-besu-26.8.1.jar` |
+| Besu | 26.8.1, Maven 26.8.1-d97cbd6 | Temurin 25.0.4.1+1, Gradle 9.2.1 | `ops-besu-approvals-0.1.0-besu-26.8.1.jar` |
 | Reth | 2.5.2, commit `5a6940e351fed80458fe6c9da8581cbe4b8bd036` | Rust 1.98.1, protoc | `ops-reth-approvals` |
 
 The machine-readable pins are in [compatibility.json](compatibility.json). Besu's plugin API is
