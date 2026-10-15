@@ -1,0 +1,23 @@
+# Reviewed for PR #549 on 2026-10-15. Exact advisory IDs and their aliases only.
+# Both Gradle builds enforce Netty 4.2.17.Final. Reassess on dependency changes.
+# Findings requiring 4.2.18.Final remain open. No paths or scan types are excluded.
+ignore:
+  cves:
+    AIKIDO-2026-240696:
+      reason: "False positive for the current dependency graph: both Gradle builds enforce Netty 4.2.17.Final, which contains this fix; Aikido reports the overridden 4.1.130.Final dependency. Reassess on dependency changes. Newer 4.2.18 findings remain open."
+    AIKIDO-2026-421700:
+      reason: "False positive for the current dependency graph: both Gradle builds enforce Netty 4.2.17.Final, which contains this fix; Aikido reports the overridden 4.1.130.Final dependency. Reassess on dependency changes. Newer 4.2.18 findings remain open."
+    AIKIDO-2026-445867:
+      reason: "False positive for the current dependency graph: both Gradle builds enforce Netty 4.2.17.Final, which contains this fix; Aikido reports the overridden 4.1.130.Final dependency. Reassess on dependency changes. Newer 4.2.18 findings remain open."
+    AIKIDO-2026-739270:
+      reason: "False positive for the current dependency graph: both Gradle builds enforce Netty 4.2.17.Final, which contains this fix; Aikido reports the overridden 4.1.130.Final dependency. Reassess on dependency changes. Newer 4.2.18 findings remain open."
+    CVE-2026-56819:
+      reason: "False positive for the current dependency graph: both Gradle builds enforce Netty 4.2.17.Final, which contains this fix; Aikido reports the overridden 4.1.130.Final dependency. Reassess on dependency changes. Newer 4.2.18 findings remain open."
+    CVE-2026-59903:
+      reason: "False positive for the current dependency graph: both Gradle builds enforce Netty 4.2.17.Final, which contains this fix; Aikido reports the overridden 4.1.130.Final dependency. Reassess on dependency changes. Newer 4.2.18 findings remain open."
+    CVE-2026-75595:
+      reason: "False positive for the current dependency graph: both Gradle builds enforce Netty 4.2.17.Final, which contains this fix; Aikido reports the overridden 4.1.130.Final dependency. Reassess on dependency changes. Newer 4.2.18 findings remain open."
+    GHSA-cc6x-ffm5-83wf:
+      reason: "False positive for the current dependency graph: both Gradle builds enforce Netty 4.2.17.Final, which contains this fix; Aikido reports the overridden 4.1.130.Final dependency. Reassess on dependency changes. Newer 4.2.18 findings remain open."
+    GHSA-p85m-gvr3-788c:
+      reason: "False positive for the current dependency graph: both Gradle builds enforce Netty 4.2.17.Final, which contains this fix; Aikido reports the overridden 4.1.130.Final dependency. Reassess on dependency changes. Newer 4.2.18 findings remain open."
