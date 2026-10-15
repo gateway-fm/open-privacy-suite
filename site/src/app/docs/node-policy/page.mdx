@@ -42,11 +42,8 @@ one approval activates the complete set together. Removing a binding removes
 that group's execution rules. A caller needs an allowing rule in at least one
 of their current groups; nested calls are checked separately.
 
-Each group's compiled rules must fit the contract size limit. Adding other
-groups no longer consumes that group's limit. If one group is too large,
-simplify its rules before submitting. Compilation of large group sets can take
-up to five minutes. Deploy the updated OPS and Reth versions
-together before activating grouped revisions; older nodes reject the new feed.
+Deploy the updated OPS and Reth versions together before activating grouped
+revisions; older nodes reject the new feed.
 Previously approved organization-wide artifacts remain valid until replaced.
 
 Cross-stream dependencies are pinned by digest. Supply sibling revision IDs to
@@ -60,6 +57,38 @@ drift for adoption in a later revision. Once a stream is active, its former
 configuration mutation endpoints close. User onboarding, memberships, bans,
 address links, sanctions and disclosure remain operational actions. Upstream
 RPC credentials can still be rotated separately, or declared in the groups document as an environment variable name (`rpcCredential.fromEnv`) that activation resolves; the value never enters the document.
+
+## Current limits
+
+**Compiled size: 24,576 bytes (24 KiB) per group.** Each group's execution rules
+compile into a separate policy program. The limit applies to that compiled
+program, not the source document's length. Other groups' rules do not consume
+its allowance, but many functions or complex rules within one group can still
+exceed it. OPS rejects an oversized group before approval; it does not
+automatically split the group. Simplify its rules and submit again. These
+programs run privately inside Reth and are not deployed as public contracts.
+
+**Execution budget: 100,000 policy gas per application call or deployment.**
+All of the caller's groups evaluated for that call share this budget. If it
+runs out before an allowing group is reached, execution is denied even when a
+later group would allow it. Adding memberships can therefore make a previously
+allowed operation fail. Raising the transaction's gas limit does not increase
+the policy budget. Nested calls receive their own policy checks.
+
+There is no universal supported rule count or membership count: cost depends on
+rule complexity and how many groups must be checked before finding an allowance.
+In one measured workload, an allowance in the last checked group succeeded with
+11 memberships and exhausted the budget at 12. An early allowance succeeded
+with 60 memberships. These measurements are examples, not guaranteed limits;
+successful activation of a 60-group organization does not establish that every
+caller can evaluate all 60 groups. Test representative rules and memberships
+before rollout, and simplify expensive rules or remove unnecessary memberships
+when the budget is exceeded.
+
+**Compilation deadline: five minutes for the complete group set.** If any group
+fails to compile or the deadline expires, OPS rejects the submission without
+storing a partial compiled set. Keep the existing active revision while
+simplifying the proposed rules and resubmitting.
 
 ## Preview and observe execution
 

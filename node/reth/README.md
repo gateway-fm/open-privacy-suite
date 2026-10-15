@@ -1,5 +1,8 @@
 # OPS Reth policy runtime
 
+For the complete path from OPS authentication and policy compilation to node
+execution, see [How OPS v2 authorizes Reth execution](../../docs/architecture/reth-execution-flow.md).
+
 `ops-reth` runs the generated DSL policy inside Reth's live EVM before each
 application CALL, STATICCALL, DELEGATECALL, CALLCODE, CREATE, and CREATE2 frame.
 Policy bytecode is private to the node. It is never deployed to a chain account,

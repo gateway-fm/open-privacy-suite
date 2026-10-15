@@ -2,6 +2,9 @@
 
 Status: implementation contract, 16 September 2026. Reth is the selected node.
 
+For a walkthrough with policy publication, transaction and RPC diagrams, read
+[How OPS v2 authorizes Reth execution](reth-execution-flow.md).
+
 ## User-requested review reminder
 
 **Review this change before accepting the finished implementation.** The user approved preserving shared signing addresses on 16 September and specifically asked that the implementation be documented for later inspection.
