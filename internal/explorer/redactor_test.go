@@ -89,19 +89,19 @@ func (m *mockContractStore) GetContract(_ context.Context, address string) (*Con
 }
 
 func newEngine(visMap VisibilityMap) *RedactionEngine {
-	return &RedactionEngine{store: nil, db: &mockDB{visMap: visMap}}
+	return &RedactionEngine{readProfile: rbac.ReadProfileStandard, store: nil, db: &mockDB{visMap: visMap}}
 }
 
 func newEngineWithLinkedAddrs(visMap VisibilityMap, linkedAddrs []string) *RedactionEngine {
-	return &RedactionEngine{store: nil, db: &mockDB{visMap: visMap, linkedAddrs: linkedAddrs}}
+	return &RedactionEngine{readProfile: rbac.ReadProfileStandard, store: nil, db: &mockDB{visMap: visMap, linkedAddrs: linkedAddrs}}
 }
 
 func newEngineWithStore(visMap VisibilityMap, store ContractStore) *RedactionEngine {
-	return &RedactionEngine{store: store, db: &mockDB{visMap: visMap}}
+	return &RedactionEngine{readProfile: rbac.ReadProfileStandard, store: store, db: &mockDB{visMap: visMap}}
 }
 
 func newEngineErr(err error) *RedactionEngine {
-	return &RedactionEngine{store: nil, db: &mockDB{err: err}}
+	return &RedactionEngine{readProfile: rbac.ReadProfileStandard, store: nil, db: &mockDB{err: err}}
 }
 
 // eventTopic0 computes keccak256 of an event signature, returning "0x"-prefixed hex.
@@ -1611,14 +1611,28 @@ func TestRedactLogs_EventRules_ParamRules_VisibleToFallback(t *testing.T) {
 	logs := []Log{
 		{ID: 1, Address: addr, TxHash: sharedTxHash, Topic0: &transferTopic, Topic1: &otherTopic, Data: "0x"},
 	}
+	// The fallback needs a genuine listing (ListedTxHashes, RD-1307).
 	result, err := engine.RedactLogsWithOpts(context.Background(), logs, "did:test", &RedactOpts{
 		VisibleTxHashes: map[string]bool{sharedTxHash: true},
+		ListedTxHashes:  map[string]bool{sharedTxHash: true},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(result) != 1 {
 		t.Errorf("visibleTo fallback: expected 1 log to pass (param failed but tx shared), got %d", len(result))
+	}
+
+	// A tx that is only in VisibleTxHashes (e.g. the RD-1009 transfer
+	// union) is not a listing: the failed param rule stands.
+	result, err = engine.RedactLogsWithOpts(context.Background(), logs, "did:test", &RedactOpts{
+		VisibleTxHashes: map[string]bool{sharedTxHash: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 0 {
+		t.Errorf("union-only tx must not trigger the param-rule fallback, got %d logs", len(result))
 	}
 }
 
@@ -1640,6 +1654,7 @@ func TestRedactLogs_EventRules_ParamRules_VisibleToOnlyHelpsIfTopic0Matches(t *t
 	logs := []Log{{ID: 1, Address: addr, TxHash: "0xshared", Topic0: &approvalTopic, Data: "0x"}}
 	result, err := engine.RedactLogsWithOpts(context.Background(), logs, "did:test", &RedactOpts{
 		VisibleTxHashes: map[string]bool{"0xshared": true},
+		ListedTxHashes:  map[string]bool{"0xshared": true}, // a genuine listing, so only the rule under test can deny (RD-1307)
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1675,6 +1690,7 @@ func TestRedactLogs_OrdinaryVisibleTo_NoGrantEmitter_RD1208(t *testing.T) {
 		logs := []Log{{ID: 1, Address: addr, TxHash: "0xshared", Topic0: &topic, Data: "0x"}}
 		result, err := engine.RedactLogsWithOpts(context.Background(), logs, "did:test", &RedactOpts{
 			VisibleTxHashes: map[string]bool{"0xshared": true},
+			ListedTxHashes:  map[string]bool{"0xshared": true}, // a genuine listing, so only the rule under test can deny (RD-1307)
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -1693,6 +1709,7 @@ func TestRedactLogs_OrdinaryVisibleTo_NoGrantEmitter_RD1208(t *testing.T) {
 		logs := []Log{{ID: 1, Address: addr, TxHash: "0xshared", Topic0: &topic, Data: "0x"}}
 		result, err := engine.RedactLogsWithOpts(context.Background(), logs, "did:test", &RedactOpts{
 			VisibleTxHashes: map[string]bool{"0xshared": true},
+			ListedTxHashes:  map[string]bool{"0xshared": true}, // a genuine listing, so only the rule under test can deny (RD-1307)
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -3394,7 +3411,7 @@ func TestRedactTransactions_AnonymousViewerContractCreationScenario(t *testing.T
 			publicEOA2:      VisibilityFull,   // public address
 		},
 	}
-	engine := NewRedactionEngine(nil, db)
+	engine := NewRedactionEngine(nil, db, rbac.ReadProfileStandard)
 
 	to1 := publicEOA2
 	txs := []Transaction{
@@ -3429,7 +3446,7 @@ func TestRedactTransactions_ContractCreationHiddenDeployer(t *testing.T) {
 			deployerAddr: VisibilityHidden,
 		},
 	}
-	engine := NewRedactionEngine(nil, db)
+	engine := NewRedactionEngine(nil, db, rbac.ReadProfileStandard)
 
 	txs := []Transaction{
 		{
@@ -3458,7 +3475,7 @@ func TestRedactTransactions_ContractCreationVisibleDeployer(t *testing.T) {
 			deployerAddr: VisibilityFull,
 		},
 	}
-	engine := NewRedactionEngine(nil, db)
+	engine := NewRedactionEngine(nil, db, rbac.ReadProfileStandard)
 
 	txs := []Transaction{
 		{
@@ -3487,7 +3504,7 @@ func TestRedactTransactions_ContractAddress_RedactedForNonParticipant_RD1143(t *
 		deployer: VisibilityFull,
 		contract: VisibilityRedacted,
 	}}
-	engine := NewRedactionEngine(nil, db)
+	engine := NewRedactionEngine(nil, db, rbac.ReadProfileStandard)
 	txs := []Transaction{{Hash: "0xdeploy", From: deployer, To: nil, ContractAddress: strPtr(contract)}}
 	result, err := engine.RedactTransactions(context.Background(), txs, "did:eve")
 	if err != nil {
@@ -3533,7 +3550,7 @@ func TestRedactTransactions_ContractAddress_AdminFlagDoesNotReveal_RD1143(t *tes
 		deployer: VisibilityHidden,
 		contract: VisibilityRedacted, // admin has NO org access to it
 	}}
-	engine := NewRedactionEngine(nil, db)
+	engine := NewRedactionEngine(nil, db, rbac.ReadProfileStandard)
 	txs := []Transaction{{Hash: "0xdeploy", From: deployer, To: nil, Value: "42", ContractAddress: strPtr(contract)}}
 	result, err := engine.RedactTransactions(context.Background(), txs, "did:admin",
 		RedactOpts{ViewerIsAdmin: true, OrgAdminViewUserTxs: true})
@@ -3564,7 +3581,7 @@ func TestRedactTransactions_ContractAddress_AdminWithContractAccessSeesReal_RD11
 		deployer: VisibilityHidden, // deployer EOA private to the admin
 		contract: VisibilityFull,   // admin has org access to the contract
 	}}
-	engine := NewRedactionEngine(nil, db)
+	engine := NewRedactionEngine(nil, db, rbac.ReadProfileStandard)
 	txs := []Transaction{{Hash: "0xdeploy", From: deployer, To: nil, ContractAddress: strPtr(contract)}}
 	result, err := engine.RedactTransactions(context.Background(), txs, "did:admin",
 		RedactOpts{ViewerIsAdmin: true, OrgAdminViewUserTxs: true})
@@ -3619,7 +3636,7 @@ func (m *mockDBDetailed) GetBatchEventAccess(_ context.Context, _ string, _ []st
 }
 
 func newEngineDetailed(visMap VisibilityMap, detailedMap map[string]AddressVisibility, linkedAddrs []string) *RedactionEngine {
-	return &RedactionEngine{store: nil, db: &mockDBDetailed{
+	return &RedactionEngine{readProfile: rbac.ReadProfileStandard, store: nil, db: &mockDBDetailed{
 		visMap:      visMap,
 		detailedMap: detailedMap,
 		linkedAddrs: linkedAddrs,
@@ -3818,7 +3835,7 @@ func TestRedactTransactions_ContractCreationRedactedDeployer(t *testing.T) {
 			deployerAddr: VisibilityRedacted,
 		},
 	}
-	engine := NewRedactionEngine(nil, db)
+	engine := NewRedactionEngine(nil, db, rbac.ReadProfileStandard)
 
 	txs := []Transaction{
 		{
@@ -3858,7 +3875,7 @@ func TestRedactTransactions_VisibleToGrant_SetsMetadata(t *testing.T) {
 	)
 
 	txs := []Transaction{{Hash: "0xabc", From: alice, To: strPtr(bob), Value: "1000"}}
-	opts := RedactOpts{VisibleTxHashes: map[string]bool{"0xabc": true}}
+	opts := RedactOpts{VisibleTxHashes: map[string]bool{"0xabc": true}, ListedTxHashes: map[string]bool{"0xabc": true}}
 	result, err := engine.RedactTransactions(context.Background(), txs, "did:viewer", opts)
 	if err != nil {
 		t.Fatal(err)
@@ -3896,7 +3913,7 @@ func TestRedactTransactions_VisibleToGrant_ParticipantTakesPrecedence(t *testing
 	)
 
 	txs := []Transaction{{Hash: "0xabc", From: alice, To: strPtr(bob), Value: "1000"}}
-	opts := RedactOpts{VisibleTxHashes: map[string]bool{"0xabc": true}}
+	opts := RedactOpts{VisibleTxHashes: map[string]bool{"0xabc": true}, ListedTxHashes: map[string]bool{"0xabc": true}}
 	result, err := engine.RedactTransactions(context.Background(), txs, "did:alice", opts)
 	if err != nil {
 		t.Fatal(err)
@@ -3981,7 +3998,7 @@ func TestRedactTransactions_G10_VisibleToStillSees(t *testing.T) {
 	)
 
 	txs := []Transaction{{Hash: "0x01", From: sender, To: strPtr(contract), Value: "1000"}}
-	opts := RedactOpts{VisibleTxHashes: map[string]bool{"0x01": true}}
+	opts := RedactOpts{VisibleTxHashes: map[string]bool{"0x01": true}, ListedTxHashes: map[string]bool{"0x01": true}}
 	result, err := engine.RedactTransactions(context.Background(), txs, "did:viewer", opts)
 	if err != nil {
 		t.Fatal(err)
@@ -4068,7 +4085,7 @@ func TestRedactTransactions_G10_CalldataParticipantStillSees(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func newEngineWithEventAccess(visMap VisibilityMap, eventAccess map[string]bool) *RedactionEngine {
-	return &RedactionEngine{store: nil, db: &mockDB{visMap: visMap, eventAccessMap: eventAccess}}
+	return &RedactionEngine{readProfile: rbac.ReadProfileStandard, store: nil, db: &mockDB{visMap: visMap, eventAccessMap: eventAccess}}
 }
 
 func TestRedactTransactions_TokenTransferStrippedWithoutEventAccess(t *testing.T) {
@@ -4420,13 +4437,23 @@ func TestRedactLogs_M15_VisibleToUnlockBypass(t *testing.T) {
 
 	topic := eventTopic0("Bridge(address,bytes)")
 	logs := []Log{{ID: 1, Address: addr, TxHash: txHash, Topic0: &topic, Data: "0x"}}
-	opts := &RedactOpts{VisibleTxHashes: map[string]bool{txHash: true}}
+	// The unlock is keyed on the genuine listing (ListedTxHashes, RD-1307);
+	// VisibleTxHashes alone (row survival) never unlocks.
+	opts := &RedactOpts{VisibleTxHashes: map[string]bool{txHash: true}, ListedTxHashes: map[string]bool{txHash: true}}
 	result, err := engine.RedactLogsWithOpts(context.Background(), logs, "did:test", opts)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(result) != 1 {
 		t.Errorf("M15 visibleTo unlock: expected 1 log, got %d", len(result))
+	}
+	unionOnly := &RedactOpts{VisibleTxHashes: map[string]bool{txHash: true}}
+	result, err = engine.RedactLogsWithOpts(context.Background(), logs, "did:test", unionOnly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 0 {
+		t.Errorf("a tx that is only in VisibleTxHashes (e.g. the RD-1009 union) must not unlock: expected 0 logs, got %d", len(result))
 	}
 }
 
@@ -4513,5 +4540,84 @@ func TestEventHasDynamicNonIndexedParam_TypeMatrix(t *testing.T) {
 				t.Errorf("expected %v, got %v", tc.expected, got)
 			}
 		})
+	}
+}
+
+// countingUnlockResolver counts Resolve calls (per-request DB cost).
+type countingUnlockResolver struct {
+	calls      int
+	unlockable map[string]bool
+}
+
+func (c *countingUnlockResolver) Resolve(_ context.Context, _ string, _ []string) map[string]bool {
+	c.calls++
+	return c.unlockable
+}
+
+// TestRedactLogs_UnlockResolverSkippedWithoutListing (RD-1300): the unlock
+// can only fire on a tx the viewer is listed on, so the eligibility resolver
+// (several DB lookups) is not consulted for a page with no listed tx.
+func TestRedactLogs_UnlockResolverSkippedWithoutListing(t *testing.T) {
+	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	engine := newEngine(VisibilityMap{addr: VisibilityFull})
+	engine.SetEventRuleChecker(&stubEventRuleChecker{byAddr: map[string]EventRulesResolution{addr: {Wildcard: true}}})
+	resolver := &countingUnlockResolver{unlockable: map[string]bool{addr: true}}
+	engine.SetVisibleToUnlockResolver(resolver)
+	topic := eventTopic0("Ping()")
+	logs := []Log{{ID: 1, Address: addr, TxHash: "0xtx", Topic0: &topic, Data: "0x"}}
+
+	if _, err := engine.RedactLogsWithOpts(context.Background(), logs, "did:test", &RedactOpts{VisibleTxHashes: map[string]bool{"0xtx": true}}); err != nil {
+		t.Fatal(err)
+	}
+	if resolver.calls != 0 {
+		t.Fatalf("no listed tx: the unlock resolver must not be consulted, got %d calls", resolver.calls)
+	}
+	if _, err := engine.RedactLogsWithOpts(context.Background(), logs, "did:test", &RedactOpts{ListedTxHashes: map[string]bool{"0xtx": true}}); err != nil {
+		t.Fatal(err)
+	}
+	if resolver.calls != 1 {
+		t.Fatalf("listed tx: the unlock resolver must be consulted once, got %d calls", resolver.calls)
+	}
+}
+
+// countingABIResolver counts Resolve calls per address.
+type countingABIResolver struct {
+	byAddr map[string]string
+	calls  map[string]int
+}
+
+func (c *countingABIResolver) Resolve(_ context.Context, address string) string {
+	a := strings.ToLower(address)
+	c.calls[a]++
+	return c.byAddr[a]
+}
+
+// TestRedactLogs_ABIResolvedOncePerEmitter (RD-1300): resolving the ABI and M15
+// facts for every candidate log costs one ABI lookup per emitter per call —
+// including an emitter that has no ABI — however many logs it emitted.
+func TestRedactLogs_ABIResolvedOncePerEmitter(t *testing.T) {
+	withABI := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	noABI := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngine(VisibilityMap{withABI: VisibilityFull, noABI: VisibilityFull})
+	resolver := &countingABIResolver{byAddr: map[string]string{withABI: testEventABI}, calls: map[string]int{}}
+	engine.SetABIResolver(resolver)
+	engine.SetEventRuleChecker(&stubEventRuleChecker{byAddr: map[string]EventRulesResolution{
+		withABI: {Wildcard: true}, noABI: {Wildcard: true},
+	}})
+	engine.SetAdminContractsResolver(&stubAdminContractsResolver{admin: map[string]bool{noABI: true}})
+	topic := eventTopic0("Transfer(address,address,uint256)")
+	data := "0x" + strings.Repeat("0", 63) + "1"
+	var logs []Log
+	for i := 0; i < 3; i++ {
+		logs = append(logs,
+			Log{ID: int64(2 * i), Address: withABI, TxHash: "0xtx", Topic0: &topic, Data: data},
+			Log{ID: int64(2*i + 1), Address: noABI, TxHash: "0xtx", Topic0: &topic, Data: data},
+		)
+	}
+	if _, err := engine.RedactLogs(context.Background(), logs, "did:test"); err != nil {
+		t.Fatal(err)
+	}
+	if resolver.calls[withABI] != 1 || resolver.calls[noABI] != 1 {
+		t.Fatalf("ABI lookups per emitter: %v, want exactly 1 each", resolver.calls)
 	}
 }

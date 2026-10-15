@@ -1,0 +1,25 @@
+   Compiling ops-reth-approvals-poc v0.1.0 (<repo>/poc/reth-signed-approvals)
+    Finished `test` profile [unoptimized] target(s) in 6.35s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/main.rs (<repo>/.tmp/reth-policy-poc/target/debug/deps/ops_reth_approvals_poc-0dc2b62aa8e7f633)
+
+running 2 tests
+test direct::tests::fee_normalization_preserves_value_and_deleted_beneficiary_effects ... ok
+test direct::tests::fee_normalization_handles_sender_beneficiary_alias_at_uint256_limit ... FAILED
+
+failures:
+
+---- direct::tests::fee_normalization_handles_sender_beneficiary_alias_at_uint256_limit stdout ----
+
+thread 'direct::tests::fee_normalization_handles_sender_beneficiary_alias_at_uint256_limit' (18587756) panicked at src/direct.rs:350:73:
+called `Result::unwrap()` on an `Err` value: "fee normalization overflow"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    direct::tests::fee_normalization_handles_sender_beneficiary_alias_at_uint256_limit
+
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--bin ops-reth-approvals-poc`

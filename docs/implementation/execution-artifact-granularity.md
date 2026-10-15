@@ -162,7 +162,7 @@ still leave the default proxy timeout at 60 seconds. Failure or cancellation
 stores no partial set. The [review-fix evidence](evidence/per-group-live-2026-09-25.md#review-fixes-and-verification)
 records the delayed-upstream regression check.
 
-Migration 081 adds `execution_policy_revisions.artifact_set`. The complete set
+Migration 082 adds `execution_policy_revisions.artifact_set`. The complete set
 is written alongside the active projection, audit and publication watermark in
 the existing transaction. The repeatable-read exporter expands that set into
 feed rows; a later revision omitting a binding deletes its old feed row. An

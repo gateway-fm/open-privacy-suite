@@ -1,0 +1,1343 @@
+{
+  "method": "Same binary; stock, original JSON fingerprint, direct fingerprint. Internal default_ethereum_payload time including execution and roots, divided by included tx count. Identical preflight warming. Rotated mode order; one discarded warmup per node. All three block hashes equal for every sample. RPC, preflight, approval signature verification/delivery, wait, and engine import excluded.",
+  "profile_enabled": false,
+  "samples_per_mode_per_workload": 9,
+  "batch": 32,
+  "hardware": {
+    "os": "macOS-26.6.1-arm64-arm-64bit-Mach-O",
+    "architecture": "arm64",
+    "logical_cpus": 12,
+    "cpu": "Apple M2 Max",
+    "memory_bytes": 34359738368
+  },
+  "reth_commit": "5a6940e351fed80458fe6c9da8581cbe4b8bd036",
+  "binary_sha256": "69a915b4191e2c22e147bf57147c78c600e03e10bee7996988c9385ff41a24ff",
+  "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+  "summary": [
+    {
+      "workload": "eighteen_calls",
+      "median_us_per_tx": {
+        "baseline": 69.966125,
+        "legacy": 199.62759375,
+        "direct": 92.772125
+      },
+      "ranges_us_per_tx": {
+        "baseline": [
+          60.32421875,
+          80.98046875
+        ],
+        "legacy": [
+          194.71484375,
+          221.7018125
+        ],
+        "direct": [
+          82.1731875,
+          103.4270625
+        ]
+      },
+      "extra_us_per_tx": 22.805999999999997,
+      "optimized_time_increase_percent": 32.59577402635918,
+      "optimized_time_reduction_vs_legacy_percent": 53.52740407411738,
+      "stage_mean_us_per_tx": {},
+      "stage_median_us_per_tx": {}
+    },
+    {
+      "workload": "single_storage_write",
+      "median_us_per_tx": {
+        "baseline": 11.53775,
+        "legacy": 24.78778125,
+        "direct": 13.72134375
+      },
+      "ranges_us_per_tx": {
+        "baseline": [
+          10.67059375,
+          13.0546875
+        ],
+        "legacy": [
+          23.91925,
+          26.85546875
+        ],
+        "direct": [
+          12.6198125,
+          15.3125
+        ]
+      },
+      "extra_us_per_tx": 2.18359375,
+      "optimized_time_increase_percent": 18.925646248185313,
+      "optimized_time_reduction_vs_legacy_percent": 44.64472793425187,
+      "stage_mean_us_per_tx": {},
+      "stage_median_us_per_tx": {}
+    },
+    {
+      "workload": "three_calls",
+      "median_us_per_tx": {
+        "baseline": 14.0,
+        "legacy": 45.546875,
+        "direct": 19.61065625
+      },
+      "ranges_us_per_tx": {
+        "baseline": [
+          13.6080625,
+          15.015625
+        ],
+        "legacy": [
+          42.309875,
+          48.99609375
+        ],
+        "direct": [
+          18.5481875,
+          43.6484375
+        ]
+      },
+      "extra_us_per_tx": 5.610656250000002,
+      "optimized_time_increase_percent": 40.07611607142858,
+      "optimized_time_reduction_vs_legacy_percent": 56.94401372212692,
+      "stage_mean_us_per_tx": {},
+      "stage_median_us_per_tx": {}
+    }
+  ],
+  "raw": [
+    {
+      "workload": "single_storage_write",
+      "pair": 0,
+      "mode": "baseline",
+      "sample": 1,
+      "approval_stats": null,
+      "block_hash": "0x917466c6d5fe6005edd5239c1e37af380d7205dfcf23086452eb50d679a4f40e",
+      "elapsed_ns": 417417,
+      "module": false,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "single_storage_write",
+      "pair": 0,
+      "mode": "baseline",
+      "sample": 2,
+      "approval_stats": null,
+      "block_hash": "0x0ce3d8068301d6c44ee378466facd6337637722f5cc7bce93359da7c2572b2cd",
+      "elapsed_ns": 341459,
+      "module": false,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "single_storage_write",
+      "pair": 0,
+      "mode": "baseline",
+      "sample": 3,
+      "approval_stats": null,
+      "block_hash": "0x812f225ab8c7d984e7e333442c509730f1eb92ed0d7f94577b4f57b379dbe0af",
+      "elapsed_ns": 411125,
+      "module": false,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "single_storage_write",
+      "pair": 0,
+      "mode": "legacy",
+      "sample": 1,
+      "approval_stats": {
+        "ready_on_first_seen": 64,
+        "verification_ns": 2644209,
+        "verified": 64,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x917466c6d5fe6005edd5239c1e37af380d7205dfcf23086452eb50d679a4f40e",
+      "elapsed_ns": 771125,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "single_storage_write",
+      "pair": 0,
+      "mode": "legacy",
+      "sample": 2,
+      "approval_stats": {
+        "ready_on_first_seen": 96,
+        "verification_ns": 3983208,
+        "verified": 96,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x0ce3d8068301d6c44ee378466facd6337637722f5cc7bce93359da7c2572b2cd",
+      "elapsed_ns": 811959,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "single_storage_write",
+      "pair": 0,
+      "mode": "legacy",
+      "sample": 3,
+      "approval_stats": {
+        "ready_on_first_seen": 128,
+        "verification_ns": 5349417,
+        "verified": 128,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x812f225ab8c7d984e7e333442c509730f1eb92ed0d7f94577b4f57b379dbe0af",
+      "elapsed_ns": 765416,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "single_storage_write",
+      "pair": 0,
+      "mode": "direct",
+      "sample": 1,
+      "approval_stats": {
+        "ready_on_first_seen": 64,
+        "verification_ns": 2661538,
+        "verified": 64,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x917466c6d5fe6005edd5239c1e37af380d7205dfcf23086452eb50d679a4f40e",
+      "elapsed_ns": 431041,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "single_storage_write",
+      "pair": 0,
+      "mode": "direct",
+      "sample": 2,
+      "approval_stats": {
+        "ready_on_first_seen": 96,
+        "verification_ns": 3998371,
+        "verified": 96,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x0ce3d8068301d6c44ee378466facd6337637722f5cc7bce93359da7c2572b2cd",
+      "elapsed_ns": 449042,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "single_storage_write",
+      "pair": 0,
+      "mode": "direct",
+      "sample": 3,
+      "approval_stats": {
+        "ready_on_first_seen": 128,
+        "verification_ns": 5385288,
+        "verified": 128,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x812f225ab8c7d984e7e333442c509730f1eb92ed0d7f94577b4f57b379dbe0af",
+      "elapsed_ns": 490000,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "single_storage_write",
+      "pair": 1,
+      "mode": "legacy",
+      "sample": 1,
+      "approval_stats": {
+        "ready_on_first_seen": 64,
+        "verification_ns": 2697880,
+        "verified": 64,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x917466c6d5fe6005edd5239c1e37af380d7205dfcf23086452eb50d679a4f40e",
+      "elapsed_ns": 776792,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "single_storage_write",
+      "pair": 1,
+      "mode": "legacy",
+      "sample": 2,
+      "approval_stats": {
+        "ready_on_first_seen": 96,
+        "verification_ns": 4058003,
+        "verified": 96,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x0ce3d8068301d6c44ee378466facd6337637722f5cc7bce93359da7c2572b2cd",
+      "elapsed_ns": 778917,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "single_storage_write",
+      "pair": 1,
+      "mode": "legacy",
+      "sample": 3,
+      "approval_stats": {
+        "ready_on_first_seen": 128,
+        "verification_ns": 5439213,
+        "verified": 128,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x812f225ab8c7d984e7e333442c509730f1eb92ed0d7f94577b4f57b379dbe0af",
+      "elapsed_ns": 830667,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "single_storage_write",
+      "pair": 1,
+      "mode": "direct",
+      "sample": 1,
+      "approval_stats": {
+        "ready_on_first_seen": 64,
+        "verification_ns": 2707748,
+        "verified": 64,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x917466c6d5fe6005edd5239c1e37af380d7205dfcf23086452eb50d679a4f40e",
+      "elapsed_ns": 486667,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "single_storage_write",
+      "pair": 1,
+      "mode": "direct",
+      "sample": 2,
+      "approval_stats": {
+        "ready_on_first_seen": 96,
+        "verification_ns": 4097458,
+        "verified": 96,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x0ce3d8068301d6c44ee378466facd6337637722f5cc7bce93359da7c2572b2cd",
+      "elapsed_ns": 403834,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "single_storage_write",
+      "pair": 1,
+      "mode": "direct",
+      "sample": 3,
+      "approval_stats": {
+        "ready_on_first_seen": 128,
+        "verification_ns": 5478710,
+        "verified": 128,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x812f225ab8c7d984e7e333442c509730f1eb92ed0d7f94577b4f57b379dbe0af",
+      "elapsed_ns": 416583,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "single_storage_write",
+      "pair": 1,
+      "mode": "baseline",
+      "sample": 1,
+      "approval_stats": null,
+      "block_hash": "0x917466c6d5fe6005edd5239c1e37af380d7205dfcf23086452eb50d679a4f40e",
+      "elapsed_ns": 355125,
+      "module": false,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "single_storage_write",
+      "pair": 1,
+      "mode": "baseline",
+      "sample": 2,
+      "approval_stats": null,
+      "block_hash": "0x0ce3d8068301d6c44ee378466facd6337637722f5cc7bce93359da7c2572b2cd",
+      "elapsed_ns": 352208,
+      "module": false,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "single_storage_write",
+      "pair": 1,
+      "mode": "baseline",
+      "sample": 3,
+      "approval_stats": null,
+      "block_hash": "0x812f225ab8c7d984e7e333442c509730f1eb92ed0d7f94577b4f57b379dbe0af",
+      "elapsed_ns": 353709,
+      "module": false,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "single_storage_write",
+      "pair": 2,
+      "mode": "direct",
+      "sample": 1,
+      "approval_stats": {
+        "ready_on_first_seen": 64,
+        "verification_ns": 2686335,
+        "verified": 64,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x917466c6d5fe6005edd5239c1e37af380d7205dfcf23086452eb50d679a4f40e",
+      "elapsed_ns": 431333,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "single_storage_write",
+      "pair": 2,
+      "mode": "direct",
+      "sample": 2,
+      "approval_stats": {
+        "ready_on_first_seen": 96,
+        "verification_ns": 4047290,
+        "verified": 96,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x0ce3d8068301d6c44ee378466facd6337637722f5cc7bce93359da7c2572b2cd",
+      "elapsed_ns": 439083,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "single_storage_write",
+      "pair": 2,
+      "mode": "direct",
+      "sample": 3,
+      "approval_stats": {
+        "ready_on_first_seen": 128,
+        "verification_ns": 5419458,
+        "verified": 128,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x812f225ab8c7d984e7e333442c509730f1eb92ed0d7f94577b4f57b379dbe0af",
+      "elapsed_ns": 442708,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "single_storage_write",
+      "pair": 2,
+      "mode": "baseline",
+      "sample": 1,
+      "approval_stats": null,
+      "block_hash": "0x917466c6d5fe6005edd5239c1e37af380d7205dfcf23086452eb50d679a4f40e",
+      "elapsed_ns": 417750,
+      "module": false,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "single_storage_write",
+      "pair": 2,
+      "mode": "baseline",
+      "sample": 2,
+      "approval_stats": null,
+      "block_hash": "0x0ce3d8068301d6c44ee378466facd6337637722f5cc7bce93359da7c2572b2cd",
+      "elapsed_ns": 369208,
+      "module": false,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "single_storage_write",
+      "pair": 2,
+      "mode": "baseline",
+      "sample": 3,
+      "approval_stats": null,
+      "block_hash": "0x812f225ab8c7d984e7e333442c509730f1eb92ed0d7f94577b4f57b379dbe0af",
+      "elapsed_ns": 381375,
+      "module": false,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "single_storage_write",
+      "pair": 2,
+      "mode": "legacy",
+      "sample": 1,
+      "approval_stats": {
+        "ready_on_first_seen": 64,
+        "verification_ns": 3217085,
+        "verified": 64,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x917466c6d5fe6005edd5239c1e37af380d7205dfcf23086452eb50d679a4f40e",
+      "elapsed_ns": 819667,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "single_storage_write",
+      "pair": 2,
+      "mode": "legacy",
+      "sample": 2,
+      "approval_stats": {
+        "ready_on_first_seen": 96,
+        "verification_ns": 4634833,
+        "verified": 96,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x0ce3d8068301d6c44ee378466facd6337637722f5cc7bce93359da7c2572b2cd",
+      "elapsed_ns": 793209,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "single_storage_write",
+      "pair": 2,
+      "mode": "legacy",
+      "sample": 3,
+      "approval_stats": {
+        "ready_on_first_seen": 128,
+        "verification_ns": 6018833,
+        "verified": 128,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x812f225ab8c7d984e7e333442c509730f1eb92ed0d7f94577b4f57b379dbe0af",
+      "elapsed_ns": 859375,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "three_calls",
+      "pair": 0,
+      "mode": "baseline",
+      "sample": 1,
+      "approval_stats": null,
+      "block_hash": "0x5c6082930cebfb093ec058ec3f96203a9ed0f7f9fda20c8b62b3378520a7d6d2",
+      "elapsed_ns": 435458,
+      "module": false,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "three_calls",
+      "pair": 0,
+      "mode": "baseline",
+      "sample": 2,
+      "approval_stats": null,
+      "block_hash": "0xf37943854ae7a45ac2f7472fc9f07a48e51bbd0901cae77494625dc89be11bf1",
+      "elapsed_ns": 480500,
+      "module": false,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "three_calls",
+      "pair": 0,
+      "mode": "baseline",
+      "sample": 3,
+      "approval_stats": null,
+      "block_hash": "0xd96ae124943ed70375560668212763f390454716fdeadad87955bb2de6d4b1ca",
+      "elapsed_ns": 448000,
+      "module": false,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "three_calls",
+      "pair": 0,
+      "mode": "legacy",
+      "sample": 1,
+      "approval_stats": {
+        "ready_on_first_seen": 64,
+        "verification_ns": 3397204,
+        "verified": 64,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x5c6082930cebfb093ec058ec3f96203a9ed0f7f9fda20c8b62b3378520a7d6d2",
+      "elapsed_ns": 1457500,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "three_calls",
+      "pair": 0,
+      "mode": "legacy",
+      "sample": 2,
+      "approval_stats": {
+        "ready_on_first_seen": 96,
+        "verification_ns": 5218082,
+        "verified": 96,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0xf37943854ae7a45ac2f7472fc9f07a48e51bbd0901cae77494625dc89be11bf1",
+      "elapsed_ns": 1478583,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "three_calls",
+      "pair": 0,
+      "mode": "legacy",
+      "sample": 3,
+      "approval_stats": {
+        "ready_on_first_seen": 128,
+        "verification_ns": 7250293,
+        "verified": 128,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0xd96ae124943ed70375560668212763f390454716fdeadad87955bb2de6d4b1ca",
+      "elapsed_ns": 1550250,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "three_calls",
+      "pair": 0,
+      "mode": "direct",
+      "sample": 1,
+      "approval_stats": {
+        "ready_on_first_seen": 64,
+        "verification_ns": 4509625,
+        "verified": 64,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x5c6082930cebfb093ec058ec3f96203a9ed0f7f9fda20c8b62b3378520a7d6d2",
+      "elapsed_ns": 595625,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "three_calls",
+      "pair": 0,
+      "mode": "direct",
+      "sample": 2,
+      "approval_stats": {
+        "ready_on_first_seen": 96,
+        "verification_ns": 7039540,
+        "verified": 96,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0xf37943854ae7a45ac2f7472fc9f07a48e51bbd0901cae77494625dc89be11bf1",
+      "elapsed_ns": 1396750,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "three_calls",
+      "pair": 0,
+      "mode": "direct",
+      "sample": 3,
+      "approval_stats": {
+        "ready_on_first_seen": 128,
+        "verification_ns": 10174083,
+        "verified": 128,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0xd96ae124943ed70375560668212763f390454716fdeadad87955bb2de6d4b1ca",
+      "elapsed_ns": 632417,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "three_calls",
+      "pair": 1,
+      "mode": "legacy",
+      "sample": 1,
+      "approval_stats": {
+        "ready_on_first_seen": 64,
+        "verification_ns": 6421877,
+        "verified": 64,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x5c6082930cebfb093ec058ec3f96203a9ed0f7f9fda20c8b62b3378520a7d6d2",
+      "elapsed_ns": 1427792,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "three_calls",
+      "pair": 1,
+      "mode": "legacy",
+      "sample": 2,
+      "approval_stats": {
+        "ready_on_first_seen": 96,
+        "verification_ns": 8439504,
+        "verified": 96,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0xf37943854ae7a45ac2f7472fc9f07a48e51bbd0901cae77494625dc89be11bf1",
+      "elapsed_ns": 1510708,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "three_calls",
+      "pair": 1,
+      "mode": "legacy",
+      "sample": 3,
+      "approval_stats": {
+        "ready_on_first_seen": 128,
+        "verification_ns": 10063509,
+        "verified": 128,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0xd96ae124943ed70375560668212763f390454716fdeadad87955bb2de6d4b1ca",
+      "elapsed_ns": 1394500,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "three_calls",
+      "pair": 1,
+      "mode": "direct",
+      "sample": 1,
+      "approval_stats": {
+        "ready_on_first_seen": 64,
+        "verification_ns": 4876081,
+        "verified": 64,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x5c6082930cebfb093ec058ec3f96203a9ed0f7f9fda20c8b62b3378520a7d6d2",
+      "elapsed_ns": 593542,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "three_calls",
+      "pair": 1,
+      "mode": "direct",
+      "sample": 2,
+      "approval_stats": {
+        "ready_on_first_seen": 96,
+        "verification_ns": 6586166,
+        "verified": 96,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0xf37943854ae7a45ac2f7472fc9f07a48e51bbd0901cae77494625dc89be11bf1",
+      "elapsed_ns": 627541,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "three_calls",
+      "pair": 1,
+      "mode": "direct",
+      "sample": 3,
+      "approval_stats": {
+        "ready_on_first_seen": 128,
+        "verification_ns": 8341210,
+        "verified": 128,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0xd96ae124943ed70375560668212763f390454716fdeadad87955bb2de6d4b1ca",
+      "elapsed_ns": 594334,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "three_calls",
+      "pair": 1,
+      "mode": "baseline",
+      "sample": 1,
+      "approval_stats": null,
+      "block_hash": "0x5c6082930cebfb093ec058ec3f96203a9ed0f7f9fda20c8b62b3378520a7d6d2",
+      "elapsed_ns": 447792,
+      "module": false,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "three_calls",
+      "pair": 1,
+      "mode": "baseline",
+      "sample": 2,
+      "approval_stats": null,
+      "block_hash": "0xf37943854ae7a45ac2f7472fc9f07a48e51bbd0901cae77494625dc89be11bf1",
+      "elapsed_ns": 444125,
+      "module": false,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "three_calls",
+      "pair": 1,
+      "mode": "baseline",
+      "sample": 3,
+      "approval_stats": null,
+      "block_hash": "0xd96ae124943ed70375560668212763f390454716fdeadad87955bb2de6d4b1ca",
+      "elapsed_ns": 440208,
+      "module": false,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "three_calls",
+      "pair": 2,
+      "mode": "direct",
+      "sample": 1,
+      "approval_stats": {
+        "ready_on_first_seen": 64,
+        "verification_ns": 2830630,
+        "verified": 64,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x5c6082930cebfb093ec058ec3f96203a9ed0f7f9fda20c8b62b3378520a7d6d2",
+      "elapsed_ns": 670500,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "three_calls",
+      "pair": 2,
+      "mode": "direct",
+      "sample": 2,
+      "approval_stats": {
+        "ready_on_first_seen": 96,
+        "verification_ns": 4427925,
+        "verified": 96,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0xf37943854ae7a45ac2f7472fc9f07a48e51bbd0901cae77494625dc89be11bf1",
+      "elapsed_ns": 629583,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "three_calls",
+      "pair": 2,
+      "mode": "direct",
+      "sample": 3,
+      "approval_stats": {
+        "ready_on_first_seen": 128,
+        "verification_ns": 5839052,
+        "verified": 128,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0xd96ae124943ed70375560668212763f390454716fdeadad87955bb2de6d4b1ca",
+      "elapsed_ns": 607166,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "three_calls",
+      "pair": 2,
+      "mode": "baseline",
+      "sample": 1,
+      "approval_stats": null,
+      "block_hash": "0x5c6082930cebfb093ec058ec3f96203a9ed0f7f9fda20c8b62b3378520a7d6d2",
+      "elapsed_ns": 464625,
+      "module": false,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "three_calls",
+      "pair": 2,
+      "mode": "baseline",
+      "sample": 2,
+      "approval_stats": null,
+      "block_hash": "0xf37943854ae7a45ac2f7472fc9f07a48e51bbd0901cae77494625dc89be11bf1",
+      "elapsed_ns": 453292,
+      "module": false,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "three_calls",
+      "pair": 2,
+      "mode": "baseline",
+      "sample": 3,
+      "approval_stats": null,
+      "block_hash": "0xd96ae124943ed70375560668212763f390454716fdeadad87955bb2de6d4b1ca",
+      "elapsed_ns": 476667,
+      "module": false,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "three_calls",
+      "pair": 2,
+      "mode": "legacy",
+      "sample": 1,
+      "approval_stats": {
+        "ready_on_first_seen": 64,
+        "verification_ns": 2820915,
+        "verified": 64,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x5c6082930cebfb093ec058ec3f96203a9ed0f7f9fda20c8b62b3378520a7d6d2",
+      "elapsed_ns": 1353916,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "three_calls",
+      "pair": 2,
+      "mode": "legacy",
+      "sample": 2,
+      "approval_stats": {
+        "ready_on_first_seen": 96,
+        "verification_ns": 4215788,
+        "verified": 96,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0xf37943854ae7a45ac2f7472fc9f07a48e51bbd0901cae77494625dc89be11bf1",
+      "elapsed_ns": 1567875,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "three_calls",
+      "pair": 2,
+      "mode": "legacy",
+      "sample": 3,
+      "approval_stats": {
+        "ready_on_first_seen": 128,
+        "verification_ns": 5685080,
+        "verified": 128,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0xd96ae124943ed70375560668212763f390454716fdeadad87955bb2de6d4b1ca",
+      "elapsed_ns": 1393083,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "eighteen_calls",
+      "pair": 0,
+      "mode": "baseline",
+      "sample": 1,
+      "approval_stats": null,
+      "block_hash": "0x9c165daf452ef0bae8f1afac74d248e6d43c973768cfc1370d6a1a7573605c43",
+      "elapsed_ns": 1930375,
+      "module": false,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "eighteen_calls",
+      "pair": 0,
+      "mode": "baseline",
+      "sample": 2,
+      "approval_stats": null,
+      "block_hash": "0xed97afec5a79933f0dab0d95dcfd8be7f5f534cc150407d24cf27734f51e6eb8",
+      "elapsed_ns": 2238916,
+      "module": false,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "eighteen_calls",
+      "pair": 0,
+      "mode": "baseline",
+      "sample": 3,
+      "approval_stats": null,
+      "block_hash": "0x35c772329bfb52d6776849e1d422aef1ea2592bde5512c63793265c72ee17480",
+      "elapsed_ns": 2591375,
+      "module": false,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "eighteen_calls",
+      "pair": 0,
+      "mode": "legacy",
+      "sample": 1,
+      "approval_stats": {
+        "ready_on_first_seen": 64,
+        "verification_ns": 2832918,
+        "verified": 64,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x9c165daf452ef0bae8f1afac74d248e6d43c973768cfc1370d6a1a7573605c43",
+      "elapsed_ns": 6267208,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "eighteen_calls",
+      "pair": 0,
+      "mode": "legacy",
+      "sample": 2,
+      "approval_stats": {
+        "ready_on_first_seen": 96,
+        "verification_ns": 4260625,
+        "verified": 96,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0xed97afec5a79933f0dab0d95dcfd8be7f5f534cc150407d24cf27734f51e6eb8",
+      "elapsed_ns": 6388083,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "eighteen_calls",
+      "pair": 0,
+      "mode": "legacy",
+      "sample": 3,
+      "approval_stats": {
+        "ready_on_first_seen": 128,
+        "verification_ns": 5745415,
+        "verified": 128,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x35c772329bfb52d6776849e1d422aef1ea2592bde5512c63793265c72ee17480",
+      "elapsed_ns": 7094458,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "eighteen_calls",
+      "pair": 0,
+      "mode": "direct",
+      "sample": 1,
+      "approval_stats": {
+        "ready_on_first_seen": 64,
+        "verification_ns": 2892206,
+        "verified": 64,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x9c165daf452ef0bae8f1afac74d248e6d43c973768cfc1370d6a1a7573605c43",
+      "elapsed_ns": 2633083,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "eighteen_calls",
+      "pair": 0,
+      "mode": "direct",
+      "sample": 2,
+      "approval_stats": {
+        "ready_on_first_seen": 96,
+        "verification_ns": 4328954,
+        "verified": 96,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0xed97afec5a79933f0dab0d95dcfd8be7f5f534cc150407d24cf27734f51e6eb8",
+      "elapsed_ns": 2968708,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "eighteen_calls",
+      "pair": 0,
+      "mode": "direct",
+      "sample": 3,
+      "approval_stats": {
+        "ready_on_first_seen": 128,
+        "verification_ns": 5824621,
+        "verified": 128,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x35c772329bfb52d6776849e1d422aef1ea2592bde5512c63793265c72ee17480",
+      "elapsed_ns": 3309666,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "eighteen_calls",
+      "pair": 1,
+      "mode": "legacy",
+      "sample": 1,
+      "approval_stats": {
+        "ready_on_first_seen": 64,
+        "verification_ns": 2828255,
+        "verified": 64,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x9c165daf452ef0bae8f1afac74d248e6d43c973768cfc1370d6a1a7573605c43",
+      "elapsed_ns": 6230875,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "eighteen_calls",
+      "pair": 1,
+      "mode": "legacy",
+      "sample": 2,
+      "approval_stats": {
+        "ready_on_first_seen": 96,
+        "verification_ns": 4277460,
+        "verified": 96,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0xed97afec5a79933f0dab0d95dcfd8be7f5f534cc150407d24cf27734f51e6eb8",
+      "elapsed_ns": 6349125,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "eighteen_calls",
+      "pair": 1,
+      "mode": "legacy",
+      "sample": 3,
+      "approval_stats": {
+        "ready_on_first_seen": 128,
+        "verification_ns": 5698456,
+        "verified": 128,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x35c772329bfb52d6776849e1d422aef1ea2592bde5512c63793265c72ee17480",
+      "elapsed_ns": 6506209,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "eighteen_calls",
+      "pair": 1,
+      "mode": "direct",
+      "sample": 1,
+      "approval_stats": {
+        "ready_on_first_seen": 64,
+        "verification_ns": 2872534,
+        "verified": 64,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x9c165daf452ef0bae8f1afac74d248e6d43c973768cfc1370d6a1a7573605c43",
+      "elapsed_ns": 2629542,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "eighteen_calls",
+      "pair": 1,
+      "mode": "direct",
+      "sample": 2,
+      "approval_stats": {
+        "ready_on_first_seen": 96,
+        "verification_ns": 4340868,
+        "verified": 96,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0xed97afec5a79933f0dab0d95dcfd8be7f5f534cc150407d24cf27734f51e6eb8",
+      "elapsed_ns": 2886417,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "eighteen_calls",
+      "pair": 1,
+      "mode": "direct",
+      "sample": 3,
+      "approval_stats": {
+        "ready_on_first_seen": 128,
+        "verification_ns": 5759953,
+        "verified": 128,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x35c772329bfb52d6776849e1d422aef1ea2592bde5512c63793265c72ee17480",
+      "elapsed_ns": 3165542,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "eighteen_calls",
+      "pair": 1,
+      "mode": "baseline",
+      "sample": 1,
+      "approval_stats": null,
+      "block_hash": "0x9c165daf452ef0bae8f1afac74d248e6d43c973768cfc1370d6a1a7573605c43",
+      "elapsed_ns": 1932125,
+      "module": false,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "eighteen_calls",
+      "pair": 1,
+      "mode": "baseline",
+      "sample": 2,
+      "approval_stats": null,
+      "block_hash": "0xed97afec5a79933f0dab0d95dcfd8be7f5f534cc150407d24cf27734f51e6eb8",
+      "elapsed_ns": 2176917,
+      "module": false,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "eighteen_calls",
+      "pair": 1,
+      "mode": "baseline",
+      "sample": 3,
+      "approval_stats": null,
+      "block_hash": "0x35c772329bfb52d6776849e1d422aef1ea2592bde5512c63793265c72ee17480",
+      "elapsed_ns": 2578958,
+      "module": false,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "eighteen_calls",
+      "pair": 2,
+      "mode": "direct",
+      "sample": 1,
+      "approval_stats": {
+        "ready_on_first_seen": 64,
+        "verification_ns": 2838871,
+        "verified": 64,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x9c165daf452ef0bae8f1afac74d248e6d43c973768cfc1370d6a1a7573605c43",
+      "elapsed_ns": 2659167,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "eighteen_calls",
+      "pair": 2,
+      "mode": "direct",
+      "sample": 2,
+      "approval_stats": {
+        "ready_on_first_seen": 96,
+        "verification_ns": 4280667,
+        "verified": 96,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0xed97afec5a79933f0dab0d95dcfd8be7f5f534cc150407d24cf27734f51e6eb8",
+      "elapsed_ns": 3146958,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "eighteen_calls",
+      "pair": 2,
+      "mode": "direct",
+      "sample": 3,
+      "approval_stats": {
+        "ready_on_first_seen": 128,
+        "verification_ns": 5683959,
+        "verified": 128,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x35c772329bfb52d6776849e1d422aef1ea2592bde5512c63793265c72ee17480",
+      "elapsed_ns": 3192792,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "eighteen_calls",
+      "pair": 2,
+      "mode": "baseline",
+      "sample": 1,
+      "approval_stats": null,
+      "block_hash": "0x9c165daf452ef0bae8f1afac74d248e6d43c973768cfc1370d6a1a7573605c43",
+      "elapsed_ns": 1945416,
+      "module": false,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "eighteen_calls",
+      "pair": 2,
+      "mode": "baseline",
+      "sample": 2,
+      "approval_stats": null,
+      "block_hash": "0xed97afec5a79933f0dab0d95dcfd8be7f5f534cc150407d24cf27734f51e6eb8",
+      "elapsed_ns": 2409834,
+      "module": false,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "eighteen_calls",
+      "pair": 2,
+      "mode": "baseline",
+      "sample": 3,
+      "approval_stats": null,
+      "block_hash": "0x35c772329bfb52d6776849e1d422aef1ea2592bde5512c63793265c72ee17480",
+      "elapsed_ns": 2369250,
+      "module": false,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "eighteen_calls",
+      "pair": 2,
+      "mode": "legacy",
+      "sample": 1,
+      "approval_stats": {
+        "ready_on_first_seen": 64,
+        "verification_ns": 2876416,
+        "verified": 64,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x9c165daf452ef0bae8f1afac74d248e6d43c973768cfc1370d6a1a7573605c43",
+      "elapsed_ns": 6248125,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "eighteen_calls",
+      "pair": 2,
+      "mode": "legacy",
+      "sample": 2,
+      "approval_stats": {
+        "ready_on_first_seen": 96,
+        "verification_ns": 4279955,
+        "verified": 96,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0xed97afec5a79933f0dab0d95dcfd8be7f5f534cc150407d24cf27734f51e6eb8",
+      "elapsed_ns": 6646875,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    },
+    {
+      "workload": "eighteen_calls",
+      "pair": 2,
+      "mode": "legacy",
+      "sample": 3,
+      "approval_stats": {
+        "ready_on_first_seen": 128,
+        "verification_ns": 5727790,
+        "verified": 128,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x35c772329bfb52d6776849e1d422aef1ea2592bde5512c63793265c72ee17480",
+      "elapsed_ns": 7088166,
+      "module": true,
+      "profile": null,
+      "transactions": 32
+    }
+  ]
+}

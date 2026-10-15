@@ -21,29 +21,54 @@ type addressVisibilityResolver interface {
 	GetBatchVisibilityDetailed(ctx context.Context, viewerDID string, addresses []string) (map[string]explorer.AddressVisibility, error)
 }
 
-// redactEmbeddedLogAddresses zeroes, in every raw eth log, each embedded address
-// (indexed topics + ABI-decoded non-indexed data) the viewer is NOT entitled to
-// see. Admission has already happened upstream (rbac.FilterEventLogs); this is
-// the field-level half of the RD-1214 unification, so eth_getLogs /
-// eth_getTransactionReceipt return the same visible-address set the explorer
-// would for the same viewer.
-//
-// It resolves visibility via p.addrVisResolver (the same GetBatchVisibilityDetailed
-// the explorer uses) and applies explorer.RedactLogAddressFields (the same
-// zeroing primitive). Fail-closed: a resolver error leaves visMap empty, so
-// every embedded address resolves to a non-Full level and is zeroed. A nil
-// resolver (not wired) is a no-op.
-//
-// Only "topics" and "data" are rewritten; all other log fields are preserved
-// byte-for-byte. A malformed log entry is passed through unchanged — it carries
-// no decodable address to leak, and admission already vetted it.
-//
-// abiProvider drives the non-indexed data scan (injected so the redaction is
-// unit-testable without a DB-backed store); the callers pass
-// p.contractABIProvider(ctx).
+// redactEmbeddedLogAddresses masks every log in rawLogs (all treated as
+// rbac.LogPayloadMasked). Kept for callers that have no per-log admission
+// decision to honour — the admin dry-run, which never evaluates visibleTo.
 func (p *JSONRPCProcessor) redactEmbeddedLogAddresses(ctx context.Context, viewerDID string, rawLogs []json.RawMessage, abiProvider rbac.ABIProvider) []json.RawMessage {
-	if p.addrVisResolver == nil || len(rawLogs) == 0 {
-		return rawLogs
+	admitted := make([]rbac.AdmittedLog, len(rawLogs))
+	for i, rl := range rawLogs {
+		admitted[i] = rbac.AdmittedLog{Raw: rl, Payload: rbac.LogPayloadMasked}
+	}
+	return p.redactAdmittedLogs(ctx, viewerDID, admitted, abiProvider)
+}
+
+// logFieldRenderer returns the renderer the eth_getLogs / receipt filters use
+// to turn admitted logs into the client response (see admittedLogRenderer).
+func (p *JSONRPCProcessor) logFieldRenderer(ctx context.Context, viewerDID string, abiProvider rbac.ABIProvider) admittedLogRenderer {
+	return func(admitted []rbac.AdmittedLog) []json.RawMessage {
+		return p.redactAdmittedLogs(ctx, viewerDID, admitted, abiProvider)
+	}
+}
+
+// redactAdmittedLogs renders admitted logs with the payload policy decided for
+// each at admission (rbac.DecideLogEmitter):
+//
+//   - rbac.LogPayloadFull (the RD-874 visibleTo unlock for this exact viewer,
+//     emitting contract and transaction): returned byte-for-byte, matching the
+//     explorer's full reveal (REDACTION_SPEC §3.7.1).
+//   - rbac.LogPayloadMasked (every other admission, and the zero value): each
+//     embedded address (indexed topics + ABI-decoded non-indexed data) the
+//     viewer is NOT entitled to see is zeroed — the field-level half of the
+//     RD-1214 unification, so eth_getLogs / eth_getTransactionReceipt return
+//     the same visible-address set the explorer would for the same viewer.
+//
+// Masking resolves visibility via p.addrVisResolver (the same
+// GetBatchVisibilityDetailed the explorer uses) and applies
+// explorer.RedactLogAddressFields (the same zeroing primitive). Fail-closed: a
+// resolver error leaves visMap empty, so every embedded address resolves to a
+// non-Full level and is zeroed; a masked log that cannot be parsed or
+// re-encoded is dropped, never emitted raw. A nil resolver (not wired) is a
+// no-op — unit tests that don't exercise field redaction.
+//
+// Only "topics" and "data" are rewritten; all other log fields are preserved.
+// abiProvider drives the non-indexed data scan (callers pass
+// p.contractABIProvider(ctx)).
+func (p *JSONRPCProcessor) redactAdmittedLogs(ctx context.Context, viewerDID string, admitted []rbac.AdmittedLog, abiProvider rbac.ABIProvider) []json.RawMessage {
+	if len(admitted) == 0 {
+		return []json.RawMessage{}
+	}
+	if p.addrVisResolver == nil {
+		return rawAdmittedLogs(admitted)
 	}
 
 	type parsedLog struct {
@@ -55,14 +80,16 @@ func (p *JSONRPCProcessor) redactEmbeddedLogAddresses(ctx context.Context, viewe
 		ok     bool
 	}
 
-	parsed := make([]parsedLog, len(rawLogs))
+	parsed := make([]parsedLog, len(admitted))
 	addrSet := make(map[string]struct{})
 
-	for i, rl := range rawLogs {
+	for i, a := range admitted {
+		if a.Payload == rbac.LogPayloadFull {
+			continue // rendered verbatim; its addresses need no resolution
+		}
 		var m map[string]json.RawMessage
-		if err := json.Unmarshal(rl, &m); err != nil {
-			parsed[i] = parsedLog{ok: false}
-			continue
+		if err := json.Unmarshal(a.Raw, &m); err != nil {
+			continue // ok=false → dropped below (fail-closed)
 		}
 		var address string
 		_ = json.Unmarshal(m["address"], &address)
@@ -88,8 +115,8 @@ func (p *JSONRPCProcessor) redactEmbeddedLogAddresses(ctx context.Context, viewe
 
 		parsed[i] = parsedLog{fields: m, topics: topics, data: data, abi: abiRaw, topic0: topic0, ok: true}
 
-		for _, a := range explorer.ExtractLogAddresses(topics, data, abiRaw, topic0) {
-			addrSet[a] = struct{}{}
+		for _, addr := range explorer.ExtractLogAddresses(topics, data, abiRaw, topic0) {
+			addrSet[addr] = struct{}{}
 		}
 	}
 
@@ -108,11 +135,14 @@ func (p *JSONRPCProcessor) redactEmbeddedLogAddresses(ctx context.Context, viewe
 		}
 	}
 
-	out := make([]json.RawMessage, len(rawLogs))
-	for i, rl := range rawLogs {
+	out := make([]json.RawMessage, 0, len(admitted))
+	for i, a := range admitted {
+		if a.Payload == rbac.LogPayloadFull {
+			out = append(out, a.Raw)
+			continue
+		}
 		pl := parsed[i]
 		if !pl.ok {
-			out[i] = rl
 			continue
 		}
 		redTopics, redData := explorer.RedactLogAddressFields(pl.topics, pl.data, pl.abi, pl.topic0, visMap)
@@ -123,23 +153,29 @@ func (p *JSONRPCProcessor) redactEmbeddedLogAddresses(ctx context.Context, viewe
 				topicStrs[j] = *t
 			}
 		}
-		if tb, err := json.Marshal(topicStrs); err == nil {
-			pl.fields["topics"] = tb
+		tb, err := json.Marshal(topicStrs)
+		if err != nil {
+			continue
 		}
-		if db, err := json.Marshal(redData); err == nil {
-			pl.fields["data"] = db
+		db, err := json.Marshal(redData)
+		if err != nil {
+			continue
 		}
-		if rewritten, err := json.Marshal(pl.fields); err == nil {
-			out[i] = rewritten
-		} else {
-			out[i] = rl
+		pl.fields["topics"] = tb
+		pl.fields["data"] = db
+		rewritten, err := json.Marshal(pl.fields)
+		if err != nil {
+			continue
 		}
+		out = append(out, rewritten)
 	}
 	return out
 }
 
 // redactLogsArrayResponseFields applies embedded-address field-redaction to an
-// eth_getLogs response (result is a JSON array of logs). The response has
+// eth_getLogs response (result is a JSON array of logs), masking every log.
+// Used only by the admin dry-run, which evaluates no visibleTo and so has no
+// unlocked log to preserve; the live path renders through logFieldRenderer. The response has
 // already passed entry-level filtering (FilterLogsWithEventRules). On any parse
 // failure the body is returned unchanged — the entry filter's own fail-closed
 // paths (which return [] on malformed input) run first.
@@ -177,7 +213,8 @@ func (p *JSONRPCProcessor) redactLogsArrayResponseFields(ctx context.Context, vi
 }
 
 // redactReceiptResponseFields applies embedded-address field-redaction to the
-// logs array nested in an eth_getTransactionReceipt response (result.logs).
+// logs array nested in an eth_getTransactionReceipt response (result.logs),
+// masking every log (admin dry-run only; see redactLogsArrayResponseFields).
 // Other receipt fields are preserved. On a null/absent result or a parse
 // failure the body is returned unchanged.
 func (p *JSONRPCProcessor) redactReceiptResponseFields(ctx context.Context, viewerDID string, responseBody []byte) []byte {

@@ -48,7 +48,15 @@ func resolveViewerInternalID(ctx context.Context, store rbac.Store, viewerDID st
 // explorer_redactor_wiring_integration_test.go) loops over the public
 // Set*Resolver methods via reflection to detect any new resolver that
 // wasn't wired here.
-func wireExplorerRedactor(redactor *explorer.RedactionEngine, store rbac.Store, accessCtrl *rbac.AccessController, logParticipants explorer.LogParticipantStore, pseudonymKey []byte) {
+// explorerChainData is the chain data the redactor reads beyond RBAC: the
+// log-participant index (RD-939) and parent-transaction data for the strict
+// read profile (RD-1299). The explorer backend satisfies both.
+type explorerChainData interface {
+	explorer.LogParticipantStore
+	explorer.TxDataResolver
+}
+
+func wireExplorerRedactor(redactor *explorer.RedactionEngine, store rbac.Store, accessCtrl *rbac.AccessController, chainData explorerChainData, pseudonymKey []byte) {
 	if redactor == nil {
 		return
 	}
@@ -64,14 +72,17 @@ func wireExplorerRedactor(redactor *explorer.RedactionEngine, store rbac.Store, 
 		redactor.SetEventRuleChecker(newDBEventRuleChecker(accessCtrl))
 		redactor.SetVisibleToUnlockResolver(newDBVisibleToUnlockResolver(accessCtrl))
 	}
-	if logParticipants != nil {
+	if chainData != nil {
 		// RD-939 Stage A. In production this is the explorer backend
 		// itself — FindLogParticipantTxs is on the ExplorerBackend
 		// interface so the gRPC client and SQL store both satisfy
 		// LogParticipantStore. Accepting the narrower interface here
 		// lets tests substitute a minimal stub without re-implementing
 		// the full backend surface.
-		redactor.SetLogParticipantStore(logParticipants)
+		redactor.SetLogParticipantStore(chainData)
+		// RD-1299: parent-transaction data for the strict profile's
+		// token-transfer and internal-call decisions.
+		redactor.SetTxDataResolver(chainData)
 	}
 }
 

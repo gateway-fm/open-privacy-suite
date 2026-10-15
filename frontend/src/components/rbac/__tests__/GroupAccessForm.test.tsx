@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
@@ -7,6 +7,7 @@ import GroupAccessForm from '../GroupAccessForm';
 import { mockGroupAccess } from '@/test/mocks/handlers';
 import { mockGroupAccessFull } from '@/test/mocks/rbac-fixtures';
 import { METHOD_SECTIONS, getPresetMethods, PERMISSION_PRESETS } from '@/types/rbac';
+import { rbacApi } from '@/api/rbac';
 
 // Minimal wrapper since GroupAccessForm doesn't need org context directly
 function renderGroupAccessForm(props: {
@@ -723,6 +724,356 @@ describe('GroupAccessForm', () => {
       // Rate limits should not be in the payload
       expect(capturedBody).not.toHaveProperty('rate_limit_rps');
       expect(capturedBody).not.toHaveProperty('rate_limit_daily');
+    });
+  });
+
+  // Operator-configured namespaces. The proxy forwards only catalog methods
+  // plus methods the operator lists by exact name, so the form must never
+  // offer (or re-save) a "<prefix>*" wildcard, and it must flag the methods
+  // the operator exposes as unfiltered passthrough.
+  describe('Operator namespaces', () => {
+    const statusWith = (methods: Record<string, unknown>) =>
+      http.get('/api/v1/admin/status', () =>
+        HttpResponse.json({
+          proxy: { status: 'running', port: '8080' },
+          node: { status: 'ok', url: 'http://localhost:8545', latency_ms: 12 },
+          security: { travel_rule_enabled: false },
+          methods,
+        })
+      );
+
+    it('waits for the method catalog before presets and saving become available', async () => {
+      const user = userEvent.setup();
+      const onSave = vi.fn();
+      const presetMethods = getPresetMethods(PERMISSION_PRESETS[0]);
+      type StatusResponse = Awaited<ReturnType<typeof rbacApi.status.get>>;
+      let releaseStatus!: (value: StatusResponse) => void;
+      const pendingStatus = new Promise<StatusResponse>(resolve => {
+        releaseStatus = resolve;
+      });
+      const accessSpy = vi.spyOn(rbacApi.groups, 'getAccess').mockResolvedValue({
+        data: {
+          ...mockGroupAccess,
+          allowed_methods: ['eth_call', 'linea_estimateGas', 'eth_getProof'],
+        },
+      } as Awaited<ReturnType<typeof rbacApi.groups.getAccess>>);
+      const statusSpy = vi.spyOn(rbacApi.status, 'get').mockReturnValue(pendingStatus);
+      let capturedMethods: string[] | undefined;
+      server.use(
+        http.put('/api/v1/admin/orgs/:orgId/groups/:groupId/access', async ({ request }) => {
+          const body = (await request.json()) as { allowed_methods: string[] };
+          capturedMethods = body.allowed_methods;
+          return HttpResponse.json({ ...mockGroupAccess, ...body });
+        })
+      );
+
+      try {
+        await act(async () => {
+          renderGroupAccessForm({ onSave });
+        });
+        expect(accessSpy).toHaveBeenCalled();
+        expect(statusSpy).toHaveBeenCalled();
+        expect(screen.queryByText('Save Access Settings')).not.toBeInTheDocument();
+        expect(screen.queryByText(PERMISSION_PRESETS[0].description)).not.toBeInTheDocument();
+
+        await act(async () => {
+          releaseStatus({
+            data: {
+              methods: {
+                extra_namespaces: { Linea: ['linea_estimateGas'] },
+                supported_methods: [...presetMethods, 'linea_estimateGas', 'eth_getProof'],
+              },
+            },
+          } as StatusResponse);
+        });
+        await user.click(screen.getByText(PERMISSION_PRESETS[0].description).closest('button')!);
+        await user.click(screen.getByText('Save Access Settings'));
+        await waitFor(() => expect(onSave).toHaveBeenCalled());
+        expect(capturedMethods).not.toContain('linea_estimateGas');
+        expect(capturedMethods).toContain('eth_getProof');
+      } finally {
+        releaseStatus({ data: {} } as StatusResponse);
+        accessSpy.mockRestore();
+        statusSpy.mockRestore();
+      }
+    });
+
+    it('does not offer a prefix-wildcard toggle', async () => {
+      server.use(
+        http.get('/api/v1/admin/orgs/:orgId/groups/:groupId/access', () =>
+          HttpResponse.json(mockGroupAccess)
+        ),
+        statusWith({
+          extra_namespaces: { Linea: ['linea_estimateGas'] },
+          extra_wildcards: { Linea: { prefix: 'linea_', deny: ['linea_sendTransaction'] } },
+        })
+      );
+
+      renderGroupAccessForm({});
+
+      await waitFor(() => {
+        expect(screen.getByText('linea_estimateGas')).toBeInTheDocument();
+      });
+      expect(screen.queryByText('linea_*')).not.toBeInTheDocument();
+      expect(screen.queryByText(/Allow any method starting with/)).not.toBeInTheDocument();
+    });
+
+    it('does not re-submit stored wildcard entries on save', async () => {
+      const user = userEvent.setup();
+      const onSave = vi.fn();
+      let capturedBody: Record<string, unknown> | null = null;
+
+      server.use(
+        http.get('/api/v1/admin/orgs/:orgId/groups/:groupId/access', () =>
+          HttpResponse.json({
+            ...mockGroupAccess,
+            allowed_methods: ['eth_call', 'linea_*', '*', 'eth_get*'],
+          })
+        ),
+        http.put('/api/v1/admin/orgs/:orgId/groups/:groupId/access', async ({ request }) => {
+          capturedBody = (await request.json()) as Record<string, unknown>;
+          return HttpResponse.json({ ...mockGroupAccess, ...capturedBody });
+        })
+      );
+
+      renderGroupAccessForm({ onSave });
+
+      await waitFor(() => {
+        expect(screen.getByText('Save Access Settings')).toBeInTheDocument();
+      });
+      await user.click(screen.getByText('Save Access Settings'));
+      await waitFor(() => {
+        expect(onSave).toHaveBeenCalled();
+      });
+
+      expect((capturedBody as unknown as Record<string, unknown>).allowed_methods).toEqual(['eth_call']);
+    });
+
+    it('drops stored methods the proxy does not support, and says so', async () => {
+      const user = userEvent.setup();
+      const onSave = vi.fn();
+      let capturedBody: Record<string, unknown> | null = null;
+
+      server.use(
+        http.get('/api/v1/admin/orgs/:orgId/groups/:groupId/access', () =>
+          HttpResponse.json({
+            ...mockGroupAccess,
+            allowed_methods: ['eth_call', 'eth_getRawTransactionByHash', 'eth_getProof'],
+          })
+        ),
+        statusWith({ supported_methods: ['eth_call', 'eth_getLogs', 'eth_getProof'] }),
+        http.put('/api/v1/admin/orgs/:orgId/groups/:groupId/access', async ({ request }) => {
+          capturedBody = (await request.json()) as Record<string, unknown>;
+          return HttpResponse.json({ ...mockGroupAccess, ...capturedBody });
+        })
+      );
+
+      renderGroupAccessForm({ onSave });
+
+      await waitFor(() => {
+        expect(screen.getByText(/Not supported by this proxy/)).toBeInTheDocument();
+      });
+      expect(screen.getByText(/Not supported by this proxy/).closest('p')).toHaveTextContent('eth_getRawTransactionByHash');
+      // A supported method granted outside the picker is shown and kept.
+      expect(screen.getByText(/Also granted/).closest('p')).toHaveTextContent('eth_getProof');
+
+      await user.click(screen.getByText('Save Access Settings'));
+      await waitFor(() => {
+        expect(onSave).toHaveBeenCalled();
+      });
+      expect((capturedBody as unknown as Record<string, unknown>).allowed_methods).toEqual(['eth_call', 'eth_getProof']);
+    });
+
+    it('keeps stored methods when the backend does not report supported methods', async () => {
+      const user = userEvent.setup();
+      const onSave = vi.fn();
+      let capturedBody: Record<string, unknown> | null = null;
+
+      server.use(
+        http.get('/api/v1/admin/orgs/:orgId/groups/:groupId/access', () =>
+          HttpResponse.json({ ...mockGroupAccess, allowed_methods: ['eth_call', 'eth_getProof'] })
+        ),
+        statusWith({}),
+        http.put('/api/v1/admin/orgs/:orgId/groups/:groupId/access', async ({ request }) => {
+          capturedBody = (await request.json()) as Record<string, unknown>;
+          return HttpResponse.json({ ...mockGroupAccess, ...capturedBody });
+        })
+      );
+
+      renderGroupAccessForm({ onSave });
+      await waitFor(() => {
+        expect(screen.getByText('Save Access Settings')).toBeInTheDocument();
+      });
+      expect(screen.queryByText(/Not supported by this proxy/)).not.toBeInTheDocument();
+      await user.click(screen.getByText('Save Access Settings'));
+      await waitFor(() => {
+        expect(onSave).toHaveBeenCalled();
+      });
+      expect((capturedBody as unknown as Record<string, unknown>).allowed_methods).toEqual(['eth_call', 'eth_getProof']);
+    });
+
+    it('says when stored wildcard entries will be replaced on save', async () => {
+      server.use(
+        http.get('/api/v1/admin/orgs/:orgId/groups/:groupId/access', () =>
+          HttpResponse.json({ ...mockGroupAccess, allowed_methods: ['*'] })
+        )
+      );
+
+      renderGroupAccessForm({});
+
+      await waitFor(() => {
+        expect(screen.getByText(/This group holds wildcard entries/)).toBeInTheDocument();
+      });
+      expect(screen.getByText(/This group holds wildcard entries/).closest('p')).toHaveTextContent('*');
+    });
+
+    it('keeps methods granted outside the picker when a preset is applied', async () => {
+      const user = userEvent.setup();
+      const onSave = vi.fn();
+      let capturedBody: Record<string, unknown> | null = null;
+
+      server.use(
+        http.get('/api/v1/admin/orgs/:orgId/groups/:groupId/access', () =>
+          HttpResponse.json({ ...mockGroupAccess, allowed_methods: ['eth_call', 'eth_getProof'] })
+        ),
+        statusWith({ supported_methods: ['eth_call', 'eth_getProof', ...getPresetMethods(PERMISSION_PRESETS[0])] }),
+        http.put('/api/v1/admin/orgs/:orgId/groups/:groupId/access', async ({ request }) => {
+          capturedBody = (await request.json()) as Record<string, unknown>;
+          return HttpResponse.json({ ...mockGroupAccess, ...capturedBody });
+        })
+      );
+
+      renderGroupAccessForm({ onSave });
+      await waitFor(() => {
+        expect(screen.getByText(/Also granted/)).toBeInTheDocument();
+      });
+      await user.click(screen.getByText(PERMISSION_PRESETS[0].description).closest('button')!);
+      await user.click(screen.getByText('Save Access Settings'));
+      await waitFor(() => {
+        expect(onSave).toHaveBeenCalled();
+      });
+      const saved = (capturedBody as unknown as Record<string, unknown>).allowed_methods as string[];
+      expect(saved).toContain('eth_getProof');
+      expect(saved).toEqual(expect.arrayContaining(getPresetMethods(PERMISSION_PRESETS[0])));
+    });
+
+    it('marks operator passthrough methods as unfiltered', async () => {
+      server.use(
+        http.get('/api/v1/admin/orgs/:orgId/groups/:groupId/access', () =>
+          HttpResponse.json(mockGroupAccess)
+        ),
+        statusWith({
+          extra_namespaces: { zkEVM: ['zkevm_batchNumber', 'zkevm_aliased'] },
+          extra_passthrough: ['zkevm_batchNumber'],
+        })
+      );
+
+      renderGroupAccessForm({});
+
+      await waitFor(() => {
+        expect(screen.getByText('zkevm_batchNumber')).toBeInTheDocument();
+      });
+      const passthroughLabel = screen.getByText('zkevm_batchNumber').closest('label');
+      expect(passthroughLabel).toHaveTextContent(/unfiltered/i);
+      const aliasedLabel = screen.getByText('zkevm_aliased').closest('label');
+      expect(aliasedLabel).not.toHaveTextContent(/unfiltered/i);
+    });
+
+    // Only an admin-tier token may add a passthrough method to a group; the
+    // dashboard's JWT session is tier-2 (the backend answers 403). The
+    // picker must not offer what the save would refuse.
+    describe('passthrough methods and the caller tier', () => {
+      const passthroughStatus = () =>
+        statusWith({
+          extra_namespaces: { zkEVM: ['zkevm_batchNumber', 'zkevm_aliased'] },
+          extra_passthrough: ['zkevm_batchNumber'],
+        });
+      const isChecked = (method: string) =>
+        !!screen.getByText(method).closest('label')?.querySelector('.bg-primary');
+
+      it('does not let a tier-2 admin add a passthrough method', async () => {
+        const user = userEvent.setup();
+        const onSave = vi.fn();
+        let capturedMethods: string[] | undefined;
+        server.use(
+          http.get('/api/v1/admin/orgs/:orgId/groups/:groupId/access', () =>
+            HttpResponse.json(mockGroupAccess)
+          ),
+          passthroughStatus(),
+          http.put('/api/v1/admin/orgs/:orgId/groups/:groupId/access', async ({ request }) => {
+            const body = (await request.json()) as { allowed_methods: string[] };
+            capturedMethods = body.allowed_methods;
+            return HttpResponse.json({ ...mockGroupAccess, ...body });
+          })
+        );
+
+        renderGroupAccessForm({ onSave });
+        await waitFor(() => {
+          expect(screen.getByText('zkevm_batchNumber')).toBeInTheDocument();
+        });
+
+        const passthroughLabel = screen.getByText('zkevm_batchNumber').closest('label')!;
+        expect(passthroughLabel).toHaveAttribute('aria-disabled', 'true');
+        expect(screen.getByText(/can be added only with an admin-tier token/)).toBeInTheDocument();
+        await user.click(passthroughLabel);
+        expect(isChecked('zkevm_batchNumber')).toBe(false);
+
+        // Select All in the namespace adds the aliased method only.
+        const section = screen.getByText('zkEVM').closest('div.border') as HTMLElement;
+        await user.click(within(section).getByText('Select All'));
+        expect(isChecked('zkevm_aliased')).toBe(true);
+        expect(isChecked('zkevm_batchNumber')).toBe(false);
+
+        await user.click(screen.getByText('Save Access Settings'));
+        await waitFor(() => expect(onSave).toHaveBeenCalled());
+        expect(capturedMethods).toContain('zkevm_aliased');
+        expect(capturedMethods).not.toContain('zkevm_batchNumber');
+      });
+
+      it('lets a tier-2 admin keep or remove a passthrough method already granted', async () => {
+        const user = userEvent.setup();
+        server.use(
+          http.get('/api/v1/admin/orgs/:orgId/groups/:groupId/access', () =>
+            HttpResponse.json({ ...mockGroupAccess, allowed_methods: ['eth_call', 'zkevm_batchNumber'] })
+          ),
+          passthroughStatus()
+        );
+
+        renderGroupAccessForm({});
+        await waitFor(() => {
+          expect(screen.getByText('zkevm_batchNumber')).toBeInTheDocument();
+        });
+
+        const passthroughLabel = screen.getByText('zkevm_batchNumber').closest('label')!;
+        expect(passthroughLabel).not.toHaveAttribute('aria-disabled', 'true');
+        expect(isChecked('zkevm_batchNumber')).toBe(true);
+        await user.click(passthroughLabel);
+        expect(isChecked('zkevm_batchNumber')).toBe(false);
+        await user.click(passthroughLabel);
+        expect(isChecked('zkevm_batchNumber')).toBe(true);
+      });
+
+      it('lets an admin-tier token add a passthrough method', async () => {
+        localStorage.setItem('privacy_proxy_admin_token', 'test-admin-token');
+        const user = userEvent.setup();
+        server.use(
+          http.get('/api/v1/admin/orgs/:orgId/groups/:groupId/access', () =>
+            HttpResponse.json(mockGroupAccess)
+          ),
+          passthroughStatus()
+        );
+
+        renderGroupAccessForm({});
+        await waitFor(() => {
+          expect(screen.getByText('zkevm_batchNumber')).toBeInTheDocument();
+        });
+
+        const passthroughLabel = screen.getByText('zkevm_batchNumber').closest('label')!;
+        expect(passthroughLabel).not.toHaveAttribute('aria-disabled', 'true');
+        expect(screen.queryByText(/can be added only with an admin-tier token/)).not.toBeInTheDocument();
+        await user.click(passthroughLabel);
+        expect(isChecked('zkevm_batchNumber')).toBe(true);
+      });
     });
   });
 });

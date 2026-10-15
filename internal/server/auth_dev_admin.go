@@ -126,7 +126,7 @@ func bootstrapDevAdminGroup(ctx context.Context, store rbac.Store) (string, erro
 		access = &rbac.GroupAccess{
 			ID:             uuid.New().String(),
 			GroupID:        group.ID,
-			AllowedMethods: []string{"*"},
+			AllowedMethods: rbac.AllAllowedMethods(), // explicit "*" expansion, never a literal "*"
 			Claims:         []rbac.Claim{rbac.ClaimAdmin},
 		}
 		if err := store.CreateGroupAccess(ctx, access); err != nil {

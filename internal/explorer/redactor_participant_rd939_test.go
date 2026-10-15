@@ -28,6 +28,8 @@ import (
 	"strings"
 	"testing"
 
+	"privacy-proxy/internal/rbac"
+
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -97,7 +99,7 @@ func newEngineForRD939(linkedAddrs []string, logStub *stubLogParticipantStore, a
 		linkedAddrs: linkedAddrs,
 		visMap:      VisibilityMap{},
 	}
-	r := &RedactionEngine{store: &mockContractStore{}, db: db}
+	r := &RedactionEngine{readProfile: rbac.ReadProfileStandard, store: &mockContractStore{}, db: db}
 	if logStub != nil {
 		r.logParticipantStore = logStub
 	}
@@ -373,14 +375,14 @@ func TestRedactTransactions_ABIDecoded_CustomSelectorMint(t *testing.T) {
 	r := newEngineForRD939([]string{viewer}, nil, abiStub)
 	r.db.(*mockDB).visMap = VisibilityMap{
 		"0xdeaddeaddeaddeaddeaddeaddeaddeaddeaddead": VisibilityHidden,
-		contract:                                     VisibilityHidden,
+		contract: VisibilityHidden,
 	}
 
 	out, err := r.RedactTransactions(context.Background(),
 		[]Transaction{{
 			Hash:      "0xmint1",
 			From:      "0xdeaddeaddeaddeaddeaddeaddeaddeaddeaddead", // hidden admin
-			To:        strPtr(contract),                              // hidden contract
+			To:        strPtr(contract),                             // hidden contract
 			InputData: calldata,
 		}},
 		"did:test:viewer")
@@ -407,7 +409,7 @@ func TestRedactTransactions_ABIDecoded_NoABI_FailsClosedForCalldataOnly(t *testi
 	r := newEngineForRD939([]string{viewer}, nil /* no log signal */, abiStub)
 	r.db.(*mockDB).visMap = VisibilityMap{
 		"0xdeaddeaddeaddeaddeaddeaddeaddeaddeaddead": VisibilityHidden,
-		contract:                                     VisibilityHidden,
+		contract: VisibilityHidden,
 	}
 
 	out, err := r.RedactTransactions(context.Background(),
@@ -451,7 +453,7 @@ func TestRedactTransactions_ABIDecoded_NestedAddressSlice(t *testing.T) {
 	r := newEngineForRD939([]string{viewer}, nil, abiStub)
 	r.db.(*mockDB).visMap = VisibilityMap{
 		"0xdeaddeaddeaddeaddeaddeaddeaddeaddeaddead": VisibilityHidden,
-		contract:                                     VisibilityHidden,
+		contract: VisibilityHidden,
 	}
 
 	out, err := r.RedactTransactions(context.Background(),
@@ -496,7 +498,7 @@ func TestRedactTransactions_ABIDecoded_AddressLooksLikeViewerButTypedUint(t *tes
 	r := newEngineForRD939([]string{viewer}, nil, abiStub)
 	r.db.(*mockDB).visMap = VisibilityMap{
 		"0xdeaddeaddeaddeaddeaddeaddeaddeaddeaddead": VisibilityHidden,
-		contract:                                     VisibilityHidden,
+		contract: VisibilityHidden,
 	}
 	res, err := r.RedactTransactions(context.Background(),
 		[]Transaction{{
@@ -531,7 +533,7 @@ func TestRedactTransactions_ABIDecoded_WrongABI_FailsClosed(t *testing.T) {
 	r := newEngineForRD939([]string{viewer}, nil, abiStub)
 	r.db.(*mockDB).visMap = VisibilityMap{
 		"0xdeaddeaddeaddeaddeaddeaddeaddeaddeaddead": VisibilityHidden,
-		contract:                                     VisibilityHidden,
+		contract: VisibilityHidden,
 	}
 	res, err := r.RedactTransactions(context.Background(),
 		[]Transaction{{

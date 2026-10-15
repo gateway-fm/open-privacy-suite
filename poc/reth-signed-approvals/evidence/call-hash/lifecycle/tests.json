@@ -1,0 +1,144 @@
+[
+  {
+    "test": "contract_fee_recipient_does_not_change_application_fingerprint",
+    "passed": true
+  },
+  {
+    "test": "shanghai_native_transfers_self_and_fee_recipient",
+    "passed": true
+  },
+  {
+    "test": "shanghai_payable_nested_transfer",
+    "passed": true
+  },
+  {
+    "test": "shanghai_caught_value_transfer_reverted",
+    "passed": true
+  },
+  {
+    "test": "shanghai_root_revert_only_pays_fees",
+    "passed": true
+  },
+  {
+    "test": "shanghai_payable_deployment_with_queued_nonce",
+    "passed": true,
+    "address": "0x1275d096b9dbf2347bd2a131fb6bdab0b4882487"
+  },
+  {
+    "test": "shanghai_nested_create_constructor_call_and_new_contract_call",
+    "passed": true
+  },
+  {
+    "test": "shanghai_empty_runtime_code_deployment",
+    "passed": true
+  },
+  {
+    "test": "shanghai_prefunded_create2_success_and_collision",
+    "passed": true
+  },
+  {
+    "test": "shanghai_create2_redeployment_after_destruction",
+    "passed": true
+  },
+  {
+    "test": "shanghai_existing_selfdestruct_account_effects",
+    "passed": true
+  },
+  {
+    "test": "shanghai_create_and_destroy_including_self_beneficiary",
+    "passed": true
+  },
+  {
+    "test": "shanghai_caught_revert_undoes_creation_and_destruction",
+    "passed": true
+  },
+  {
+    "test": "shanghai_reject_changed_value_recipient",
+    "passed": true
+  },
+  {
+    "test": "shanghai_reject_changed_destruction_balance",
+    "passed": true
+  },
+  {
+    "test": "shanghai_reject_changed_constructor_state",
+    "passed": true
+  },
+  {
+    "test": "shanghai_selfdestruct_self_beneficiary",
+    "passed": true
+  },
+  {
+    "test": "shanghai_selfdestruct_fee_beneficiary",
+    "passed": true
+  },
+  {
+    "test": "cancun_native_transfers_self_and_fee_recipient",
+    "passed": true
+  },
+  {
+    "test": "cancun_payable_nested_transfer",
+    "passed": true
+  },
+  {
+    "test": "cancun_caught_value_transfer_reverted",
+    "passed": true
+  },
+  {
+    "test": "cancun_root_revert_only_pays_fees",
+    "passed": true
+  },
+  {
+    "test": "cancun_payable_deployment_with_queued_nonce",
+    "passed": true,
+    "address": "0x1275d096b9dbf2347bd2a131fb6bdab0b4882487"
+  },
+  {
+    "test": "cancun_nested_create_constructor_call_and_new_contract_call",
+    "passed": true
+  },
+  {
+    "test": "cancun_empty_runtime_code_deployment",
+    "passed": true
+  },
+  {
+    "test": "cancun_prefunded_create2_success_and_collision",
+    "passed": true
+  },
+  {
+    "test": "cancun_create2_redeployment_after_destruction",
+    "passed": true
+  },
+  {
+    "test": "cancun_existing_selfdestruct_account_effects",
+    "passed": true
+  },
+  {
+    "test": "cancun_create_and_destroy_including_self_beneficiary",
+    "passed": true
+  },
+  {
+    "test": "cancun_caught_revert_undoes_creation_and_destruction",
+    "passed": true
+  },
+  {
+    "test": "cancun_reject_changed_value_recipient",
+    "passed": true
+  },
+  {
+    "test": "cancun_reject_changed_destruction_balance",
+    "passed": true
+  },
+  {
+    "test": "cancun_reject_changed_constructor_state",
+    "passed": true
+  },
+  {
+    "test": "cancun_selfdestruct_self_beneficiary",
+    "passed": true
+  },
+  {
+    "test": "cancun_selfdestruct_fee_beneficiary",
+    "passed": true
+  }
+]

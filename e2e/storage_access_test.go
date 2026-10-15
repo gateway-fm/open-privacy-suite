@@ -72,7 +72,7 @@ func setupStorageAccessTest(t *testing.T, database *db.DB) *storageAccessTestSet
 	}))
 	require.NoError(t, database.CreateGroupAccess(ctx, &rbac.GroupAccess{
 		ID: uuid.New().String(), GroupID: setup.readGroupID,
-		AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_blockNumber", "eth_chainId", "eth_getStorageAt", "eth_getCode"},
+		AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_blockNumber", "eth_chainId", "eth_getStorageAt", "eth_getProof", "eth_getCode"},
 		Claims:         []rbac.Claim{},
 	}))
 
@@ -83,7 +83,7 @@ func setupStorageAccessTest(t *testing.T, database *db.DB) *storageAccessTestSet
 	}))
 	require.NoError(t, database.CreateGroupAccess(ctx, &rbac.GroupAccess{
 		ID: uuid.New().String(), GroupID: setup.adminGroupID,
-		AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_blockNumber", "eth_chainId", "eth_getStorageAt", "eth_getCode"},
+		AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_blockNumber", "eth_chainId", "eth_getStorageAt", "eth_getProof", "eth_getCode"},
 		Claims:         rbac.ExpandClaims([]rbac.Claim{rbac.ClaimAdmin}), // admin implies read+write+deploy+upgrade
 	}))
 
@@ -133,7 +133,7 @@ func setupStorageAccessTest(t *testing.T, database *db.DB) *storageAccessTestSet
 	}))
 	require.NoError(t, database.CreateGroupAccess(ctx, &rbac.GroupAccess{
 		ID: uuid.New().String(), GroupID: setup.orgBGroupID,
-		AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_blockNumber", "eth_chainId", "eth_getStorageAt", "eth_getCode"},
+		AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_blockNumber", "eth_chainId", "eth_getStorageAt", "eth_getProof", "eth_getCode"},
 		Claims:         rbac.ExpandClaims([]rbac.Claim{rbac.ClaimAdmin}), // admin implies read+write+deploy+upgrade
 	}))
 	orgBUserID := uuid.New().String()
@@ -306,5 +306,101 @@ func TestE2E_TieredStorageAccess(t *testing.T) {
 		assert.Equal(t, http.StatusNotFound, resp.StatusCode,
 			"read user with off-by-one Diamond slot should be denied; got: %s", string(respBody))
 		assertOpaqueErrorBody(t, respBody, "storage", "slot")
+	})
+}
+
+// buildGetProofBody builds a JSON-RPC eth_getProof request body.
+func buildGetProofBody(contractAddr string, keys []string) []byte {
+	storageKeys := make([]any, 0, len(keys))
+	for _, k := range keys {
+		storageKeys = append(storageKeys, k)
+	}
+	body, _ := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"method":  "eth_getProof",
+		"params":  []any{contractAddr, storageKeys, "latest"},
+		"id":      1,
+	})
+	return body
+}
+
+// TestE2E_TieredStorageAccess_GetProof pins that eth_getProof sits behind the
+// same storage-slot tier as eth_getStorageAt. A proof returns
+// storageProof[].value for every requested key, so a non-admin may only prove
+// the well-known infrastructure slots; an ordinary or mixed key list is denied
+// with the opaque 404 before it reaches the node.
+func TestE2E_TieredStorageAccess_GetProof(t *testing.T) {
+	const (
+		implSlot     = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc"
+		ordinarySlot = "0x0000000000000000000000000000000000000000000000000000000000000000"
+	)
+
+	t.Run("read user", func(t *testing.T) {
+		mockVerifier := &mockPrivadoVerifier{userDID: "did:privado:storage_read_user"}
+		srv, serverURL, cleanup := setupE2EWithVerifier(t, mockVerifier)
+		defer cleanup()
+
+		setup := setupStorageAccessTest(t, srv.DB())
+		accessToken := getJWTToken(t, serverURL, setup.readUserDID)
+
+		for _, tc := range []struct {
+			name string
+			keys []string
+		}{
+			{"ordinary key DENIED", []string{ordinarySlot}},
+			{"well-known + ordinary keys DENIED", []string{implSlot, ordinarySlot}},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				resp, respBody := doRPCRequest(t, serverURL, accessToken, buildGetProofBody(setup.contractAddr, tc.keys))
+				assert.Equal(t, http.StatusNotFound, resp.StatusCode,
+					"a non-admin proof of an ordinary slot must be denied with the opaque 404; got: %s", string(respBody))
+				assertOpaqueErrorBody(t, respBody, "storage", "slot", "proof", "denied")
+			})
+		}
+
+		for _, tc := range []struct {
+			name string
+			keys []string
+		}{
+			{"EIP-1967 implementation key allowed", []string{implSlot}},
+			{"zero keys (account proof) allowed", []string{}},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				resp, respBody := doRPCRequest(t, serverURL, accessToken, buildGetProofBody(setup.contractAddr, tc.keys))
+				assert.NotEqual(t, http.StatusNotFound, resp.StatusCode,
+					"a non-admin proof of well-known slots only must not be denied; got: %s", string(respBody))
+				assert.True(t, resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusBadGateway,
+					"expected 200 or 502, got %d: %s", resp.StatusCode, string(respBody))
+			})
+		}
+	})
+
+	t.Run("admin proves an ordinary key", func(t *testing.T) {
+		mockVerifier := &mockPrivadoVerifier{userDID: "did:privado:storage_admin_user"}
+		srv, serverURL, cleanup := setupE2EWithVerifier(t, mockVerifier)
+		defer cleanup()
+
+		setup := setupStorageAccessTest(t, srv.DB())
+		accessToken := getJWTToken(t, serverURL, setup.adminUserDID)
+
+		resp, respBody := doRPCRequest(t, serverURL, accessToken, buildGetProofBody(setup.contractAddr, []string{ordinarySlot}))
+		assert.NotEqual(t, http.StatusNotFound, resp.StatusCode,
+			"an admin proof of an ordinary slot on a granted contract must not be denied; got: %s", string(respBody))
+		assert.True(t, resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusBadGateway,
+			"expected 200 or 502, got %d: %s", resp.StatusCode, string(respBody))
+	})
+
+	t.Run("cross-org user DENIED", func(t *testing.T) {
+		mockVerifier := &mockPrivadoVerifier{userDID: "did:privado:storage_orgb_user"}
+		srv, serverURL, cleanup := setupE2EWithVerifier(t, mockVerifier)
+		defer cleanup()
+
+		setup := setupStorageAccessTest(t, srv.DB())
+		accessToken := getJWTToken(t, serverURL, setup.orgBUserDID)
+
+		resp, respBody := doRPCRequest(t, serverURL, accessToken, buildGetProofBody(setup.contractAddr, []string{implSlot}))
+		assert.Equal(t, http.StatusNotFound, resp.StatusCode,
+			"another org's user must be denied a proof even of a well-known slot; got: %s", string(respBody))
+		assertOpaqueErrorBody(t, respBody, "cross-org", "org b")
 	})
 }

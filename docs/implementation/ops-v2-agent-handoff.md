@@ -4,7 +4,8 @@ Updated 25 September 2026. This is the starting point for continuing the PoC on
 `feat/ops-dsl-reth`, originally at
 `/Users/blade/work/software/privacy-proxy/.tmp/worktrees/ops-dsl-reth`.
 The latest functional fix is `8d835dd4`; later documentation commits describe it.
-This session has not pushed, merged or deployed the branch.
+The original branch is preserved on origin. For the main-reconciled migration
+sequence and database compatibility, use the [stack runbook](ops-reth-stack.md).
 
 ## Scope and reading order
 
@@ -69,7 +70,7 @@ bytes can increase; the design does not eliminate aggregate size or gas bounds.
 | Change | Reason and behavior |
 |---|---|
 | Per-group compiler output | Each artifact retains the canonical whole-document digest while generating only its group's rules. All builds succeed or submission fails. |
-| Complete artifact-set review/storage | Review checks the exact bindings, generated source, runtime hashes and compiler settings. Migration 081 persists the set; approval/audit cover every artifact. |
+| Complete artifact-set review/storage | Review checks the exact bindings, generated source, runtime hashes and compiler settings. Migration 082 persists the set; approval/audit cover every artifact. |
 | Publication and removal | Feed keys include organization and group. Activation/export replace the complete set, including removal of omitted bindings; an empty set denies execution. |
 | Reth group selection | Filter and sort the authenticated principal's applicable groups in the frame's policy organization; allow if one evaluated artifact allows. Full group/claim facts remain available for cross-group exceptions. |
 | Candidate isolation | A complete candidate set replaces only the selected organization's candidate rules for that simulation. Active state is unchanged; diagnostics retain separate authority and scope checks. |
@@ -99,7 +100,7 @@ Paths below are relative to the worktree root.
 |---|---|---|
 | Compiler, set encoding and digest binding | `internal/policydsl/{validate,generate,compile,artifact_set}.go` | `per_group_test.go`, `per_group_vectors_test.go`, `testdata/per-group-v1.json` |
 | Review and atomic activation | `internal/configuration/execution.go`, `internal/db/configuration_revision_execution.go` | `internal/db/execution_artifact_set_test.go` |
-| Storage and feed export | `internal/db/migrations/081_execution_artifact_sets.sql`, `execution_policy_store.go`, `node_policy_export.go` | Database execution/export tests |
+| Storage and feed export | `internal/db/migrations/082_execution_artifact_sets.sql`, `execution_policy_store.go`, `node_policy_export.go` | Database execution/export tests |
 | Signed wire, deltas and simulation | `internal/nodepolicy/{envelope,feed,state,simulation,client}.go` | `internal/nodepolicy/group_artifacts_test.go` |
 | Node selection and enforcement | `node/reth/src/{facts,policy,context,runtime,wire,stream}.rs` | `node/reth/tests/{group_artifacts,facts_adapter,diagnostics}.rs` |
 | HTTP compile window and candidates | `internal/server/{admin_configuration,node_simulation}.go` | `configuration_execution_deadline_test.go`, `node_simulation_test.go` |

@@ -1,6 +1,6 @@
 # OPS with guarded Reth: local stack and acceptance
 
-Run these commands from the `feat/ops-dsl-reth` worktree. The harness starts the
+Run these commands from the worktree whose V2 code you are validating. The harness starts the
 actual OPS application, guarded Reth, chain-indexer, OPS frontend, and the
 privacy-mode explorer (BFF plus frontend). PostgreSQL and Redis run in a unique
 Docker Compose project. Every invocation gets separate ports, database volume,
@@ -24,6 +24,15 @@ its indexer client and contract-verification writes are compiled out. The BFF
 obtains viewer-filtered chain data only through OPS.
 
 ## Start, test, restart, stop
+
+Use a fresh stack when moving from the original V2 development branch to the
+main-reconciled branch. Main's published migration 071 remains unchanged; V2's
+previous migrations 071–081 are now 072–082. Databases initialized by main
+through 071 upgrade normally. Databases initialized by the old V2 branch have
+different migration identities and must not be opened by the reconciled binary.
+Keep their backup and original worktree if their local data is still needed;
+start a separate database for reconciliation checks. Do not edit `schema_version`
+to make an old V2 database appear compatible.
 
 ```sh
 python3 scripts/ops-reth-stack/stack.py start

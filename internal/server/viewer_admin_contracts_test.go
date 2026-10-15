@@ -28,6 +28,7 @@ func TestViewerAdminContracts(t *testing.T) {
 	ctx := context.Background()
 	ts := setupTestServerForRBAC(t)
 	proc := NewJSONRPCProcessor(JSONRPCProcessorConfig{
+		ReadProfile:        rbac.ReadProfileStandard,
 		RBACAccessCtrl:     ts.rbacAccessCtrl,
 		RateLimiter:        &noopRateLimiter{},
 		AccessLogger:       ts.db,
@@ -194,6 +195,7 @@ func TestApplyResponseFilter_AdminBypass_UsesUUIDFromAccessCheckResult(t *testin
 	ctx := context.Background()
 	ts := setupTestServerForRBAC(t)
 	proc := NewJSONRPCProcessor(JSONRPCProcessorConfig{
+		ReadProfile:        rbac.ReadProfileStandard,
 		RBACAccessCtrl:     ts.rbacAccessCtrl,
 		RateLimiter:        &noopRateLimiter{},
 		AccessLogger:       ts.db,

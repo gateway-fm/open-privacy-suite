@@ -607,13 +607,18 @@ type VisibilityFilter struct {
 	HiddenAddresses  []string // blocklist mode: addresses with VisibilityHidden or VisibilityRedacted
 	AllPrivate       bool     // when true, use allowlist mode (VisibleAddresses)
 	VisibleAddresses []string // allowlist mode: addresses with VisibilityFull
-	VisibleTxHashes  []string // tx hashes that are always visible (visibleTo override)
-	// ParticipantTxHashes is a LABEL-ONLY subset of VisibleTxHashes: hashes
-	// added by the RD-1009 transfer-participant union (visible because the
-	// viewer participates in the tx), NOT genuine visibleTo shares. It does
-	// not affect SQL filtering or row survival — it only lets the redactor
-	// label a revealed counterparty "Counterparty" vs "Shared" (RD-1155).
-	ParticipantTxHashes []string
+	// VisibleTxHashes are tx hashes whose rows are always kept: genuine
+	// visibleTo shares plus the RD-1009 transfer-participant union. Keeping a
+	// row reveals nothing by itself (RD-1316); see ListedTxHashes.
+	VisibleTxHashes []string
+	// ListedTxHashes are ONLY the tx hashes whose tx_visible_to row lists the
+	// viewer — genuine visibleTo shares, never the RD-1009 transfer-participant
+	// union. Not used for SQL filtering (VisibleTxHashes already covers row
+	// survival); it is the sole redactor input for "the sender listed this
+	// viewer on this tx": the address reveal on tx, transfer and internal rows
+	// (RD-1316), and the RD-874 log unlock and param-rule fallback (RD-1307).
+	// A subset of VisibleTxHashes.
+	ListedTxHashes []string
 }
 
 // isFilterActive returns true if the filter has any effect.
@@ -877,6 +882,55 @@ func (s *Store) GetLogsByTransaction(ctx context.Context, txHash string) ([]Log,
 	return s.scanLogs(rows)
 }
 
+// GetLogsByTransactions returns the event logs of the given transactions in
+// one query, ordered by transaction and log index (TxDataBatchResolver).
+func (s *Store) GetLogsByTransactions(ctx context.Context, txHashes []string) ([]Log, error) {
+	if len(txHashes) == 0 {
+		return nil, nil
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, tx_hash, log_index, address, topic0, topic1, topic2, topic3, data, block_number, timestamp, removed
+		FROM logs WHERE tx_hash = ANY($1) ORDER BY tx_hash, log_index`, txHashes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return s.scanLogs(rows)
+}
+
+// GetTransactionsByHashes returns the given transactions in one query, with
+// the same columns as GetTransaction (TxDataBatchResolver). Unknown hashes
+// are absent from the result.
+func (s *Store) GetTransactionsByHashes(ctx context.Context, hashes []string) ([]Transaction, error) {
+	if len(hashes) == 0 {
+		return nil, nil
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT t.hash, t.block_number, t.tx_index, t.from_address, t.to_address, t.value::text,
+			t.gas_used, t.gas_price, t.gas_limit, t.max_fee_per_gas, t.max_priority_fee_per_gas, t.nonce,
+			t.tx_type, t.input_data, t.status, t.error, t.revert_reason, t.created_at
+		FROM transactions t
+		WHERE t.hash = ANY($1)`, hashes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Transaction
+	for rows.Next() {
+		var tx Transaction
+		var valueStr string
+		if err := rows.Scan(
+			&tx.Hash, &tx.BlockNumber, &tx.TxIndex, &tx.From, &tx.To, &valueStr,
+			&tx.GasUsed, &tx.GasPrice, &tx.GasLimit, &tx.MaxFeePerGas, &tx.MaxPriorityFeePerGas, &tx.Nonce,
+			&tx.TxType, &tx.InputData, &tx.Status, &tx.Error, &tx.RevertReason, &tx.CreatedAt); err != nil {
+			return nil, err
+		}
+		tx.Value = JSONString(valueStr)
+		out = append(out, tx)
+	}
+	return out, rows.Err()
+}
+
 // FindLogParticipantTxs implements explorer.LogParticipantStore for the
 // SQL-backed indexer store. Returns the subset of txHashes where any of
 // viewerAddrs appears in an indexed address topic of a log whose topic0
@@ -1042,6 +1096,70 @@ func (s *Store) FindTransferParticipantTxs(ctx context.Context, visibleAddrs []s
 		return nil, fmt.Errorf("FindTransferParticipantTxs rows.Err: %w", err)
 	}
 	return out, nil
+}
+
+// FindTransferTxsBetween returns the tx hashes that have a token transfer
+// whose from and to are both in sideAddrs, on a token in tokenAddrs. It backs
+// the third non-admin driver of the RD-1009 parent-row union (RD-1316): the
+// caller passes the addresses the viewer sees at Full plus the public ones
+// (zero address, precompiles) as sideAddrs, and the tokens the viewer has
+// event access to as tokenAddrs. For a viewer who is not exempt from the G10
+// drop, such a transfer row survives RedactTransfers (both sides identifiable,
+// event access on the token), while its parent tx — typically another user's
+// wallet calling the token — would be G10-dropped. Keeping the parent row
+// reveals nothing: the redactor renders it at the viewer's own visibility.
+//
+// Either slice empty → empty map. beforeBlock and limit bound the scan as in
+// FindTransferParticipantTxs. Returns lowercase tx hashes.
+func (s *Store) FindTransferTxsBetween(ctx context.Context, sideAddrs, tokenAddrs []string, beforeBlock *uint64, limit int) (map[string]bool, error) {
+	out := make(map[string]bool)
+	sides := normalizeAddrs(sideAddrs)
+	tokens := normalizeAddrs(tokenAddrs)
+	if len(sides) == 0 || len(tokens) == 0 {
+		return out, nil
+	}
+
+	query := `SELECT DISTINCT tx_hash FROM token_transfers
+		WHERE LOWER(token_address) = ANY($2)
+		  AND LOWER(from_address) = ANY($1)
+		  AND LOWER(to_address) = ANY($1)`
+	args := []any{sides, tokens}
+	if beforeBlock != nil {
+		query += ` AND block_number < $3`
+		args = append(args, *beforeBlock)
+	}
+	query += ` ORDER BY tx_hash`
+	if limit > 0 {
+		query += fmt.Sprintf(` LIMIT %d`, limit)
+	}
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("FindTransferTxsBetween: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var h string
+		if err := rows.Scan(&h); err != nil {
+			return nil, fmt.Errorf("FindTransferTxsBetween scan: %w", err)
+		}
+		out[strings.ToLower(h)] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("FindTransferTxsBetween rows.Err: %w", err)
+	}
+	return out, nil
+}
+
+// normalizeAddrs lowercases and trims addresses, dropping empty entries.
+func normalizeAddrs(addrs []string) []string {
+	out := make([]string, 0, len(addrs))
+	for _, a := range addrs {
+		if a = strings.TrimSpace(strings.ToLower(a)); a != "" {
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 // GetTransfersByAddress returns token transfers involving a specific address.

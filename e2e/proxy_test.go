@@ -110,6 +110,21 @@ func setupE2E(t *testing.T) (*server.Server, string, func()) {
 }
 
 func setupE2EWithVerifier(t *testing.T, verifier server.PrivadoVerifier) (*server.Server, string, func()) {
+	return setupE2EWithVerifierAndNode(t, verifier, e2eNodeURL())
+}
+
+// e2eNodeURL is the upstream node the E2E server forwards to.
+func e2eNodeURL() string {
+	if nodeURL := os.Getenv("E2E_NODE_URL"); nodeURL != "" {
+		return nodeURL
+	}
+	return "http://localhost:8545"
+}
+
+// setupE2EWithVerifierAndNode is setupE2EWithVerifier with an explicit
+// upstream node URL, for tests that interpose a recording relay between the
+// proxy and the node.
+func setupE2EWithVerifierAndNode(t *testing.T, verifier server.PrivadoVerifier, nodeURL string) (*server.Server, string, func()) {
 	// The server harness provides a run-owned database. TEST_DATABASE_URL remains
 	// an explicit developer/CI override; otherwise testcontainers owns the DB.
 	dbURL := os.Getenv("E2E_DATABASE_URL")
@@ -147,12 +162,8 @@ func setupE2EWithVerifier(t *testing.T, verifier server.PrivadoVerifier) (*serve
 
 	listenerAddresses := make(chan string, 1)
 
-	nodeURL := os.Getenv("E2E_NODE_URL")
-	if nodeURL == "" {
-		nodeURL = "http://localhost:8545"
-	}
-
 	cfg := &config.Config{
+		ReadProfile: rbac.ReadProfileStandard,
 		NodeURL:     nodeURL,
 		DatabaseURL: dbURL,
 		// RD-1147: audit logs live in a separate DB via the real server.New path.
@@ -408,9 +419,12 @@ func TestE2E_Proxy_JSONRPCWithAuth(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusBadGateway {
+	// The token is accepted (no 401) and the method passes RBAC (no masked
+	// 404). This eth_call carries no call object, so the nested-call check
+	// refuses it as an invalid shape instead of forwarding it to the node.
+	if resp.StatusCode != http.StatusBadRequest {
 		body, _ := io.ReadAll(resp.Body)
-		t.Errorf("expected 200 or 502 (node might not be running), got %d: %s", resp.StatusCode, string(body))
+		t.Errorf("expected 400 (eth_call without a call object), got %d: %s", resp.StatusCode, string(body))
 	}
 }
 

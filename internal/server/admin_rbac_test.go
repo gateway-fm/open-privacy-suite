@@ -84,6 +84,7 @@ func setupTestServerForRBAC(t *testing.T) *testServerRBAC {
 	})
 
 	cfg := &config.Config{
+		ReadProfile: rbac.ReadProfileStandard,
 		NodeURL:     "http://localhost:8545",
 		JWTSecret:   "test-secret-key-for-jwt-signing-123",
 		BaseURL:     "http://localhost:8080",
@@ -573,10 +574,11 @@ func TestGroupAccessValidation(t *testing.T) {
 		assert.Equal(t, http.StatusOK, w.Code)
 	})
 
-	t.Run("AcceptsUnknownMethodsWithoutClaims", func(t *testing.T) {
+	t.Run("RejectsUnknownMethods", func(t *testing.T) {
+		// Unsupported method names are refused when group access is saved.
 		body := map[string]any{
 			"allowed_methods": []string{"some_unknown_method", "another_custom_method"},
-			"claims":          []string{}, // No claims needed for unknown methods
+			"claims":          []string{},
 		}
 		jsonBody, _ := json.Marshal(body)
 
@@ -586,7 +588,7 @@ func TestGroupAccessValidation(t *testing.T) {
 
 		server.router.ServeHTTP(w, req)
 
-		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
 	})
 
 	t.Run("AcceptsAllClaimsWithAnyMethods", func(t *testing.T) {
@@ -1006,7 +1008,7 @@ func TestAccessCheckAPI(t *testing.T) {
 	// Set group access with allowed methods
 	accessBody := map[string]any{
 		"allowed_methods": []string{"eth_call", "eth_getBalance"},
-		"claims":          []string{"deploy"},
+		"claims":          []string{},
 	}
 	accessJson, _ := json.Marshal(accessBody)
 	accessReq := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/orgs/%s/groups/%s/access", org.ID, group.ID), bytes.NewReader(accessJson))

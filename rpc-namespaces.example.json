@@ -1,20 +1,10 @@
 {
-  "version": 2,
+  "version": 1,
   "namespaces": {
-    "Linea": {
-      "explicit": [
-        {"method": "linea_estimateGas", "alias": "eth_estimateGas"},
-        {"method": "linea_getProof", "alias": "eth_getProof"},
-        {"method": "linea_getTransactionExclusionStatusV1", "alias": "eth_getTransactionByHash"}
-      ],
-      "wildcard": {
-        "prefix": "linea_",
-        "deny": [
-          "linea_sendTransaction",
-          "linea_sendRawTransaction",
-          "linea_sign*"
-        ]
-      }
-    }
+    "Linea": [
+      {"method": "linea_estimateGas", "alias": "eth_estimateGas"},
+      {"method": "linea_getProof", "alias": "eth_getProof"},
+      {"method": "linea_getTransactionExclusionStatusV1", "alias": "eth_getTransactionByHash"}
+    ]
   }
 }

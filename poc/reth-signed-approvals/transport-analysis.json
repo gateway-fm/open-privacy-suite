@@ -1,0 +1,328 @@
+{
+  "poc/reth-signed-approvals/evidence/transport-before": {
+    "all": {
+      "count": 256,
+      "read_complete_after_pool": 70,
+      "published_after_pool": 202,
+      "microseconds": {
+        "signer_queue": {
+          "median": 15.0,
+          "mean": 22.234375,
+          "p95": 44.0,
+          "max": 465.0
+        },
+        "signing": {
+          "median": 22.0,
+          "mean": 25.265625,
+          "p95": 40.0,
+          "max": 71.0
+        },
+        "sender_queue": {
+          "median": 2.0,
+          "mean": 6.92578125,
+          "p95": 25.0,
+          "max": 106.0
+        },
+        "encoding": {
+          "median": 2.0,
+          "mean": 29.3984375,
+          "p95": 9.0,
+          "max": 6660.0
+        },
+        "socket_write": {
+          "median": 5.0,
+          "mean": 5.484375,
+          "p95": 9.0,
+          "max": 22.0
+        },
+        "write_to_read_complete": {
+          "median": 82.0,
+          "mean": 123.94140625,
+          "p95": 380.0,
+          "max": 537.0
+        },
+        "verification_queue": {
+          "median": 14.0,
+          "mean": 25.51171875,
+          "p95": 72.0,
+          "max": 190.0
+        },
+        "decoding": {
+          "median": 4.0,
+          "mean": 5.47265625,
+          "p95": 16.0,
+          "max": 79.0
+        },
+        "signature_verification": {
+          "median": 37.0,
+          "mean": 44.14453125,
+          "p95": 89.0,
+          "max": 124.0
+        },
+        "publication": {
+          "median": 1.0,
+          "mean": 2.59375,
+          "p95": 8.0,
+          "max": 31.0
+        },
+        "approval_total": {
+          "median": 206.5,
+          "mean": 286.56640625,
+          "p95": 552.0,
+          "max": 6785.0
+        },
+        "tx_forward_to_pool": {
+          "median": 170.3755,
+          "mean": 206.104671875,
+          "p95": 451.292,
+          "max": 820.083
+        }
+      }
+    },
+    "after_64_tx_warmup": {
+      "count": 192,
+      "read_complete_after_pool": 58,
+      "published_after_pool": 150,
+      "microseconds": {
+        "signer_queue": {
+          "median": 15.0,
+          "mean": 23.927083333333332,
+          "p95": 46.0,
+          "max": 465.0
+        },
+        "signing": {
+          "median": 22.0,
+          "mean": 25.5,
+          "p95": 45.0,
+          "max": 70.0
+        },
+        "sender_queue": {
+          "median": 2.0,
+          "mean": 7.416666666666667,
+          "p95": 23.0,
+          "max": 106.0
+        },
+        "encoding": {
+          "median": 2.0,
+          "mean": 3.109375,
+          "p95": 9.0,
+          "max": 26.0
+        },
+        "socket_write": {
+          "median": 5.0,
+          "mean": 5.505208333333333,
+          "p95": 9.0,
+          "max": 22.0
+        },
+        "write_to_read_complete": {
+          "median": 90.5,
+          "mean": 132.609375,
+          "p95": 380.0,
+          "max": 537.0
+        },
+        "verification_queue": {
+          "median": 14.0,
+          "mean": 26.052083333333332,
+          "p95": 74.0,
+          "max": 190.0
+        },
+        "decoding": {
+          "median": 4.0,
+          "mean": 4.916666666666667,
+          "p95": 11.0,
+          "max": 41.0
+        },
+        "signature_verification": {
+          "median": 37.0,
+          "mean": 44.755208333333336,
+          "p95": 96.0,
+          "max": 124.0
+        },
+        "publication": {
+          "median": 1.0,
+          "mean": 2.6354166666666665,
+          "p95": 7.0,
+          "max": 31.0
+        },
+        "approval_total": {
+          "median": 219.0,
+          "mean": 271.3229166666667,
+          "p95": 552.0,
+          "max": 798.0
+        },
+        "tx_forward_to_pool": {
+          "median": 177.0005,
+          "mean": 212.54861979166665,
+          "p95": 451.292,
+          "max": 820.083
+        }
+      }
+    },
+    "method": "Same-host Unix timestamps; opt-in instrumentation. Write-to-read includes kernel transport, reader scheduling and any previous frame processing; it is not pure network latency.",
+    "connection_counts": []
+  },
+  "poc/reth-signed-approvals/evidence/transport-after": {
+    "all": {
+      "count": 256,
+      "read_complete_after_pool": 13,
+      "published_after_pool": 56,
+      "microseconds": {
+        "signer_queue": {
+          "median": 18.0,
+          "mean": 27.21875,
+          "p95": 65.0,
+          "max": 480.0
+        },
+        "signing": {
+          "median": 25.0,
+          "mean": 32.76953125,
+          "p95": 80.0,
+          "max": 199.0
+        },
+        "sender_queue": {
+          "median": 1.0,
+          "mean": 6.984375,
+          "p95": 31.0,
+          "max": 130.0
+        },
+        "encoding": {
+          "median": 0.0,
+          "mean": 0.0625,
+          "p95": 1.0,
+          "max": 1.0
+        },
+        "socket_write": {
+          "median": 5.0,
+          "mean": 6.25390625,
+          "p95": 12.0,
+          "max": 32.0
+        },
+        "write_to_read_complete": {
+          "median": 49.0,
+          "mean": 72.99609375,
+          "p95": 221.0,
+          "max": 449.0
+        },
+        "verification_queue": {
+          "median": 0.0,
+          "mean": 0.34375,
+          "p95": 1.0,
+          "max": 47.0
+        },
+        "decoding": {
+          "median": 0.0,
+          "mean": 0.828125,
+          "p95": 1.0,
+          "max": 26.0
+        },
+        "signature_verification": {
+          "median": 37.5,
+          "mean": 47.3359375,
+          "p95": 100.0,
+          "max": 220.0
+        },
+        "publication": {
+          "median": 1.0,
+          "mean": 2.7109375,
+          "p95": 7.0,
+          "max": 30.0
+        },
+        "approval_total": {
+          "median": 160.0,
+          "mean": 191.25,
+          "p95": 388.0,
+          "max": 698.0
+        },
+        "tx_forward_to_pool": {
+          "median": 193.27100000000002,
+          "mean": 336.8335,
+          "p95": 747.166,
+          "max": 4887.791
+        }
+      }
+    },
+    "after_64_tx_warmup": {
+      "count": 192,
+      "read_complete_after_pool": 11,
+      "published_after_pool": 47,
+      "microseconds": {
+        "signer_queue": {
+          "median": 17.0,
+          "mean": 26.078125,
+          "p95": 53.0,
+          "max": 480.0
+        },
+        "signing": {
+          "median": 25.0,
+          "mean": 32.104166666666664,
+          "p95": 80.0,
+          "max": 128.0
+        },
+        "sender_queue": {
+          "median": 1.0,
+          "mean": 6.385416666666667,
+          "p95": 24.0,
+          "max": 130.0
+        },
+        "encoding": {
+          "median": 0.0,
+          "mean": 0.052083333333333336,
+          "p95": 0.0,
+          "max": 1.0
+        },
+        "socket_write": {
+          "median": 5.0,
+          "mean": 6.119791666666667,
+          "p95": 11.0,
+          "max": 26.0
+        },
+        "write_to_read_complete": {
+          "median": 48.0,
+          "mean": 70.59895833333333,
+          "p95": 218.0,
+          "max": 449.0
+        },
+        "verification_queue": {
+          "median": 0.0,
+          "mean": 0.3802083333333333,
+          "p95": 1.0,
+          "max": 47.0
+        },
+        "decoding": {
+          "median": 0.0,
+          "mean": 0.8958333333333334,
+          "p95": 1.0,
+          "max": 26.0
+        },
+        "signature_verification": {
+          "median": 37.0,
+          "mean": 46.572916666666664,
+          "p95": 100.0,
+          "max": 220.0
+        },
+        "publication": {
+          "median": 1.0,
+          "mean": 2.7395833333333335,
+          "p95": 7.0,
+          "max": 30.0
+        },
+        "approval_total": {
+          "median": 152.0,
+          "mean": 185.80729166666666,
+          "p95": 394.0,
+          "max": 698.0
+        },
+        "tx_forward_to_pool": {
+          "median": 173.667,
+          "mean": 346.2606510416667,
+          "p95": 760.625,
+          "max": 4887.791
+        }
+      }
+    },
+    "method": "Same-host Unix timestamps; opt-in instrumentation. Write-to-read includes kernel transport, reader scheduling and any previous frame processing; it is not pure network latency.",
+    "connection_counts": [
+      1
+    ]
+  }
+}

@@ -1,0 +1,1082 @@
+{
+  "method": "Same binary; stock, original JSON fingerprint, direct fingerprint. Internal default_ethereum_payload time including execution and roots, divided by included tx count. Identical preflight warming. Rotated mode order; one discarded warmup per node. All three block hashes equal for every sample. RPC, preflight, approval signature verification/delivery, wait, and engine import excluded.",
+  "profile_enabled": true,
+  "samples_per_mode_per_workload": 3,
+  "batch": 32,
+  "hardware": {
+    "os": "macOS-26.6.1-arm64-arm-64bit-Mach-O",
+    "architecture": "arm64",
+    "logical_cpus": 12,
+    "cpu": "Apple M2 Max",
+    "memory_bytes": 34359738368
+  },
+  "reth_commit": "5a6940e351fed80458fe6c9da8581cbe4b8bd036",
+  "binary_sha256": "69a915b4191e2c22e147bf57147c78c600e03e10bee7996988c9385ff41a24ff",
+  "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+  "summary": [
+    {
+      "workload": "eighteen_calls",
+      "median_us_per_tx": {
+        "baseline": 60.5546875,
+        "legacy": 189.38021875,
+        "direct": 83.72134375
+      },
+      "ranges_us_per_tx": {
+        "baseline": [
+          60.50259375,
+          61.26821875
+        ],
+        "legacy": [
+          185.9049375,
+          191.3385625
+        ],
+        "direct": [
+          81.5325625,
+          86.89975
+        ]
+      },
+      "extra_us_per_tx": 23.166656250000003,
+      "optimized_time_increase_percent": 38.25741194684558,
+      "optimized_time_reduction_vs_legacy_percent": 55.79192784621282,
+      "stage_mean_us_per_tx": {
+        "legacy": {
+          "canonical_json_tree": 72.90286458333333,
+          "direct_fingerprint": 0.0,
+          "drop_reports": 4.782125,
+          "encode_canonical_json": 11.711291666666666,
+          "evm_with_inspector": 32.04208333333333,
+          "geth_call_frames": 2.2747604166666666,
+          "geth_diff": 2.3607083333333336,
+          "geth_prestate": 1.0481458333333333,
+          "keccak": 13.380677083333333,
+          "reports_to_json_values": 16.0081875,
+          "selection_and_reset": 0.6198020833333334
+        },
+        "direct": {
+          "canonical_json_tree": 0.0,
+          "direct_fingerprint": 3.4175,
+          "drop_reports": 0.30251041666666667,
+          "encode_canonical_json": 0.0,
+          "evm_with_inspector": 32.24041666666667,
+          "geth_call_frames": 2.3290520833333335,
+          "geth_diff": 0.0,
+          "geth_prestate": 0.0,
+          "keccak": 12.70571875,
+          "reports_to_json_values": 0.0,
+          "selection_and_reset": 0.5594479166666666
+        }
+      },
+      "stage_median_us_per_tx": {
+        "legacy": {
+          "canonical_json_tree": 73.60034375,
+          "direct_fingerprint": 0.0,
+          "drop_reports": 4.763,
+          "encode_canonical_json": 11.65746875,
+          "evm_with_inspector": 31.74609375,
+          "geth_call_frames": 2.25003125,
+          "geth_diff": 2.37378125,
+          "geth_prestate": 1.046875,
+          "keccak": 12.8841875,
+          "reports_to_json_values": 16.0728125,
+          "selection_and_reset": 0.60678125
+        },
+        "direct": {
+          "canonical_json_tree": 0.0,
+          "direct_fingerprint": 3.44403125,
+          "drop_reports": 0.3046875,
+          "encode_canonical_json": 0.0,
+          "evm_with_inspector": 31.6783125,
+          "geth_call_frames": 2.29303125,
+          "geth_diff": 0.0,
+          "geth_prestate": 0.0,
+          "keccak": 12.66921875,
+          "reports_to_json_values": 0.0,
+          "selection_and_reset": 0.5495625
+        }
+      }
+    },
+    {
+      "workload": "single_storage_write",
+      "median_us_per_tx": {
+        "baseline": 12.02603125,
+        "legacy": 25.69140625,
+        "direct": 13.6106875
+      },
+      "ranges_us_per_tx": {
+        "baseline": [
+          11.51303125,
+          75.45184375
+        ],
+        "legacy": [
+          25.3541875,
+          142.85546875
+        ],
+        "direct": [
+          13.1875,
+          14.14584375
+        ]
+      },
+      "extra_us_per_tx": 1.5846562499999983,
+      "optimized_time_increase_percent": 13.176884518739286,
+      "optimized_time_reduction_vs_legacy_percent": 47.022411433784406,
+      "stage_mean_us_per_tx": {
+        "legacy": {
+          "canonical_json_tree": 12.225260416666666,
+          "direct_fingerprint": 0.0,
+          "drop_reports": 1.6263541666666668,
+          "encode_canonical_json": 1.9926354166666667,
+          "evm_with_inspector": 5.890197916666667,
+          "geth_call_frames": 1.19703125,
+          "geth_diff": 1.13190625,
+          "geth_prestate": 0.4440104166666667,
+          "keccak": 1.5034479166666668,
+          "reports_to_json_values": 4.648020833333333,
+          "selection_and_reset": 0.2105625
+        },
+        "direct": {
+          "canonical_json_tree": 0.0,
+          "direct_fingerprint": 0.44965625,
+          "drop_reports": 0.05384375,
+          "encode_canonical_json": 0.0,
+          "evm_with_inspector": 2.5381875,
+          "geth_call_frames": 0.15320833333333334,
+          "geth_diff": 0.0,
+          "geth_prestate": 0.0,
+          "keccak": 0.98309375,
+          "reports_to_json_values": 0.0,
+          "selection_and_reset": 0.0429375
+        }
+      },
+      "stage_median_us_per_tx": {
+        "legacy": {
+          "canonical_json_tree": 4.7200625,
+          "direct_fingerprint": 0.0,
+          "drop_reports": 1.1836875,
+          "encode_canonical_json": 1.24225,
+          "evm_with_inspector": 3.05465625,
+          "geth_call_frames": 0.17703125,
+          "geth_diff": 0.67834375,
+          "geth_prestate": 0.298125,
+          "keccak": 1.13146875,
+          "reports_to_json_values": 3.26184375,
+          "selection_and_reset": 0.12775
+        },
+        "direct": {
+          "canonical_json_tree": 0.0,
+          "direct_fingerprint": 0.44659375,
+          "drop_reports": 0.04821875,
+          "encode_canonical_json": 0.0,
+          "evm_with_inspector": 2.55734375,
+          "geth_call_frames": 0.15625,
+          "geth_diff": 0.0,
+          "geth_prestate": 0.0,
+          "keccak": 0.99475,
+          "reports_to_json_values": 0.0,
+          "selection_and_reset": 0.04428125
+        }
+      }
+    },
+    {
+      "workload": "three_calls",
+      "median_us_per_tx": {
+        "baseline": 14.3685,
+        "legacy": 43.0325625,
+        "direct": 17.59634375
+      },
+      "ranges_us_per_tx": {
+        "baseline": [
+          13.29296875,
+          15.84896875
+        ],
+        "legacy": [
+          42.96875,
+          43.19140625
+        ],
+        "direct": [
+          17.5703125,
+          20.4049375
+        ]
+      },
+      "extra_us_per_tx": 3.22784375,
+      "optimized_time_increase_percent": 22.464723179176673,
+      "optimized_time_reduction_vs_legacy_percent": 59.10923559339511,
+      "stage_mean_us_per_tx": {
+        "legacy": {
+          "canonical_json_tree": 12.945760416666666,
+          "direct_fingerprint": 0.0,
+          "drop_reports": 1.8159583333333333,
+          "encode_canonical_json": 2.59896875,
+          "evm_with_inspector": 5.03859375,
+          "geth_call_frames": 0.41365625,
+          "geth_diff": 1.1203125,
+          "geth_prestate": 0.45698958333333334,
+          "keccak": 2.45178125,
+          "reports_to_json_values": 5.943572916666667,
+          "selection_and_reset": 0.22220833333333334
+        },
+        "direct": {
+          "canonical_json_tree": 0.0,
+          "direct_fingerprint": 0.9110104166666666,
+          "drop_reports": 0.10722916666666667,
+          "encode_canonical_json": 0.0,
+          "evm_with_inspector": 5.044677083333333,
+          "geth_call_frames": 0.38367708333333334,
+          "geth_diff": 0.0,
+          "geth_prestate": 0.0,
+          "keccak": 2.2474166666666666,
+          "reports_to_json_values": 0.0,
+          "selection_and_reset": 0.15108333333333335
+        }
+      },
+      "stage_median_us_per_tx": {
+        "legacy": {
+          "canonical_json_tree": 12.89059375,
+          "direct_fingerprint": 0.0,
+          "drop_reports": 1.81378125,
+          "encode_canonical_json": 2.5859375,
+          "evm_with_inspector": 5.06759375,
+          "geth_call_frames": 0.39078125,
+          "geth_diff": 1.10028125,
+          "geth_prestate": 0.4465625,
+          "keccak": 2.43740625,
+          "reports_to_json_values": 5.897,
+          "selection_and_reset": 0.222625
+        },
+        "direct": {
+          "canonical_json_tree": 0.0,
+          "direct_fingerprint": 0.877625,
+          "drop_reports": 0.1029375,
+          "encode_canonical_json": 0.0,
+          "evm_with_inspector": 4.691375,
+          "geth_call_frames": 0.375,
+          "geth_diff": 0.0,
+          "geth_prestate": 0.0,
+          "keccak": 2.21353125,
+          "reports_to_json_values": 0.0,
+          "selection_and_reset": 0.1459375
+        }
+      }
+    }
+  ],
+  "raw": [
+    {
+      "workload": "single_storage_write",
+      "pair": 0,
+      "mode": "baseline",
+      "sample": 1,
+      "approval_stats": null,
+      "block_hash": "0x917466c6d5fe6005edd5239c1e37af380d7205dfcf23086452eb50d679a4f40e",
+      "elapsed_ns": 2414459,
+      "module": false,
+      "profile": {
+        "stage_ns": {
+          "canonical_json_tree": 0,
+          "direct_fingerprint": 0,
+          "drop_reports": 0,
+          "encode_canonical_json": 0,
+          "evm_with_inspector": 0,
+          "geth_call_frames": 0,
+          "geth_diff": 0,
+          "geth_prestate": 0,
+          "keccak": 0,
+          "reports_to_json_values": 0,
+          "selection_and_reset": 0
+        },
+        "transactions": 0
+      },
+      "transactions": 32
+    },
+    {
+      "workload": "single_storage_write",
+      "pair": 0,
+      "mode": "legacy",
+      "sample": 1,
+      "approval_stats": {
+        "ready_on_first_seen": 64,
+        "verification_ns": 5461500,
+        "verified": 64,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x917466c6d5fe6005edd5239c1e37af380d7205dfcf23086452eb50d679a4f40e",
+      "elapsed_ns": 822125,
+      "module": true,
+      "profile": {
+        "stage_ns": {
+          "canonical_json_tree": 151042,
+          "direct_fingerprint": 0,
+          "drop_reports": 37874,
+          "encode_canonical_json": 39752,
+          "evm_with_inspector": 97749,
+          "geth_call_frames": 5665,
+          "geth_diff": 21707,
+          "geth_prestate": 9502,
+          "keccak": 35666,
+          "reports_to_json_values": 104332,
+          "selection_and_reset": 4088
+        },
+        "transactions": 32
+      },
+      "transactions": 32
+    },
+    {
+      "workload": "single_storage_write",
+      "pair": 0,
+      "mode": "direct",
+      "sample": 1,
+      "approval_stats": {
+        "ready_on_first_seen": 64,
+        "verification_ns": 3031580,
+        "verified": 64,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x917466c6d5fe6005edd5239c1e37af380d7205dfcf23086452eb50d679a4f40e",
+      "elapsed_ns": 422000,
+      "module": true,
+      "profile": {
+        "stage_ns": {
+          "canonical_json_tree": 0,
+          "direct_fingerprint": 14291,
+          "drop_reports": 1543,
+          "encode_canonical_json": 0,
+          "evm_with_inspector": 83583,
+          "geth_call_frames": 5043,
+          "geth_diff": 0,
+          "geth_prestate": 0,
+          "keccak": 31832,
+          "reports_to_json_values": 0,
+          "selection_and_reset": 1417
+        },
+        "transactions": 32
+      },
+      "transactions": 32
+    },
+    {
+      "workload": "single_storage_write",
+      "pair": 1,
+      "mode": "legacy",
+      "sample": 1,
+      "approval_stats": {
+        "ready_on_first_seen": 64,
+        "verification_ns": 3483751,
+        "verified": 64,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x917466c6d5fe6005edd5239c1e37af380d7205dfcf23086452eb50d679a4f40e",
+      "elapsed_ns": 811334,
+      "module": true,
+      "profile": {
+        "stage_ns": {
+          "canonical_json_tree": 151041,
+          "direct_fingerprint": 0,
+          "drop_reports": 37878,
+          "encode_canonical_json": 39165,
+          "evm_with_inspector": 87124,
+          "geth_call_frames": 5084,
+          "geth_diff": 21332,
+          "geth_prestate": 9540,
+          "keccak": 36207,
+          "reports_to_json_values": 104379,
+          "selection_and_reset": 3752
+        },
+        "transactions": 32
+      },
+      "transactions": 32
+    },
+    {
+      "workload": "single_storage_write",
+      "pair": 1,
+      "mode": "direct",
+      "sample": 1,
+      "approval_stats": {
+        "ready_on_first_seen": 64,
+        "verification_ns": 2855253,
+        "verified": 64,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x917466c6d5fe6005edd5239c1e37af380d7205dfcf23086452eb50d679a4f40e",
+      "elapsed_ns": 452667,
+      "module": true,
+      "profile": {
+        "stage_ns": {
+          "canonical_json_tree": 0,
+          "direct_fingerprint": 14625,
+          "drop_reports": 2087,
+          "encode_canonical_json": 0,
+          "evm_with_inspector": 81835,
+          "geth_call_frames": 5000,
+          "geth_diff": 0,
+          "geth_prestate": 0,
+          "keccak": 31917,
+          "reports_to_json_values": 0,
+          "selection_and_reset": 1455
+        },
+        "transactions": 32
+      },
+      "transactions": 32
+    },
+    {
+      "workload": "single_storage_write",
+      "pair": 1,
+      "mode": "baseline",
+      "sample": 1,
+      "approval_stats": null,
+      "block_hash": "0x917466c6d5fe6005edd5239c1e37af380d7205dfcf23086452eb50d679a4f40e",
+      "elapsed_ns": 384833,
+      "module": false,
+      "profile": {
+        "stage_ns": {
+          "canonical_json_tree": 0,
+          "direct_fingerprint": 0,
+          "drop_reports": 0,
+          "encode_canonical_json": 0,
+          "evm_with_inspector": 0,
+          "geth_call_frames": 0,
+          "geth_diff": 0,
+          "geth_prestate": 0,
+          "keccak": 0,
+          "reports_to_json_values": 0,
+          "selection_and_reset": 0
+        },
+        "transactions": 0
+      },
+      "transactions": 32
+    },
+    {
+      "workload": "single_storage_write",
+      "pair": 2,
+      "mode": "direct",
+      "sample": 1,
+      "approval_stats": {
+        "ready_on_first_seen": 64,
+        "verification_ns": 2669833,
+        "verified": 64,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x917466c6d5fe6005edd5239c1e37af380d7205dfcf23086452eb50d679a4f40e",
+      "elapsed_ns": 435542,
+      "module": true,
+      "profile": {
+        "stage_ns": {
+          "canonical_json_tree": 0,
+          "direct_fingerprint": 14251,
+          "drop_reports": 1539,
+          "encode_canonical_json": 0,
+          "evm_with_inspector": 78248,
+          "geth_call_frames": 4665,
+          "geth_diff": 0,
+          "geth_prestate": 0,
+          "keccak": 30628,
+          "reports_to_json_values": 0,
+          "selection_and_reset": 1250
+        },
+        "transactions": 32
+      },
+      "transactions": 32
+    },
+    {
+      "workload": "single_storage_write",
+      "pair": 2,
+      "mode": "baseline",
+      "sample": 1,
+      "approval_stats": null,
+      "block_hash": "0x917466c6d5fe6005edd5239c1e37af380d7205dfcf23086452eb50d679a4f40e",
+      "elapsed_ns": 368417,
+      "module": false,
+      "profile": {
+        "stage_ns": {
+          "canonical_json_tree": 0,
+          "direct_fingerprint": 0,
+          "drop_reports": 0,
+          "encode_canonical_json": 0,
+          "evm_with_inspector": 0,
+          "geth_call_frames": 0,
+          "geth_diff": 0,
+          "geth_prestate": 0,
+          "keccak": 0,
+          "reports_to_json_values": 0,
+          "selection_and_reset": 0
+        },
+        "transactions": 0
+      },
+      "transactions": 32
+    },
+    {
+      "workload": "single_storage_write",
+      "pair": 2,
+      "mode": "legacy",
+      "sample": 1,
+      "approval_stats": {
+        "ready_on_first_seen": 64,
+        "verification_ns": 2618582,
+        "verified": 64,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x917466c6d5fe6005edd5239c1e37af380d7205dfcf23086452eb50d679a4f40e",
+      "elapsed_ns": 4571375,
+      "module": true,
+      "profile": {
+        "stage_ns": {
+          "canonical_json_tree": 871542,
+          "direct_fingerprint": 0,
+          "drop_reports": 80378,
+          "encode_canonical_json": 112376,
+          "evm_with_inspector": 380586,
+          "geth_call_frames": 104166,
+          "geth_diff": 65624,
+          "geth_prestate": 23583,
+          "keccak": 72458,
+          "reports_to_json_values": 237499,
+          "selection_and_reset": 12374
+        },
+        "transactions": 32
+      },
+      "transactions": 32
+    },
+    {
+      "workload": "three_calls",
+      "pair": 0,
+      "mode": "baseline",
+      "sample": 1,
+      "approval_stats": null,
+      "block_hash": "0x5c6082930cebfb093ec058ec3f96203a9ed0f7f9fda20c8b62b3378520a7d6d2",
+      "elapsed_ns": 425375,
+      "module": false,
+      "profile": {
+        "stage_ns": {
+          "canonical_json_tree": 0,
+          "direct_fingerprint": 0,
+          "drop_reports": 0,
+          "encode_canonical_json": 0,
+          "evm_with_inspector": 0,
+          "geth_call_frames": 0,
+          "geth_diff": 0,
+          "geth_prestate": 0,
+          "keccak": 0,
+          "reports_to_json_values": 0,
+          "selection_and_reset": 0
+        },
+        "transactions": 0
+      },
+      "transactions": 32
+    },
+    {
+      "workload": "three_calls",
+      "pair": 0,
+      "mode": "legacy",
+      "sample": 1,
+      "approval_stats": {
+        "ready_on_first_seen": 64,
+        "verification_ns": 2626792,
+        "verified": 64,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x5c6082930cebfb093ec058ec3f96203a9ed0f7f9fda20c8b62b3378520a7d6d2",
+      "elapsed_ns": 1375000,
+      "module": true,
+      "profile": {
+        "stage_ns": {
+          "canonical_json_tree": 409166,
+          "direct_fingerprint": 0,
+          "drop_reports": 58499,
+          "encode_canonical_json": 82750,
+          "evm_with_inspector": 162163,
+          "geth_call_frames": 12505,
+          "geth_diff": 35209,
+          "geth_prestate": 15373,
+          "keccak": 77997,
+          "reports_to_json_values": 186959,
+          "selection_and_reset": 7208
+        },
+        "transactions": 32
+      },
+      "transactions": 32
+    },
+    {
+      "workload": "three_calls",
+      "pair": 0,
+      "mode": "direct",
+      "sample": 1,
+      "approval_stats": {
+        "ready_on_first_seen": 64,
+        "verification_ns": 2650745,
+        "verified": 64,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x5c6082930cebfb093ec058ec3f96203a9ed0f7f9fda20c8b62b3378520a7d6d2",
+      "elapsed_ns": 563083,
+      "module": true,
+      "profile": {
+        "stage_ns": {
+          "canonical_json_tree": 0,
+          "direct_fingerprint": 28084,
+          "drop_reports": 3251,
+          "encode_canonical_json": 0,
+          "evm_with_inspector": 150124,
+          "geth_call_frames": 12000,
+          "geth_diff": 0,
+          "geth_prestate": 0,
+          "keccak": 70833,
+          "reports_to_json_values": 0,
+          "selection_and_reset": 4544
+        },
+        "transactions": 32
+      },
+      "transactions": 32
+    },
+    {
+      "workload": "three_calls",
+      "pair": 1,
+      "mode": "legacy",
+      "sample": 1,
+      "approval_stats": {
+        "ready_on_first_seen": 64,
+        "verification_ns": 2718086,
+        "verified": 64,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x5c6082930cebfb093ec058ec3f96203a9ed0f7f9fda20c8b62b3378520a7d6d2",
+      "elapsed_ns": 1377042,
+      "module": true,
+      "profile": {
+        "stage_ns": {
+          "canonical_json_tree": 412499,
+          "direct_fingerprint": 0,
+          "drop_reports": 57792,
+          "encode_canonical_json": 84291,
+          "evm_with_inspector": 162248,
+          "geth_call_frames": 15375,
+          "geth_diff": 38712,
+          "geth_prestate": 14290,
+          "keccak": 76958,
+          "reports_to_json_values": 194920,
+          "selection_and_reset": 7124
+        },
+        "transactions": 32
+      },
+      "transactions": 32
+    },
+    {
+      "workload": "three_calls",
+      "pair": 1,
+      "mode": "direct",
+      "sample": 1,
+      "approval_stats": {
+        "ready_on_first_seen": 64,
+        "verification_ns": 2612875,
+        "verified": 64,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x5c6082930cebfb093ec058ec3f96203a9ed0f7f9fda20c8b62b3378520a7d6d2",
+      "elapsed_ns": 562250,
+      "module": true,
+      "profile": {
+        "stage_ns": {
+          "canonical_json_tree": 0,
+          "direct_fingerprint": 27999,
+          "drop_reports": 3294,
+          "encode_canonical_json": 0,
+          "evm_with_inspector": 149459,
+          "geth_call_frames": 11624,
+          "geth_diff": 0,
+          "geth_prestate": 0,
+          "keccak": 70500,
+          "reports_to_json_values": 0,
+          "selection_and_reset": 4670
+        },
+        "transactions": 32
+      },
+      "transactions": 32
+    },
+    {
+      "workload": "three_calls",
+      "pair": 1,
+      "mode": "baseline",
+      "sample": 1,
+      "approval_stats": null,
+      "block_hash": "0x5c6082930cebfb093ec058ec3f96203a9ed0f7f9fda20c8b62b3378520a7d6d2",
+      "elapsed_ns": 459792,
+      "module": false,
+      "profile": {
+        "stage_ns": {
+          "canonical_json_tree": 0,
+          "direct_fingerprint": 0,
+          "drop_reports": 0,
+          "encode_canonical_json": 0,
+          "evm_with_inspector": 0,
+          "geth_call_frames": 0,
+          "geth_diff": 0,
+          "geth_prestate": 0,
+          "keccak": 0,
+          "reports_to_json_values": 0,
+          "selection_and_reset": 0
+        },
+        "transactions": 0
+      },
+      "transactions": 32
+    },
+    {
+      "workload": "three_calls",
+      "pair": 2,
+      "mode": "direct",
+      "sample": 1,
+      "approval_stats": {
+        "ready_on_first_seen": 64,
+        "verification_ns": 2684995,
+        "verified": 64,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x5c6082930cebfb093ec058ec3f96203a9ed0f7f9fda20c8b62b3378520a7d6d2",
+      "elapsed_ns": 652958,
+      "module": true,
+      "profile": {
+        "stage_ns": {
+          "canonical_json_tree": 0,
+          "direct_fingerprint": 31374,
+          "drop_reports": 3749,
+          "encode_canonical_json": 0,
+          "evm_with_inspector": 184706,
+          "geth_call_frames": 13209,
+          "geth_diff": 0,
+          "geth_prestate": 0,
+          "keccak": 74419,
+          "reports_to_json_values": 0,
+          "selection_and_reset": 5290
+        },
+        "transactions": 32
+      },
+      "transactions": 32
+    },
+    {
+      "workload": "three_calls",
+      "pair": 2,
+      "mode": "baseline",
+      "sample": 1,
+      "approval_stats": null,
+      "block_hash": "0x5c6082930cebfb093ec058ec3f96203a9ed0f7f9fda20c8b62b3378520a7d6d2",
+      "elapsed_ns": 507167,
+      "module": false,
+      "profile": {
+        "stage_ns": {
+          "canonical_json_tree": 0,
+          "direct_fingerprint": 0,
+          "drop_reports": 0,
+          "encode_canonical_json": 0,
+          "evm_with_inspector": 0,
+          "geth_call_frames": 0,
+          "geth_diff": 0,
+          "geth_prestate": 0,
+          "keccak": 0,
+          "reports_to_json_values": 0,
+          "selection_and_reset": 0
+        },
+        "transactions": 0
+      },
+      "transactions": 32
+    },
+    {
+      "workload": "three_calls",
+      "pair": 2,
+      "mode": "legacy",
+      "sample": 1,
+      "approval_stats": {
+        "ready_on_first_seen": 64,
+        "verification_ns": 2669963,
+        "verified": 64,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x5c6082930cebfb093ec058ec3f96203a9ed0f7f9fda20c8b62b3378520a7d6d2",
+      "elapsed_ns": 1382125,
+      "module": true,
+      "profile": {
+        "stage_ns": {
+          "canonical_json_tree": 421128,
+          "direct_fingerprint": 0,
+          "drop_reports": 58041,
+          "encode_canonical_json": 82460,
+          "evm_with_inspector": 159294,
+          "geth_call_frames": 11831,
+          "geth_diff": 33629,
+          "geth_prestate": 14208,
+          "keccak": 80416,
+          "reports_to_json_values": 188704,
+          "selection_and_reset": 7000
+        },
+        "transactions": 32
+      },
+      "transactions": 32
+    },
+    {
+      "workload": "eighteen_calls",
+      "pair": 0,
+      "mode": "baseline",
+      "sample": 1,
+      "approval_stats": null,
+      "block_hash": "0x9c165daf452ef0bae8f1afac74d248e6d43c973768cfc1370d6a1a7573605c43",
+      "elapsed_ns": 1960583,
+      "module": false,
+      "profile": {
+        "stage_ns": {
+          "canonical_json_tree": 0,
+          "direct_fingerprint": 0,
+          "drop_reports": 0,
+          "encode_canonical_json": 0,
+          "evm_with_inspector": 0,
+          "geth_call_frames": 0,
+          "geth_diff": 0,
+          "geth_prestate": 0,
+          "keccak": 0,
+          "reports_to_json_values": 0,
+          "selection_and_reset": 0
+        },
+        "transactions": 0
+      },
+      "transactions": 32
+    },
+    {
+      "workload": "eighteen_calls",
+      "pair": 0,
+      "mode": "legacy",
+      "sample": 1,
+      "approval_stats": {
+        "ready_on_first_seen": 64,
+        "verification_ns": 2690665,
+        "verified": 64,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x9c165daf452ef0bae8f1afac74d248e6d43c973768cfc1370d6a1a7573605c43",
+      "elapsed_ns": 5948958,
+      "module": true,
+      "profile": {
+        "stage_ns": {
+          "canonical_json_tree": 2278003,
+          "direct_fingerprint": 0,
+          "drop_reports": 151791,
+          "encode_canonical_json": 364581,
+          "evm_with_inspector": 1015166,
+          "geth_call_frames": 72001,
+          "geth_diff": 75999,
+          "geth_prestate": 34167,
+          "keccak": 412294,
+          "reports_to_json_values": 504999,
+          "selection_and_reset": 19416
+        },
+        "transactions": 32
+      },
+      "transactions": 32
+    },
+    {
+      "workload": "eighteen_calls",
+      "pair": 0,
+      "mode": "direct",
+      "sample": 1,
+      "approval_stats": {
+        "ready_on_first_seen": 64,
+        "verification_ns": 2593417,
+        "verified": 64,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x9c165daf452ef0bae8f1afac74d248e6d43c973768cfc1370d6a1a7573605c43",
+      "elapsed_ns": 2679083,
+      "module": true,
+      "profile": {
+        "stage_ns": {
+          "canonical_json_tree": 0,
+          "direct_fingerprint": 110209,
+          "drop_reports": 9501,
+          "encode_canonical_json": 0,
+          "evm_with_inspector": 1013706,
+          "geth_call_frames": 73377,
+          "geth_diff": 0,
+          "geth_prestate": 0,
+          "keccak": 405415,
+          "reports_to_json_values": 0,
+          "selection_and_reset": 17586
+        },
+        "transactions": 32
+      },
+      "transactions": 32
+    },
+    {
+      "workload": "eighteen_calls",
+      "pair": 1,
+      "mode": "legacy",
+      "sample": 1,
+      "approval_stats": {
+        "ready_on_first_seen": 64,
+        "verification_ns": 2619669,
+        "verified": 64,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x9c165daf452ef0bae8f1afac74d248e6d43c973768cfc1370d6a1a7573605c43",
+      "elapsed_ns": 6060167,
+      "module": true,
+      "profile": {
+        "stage_ns": {
+          "canonical_json_tree": 2365461,
+          "direct_fingerprint": 0,
+          "drop_reports": 154877,
+          "encode_canonical_json": 386664,
+          "evm_with_inspector": 1015875,
+          "geth_call_frames": 70124,
+          "geth_diff": 75961,
+          "geth_prestate": 33500,
+          "keccak": 410750,
+          "reports_to_json_values": 514330,
+          "selection_and_reset": 19417
+        },
+        "transactions": 32
+      },
+      "transactions": 32
+    },
+    {
+      "workload": "eighteen_calls",
+      "pair": 1,
+      "mode": "direct",
+      "sample": 1,
+      "approval_stats": {
+        "ready_on_first_seen": 64,
+        "verification_ns": 2798838,
+        "verified": 64,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x9c165daf452ef0bae8f1afac74d248e6d43c973768cfc1370d6a1a7573605c43",
+      "elapsed_ns": 2780792,
+      "module": true,
+      "profile": {
+        "stage_ns": {
+          "canonical_json_tree": 0,
+          "direct_fingerprint": 114289,
+          "drop_reports": 9790,
+          "encode_canonical_json": 0,
+          "evm_with_inspector": 1069625,
+          "geth_call_frames": 77211,
+          "geth_diff": 0,
+          "geth_prestate": 0,
+          "keccak": 418292,
+          "reports_to_json_values": 0,
+          "selection_and_reset": 18913
+        },
+        "transactions": 32
+      },
+      "transactions": 32
+    },
+    {
+      "workload": "eighteen_calls",
+      "pair": 1,
+      "mode": "baseline",
+      "sample": 1,
+      "approval_stats": null,
+      "block_hash": "0x9c165daf452ef0bae8f1afac74d248e6d43c973768cfc1370d6a1a7573605c43",
+      "elapsed_ns": 1937750,
+      "module": false,
+      "profile": {
+        "stage_ns": {
+          "canonical_json_tree": 0,
+          "direct_fingerprint": 0,
+          "drop_reports": 0,
+          "encode_canonical_json": 0,
+          "evm_with_inspector": 0,
+          "geth_call_frames": 0,
+          "geth_diff": 0,
+          "geth_prestate": 0,
+          "keccak": 0,
+          "reports_to_json_values": 0,
+          "selection_and_reset": 0
+        },
+        "transactions": 0
+      },
+      "transactions": 32
+    },
+    {
+      "workload": "eighteen_calls",
+      "pair": 2,
+      "mode": "direct",
+      "sample": 1,
+      "approval_stats": {
+        "ready_on_first_seen": 64,
+        "verification_ns": 2622503,
+        "verified": 64,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x9c165daf452ef0bae8f1afac74d248e6d43c973768cfc1370d6a1a7573605c43",
+      "elapsed_ns": 2609042,
+      "module": true,
+      "profile": {
+        "stage_ns": {
+          "canonical_json_tree": 0,
+          "direct_fingerprint": 103582,
+          "drop_reports": 9750,
+          "encode_canonical_json": 0,
+          "evm_with_inspector": 1011749,
+          "geth_call_frames": 73001,
+          "geth_diff": 0,
+          "geth_prestate": 0,
+          "keccak": 396042,
+          "reports_to_json_values": 0,
+          "selection_and_reset": 17208
+        },
+        "transactions": 32
+      },
+      "transactions": 32
+    },
+    {
+      "workload": "eighteen_calls",
+      "pair": 2,
+      "mode": "baseline",
+      "sample": 1,
+      "approval_stats": null,
+      "block_hash": "0x9c165daf452ef0bae8f1afac74d248e6d43c973768cfc1370d6a1a7573605c43",
+      "elapsed_ns": 1936083,
+      "module": false,
+      "profile": {
+        "stage_ns": {
+          "canonical_json_tree": 0,
+          "direct_fingerprint": 0,
+          "drop_reports": 0,
+          "encode_canonical_json": 0,
+          "evm_with_inspector": 0,
+          "geth_call_frames": 0,
+          "geth_diff": 0,
+          "geth_prestate": 0,
+          "keccak": 0,
+          "reports_to_json_values": 0,
+          "selection_and_reset": 0
+        },
+        "transactions": 0
+      },
+      "transactions": 32
+    },
+    {
+      "workload": "eighteen_calls",
+      "pair": 2,
+      "mode": "legacy",
+      "sample": 1,
+      "approval_stats": {
+        "ready_on_first_seen": 64,
+        "verification_ns": 2748915,
+        "verified": 64,
+        "waiting_on_first_seen": 0
+      },
+      "block_hash": "0x9c165daf452ef0bae8f1afac74d248e6d43c973768cfc1370d6a1a7573605c43",
+      "elapsed_ns": 6122834,
+      "module": true,
+      "profile": {
+        "stage_ns": {
+          "canonical_json_tree": 2355211,
+          "direct_fingerprint": 0,
+          "drop_reports": 152416,
+          "encode_canonical_json": 373039,
+          "evm_with_inspector": 1044999,
+          "geth_call_frames": 76252,
+          "geth_diff": 74668,
+          "geth_prestate": 32955,
+          "keccak": 461501,
+          "reports_to_json_values": 517457,
+          "selection_and_reset": 20668
+        },
+        "transactions": 32
+      },
+      "transactions": 32
+    }
+  ]
+}

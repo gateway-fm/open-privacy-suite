@@ -168,7 +168,7 @@ func (e *EVMEvaluator) staticRead(from, target common.Address, input []byte, gas
 	defer e.stateDB.RevertToSnapshot(snapshot)
 	evm := vm.NewEVM(e.blockCtx, e.stateDB, e.chainCfg, vm.Config{NoBaseFee: true})
 	evm.SetTxContext(vm.TxContext{Origin: callerAddress, GasPrice: uint256.NewInt(0)})
-	ret, _, err := evm.StaticCall(from, target, input, vm.GasBudget{RegularGas: gas})
+	ret, _, err := evm.StaticCall(from, target, input, vm.NewGasBudget(gas, 0))
 	if err != nil {
 		return nil, fmt.Errorf("the compiled policy did not return a decision: %w", err)
 	}

@@ -1678,9 +1678,12 @@ func TestBasicAddressQueryOnEOA(t *testing.T) {
 	store.users["did:test:reader"] = user
 
 	groupA := &Group{ID: "group-a", OrgID: "org-a", Slug: "readers", Name: "Readers"}
+	// eth_getProof is granted only by exact name (never through "*"), so it is
+	// listed explicitly: the row below must be denied by the per-address gate,
+	// not by the allowlist.
 	store.groupAccess["group-a"] = &GroupAccess{
 		GroupID:        "group-a",
-		AllowedMethods: []string{"*"},
+		AllowedMethods: []string{"*", "eth_getProof"},
 		Claims:         []Claim{},
 	}
 	store.memberships["reader-user"] = []*MembershipWithDetails{
@@ -1691,7 +1694,7 @@ func TestBasicAddressQueryOnEOA(t *testing.T) {
 	store.cachedPermissions["reader-user:org-a"] = &EffectivePermissions{
 		UserID:         "reader-user",
 		OrgID:          "org-a",
-		AllowedMethods: []string{"*"},
+		AllowedMethods: []string{"*", "eth_getProof"},
 		Claims:         []Claim{},
 		ContractAccess: map[string]ContractAccess{},
 		ComputedAt:     time.Now(),

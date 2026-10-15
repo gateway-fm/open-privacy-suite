@@ -1654,8 +1654,11 @@ func (d *DB) ListAllGrantsForTarget(ctx context.Context, targetUserID string) ([
 //
 // This is used by address-specific explorer endpoints to upgrade visibility for
 // full disclosure recipients without modifying GetBatchVisibility (G17 preserved).
+//
+// Under an impersonation (disclosure.WithoutViewerGrants) it is always false:
+// the grants belong to the viewer, not to the admin viewing as them (RD-1318).
 func (d *DB) ViewerHasFullDisclosureGrant(ctx context.Context, viewerDID, targetAddress string) (bool, error) {
-	if viewerDID == "" || targetAddress == "" {
+	if viewerDID == "" || targetAddress == "" || disclosure.ViewerGrantsSuppressed(ctx) {
 		return false, nil
 	}
 

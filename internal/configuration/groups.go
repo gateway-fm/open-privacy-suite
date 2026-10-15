@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 
 	"privacy-proxy/internal/rbac"
@@ -97,7 +98,7 @@ func diffGroups(document *Document, snapshot GroupSnapshot) (GroupDiff, error) {
 				action = "adopt"
 			}
 			result.Changes = append(result.Changes, GroupChange{Action: action, ID: id, Before: &before, After: &after,
-				LiveMemberships: state.LiveMemberships, RequiresPlatform: changed && (before.IsOrgAdmin || after.IsOrgAdmin)})
+				LiveMemberships: state.LiveMemberships, RequiresPlatform: changed && (before.IsOrgAdmin || after.IsOrgAdmin || addsPassthrough(before, after))})
 		}
 	}
 	for id := range deletions {
@@ -110,7 +111,7 @@ func diffGroups(document *Document, snapshot GroupSnapshot) (GroupDiff, error) {
 			continue
 		}
 		result.Projection = append(result.Projection, after)
-		result.Changes = append(result.Changes, GroupChange{Action: "create", ID: id, After: &after, RequiresPlatform: after.IsOrgAdmin})
+		result.Changes = append(result.Changes, GroupChange{Action: "create", ID: id, After: &after, RequiresPlatform: after.IsOrgAdmin || addsPassthrough(Group{}, after)})
 	}
 	sort.Slice(result.Changes, func(i, j int) bool { return result.Changes[i].ID < result.Changes[j].ID })
 	sort.Strings(result.PreservedDrift)
@@ -137,6 +138,17 @@ func diffGroups(document *Document, snapshot GroupSnapshot) (GroupDiff, error) {
 		return result, fmt.Errorf("configuration cannot remove the last live full administrator")
 	}
 	return result, nil
+}
+
+// Passthrough RPCs return unfiltered node data. As with the direct group API,
+// an organization administrator can retain or remove a grant but cannot add it.
+func addsPassthrough(before, after Group) bool {
+	for _, method := range after.AllowedMethods {
+		if rbac.IsPassthroughMethod(method) && !slices.Contains(before.AllowedMethods, method) {
+			return true
+		}
+	}
+	return false
 }
 
 func ExportGroup(group *rbac.Group, access *rbac.GroupAccess) Group {

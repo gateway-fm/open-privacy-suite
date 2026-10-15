@@ -180,3 +180,11 @@ func TestExtractStorageSlot(t *testing.T) {
 		})
 	}
 }
+
+// The private-storage probe must sit outside the infrastructure allowlist, or
+// the storage-slot tier would grant it to every viewer with contract access.
+func TestPrivateStorageSlotIsNotInfrastructure(t *testing.T) {
+	if IsWellKnownStorageSlot(PrivateStorageSlot) {
+		t.Fatalf("PrivateStorageSlot %q must not be a well-known infrastructure slot", PrivateStorageSlot)
+	}
+}

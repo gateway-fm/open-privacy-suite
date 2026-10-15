@@ -133,7 +133,7 @@ func TestRecordPartyReadsLiveSameBlockStateAndAllLinkedAddresses(t *testing.T) {
 	setter := packCalldata(t, recordABI, "setParties", strangerAddr, strangerAddr)
 	evm := vm.NewEVM(e.blockCtx, e.stateDB, e.chainCfg, vm.Config{NoBaseFee: true})
 	evm.SetTxContext(vm.TxContext{Origin: signerAddr, GasPrice: uint256.NewInt(0)})
-	if _, _, err := evm.Call(signerAddr, common.HexToAddress(vaultAddr), setter, vm.GasBudget{RegularGas: 100_000}, uint256.NewInt(0)); err != nil {
+	if _, _, err := evm.Call(signerAddr, common.HexToAddress(vaultAddr), setter, vm.NewGasBudget(100_000, 0), uint256.NewInt(0)); err != nil {
 		t.Fatal(err)
 	}
 	if got := executeFactsFixture(t, e, facts, call); got != reasonArgumentConstraint {

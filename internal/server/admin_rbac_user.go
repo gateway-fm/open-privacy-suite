@@ -1491,6 +1491,10 @@ func (s *Server) checkAccessAPI(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 		return
 	}
+	// Evaluate the method as /rpc does: canonical spelling, then the operator
+	// alias (AccessMethod is not part of the request body).
+	req.Method = rbac.CanonicalizeMethod(req.Method)
+	req.AccessMethod = rbac.ResolveMethodAlias(req.Method)
 
 	// Audit H4: clamp the probe target to the caller's scope. The
 	// raw endpoint is a permission-map enumeration oracle otherwise —

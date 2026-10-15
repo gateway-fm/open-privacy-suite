@@ -10,6 +10,10 @@ organization, RPC methods and compliance requirements. Reth checks the active
 execution policy on every actual call and deployment. Contracts and signed
 Ethereum transactions keep their existing format.
 
+This mode uses the V2 policy protocol. Leave `OPS_APPROVAL_TARGETS` unset;
+the V1 signed-approval protocol cannot be enabled alongside it. OPS refuses
+to start when both are configured.
+
 ## Author and approve configuration
 
 Open **Administration → RBAC → Configuration** and select an organization.
@@ -103,6 +107,17 @@ bound to the exact revision bundle and configured reviewers; possessing a servic
 JWT alone does not permit activation. MCP tooling is not required.
 
 ## Operator configuration
+
+The deployment's read privacy profile still applies in Reth policy mode.
+Under `PRIVACY_READ_PROFILE=strict`, sends containing `visibleTo` are refused,
+diagnostic reads as another user are unavailable, and diagnostic traces expose
+only the permission verdict. Ordinary traces use `callTracer` and hide nested
+values the caller could not read through storage access. State and block
+overrides remain unsupported.
+
+Group documents accept supported RPC methods and configured aliases. Adding
+an unfiltered passthrough method requires named platform-authorized authors
+and approvers; organization administrators may retain or remove existing grants.
 
 Set `OPS_NODE_POLICY_MODE=reth` and point `NODE_URL` at the guarded Reth node.
 Configure the private policy endpoint with `OPS_NODE_POLICY_URL`,

@@ -152,6 +152,15 @@ func (rt *RuntimeTracer) TraceTransactionUncached(
 	return rt.tracer.TraceCall(ctx, from, to, data, value, blockParam)
 }
 
+// TraceCallObjectUncached preserves the full call object and never uses the
+// four-field transaction cache. Callers validate the request before invoking it.
+func (rt *RuntimeTracer) TraceCallObjectUncached(ctx context.Context, callObj map[string]any, blockParam any) (*TraceResult, error) {
+	if !rt.enabled {
+		return nil, nil
+	}
+	return rt.tracer.TraceCallObject(ctx, callObj, blockParam)
+}
+
 // TraceMinedTransaction traces a mined transaction to discover actual CREATE/CREATE2 addresses.
 // No caching — mined transactions are traced once during deployment finalization.
 func (rt *RuntimeTracer) TraceMinedTransaction(ctx context.Context, txHash string) (*TraceResult, error) {

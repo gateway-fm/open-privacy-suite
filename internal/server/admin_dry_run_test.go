@@ -9,11 +9,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
+	"privacy-proxy/internal/server/middleware"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -41,7 +43,24 @@ type dryRunTestServer struct {
 func setupDryRunTestServer(t *testing.T) *dryRunTestServer {
 	t.Helper()
 	ts := setupTestServerForRBAC(t)
+	// The production processor is always wired (NewWithVerifier); dry-run
+	// runs its response filter as the impersonated user (RD-1308), and
+	// withholds read responses when it is missing.
+	ts.jsonrpcProcessor = NewJSONRPCProcessor(JSONRPCProcessorConfig{
+		ReadProfile:               rbac.ReadProfileStandard,
+		RBACAccessCtrl:            ts.rbacAccessCtrl,
+		RateLimiter:               &noopRateLimiter{},
+		AccessLogger:              ts.db,
+		CircuitBreaker:            middleware.NewCircuitBreaker(),
+		ConcurrencyLimiter:        middleware.NewConcurrencyLimiter(50, 0),
+		TxVisibilityStore:         ts.db,
+		AddressVisibilityResolver: ts.db,
+	})
+	return dryRunServerFor(ts)
+}
 
+// dryRunServerFor mounts the dry-run route on an existing test server.
+func dryRunServerFor(ts *testServerRBAC) *dryRunTestServer {
 	// Inject a minimal middleware that mirrors what
 	// adminAuthMiddleware sets in production. Real auth is exercised
 	// elsewhere (admin_auth_test.go); here we just need the context
@@ -261,6 +280,55 @@ func TestDryRun_DenyDecisionLoggedAndReturned(t *testing.T) {
 	assert.Equal(t, 1, count, "expected exactly one deny row in impersonation_log")
 }
 
+// TestDryRun_StateOverrideDenied verifies that admin diagnostics apply the
+// same simulation-option policy as the RPC endpoint.
+func TestDryRun_StateOverrideDenied(t *testing.T) {
+	f := setupDryRunFixture(t)
+
+	// The allow baseline forwards upstream, so the fixture needs a node; count
+	// hits so the deny case can prove the override never reached it.
+	var hits atomic.Int64
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":"0x"}`))
+	}))
+	t.Cleanup(stub.Close)
+	f.srv.proxy = proxy.New(stub.URL)
+
+	call := map[string]any{"to": f.contractAddr, "data": "0x"}
+	post := func(params []any) dryRunResponse {
+		t.Helper()
+		w := dryRunPost(t, f.srv, f.orgID, "jwt_admin", f.adminDID, map[string]any{
+			"user_did": f.userDID,
+			"rpc":      map[string]any{"method": "eth_call", "params": params},
+		})
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		var resp dryRunResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		return resp
+	}
+
+	// Baseline: the same call without an override is allowed — so the deny
+	// below is caused by the override, not by the fixture's grants.
+	base := post([]any{call, "latest"})
+	require.Equal(t, "allow", base.Decision, "plain eth_call on the granted contract must be allowed; reason=%q", base.Reason)
+	require.Equal(t, int64(1), hits.Load())
+
+	hits.Store(0)
+	resp := post([]any{call, "latest", map[string]any{f.contractAddr: map[string]any{"code": "0x00"}}})
+	assert.Equal(t, "deny", resp.Decision, "a state override on a granted contract must still be denied")
+	assert.Equal(t, rbac.StateOverrideDeniedReason, resp.Reason, "denied by the override gate")
+	assert.Equal(t, int64(0), hits.Load(), "the override must never reach the node")
+
+	// Audit row carries the curated reason code, not free text.
+	var logged string
+	require.NoError(t, f.srv.db.Conn().QueryRowContext(context.Background(),
+		`SELECT reason FROM impersonation_log
+		 WHERE actor_did = $1 AND impersonated_did = $2 AND decision = 'deny'`,
+		f.adminDID, f.userDID).Scan(&logged))
+	assert.Equal(t, ReasonStateOverrideNotAllowed, logged)
+}
+
 const (
 	dryRunBalanceOfABI      = `[{"name":"balanceOf","type":"function","inputs":[{"name":"owner","type":"address"}],"outputs":[{"name":"","type":"uint256"}]}]`
 	dryRunBalanceOfSelector = "0x70a08231"
@@ -354,6 +422,9 @@ func TestDryRunAccessRequest_MatchesEnforcementDerivation(t *testing.T) {
 		assert.Equal(t, rbac.GetTargetAddress("eth_call", params), got.TargetAddress)
 		assert.Equal(t, "0xabc0000000000000000000000000000000000001", got.TargetAddress)
 		assert.Equal(t, rbac.GetFunctionSelector("eth_call", params), got.FunctionSelector)
+		// Same as the View-as RPC mirror (ProcessRequest.BypassPermsCache):
+		// an impersonated check never answers from the in-memory cache.
+		assert.True(t, got.BypassCache, "dry-run must skip the in-memory permission cache")
 	})
 
 	t.Run("eth_sendRawTransaction", func(t *testing.T) {
@@ -372,6 +443,7 @@ func TestDryRunAccessRequest_MatchesEnforcementDerivation(t *testing.T) {
 		assert.Equal(t, wantTo, got.TargetAddress)
 		assert.Equal(t, extractSelector(data), got.FunctionSelector)
 		assert.Equal(t, buildTxParams(from, wantTo, data, value), got.Params)
+		assert.True(t, got.BypassCache, "dry-run must skip the in-memory permission cache")
 	})
 
 	t.Run("undecodable raw tx is an error, not an empty target", func(t *testing.T) {

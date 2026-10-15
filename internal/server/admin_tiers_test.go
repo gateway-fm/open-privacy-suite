@@ -40,6 +40,7 @@ func setupTieredAdminTestServer(t *testing.T, adminToken string) (*Server, *gin.
 	require.NoError(t, err)
 
 	cfg := &config.Config{
+		ReadProfile:   rbac.ReadProfileStandard,
 		AdminAPIToken: adminToken,
 		// RD-1132: a fixed restricted operator token so tests can exercise the
 		// denyOperator* gates (X-Admin-Token: testOperatorToken → operator_token).

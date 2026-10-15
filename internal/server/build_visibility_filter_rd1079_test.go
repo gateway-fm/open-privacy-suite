@@ -9,28 +9,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestBuildVisibilityFilter_DisclosureGrant_UnionDrivenByFullOnly_RD1079 is the
-// server-level proof of the RD-1079 fix. It is the inverse of
-// TestBuildVisibilityFilter_UnionsTransferParticipantTxHashes_RD1009: there the
-// visible counterparty is admin-visible at *Full* and the parent tx hash MUST
-// enter VisibleTxHashes (the RD-1009 row-survival union). Here the counterparty
-// is visible only through a *disclosure grant*, and the grant's level decides
-// whether it drives that union:
-//
-//   - Full grant       → drives the union (the holder is entitled to see
-//     counterparties), tx hash IS in VisibleTxHashes — same as the RD-1009
-//     admin case.
-//   - Pseudonymous     → must NOT drive the union. VisibleTxHashes is a
-//     full-identity-reveal override in the redactor; driving it from a
-//     pseudonymous grant would force-reveal the grant subject's counterparty's
-//     real address (the RD-1079 leak). The subject still surfaces in
-//     /transfers via VisibleAddresses (row-survival by address), where the
-//     redactor's counterparty lens pseudonymises the counterparty.
-//   - Redacted         → same as pseudonymous; must NOT drive the union.
-//
-// In every case the granted address itself is in VisibleAddresses (so the
-// /transfers row survives); only the parent-tx full-reveal union membership
-// differs by level.
+// TestBuildVisibilityFilter_DisclosureGrant_UnionDrivenByFullOnly_RD1079
+// verifies that only Full disclosure grants contribute parent-row hashes.
+// The union preserves rows; the grant lens determines address rendering.
 func TestBuildVisibilityFilter_DisclosureGrant_UnionDrivenByFullOnly_RD1079(t *testing.T) {
 	cases := []struct {
 		level         string
@@ -146,7 +127,7 @@ func TestBuildVisibilityFilter_DisclosureGrant_UnionDrivenByFullOnly_RD1079(t *t
 				txHash, token, charlieEOA, eveEOA, blockNum)
 			require.NoError(t, err)
 
-			filter := srv.buildVisibilityFilter(ctx, viewerDID)
+			filter := srv.buildVisibilityFilter(ctx, viewerDID, srv.isViewerAdmin(ctx, viewerDID))
 			require.NotNil(t, filter)
 			require.True(t, filter.AllPrivate)
 

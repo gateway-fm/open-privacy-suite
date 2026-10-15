@@ -398,6 +398,16 @@ describe('ContractGrantsManager — event rules display', () => {
 
       // Cancel keeps it disabled.
       const dialog = dialogHeading.closest('div.fixed') as HTMLElement;
+      // The operator sees the full-payload policy, including embedded addresses.
+      expect(
+        (await import('@testing-library/react')).within(dialog).getByText(/including embedded addresses/i),
+      ).toBeInTheDocument();
+      expect(
+        (await import('@testing-library/react')).within(dialog).getByText(/org-admin membership there/i),
+      ).toBeInTheDocument();
+      expect(
+        (await import('@testing-library/react')).within(dialog).getByText(/default and system groups are excluded/i),
+      ).toBeInTheDocument();
       const cancelBtn = (await import('@testing-library/react')).within(dialog).getByRole('button', { name: /cancel/i });
       await user.click(cancelBtn);
       
@@ -417,11 +427,9 @@ describe('ContractGrantsManager — event rules display', () => {
         await screen.findByText(/visibleTo unlock enabled for this contract/i),
       ).toBeInTheDocument();
 
-      // RD-1069: the enabled-state caption must match the confirm dialog —
-      // it gates on contract group access and denies cross-org/anonymous,
-      // and must NOT claim "full event payloads with any DID".
+      // RD-1069: the enabled-state caption uses the same eligibility as the dialog.
       expect(
-        screen.getByText(/already hold contract group access in this org/i),
+        screen.getByText(/eligible contract grant or org-admin membership in this org/i),
       ).toBeInTheDocument();
       expect(screen.queryByText(/with any DID they list/i)).not.toBeInTheDocument();
     });

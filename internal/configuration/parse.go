@@ -380,6 +380,11 @@ func normalizeGroups(spec *GroupsSpec, scope Scope) error {
 			}
 		}
 		g.AllowedMethods = rbac.ExpandWildcardMethods(g.AllowedMethods)
+		for _, method := range g.AllowedMethods {
+			if !rbac.IsAssignableMethod(method) {
+				return fmt.Errorf("unsupported RPC method allowlist entry")
+			}
+		}
 		sort.Strings(g.AllowedMethods)
 		claims := []rbac.Claim{}
 		for _, claim := range g.Claims {

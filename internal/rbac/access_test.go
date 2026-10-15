@@ -215,9 +215,9 @@ func TestIsContractDeployment(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:   "eth_sendTransaction with malformed params (not map) - deployment (safe default)",
-			method: "eth_sendTransaction",
-			params: []any{"not a map"},
+			name:     "eth_sendTransaction with malformed params (not map) - deployment (safe default)",
+			method:   "eth_sendTransaction",
+			params:   []any{"not a map"},
 			expected: true,
 		},
 		{
@@ -510,6 +510,9 @@ func TestIsMethodBlocked(t *testing.T) {
 		method   string
 		expected bool
 	}{
+		{"approval preparation", "ops_prepareApproval", true},
+		{"approval namespace case", " OPS_PREPAREAPPROVAL ", true},
+		{"future approval control method", "ops_futureMethod", true},
 		// Should be blocked - debug namespace (except exempted trace methods)
 		{"debug_setHead", "debug_setHead", true},
 		{"debug_unknown", "debug_unknown", true}, // prefix match
@@ -755,6 +758,39 @@ func TestDetectMulticall(t *testing.T) {
 			},
 			expectMulticall: false,
 		},
+		{
+			name:   "calldata in input only",
+			method: "eth_call",
+			params: []any{
+				map[string]any{
+					"to":    "0xca11bde05977b3631167028862be2a173976ca11",
+					"input": "0x252dba42000000000000000000000000",
+				},
+			},
+			expectMulticall: true,
+		},
+		{
+			name:   "calldata in input only, sendTransaction",
+			method: "eth_sendTransaction",
+			params: []any{
+				map[string]any{
+					"to":    "0xca11bde05977b3631167028862be2a173976ca11",
+					"input": "0x82ad56cb",
+				},
+			},
+			expectMulticall: true,
+		},
+		{
+			name:   "non-multicall calldata in input only",
+			method: "eth_call",
+			params: []any{
+				map[string]any{
+					"to":    "0xca11bde05977b3631167028862be2a173976ca11",
+					"input": "0xa9059cbb",
+				},
+			},
+			expectMulticall: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -765,6 +801,47 @@ func TestDetectMulticall(t *testing.T) {
 			}
 			if tt.expectMulticall && reason == "" {
 				t.Error("Expected non-empty reason when Multicall is detected")
+			}
+		})
+	}
+}
+
+// TestCheckAccess_AliasMulticallDetected: an operator alias inherits its
+// target's Multicall check, so an alias of eth_call or eth_estimateGas aimed
+// at a Multicall contract is refused like the target method itself. The
+// detector runs before identity resolution, so anonymous and authenticated
+// callers get the same answer.
+func TestCheckAccess_AliasMulticallDetected(t *testing.T) {
+	registerStorageReadAliases(t, map[string]string{"linea_call": MethodCall, "linea_estimateGas": MethodEstimateGas})
+	ac := NewAccessController(NewMockCrossOrgStore(), time.Minute)
+	defer ac.Stop()
+
+	multicall := []any{map[string]any{"to": "0xcA11bde05977b3631167028862bE2a173976CA11", "data": "0x252dba42000000000000000000000000"}, "latest"}
+	transfer := []any{map[string]any{"to": "0xcA11bde05977b3631167028862bE2a173976CA11", "data": "0xa9059cbb"}, "latest"}
+	for _, tc := range []struct {
+		name, method, alias, user string
+		params                    []any
+		detected                  bool
+	}{
+		{"call alias, anonymous", "linea_call", MethodCall, "", multicall, true},
+		{"call alias, authenticated", "linea_call", MethodCall, "did:example:alias-multicall", multicall, true},
+		{"estimateGas alias, anonymous", "linea_estimateGas", MethodEstimateGas, "", multicall, true},
+		{"catalog method, anonymous", MethodCall, "", "", multicall, true},
+		{"call alias, non-multicall selector", "linea_call", MethodCall, "", transfer, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := ac.CheckAccess(context.Background(), &AccessCheckRequest{
+				UserExternalID: tc.user, Method: tc.method, AccessMethod: tc.alias, Params: tc.params,
+			})
+			if err != nil {
+				t.Fatalf("CheckAccess: %v", err)
+			}
+			gotMulticall := strings.HasPrefix(res.Reason, "multicall to ")
+			if gotMulticall != tc.detected {
+				t.Fatalf("multicall detected = %v, want %v (result %+v)", gotMulticall, tc.detected, res)
+			}
+			if tc.detected && res.Allowed {
+				t.Fatalf("a detected multicall must be denied: %+v", res)
 			}
 		})
 	}
@@ -1079,8 +1156,8 @@ func TestReadWriteOpsMaps(t *testing.T) {
 func TestCrossOrgIsolationComprehensive(t *testing.T) {
 	// Contract addresses for testing
 	const (
-		contractOrgA = "0xaaaa000000000000000000000000000000000001" // OrgA's contract
-		contractOrgB = "0xbbbb000000000000000000000000000000000002" // OrgB's contract
+		contractOrgA   = "0xaaaa000000000000000000000000000000000001" // OrgA's contract
+		contractOrgB   = "0xbbbb000000000000000000000000000000000002" // OrgB's contract
 		publicContract = "0xcccc000000000000000000000000000000000003" // Public (no org)
 	)
 
@@ -1769,10 +1846,10 @@ func TestExtractDeploymentBytecode(t *testing.T) {
 			expected: "0x6080604052",
 		},
 		{
-			name:     "eth_call - not a deployment method",
+			name:     "eth_call without to - creation code is the bytecode",
 			method:   "eth_call",
 			params:   []any{map[string]any{"data": "0x6080604052"}},
-			expected: "",
+			expected: "0x6080604052",
 		},
 		{
 			name:     "eth_sendRawTransaction - not a deployment method",
@@ -1793,9 +1870,9 @@ func TestExtractDeploymentBytecode(t *testing.T) {
 			expected: "",
 		},
 		{
-			name:   "Malformed params - not a map",
-			method: "eth_sendTransaction",
-			params: []any{"not a map"},
+			name:     "Malformed params - not a map",
+			method:   "eth_sendTransaction",
+			params:   []any{"not a map"},
 			expected: "",
 		},
 		{
@@ -2772,7 +2849,7 @@ func TestEmptySelectorDeniedWithFunctionRestrictions(t *testing.T) {
 	tests := []struct {
 		name          string
 		functionRules []FunctionRule // function rules on the contract grant
-		selector      string        // function selector in request
+		selector      string         // function selector in request
 		expectAllowed bool
 		expectReason  string // substring that must appear in denial reason
 	}{
@@ -2994,12 +3071,15 @@ func TestAnonymousAccess(t *testing.T) {
 			}
 
 			if !tt.expectAllowed {
-				// Methods that are globally blocked get rejected before the anonymous
-				// access check, so their reason says "globally blocked" instead of
-				// "authentication required". Both are correct denials.
+				// Methods that are globally blocked, or that the proxy does not
+				// model at all (the eth_getUncle* family), get rejected before the
+				// anonymous access check, so their reason says "globally blocked" /
+				// "not supported" instead of "authentication required". All are
+				// correct denials.
 				if !strings.Contains(result.Reason, "authentication required") &&
-					!strings.Contains(result.Reason, "globally blocked") {
-					t.Errorf("expected reason to contain 'authentication required' or 'globally blocked', got: %s", result.Reason)
+					!strings.Contains(result.Reason, "globally blocked") &&
+					!strings.Contains(result.Reason, "not supported") {
+					t.Errorf("expected reason to contain 'authentication required', 'globally blocked' or 'not supported', got: %s", result.Reason)
 				}
 			}
 			// Note: RateLimit{RPS,Daily} are no longer set on the AccessCheckResult
@@ -3518,5 +3598,19 @@ func TestFunctionSelectorGateOnlyForCallMethods(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// No policy, cache or database state may allow callers into the producer's
+// private preflight API. The empty controller proves denial precedes all of it.
+func TestApprovalRPCDeniedBeforePolicyLookup(t *testing.T) {
+	for _, method := range []string{"ops_prepareApproval", "OPS_PREPAREAPPROVAL", " ops_futureMethod "} {
+		for _, principal := range []string{"", "did:test:permitted"} {
+			controller := &AccessController{}
+			result, err := controller.CheckAccess(context.Background(), &AccessCheckRequest{Method: method, UserExternalID: principal, BypassCache: true})
+			if err != nil || result == nil || result.Allowed {
+				t.Fatalf("private method %q was not refused before policy lookup: result=%+v err=%v", method, result, err)
+			}
+		}
 	}
 }

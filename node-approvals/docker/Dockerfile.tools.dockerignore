@@ -1,0 +1,10 @@
+**
+!go.mod
+!poc/
+!poc/reth-signed-approvals/
+!poc/reth-signed-approvals/*.py
+!poc/reth-signed-approvals/contracts/
+!poc/reth-signed-approvals/contracts/**
+!node-approvals/
+!node-approvals/docker/
+!node-approvals/docker/compile.js
