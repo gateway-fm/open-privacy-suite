@@ -12,6 +12,7 @@ import (
 	"privacy-proxy/internal/explorer"
 	"privacy-proxy/internal/metrics"
 	"privacy-proxy/internal/proxy"
+	"privacy-proxy/internal/rbac"
 	"privacy-proxy/internal/server/middleware"
 )
 
@@ -39,6 +40,7 @@ func (stubAuditBuffer) Append([]byte) (uint64, error) { return 0, nil }
 
 func TestNewJSONRPCProcessor_OptionalDepsOmitted(t *testing.T) {
 	p := NewJSONRPCProcessor(JSONRPCProcessorConfig{
+		ReadProfile:        rbac.ReadProfileStandard,
 		CircuitBreaker:     middleware.NewCircuitBreaker(),
 		ConcurrencyLimiter: middleware.NewConcurrencyLimiter(1, 0),
 	})
@@ -78,6 +80,7 @@ func TestNewJSONRPCProcessor_OptionalDepsInstalled(t *testing.T) {
 	m := &metrics.Metrics{}
 
 	p := NewJSONRPCProcessor(JSONRPCProcessorConfig{
+		ReadProfile:                 rbac.ReadProfileStandard,
 		CircuitBreaker:              middleware.NewCircuitBreaker(),
 		ConcurrencyLimiter:          middleware.NewConcurrencyLimiter(1, 0),
 		Metrics:                     m,
@@ -119,6 +122,7 @@ func TestNewJSONRPCProcessor_OptionalDepsInstalled(t *testing.T) {
 
 func TestNewJSONRPCProcessor_EthCallTimeoutZeroKeepsDefault(t *testing.T) {
 	p := NewJSONRPCProcessor(JSONRPCProcessorConfig{
+		ReadProfile:    rbac.ReadProfileStandard,
 		EthCallTracing: &EthCallTracingConfig{Enabled: true, Timeout: 0},
 	})
 	require.Equal(t, 5*time.Second, p.ethCallTraceTimeout)

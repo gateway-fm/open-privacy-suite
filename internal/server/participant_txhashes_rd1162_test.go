@@ -23,7 +23,7 @@ import (
 // resolution glue against an in-process fake node (no Docker), closing the
 // coverage gap flagged in RD-1162 (buildParticipantTxHashes was untested).
 
-type txFromTo struct{ from, to string }
+type txFromTo struct{ from, to, input string }
 
 // fakeTxByHashNode serves a batched eth_getTransactionByHash: for each requested
 // hash it returns {hash, from, to} from txs (or a null result for unknown hashes).
@@ -48,7 +48,7 @@ func fakeTxByHashNode(t *testing.T, txs map[string]txFromTo) *httptest.Server {
 			}
 			entry := map[string]any{"jsonrpc": "2.0", "id": req.ID}
 			if tx, ok := txs[strings.ToLower(hash)]; ok {
-				entry["result"] = map[string]any{"hash": hash, "from": tx.from, "to": tx.to}
+				entry["result"] = map[string]any{"hash": hash, "from": tx.from, "to": tx.to, "input": tx.input}
 			} else {
 				entry["result"] = nil
 			}
@@ -68,24 +68,27 @@ func TestBuildParticipantTxHashes_ResolvesParticipants_RD1162(t *testing.T) {
 	user := "0xabc1234567890123456789012345678901234567"
 	other := "0x9999999999999999999999999999999999999999"
 	contract := "0xcontract0000000000000000000000000000001"
-	txFrom := "0x" + strings.Repeat("a", 64)    // from = user
-	txNone := "0x" + strings.Repeat("b", 64)    // user uninvolved
-	txTo := "0x" + strings.Repeat("c", 64)      // to = user
-	txUnknown := "0x" + strings.Repeat("d", 64) // node has no such tx
+	txFrom := "0x" + strings.Repeat("a", 64)     // from = user
+	txNone := "0x" + strings.Repeat("b", 64)     // user uninvolved
+	txTo := "0x" + strings.Repeat("c", 64)       // to = user
+	txUnknown := "0x" + strings.Repeat("d", 64)  // node has no such tx
+	txCalldata := "0x" + strings.Repeat("e", 64) // user only appears in calldata
 
 	srv := fakeTxByHashNode(t, map[string]txFromTo{
-		txFrom: {from: user, to: contract},
-		txNone: {from: other, to: other},
-		txTo:   {from: other, to: user},
+		txFrom:     {from: user, to: contract},
+		txNone:     {from: other, to: other},
+		txTo:       {from: other, to: user},
+		txCalldata: {from: other, to: contract, input: "0xa9059cbb" + strings.Repeat("0", 24) + strings.TrimPrefix(user, "0x") + fmt.Sprintf("%064x", 1)},
 	})
 	defer srv.Close()
-	p := &JSONRPCProcessor{proxy: proxy.New(srv.URL)}
+	p := &JSONRPCProcessor{readProfile: rbac.ReadProfileStandard, proxy: proxy.New(srv.URL)}
 
 	resp := getLogsRPCResponse([]map[string]any{
 		{"address": contract, "topics": []string{"0xevt"}, "transactionHash": txFrom},
 		{"address": contract, "topics": []string{"0xevt"}, "transactionHash": txNone},
 		{"address": contract, "topics": []string{"0xevt"}, "transactionHash": txTo},
 		{"address": contract, "topics": []string{"0xevt"}, "transactionHash": txUnknown},
+		{"address": contract, "topics": []string{"0xevt"}, "transactionHash": txCalldata},
 	})
 
 	got := p.buildParticipantTxHashes([]string{user}, resp)
@@ -101,6 +104,9 @@ func TestBuildParticipantTxHashes_ResolvesParticipants_RD1162(t *testing.T) {
 	if got[txUnknown] {
 		t.Errorf("tx the node cannot resolve must NOT be a participant tx")
 	}
+	if got[txCalldata] {
+		t.Errorf("an address named only in calldata must not expand transaction participation")
+	}
 	if len(got) != 2 {
 		t.Errorf("expected exactly 2 participant txs, got %d: %v", len(got), got)
 	}
@@ -115,7 +121,7 @@ func TestBuildParticipantTxHashes_FailClosed_RD1162(t *testing.T) {
 	})
 
 	t.Run("no linked addresses -> empty (upstream not consulted)", func(t *testing.T) {
-		p := &JSONRPCProcessor{proxy: proxy.New("http://127.0.0.1:1")}
+		p := &JSONRPCProcessor{readProfile: rbac.ReadProfileStandard, proxy: proxy.New("http://127.0.0.1:1")}
 		if got := p.buildParticipantTxHashes(nil, resp); len(got) != 0 {
 			t.Errorf("want empty, got %v", got)
 		}
@@ -125,7 +131,7 @@ func TestBuildParticipantTxHashes_FailClosed_RD1162(t *testing.T) {
 		down := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 		url := down.URL
 		down.Close() // connection refused on Forward
-		p := &JSONRPCProcessor{proxy: proxy.New(url)}
+		p := &JSONRPCProcessor{readProfile: rbac.ReadProfileStandard, proxy: proxy.New(url)}
 		if got := p.buildParticipantTxHashes([]string{user}, resp); len(got) != 0 {
 			t.Errorf("want empty on upstream error, got %v", got)
 		}
@@ -136,7 +142,7 @@ func TestBuildParticipantTxHashes_FailClosed_RD1162(t *testing.T) {
 			_, _ = w.Write([]byte("not json"))
 		}))
 		defer srv.Close()
-		p := &JSONRPCProcessor{proxy: proxy.New(srv.URL)}
+		p := &JSONRPCProcessor{readProfile: rbac.ReadProfileStandard, proxy: proxy.New(srv.URL)}
 		if got := p.buildParticipantTxHashes([]string{user}, resp); len(got) != 0 {
 			t.Errorf("want empty on unparseable response, got %v", got)
 		}
@@ -154,7 +160,7 @@ func TestBuildParticipantTxHashes_FailClosed_RD1162(t *testing.T) {
 		}
 		srv := fakeTxByHashNode(t, allTxs)
 		defer srv.Close()
-		p := &JSONRPCProcessor{proxy: proxy.New(srv.URL)}
+		p := &JSONRPCProcessor{readProfile: rbac.ReadProfileStandard, proxy: proxy.New(srv.URL)}
 		if got := p.buildParticipantTxHashes([]string{user}, getLogsRPCResponse(manyLogs)); len(got) != 0 {
 			t.Errorf("over-cap response must skip participant resolution and return empty, got %d", len(got))
 		}
@@ -179,7 +185,7 @@ func TestGetLogsParticipantPath_AddresslessOwnTxLogAdmitted_RD1162(t *testing.T)
 		txOther: {from: other, to: granted},
 	})
 	defer srv.Close()
-	p := &JSONRPCProcessor{proxy: proxy.New(srv.URL)}
+	p := &JSONRPCProcessor{readProfile: rbac.ReadProfileStandard, proxy: proxy.New(srv.URL)}
 
 	// granted contract, nil EventRules → deny-all baseline (address-less log is
 	// denied without participant admission).
@@ -196,7 +202,7 @@ func TestGetLogsParticipantPath_AddresslessOwnTxLogAdmitted_RD1162(t *testing.T)
 
 	participants := p.buildParticipantTxHashes([]string{user}, resp)
 	visCtx := &rbac.TxVisibilityContext{ParticipantTxHashes: participants}
-	got := FilterLogsWithEventRules(resp, []string{user}, perms, &testABIProviderServer{}, visCtx, nil)
+	got := FilterLogsWithEventRules(rbac.ReadProfileStandard, resp, []string{user}, perms, &testABIProviderServer{}, visCtx, nil)
 
 	var out struct {
 		Result []struct {

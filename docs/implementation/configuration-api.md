@@ -126,7 +126,8 @@ stream or a sibling candidate in that activation. A named independent human
 with current full authority approves; the original author's current authority
 is checked again in the same transaction. Readonly humans and service
 principals may draft/review. Missing principal kind requires a fresh login for
-approval. Changes to full-admin groups additionally require the deployment
+approval. Changes to full-admin groups and additions of unfiltered passthrough RPC grants
+additionally require the deployment
 platform allowlist; an org administrator cannot promote their own authority.
 `POST /revisions/{id}/withdraw` changes a draft to withdrawn.
 

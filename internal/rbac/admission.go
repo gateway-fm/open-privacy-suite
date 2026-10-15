@@ -36,8 +36,8 @@ func (c *AccessController) CheckExecutionAdmission(ctx context.Context, req *Acc
 	default:
 		return deny("method is not an execution request"), nil
 	}
-	if IsMethodBlocked(req.Method) {
-		return deny("method is globally blocked"), nil
+	if IsMethodBlocked(req.Method) || !IsForwardableMethod(CanonicalizeMethod(req.Method)) {
+		return deny("method is unavailable"), nil
 	}
 	if req.UserExternalID == "" {
 		out := deny("execution requires authentication")

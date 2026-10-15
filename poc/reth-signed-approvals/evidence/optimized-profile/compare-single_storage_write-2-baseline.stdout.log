@@ -1,0 +1,49 @@
+[2m2026-09-11T13:53:25.910756Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m Initialized tracing, debug log directory: <repo>/.tmp/approval-runs/compare-single_storage_write-2-baseline-eosh8a_y/logs/anvil-hardhat
+[2m2026-09-11T13:53:26.110998Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m Starting Reth [3mversion[0m[2m=[0m"2.5.2 (5a6940e)"
+[2m2026-09-11T13:53:26.111054Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m Opening database [3mpath[0m[2m=[0m"<repo>/.tmp/approval-runs/compare-single_storage_write-2-baseline-eosh8a_y/data/db"
+[2m2026-09-11T13:53:26.115773Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m Configuration loaded [3mpath[0m[2m=[0m"<repo>/.tmp/approval-runs/compare-single_storage_write-2-baseline-eosh8a_y/data/reth.toml"
+[2m2026-09-11T13:53:26.116132Z[0m [33m WARN[0m [2mproviders::rocksdb[0m[2m:[0m RocksDB will not keep all files open; performance may be reduced [3mfile_descriptor_limit[0m[2m=[0mSome(122880) [3mthreshold[0m[2m=[0m131072 [3mmax_open_files[0m[2m=[0m512
+[2m2026-09-11T13:53:26.130112Z[0m [32m INFO[0m [1mcheck_consistency[0m[2m:[0m [2mreth::cli[0m[2m:[0m Healing static file inconsistencies.
+[2m2026-09-11T13:53:26.204453Z[0m [32m INFO[0m [1mcheck_consistency[0m[2m:[0m[1mcheck_consistency[0m[1m{[0m[3mread_only[0m[2m=[0mfalse[1m}[0m[2m:[0m [2mreth::cli[0m[2m:[0m Verifying storage consistency.
+[2m2026-09-11T13:53:26.204620Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m Database opened
+[2m2026-09-11T13:53:26.391304Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m 
+Pre-merge hard forks (block based):
+- Frontier                         @0
+- Homestead                        @0
+- Tangerine                        @0
+- SpuriousDragon                   @0
+- Byzantium                        @0
+- Constantinople                   @0
+- Petersburg                       @0
+- Istanbul                         @0
+- Berlin                           @0
+- London                           @0
+Merge hard forks:
+- Paris                            @0 (network is known to be merged)
+Post-merge hard forks (timestamp based):
+- Shanghai                         @0
+[2m2026-09-11T13:53:26.391336Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m Loaded storage settings [3msettings[0m[2m=[0mStorageSettings { storage_v2: true } [3mpruning_mode[0m[2m=[0m"archive"
+[2m2026-09-11T13:53:26.391884Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m Transaction pool initialized
+[2m2026-09-11T13:53:26.402430Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m P2P networking initialized [3menode[0m[2m=[0menode://b5903a95e27b94a13ca6ce4d7316e2fc6b29470c56fd0f3a5f1a7a52f5d55ac186c0d911f2315baebb79af097972fd17d608983cf82c5c93b9fed71c9382c70b@127.0.0.1:55247
+[2m2026-09-11T13:53:26.402624Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m StaticFileProducer initialized
+[2m2026-09-11T13:53:26.402835Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m Pruner initialized [3mprune_config[0m[2m=[0mPruneConfig { block_interval: 5, segments: PruneModes { sender_recovery: None, transaction_lookup: None, receipts: None, account_history: None, storage_history: None, bodies_history: None, receipts_log_filter: ReceiptsLogPruneConfig({}) }, minimum_pruning_distance: 10064 }
+[2m2026-09-11T13:53:26.403452Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m Consensus engine initialized
+[2m2026-09-11T13:53:26.403551Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m Engine API handler initialized
+[2m2026-09-11T13:53:26.404499Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m RPC HTTP server started [3murl[0m[2m=[0m127.0.0.1:55239
+[2m2026-09-11T13:53:26.404549Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m RPC auth server started [3murl[0m[2m=[0m127.0.0.1:55240
+[2m2026-09-11T13:53:26.404647Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m Starting consensus engine
+[2m2026-09-11T13:53:27.099488Z[0m [32m INFO[0m [2mreth_node_events::node[0m[2m:[0m Forkchoice updated [3mhead_block_hash[0m[2m=[0m0x0aab257fea85931ac0846e88fcbf1630bd74f79e322de046d0257eeda8e7d750 [3msafe_block_hash[0m[2m=[0m0x0aab257fea85931ac0846e88fcbf1630bd74f79e322de046d0257eeda8e7d750 [3mfinalized_block_hash[0m[2m=[0m0x0aab257fea85931ac0846e88fcbf1630bd74f79e322de046d0257eeda8e7d750
+[2m2026-09-11T13:53:27.099489Z[0m [32m INFO[0m [2mpayload_builder[0m[2m:[0m New payload job created [3mid[0m[2m=[0m0x5f98fc884b26da94 [3mparent[0m[2m=[0m0x0aab257fea85931ac0846e88fcbf1630bd74f79e322de046d0257eeda8e7d750
+[2m2026-09-11T13:53:27.206219Z[0m [32m INFO[0m [2mreth_node_events::node[0m[2m:[0m Received new payload from consensus engine [3mnumber[0m[2m=[0m1 [3mhash[0m[2m=[0m0xa7cff7b7c0bcac8bf55960dcb29bdd5bb08f43b6374672361feec9fea92178af
+[2m2026-09-11T13:53:27.355630Z[0m [32m INFO[0m [2mengine::tree::payload_validator[0m[2m:[0m State root job finished [3mstrategy[0m[2m=[0m"sparse-trie" [3mstate_root[0m[2m=[0m0x39e5058c2337040d7bbd9acb12adb7a777efc7c61b4f5f1b265685aae557e28e [3melapsed[0m[2m=[0m237.168µs
+[2m2026-09-11T13:53:27.355760Z[0m [32m INFO[0m [2mreth_node_events::node[0m[2m:[0m Block added to canonical chain [3mnumber[0m[2m=[0m1 [3mhash[0m[2m=[0m0xa7cff7b7c0bcac8bf55960dcb29bdd5bb08f43b6374672361feec9fea92178af [3mpeers[0m[2m=[0m0 [3mtxs[0m[2m=[0m32 [3mgas_used[0m[2m=[0m1.40Mgas [3mgas_throughput[0m[2m=[0m9.36Mgas/second [3mgas_limit[0m[2m=[0m30.03Mgas [3mfull[0m[2m=[0m4.7% [3mbase_fee[0m[2m=[0m0.88Gwei [3mblobs[0m[2m=[0m0 [3mexcess_blobs[0m[2m=[0m0 [3melapsed[0m[2m=[0m149.482372ms
+[2m2026-09-11T13:53:27.356566Z[0m [32m INFO[0m [2mreth_node_events::node[0m[2m:[0m Canonical chain committed [3mnumber[0m[2m=[0m1 [3mhash[0m[2m=[0m0xa7cff7b7c0bcac8bf55960dcb29bdd5bb08f43b6374672361feec9fea92178af [3melapsed[0m[2m=[0m22.375µs
+[2m2026-09-11T13:53:27.356580Z[0m [32m INFO[0m [2mreth_node_events::node[0m[2m:[0m Forkchoice updated [3mhead_block_hash[0m[2m=[0m0xa7cff7b7c0bcac8bf55960dcb29bdd5bb08f43b6374672361feec9fea92178af [3msafe_block_hash[0m[2m=[0m0xa7cff7b7c0bcac8bf55960dcb29bdd5bb08f43b6374672361feec9fea92178af [3mfinalized_block_hash[0m[2m=[0m0xa7cff7b7c0bcac8bf55960dcb29bdd5bb08f43b6374672361feec9fea92178af
+[2m2026-09-11T13:53:28.038795Z[0m [32m INFO[0m [2mpayload_builder[0m[2m:[0m New payload job created [3mid[0m[2m=[0m0x5e0025b62b77d9cb [3mparent[0m[2m=[0m0xa7cff7b7c0bcac8bf55960dcb29bdd5bb08f43b6374672361feec9fea92178af
+[2m2026-09-11T13:53:28.143212Z[0m [32m INFO[0m [2mreth_node_events::node[0m[2m:[0m Received new payload from consensus engine [3mnumber[0m[2m=[0m2 [3mhash[0m[2m=[0m0x917466c6d5fe6005edd5239c1e37af380d7205dfcf23086452eb50d679a4f40e
+[2m2026-09-11T13:53:28.144342Z[0m [32m INFO[0m [2mengine::tree::payload_validator[0m[2m:[0m State root job finished [3mstrategy[0m[2m=[0m"sparse-trie" [3mstate_root[0m[2m=[0m0x074bad6d7a07451757d0e3808be03302169ac1efde4c14a188398fb100ed70bf [3melapsed[0m[2m=[0m81.917µs
+[2m2026-09-11T13:53:28.144420Z[0m [32m INFO[0m [2mreth_node_events::node[0m[2m:[0m Block added to canonical chain [3mnumber[0m[2m=[0m2 [3mhash[0m[2m=[0m0x917466c6d5fe6005edd5239c1e37af380d7205dfcf23086452eb50d679a4f40e [3mpeers[0m[2m=[0m0 [3mtxs[0m[2m=[0m32 [3mgas_used[0m[2m=[0m1.40Mgas [3mgas_throughput[0m[2m=[0m1.18Ggas/second [3mgas_limit[0m[2m=[0m30.06Mgas [3mfull[0m[2m=[0m4.7% [3mbase_fee[0m[2m=[0m0.78Gwei [3mblobs[0m[2m=[0m0 [3mexcess_blobs[0m[2m=[0m0 [3melapsed[0m[2m=[0m1.18663ms
+[2m2026-09-11T13:53:28.144994Z[0m [32m INFO[0m [2mreth_node_events::node[0m[2m:[0m Canonical chain committed [3mnumber[0m[2m=[0m2 [3mhash[0m[2m=[0m0x917466c6d5fe6005edd5239c1e37af380d7205dfcf23086452eb50d679a4f40e [3melapsed[0m[2m=[0m15.583µs
+[2m2026-09-11T13:53:28.145012Z[0m [32m INFO[0m [2mreth_node_events::node[0m[2m:[0m Forkchoice updated [3mhead_block_hash[0m[2m=[0m0x917466c6d5fe6005edd5239c1e37af380d7205dfcf23086452eb50d679a4f40e [3msafe_block_hash[0m[2m=[0m0x917466c6d5fe6005edd5239c1e37af380d7205dfcf23086452eb50d679a4f40e [3mfinalized_block_hash[0m[2m=[0m0x917466c6d5fe6005edd5239c1e37af380d7205dfcf23086452eb50d679a4f40e
+[2m2026-09-11T13:53:28.147292Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m Received SIGTERM
+[2m2026-09-11T13:53:28.147619Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m Wrote network peers to file [3mpeers_file[0m[2m=[0m"<repo>/.tmp/approval-runs/compare-single_storage_write-2-baseline-eosh8a_y/data/known-peers.json"

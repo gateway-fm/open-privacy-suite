@@ -17,11 +17,12 @@ import (
 	"privacy-proxy/internal/nodepolicy"
 	"privacy-proxy/internal/policydsl"
 	"privacy-proxy/internal/rbac"
+	"privacy-proxy/internal/tracer"
 )
 
 // simulateNodeExecution evaluates a stored candidate against current chain state.
 // @Summary Preview execution through the node policy evaluator
-// @Description Named organization administrators can preview their own calls and stored execution revisions. Current active permissions remain mandatory for candidate previews. dryRun permits a full human organization administrator to diagnose another current member; independent organization isolation remains mandatory. This never submits a transaction or changes active policy. Candidate previews use current facts, including current memberships and registry state.
+// @Description Named organization administrators can preview their own calls and stored execution revisions. Current active permissions remain mandatory for candidate previews. dryRun permits a full human organization administrator to diagnose another current member; independent organization isolation remains mandatory. Under the strict read profile, dryRun read methods are refused and debug_traceCall diagnostics return only policy.would_allow, with result null. This never submits a transaction or changes active policy. Candidate previews use current facts, including current memberships and registry state.
 // @Tags Admin: Configuration
 // @Accept json
 // @Produce json
@@ -88,6 +89,18 @@ func (s *Server) executeNodePreview(c *gin.Context, req apimodels.NodeSimulation
 	}
 	if req.PrincipalID == "" {
 		req.PrincipalID = actor.UserID
+	}
+	if req.DryRun && s.readProfile().Strict() && req.Method != "debug_traceCall" {
+		return fail(http.StatusForbidden, "diagnostic read methods are unavailable under the strict read privacy profile")
+	}
+	if denied, _ := rbac.DetectStateOverride(req.Method, req.Params); denied {
+		return fail(http.StatusBadRequest, "unsupported simulation options")
+	}
+	if req.Method == "debug_traceCall" && !req.DryRun {
+		if err := vetDebugTraceConfig(req.Method, req.Params); err != nil {
+			return fail(err.StatusCode, err.Message)
+		}
+		req.Params = nodeCallTraceParams(req.Params)
 	}
 	target, err := s.db.GetUser(ctx, req.PrincipalID)
 	if err != nil || target == nil {
@@ -216,6 +229,42 @@ func (s *Server) executeNodePreview(c *gin.Context, req apimodels.NodeSimulation
 	result, err := s.nodeExecution.Simulate(ctx, identity, wire)
 	if err != nil || !json.Valid(result) {
 		return fail(http.StatusForbidden, "simulation denied or unavailable")
+	}
+	if req.DryRun && s.readProfile().Strict() {
+		var out struct {
+			Policy struct {
+				WouldAllow *bool `json:"would_allow"`
+			} `json:"policy"`
+		}
+		if json.Unmarshal(result, &out) != nil || out.Policy.WouldAllow == nil {
+			return fail(http.StatusBadGateway, "invalid node diagnostics response")
+		}
+		result, _ = json.Marshal(map[string]any{"result": nil, "policy": map[string]any{"would_allow": *out.Policy.WouldAllow}})
+	} else if !req.DryRun && req.Method == "debug_traceCall" {
+		// Candidate preview keeps active execution authority and the public
+		// trace's storage-value privacy, even for a human administrator.
+		trace := result
+		var envelope map[string]json.RawMessage
+		if req.CandidateRevisionID != "" {
+			if json.Unmarshal(result, &envelope) != nil || len(envelope["result"]) == 0 {
+				return fail(http.StatusBadGateway, "invalid node preview response")
+			}
+			trace = envelope["result"]
+		}
+		sanitized, _, err := tracer.ParseStrictCallTrace(trace)
+		if err != nil {
+			return fail(http.StatusBadGateway, "invalid node trace response")
+		}
+		processor := &JSONRPCProcessor{rbacAccessCtrl: s.rbacAccessCtrl}
+		filtered, denied := processor.redactClientTraceValues(ctx, &ProcessRequest{UserID: target.ExternalID, OrgID: org, Method: req.Method, BypassPermsCache: true}, map[string]bool{org: true}, sanitized)
+		if denied != nil {
+			return fail(denied.StatusCode, denied.Message)
+		}
+		result = filtered
+		if envelope != nil {
+			envelope["result"] = filtered
+			result, _ = json.Marshal(envelope)
+		}
 	}
 	return result, true
 }

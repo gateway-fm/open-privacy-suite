@@ -1,0 +1,441 @@
+{
+  "correctness": "256 valid fixtures; tampering in domain/chain/tx/fingerprint/principal rejected for both Ed25519 and HMAC; modified HMAC tags and AES-GCM ciphertext rejected; AES roundtrip and RFC4231 HMAC vector pass.",
+  "message_bytes": 120,
+  "method": "Single-thread in-memory cryptographic primitives, release build, 256 varying fixtures, black_box, rotated method order, one warmup sample discarded, nine measured samples. Signature/MAC generation and key setup excluded except the explicitly named new-context HMAC variant. AES-GCM includes a ciphertext-buffer allocation but is NOT a TLS benchmark. No network, JSON parsing, OPS preflight, or Reth execution.",
+  "raw": [
+    {
+      "approvals_per_operation": 1,
+      "iterations": 20000,
+      "method": "ed25519_with_hex_and_message_allocation",
+      "sample": 1,
+      "us_per_verification": 32.9100521
+    },
+    {
+      "approvals_per_operation": 32,
+      "iterations": 20000,
+      "method": "ed25519_signed_batch_32_per_approval",
+      "sample": 1,
+      "us_per_verification": 1.1792694671875
+    },
+    {
+      "approvals_per_operation": 1,
+      "iterations": 500000,
+      "method": "hmac_sha256_prepared_key",
+      "sample": 1,
+      "us_per_verification": 0.6968267499999999
+    },
+    {
+      "approvals_per_operation": 1,
+      "iterations": 500000,
+      "method": "hmac_sha256_new_context",
+      "sample": 1,
+      "us_per_verification": 1.044660082
+    },
+    {
+      "approvals_per_operation": 1,
+      "iterations": 500000,
+      "method": "aes256_gcm_decrypt_only",
+      "sample": 1,
+      "us_per_verification": 2.22619075
+    },
+    {
+      "approvals_per_operation": 1,
+      "iterations": 20000,
+      "method": "ed25519_strict",
+      "sample": 1,
+      "us_per_verification": 32.25838335
+    },
+    {
+      "approvals_per_operation": 32,
+      "iterations": 20000,
+      "method": "ed25519_signed_batch_32_per_approval",
+      "sample": 2,
+      "us_per_verification": 1.192747265625
+    },
+    {
+      "approvals_per_operation": 1,
+      "iterations": 500000,
+      "method": "hmac_sha256_prepared_key",
+      "sample": 2,
+      "us_per_verification": 0.7010878340000001
+    },
+    {
+      "approvals_per_operation": 1,
+      "iterations": 500000,
+      "method": "hmac_sha256_new_context",
+      "sample": 2,
+      "us_per_verification": 1.0301243320000002
+    },
+    {
+      "approvals_per_operation": 1,
+      "iterations": 500000,
+      "method": "aes256_gcm_decrypt_only",
+      "sample": 2,
+      "us_per_verification": 2.2304695000000003
+    },
+    {
+      "approvals_per_operation": 1,
+      "iterations": 20000,
+      "method": "ed25519_strict",
+      "sample": 2,
+      "us_per_verification": 31.974818749999997
+    },
+    {
+      "approvals_per_operation": 1,
+      "iterations": 20000,
+      "method": "ed25519_with_hex_and_message_allocation",
+      "sample": 2,
+      "us_per_verification": 33.12622915
+    },
+    {
+      "approvals_per_operation": 1,
+      "iterations": 500000,
+      "method": "hmac_sha256_prepared_key",
+      "sample": 3,
+      "us_per_verification": 0.69877775
+    },
+    {
+      "approvals_per_operation": 1,
+      "iterations": 500000,
+      "method": "hmac_sha256_new_context",
+      "sample": 3,
+      "us_per_verification": 1.0365076659999999
+    },
+    {
+      "approvals_per_operation": 1,
+      "iterations": 500000,
+      "method": "aes256_gcm_decrypt_only",
+      "sample": 3,
+      "us_per_verification": 2.235763666
+    },
+    {
+      "approvals_per_operation": 1,
+      "iterations": 20000,
+      "method": "ed25519_strict",
+      "sample": 3,
+      "us_per_verification": 32.4000958
+    },
+    {
+      "approvals_per_operation": 1,
+      "iterations": 20000,
+      "method": "ed25519_with_hex_and_message_allocation",
+      "sample": 3,
+      "us_per_verification": 33.1496458
+    },
+    {
+      "approvals_per_operation": 32,
+      "iterations": 20000,
+      "method": "ed25519_signed_batch_32_per_approval",
+      "sample": 3,
+      "us_per_verification": 1.199676303125
+    },
+    {
+      "approvals_per_operation": 1,
+      "iterations": 500000,
+      "method": "hmac_sha256_new_context",
+      "sample": 4,
+      "us_per_verification": 1.0281345
+    },
+    {
+      "approvals_per_operation": 1,
+      "iterations": 500000,
+      "method": "aes256_gcm_decrypt_only",
+      "sample": 4,
+      "us_per_verification": 2.23040825
+    },
+    {
+      "approvals_per_operation": 1,
+      "iterations": 20000,
+      "method": "ed25519_strict",
+      "sample": 4,
+      "us_per_verification": 32.578525
+    },
+    {
+      "approvals_per_operation": 1,
+      "iterations": 20000,
+      "method": "ed25519_with_hex_and_message_allocation",
+      "sample": 4,
+      "us_per_verification": 33.3564333
+    },
+    {
+      "approvals_per_operation": 32,
+      "iterations": 20000,
+      "method": "ed25519_signed_batch_32_per_approval",
+      "sample": 4,
+      "us_per_verification": 1.18649075625
+    },
+    {
+      "approvals_per_operation": 1,
+      "iterations": 500000,
+      "method": "hmac_sha256_prepared_key",
+      "sample": 4,
+      "us_per_verification": 0.6904696659999999
+    },
+    {
+      "approvals_per_operation": 1,
+      "iterations": 500000,
+      "method": "aes256_gcm_decrypt_only",
+      "sample": 5,
+      "us_per_verification": 2.2300431659999997
+    },
+    {
+      "approvals_per_operation": 1,
+      "iterations": 20000,
+      "method": "ed25519_strict",
+      "sample": 5,
+      "us_per_verification": 32.39718125
+    },
+    {
+      "approvals_per_operation": 1,
+      "iterations": 20000,
+      "method": "ed25519_with_hex_and_message_allocation",
+      "sample": 5,
+      "us_per_verification": 33.136783300000005
+    },
+    {
+      "approvals_per_operation": 32,
+      "iterations": 20000,
+      "method": "ed25519_signed_batch_32_per_approval",
+      "sample": 5,
+      "us_per_verification": 1.1789702468749998
+    },
+    {
+      "approvals_per_operation": 1,
+      "iterations": 500000,
+      "method": "hmac_sha256_prepared_key",
+      "sample": 5,
+      "us_per_verification": 0.690790582
+    },
+    {
+      "approvals_per_operation": 1,
+      "iterations": 500000,
+      "method": "hmac_sha256_new_context",
+      "sample": 5,
+      "us_per_verification": 1.03070325
+    },
+    {
+      "approvals_per_operation": 1,
+      "iterations": 20000,
+      "method": "ed25519_strict",
+      "sample": 6,
+      "us_per_verification": 32.4370167
+    },
+    {
+      "approvals_per_operation": 1,
+      "iterations": 20000,
+      "method": "ed25519_with_hex_and_message_allocation",
+      "sample": 6,
+      "us_per_verification": 33.1225083
+    },
+    {
+      "approvals_per_operation": 32,
+      "iterations": 20000,
+      "method": "ed25519_signed_batch_32_per_approval",
+      "sample": 6,
+      "us_per_verification": 1.1843514984374999
+    },
+    {
+      "approvals_per_operation": 1,
+      "iterations": 500000,
+      "method": "hmac_sha256_prepared_key",
+      "sample": 6,
+      "us_per_verification": 0.697759834
+    },
+    {
+      "approvals_per_operation": 1,
+      "iterations": 500000,
+      "method": "hmac_sha256_new_context",
+      "sample": 6,
+      "us_per_verification": 1.036361084
+    },
+    {
+      "approvals_per_operation": 1,
+      "iterations": 500000,
+      "method": "aes256_gcm_decrypt_only",
+      "sample": 6,
+      "us_per_verification": 2.229826584
+    },
+    {
+      "approvals_per_operation": 1,
+      "iterations": 20000,
+      "method": "ed25519_with_hex_and_message_allocation",
+      "sample": 7,
+      "us_per_verification": 33.15168125
+    },
+    {
+      "approvals_per_operation": 32,
+      "iterations": 20000,
+      "method": "ed25519_signed_batch_32_per_approval",
+      "sample": 7,
+      "us_per_verification": 1.1797643234375
+    },
+    {
+      "approvals_per_operation": 1,
+      "iterations": 500000,
+      "method": "hmac_sha256_prepared_key",
+      "sample": 7,
+      "us_per_verification": 0.6933389160000001
+    },
+    {
+      "approvals_per_operation": 1,
+      "iterations": 500000,
+      "method": "hmac_sha256_new_context",
+      "sample": 7,
+      "us_per_verification": 1.034741166
+    },
+    {
+      "approvals_per_operation": 1,
+      "iterations": 500000,
+      "method": "aes256_gcm_decrypt_only",
+      "sample": 7,
+      "us_per_verification": 2.231084334
+    },
+    {
+      "approvals_per_operation": 1,
+      "iterations": 20000,
+      "method": "ed25519_strict",
+      "sample": 7,
+      "us_per_verification": 32.2860396
+    },
+    {
+      "approvals_per_operation": 32,
+      "iterations": 20000,
+      "method": "ed25519_signed_batch_32_per_approval",
+      "sample": 8,
+      "us_per_verification": 1.1914803390625
+    },
+    {
+      "approvals_per_operation": 1,
+      "iterations": 500000,
+      "method": "hmac_sha256_prepared_key",
+      "sample": 8,
+      "us_per_verification": 0.692189666
+    },
+    {
+      "approvals_per_operation": 1,
+      "iterations": 500000,
+      "method": "hmac_sha256_new_context",
+      "sample": 8,
+      "us_per_verification": 1.03654025
+    },
+    {
+      "approvals_per_operation": 1,
+      "iterations": 500000,
+      "method": "aes256_gcm_decrypt_only",
+      "sample": 8,
+      "us_per_verification": 2.225843834
+    },
+    {
+      "approvals_per_operation": 1,
+      "iterations": 20000,
+      "method": "ed25519_strict",
+      "sample": 8,
+      "us_per_verification": 32.4946125
+    },
+    {
+      "approvals_per_operation": 1,
+      "iterations": 20000,
+      "method": "ed25519_with_hex_and_message_allocation",
+      "sample": 8,
+      "us_per_verification": 32.96076875
+    },
+    {
+      "approvals_per_operation": 1,
+      "iterations": 500000,
+      "method": "hmac_sha256_prepared_key",
+      "sample": 9,
+      "us_per_verification": 0.700105168
+    },
+    {
+      "approvals_per_operation": 1,
+      "iterations": 500000,
+      "method": "hmac_sha256_new_context",
+      "sample": 9,
+      "us_per_verification": 1.033615834
+    },
+    {
+      "approvals_per_operation": 1,
+      "iterations": 500000,
+      "method": "aes256_gcm_decrypt_only",
+      "sample": 9,
+      "us_per_verification": 2.232558166
+    },
+    {
+      "approvals_per_operation": 1,
+      "iterations": 20000,
+      "method": "ed25519_strict",
+      "sample": 9,
+      "us_per_verification": 32.472454150000004
+    },
+    {
+      "approvals_per_operation": 1,
+      "iterations": 20000,
+      "method": "ed25519_with_hex_and_message_allocation",
+      "sample": 9,
+      "us_per_verification": 33.3268646
+    },
+    {
+      "approvals_per_operation": 32,
+      "iterations": 20000,
+      "method": "ed25519_signed_batch_32_per_approval",
+      "sample": 9,
+      "us_per_verification": 1.1852206390625
+    }
+  ],
+  "summary": [
+    {
+      "median_us": 32.4000958,
+      "method": "ed25519_strict",
+      "range_us": [
+        31.974818749999997,
+        32.578525
+      ],
+      "samples": 9
+    },
+    {
+      "median_us": 33.136783300000005,
+      "method": "ed25519_with_hex_and_message_allocation",
+      "range_us": [
+        32.9100521,
+        33.3564333
+      ],
+      "samples": 9
+    },
+    {
+      "median_us": 1.1852206390625,
+      "method": "ed25519_signed_batch_32_per_approval",
+      "range_us": [
+        1.1789702468749998,
+        1.199676303125
+      ],
+      "samples": 9
+    },
+    {
+      "median_us": 0.6968267499999999,
+      "method": "hmac_sha256_prepared_key",
+      "range_us": [
+        0.6904696659999999,
+        0.7010878340000001
+      ],
+      "samples": 9
+    },
+    {
+      "median_us": 1.034741166,
+      "method": "hmac_sha256_new_context",
+      "range_us": [
+        1.0281345,
+        1.044660082
+      ],
+      "samples": 9
+    },
+    {
+      "median_us": 2.23040825,
+      "method": "aes256_gcm_decrypt_only",
+      "range_us": [
+        2.225843834,
+        2.235763666
+      ],
+      "samples": 9
+    }
+  ]
+}

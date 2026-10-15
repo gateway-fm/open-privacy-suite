@@ -1,0 +1,25 @@
+{
+  "wire_service": "ops.approvals.v1.ApprovalDelivery",
+  "envelope": "OPS_APPROVAL_BATCH_V2",
+  "fingerprint_modes": [0, 3],
+  "transaction_types": ["EIP-155 legacy", "EIP-1559"],
+  "besu": {
+    "version": "26.8.1",
+    "maven_version": "26.8.1-d97cbd6",
+    "java": "25.0.4.1+1",
+    "gradle": "9.0.0",
+    "archive_url": "https://github.com/besu-eth/besu/releases/download/26.8.1/besu-26.8.1.tar.gz",
+    "archive_sha256": "0e0ed9cc0d8fa9091081b6c5d4646f15bbf7e33a6eb1e9f7bfb2ef831fe9aaf4"
+  },
+  "reth": {
+    "version": "2.5.2",
+    "commit": "5a6940e351fed80458fe6c9da8581cbe4b8bd036",
+    "repository": "https://github.com/paradigmxyz/reth.git",
+    "rust": "1.98.1"
+  },
+  "fixtures": {
+    "solc": "0.8.35",
+    "solc_linux_url": "https://github.com/argotorg/solidity/releases/download/v0.8.35/solc-static-linux",
+    "solc_linux_sha256": "fa8ac9a32d301ad023a36ee5a29f8e291fe3200c60244e43c142539e82a617f4"
+  }
+}

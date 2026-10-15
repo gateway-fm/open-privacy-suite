@@ -23,6 +23,7 @@ type previewNode struct {
 	network nodepolicy.Network
 	calls   int
 	request nodepolicy.SimulationRequest
+	result  json.RawMessage
 }
 
 func (n *previewNode) PolicyStatus(ctx context.Context) (nodepolicy.NodeStatus, error) {
@@ -37,14 +38,21 @@ func (n *previewNode) Simulate(_ context.Context, _ []byte, b []byte) (json.RawM
 	if err := json.Unmarshal(b, &n.request); err != nil {
 		return nil, err
 	}
+	if n.result != nil {
+		return n.result, nil
+	}
 	return json.RawMessage(`{"result":"0x","policy":{"would_allow":false,"decisions":[]}}`), nil
 }
 
 func TestNodeSimulationDiagnosticRequiresNamedHumanAndSelectedOrg(t *testing.T) {
-	for _, actor := range []string{"human", "legacy", "service", "readonly", "bootstrap", "foreign_target"} {
+	for _, actor := range []string{"human", "legacy", "service", "readonly", "bootstrap", "foreign_target", "strict", "strict_legacy", "strict_trace", "strict_legacy_send"} {
 		t.Run(actor, func(t *testing.T) {
 			f := configurationAPI(t)
 			s := f.server
+			s.config.ReadProfile = rbac.ReadProfileStandard
+			if strings.HasPrefix(actor, "strict") {
+				s.config.ReadProfile = rbac.ReadProfileStrict
+			}
 			network := nodepolicy.Network{ChainID: 31337, DeploymentID: "preview-test"}
 			s.config.NodePolicy = config.NodePolicyConfig{Mode: "reth", ChainID: network.ChainID, DeploymentID: network.DeploymentID}
 			s.rateLimiter = middleware.NewRateLimiter(middleware.RateLimiterCleanupInterval)
@@ -76,16 +84,31 @@ func TestNodeSimulationDiagnosticRequiresNamedHumanAndSelectedOrg(t *testing.T) 
 			case "foreign_target":
 				target.ID = "00000000-0000-0000-0000-000000000001"
 				want = http.StatusNotFound
+			case "strict", "strict_legacy":
+				want = http.StatusForbidden
 			}
 			path := "/api/v1/admin/orgs/" + f.orgID + "/execution/simulate"
 			body := map[string]any{"principalId": target.ID, "method": "eth_call", "params": []any{map[string]any{"from": address, "to": address}, "latest"}, "dryRun": true}
-			if actor == "legacy" {
+			if actor == "strict_trace" {
+				body["method"] = "debug_traceCall"
+			}
+			if actor == "legacy" || actor == "strict_legacy" || actor == "strict_legacy_send" {
 				path = "/api/v1/admin/orgs/" + f.orgID + "/dry-run"
-				body = map[string]any{"user_did": target.ExternalID, "rpc": map[string]any{"method": "eth_call", "params": body["params"]}}
+				method, params := "eth_call", body["params"]
+				if actor == "strict_legacy_send" {
+					method, params = "eth_sendTransaction", []any{map[string]any{"from": address, "to": address}}
+				}
+				body = map[string]any{"user_did": target.ExternalID, "rpc": map[string]any{"method": method, "params": params}}
 			}
 			response := f.request(t, token, http.MethodPost, path, body)
 			require.Equal(t, want, response.Code, response.Body.String())
 			if want == http.StatusOK {
+				if actor == "strict_trace" {
+					require.JSONEq(t, `{"result":null,"policy":{"would_allow":false}}`, response.Body.String())
+				}
+				if actor == "strict_legacy_send" {
+					require.JSONEq(t, `{"decision":"deny"}`, response.Body.String())
+				}
 				require.Equal(t, 1, n.calls)
 				require.True(t, n.request.DryRun)
 				var count int
@@ -197,4 +220,28 @@ func TestNodeCandidatePreviewAllowsReadonlySelfAndNeverImpersonation(t *testing.
 	response = f.request(t, f.readonly, http.MethodPost, path, request)
 	require.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
 	require.Equal(t, 1, n.calls)
+
+	// Previewing one's own trace, including a stored candidate, keeps the
+	// same nested-value privacy as the public RPC. A permitted execution is
+	// not permission to read the callee's private storage.
+	s.rateLimiter = &noopRateLimiter{} // These requests test visibility, not throttling.
+	_, err = s.db.Conn().ExecContext(t.Context(), `UPDATE group_access SET allowed_methods=ARRAY['eth_call','debug_traceCall'] WHERE group_id IN (SELECT group_id FROM user_memberships WHERE user_id=$1)`, user.ID)
+	require.NoError(t, err)
+	require.NoError(t, s.rbacAccessCtrl.InvalidateUser(t.Context(), user.ID))
+	trace := json.RawMessage(`{"type":"CALL","from":"` + address + `","to":"` + address + `","input":"0x1234","calls":[{"type":"CALL","from":"` + address + `","to":"0x2222222222222222222222222222222222222222","input":"0xdeadbeef","output":"0xabcdef"}]}`)
+	request["dryRun"], request["method"] = false, "debug_traceCall"
+	for _, candidate := range []bool{true, false} {
+		if candidate {
+			n.result, err = json.Marshal(map[string]any{"result": trace, "policy": map[string]any{"would_allow": true}})
+			require.NoError(t, err)
+		} else {
+			delete(request, "candidateRevisionId")
+			n.result = trace
+		}
+		response = f.request(t, f.readonly, http.MethodPost, path, request)
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		require.Contains(t, response.Body.String(), "0x1234")
+		require.NotContains(t, response.Body.String(), "0xdeadbeef")
+		require.NotContains(t, response.Body.String(), "0xabcdef")
+	}
 }

@@ -162,6 +162,57 @@ func TestGroupDocumentPreservesLegacyMethodAndClaimSemantics(t *testing.T) {
 	require.NoError(t, err, "expanded standard method names must remain valid source")
 }
 
+func TestGroupDocumentRejectsUnsupportedMethods(t *testing.T) {
+	for _, method := range []string{"linea_*", "some_unknown_method", "ops_prepareApproval"} {
+		g := group(groupOne)
+		g.AllowedMethods = []string{method}
+		_, err := Parse(source(t, []Group{g}))
+		require.Error(t, err, method)
+	}
+}
+
+func TestGroupPassthroughChangesRequirePlatform(t *testing.T) {
+	const method = "test_passthrough"
+	previous, existed := rbac.PassthroughMethods[method]
+	rbac.PassthroughMethods[method] = true
+	t.Cleanup(func() {
+		if existed {
+			rbac.PassthroughMethods[method] = previous
+		} else {
+			delete(rbac.PassthroughMethods, method)
+		}
+	})
+	for _, tc := range []struct {
+		name                              string
+		existing, before, after, platform bool
+	}{
+		{"create", false, false, true, true},
+		{"add", true, false, true, true},
+		{"keep", true, true, true, false},
+		{"remove", true, true, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			before, after := group(groupOne), group(groupOne)
+			if tc.before {
+				before.AllowedMethods = append(before.AllowedMethods, method)
+			}
+			if tc.after {
+				after.AllowedMethods = append(after.AllowedMethods, method)
+			}
+			doc, err := Parse(source(t, []Group{after}))
+			require.NoError(t, err)
+			snapshot := GroupSnapshot{Scope: doc.Scope, ActiveRevision: 4}
+			if tc.existing {
+				snapshot.Groups = []GroupState{{Group: before}}
+			}
+			diff, err := DiffGroups(doc, snapshot)
+			require.NoError(t, err)
+			require.Len(t, diff.Changes, 1)
+			require.Equal(t, tc.platform, diff.Changes[0].RequiresPlatform)
+		})
+	}
+}
+
 // A credential placeholder names a variable the platform provisions for this
 // organisation and nothing else. Anything outside the organisation's own
 // namespace is refused at parse time, so a tenant admin can never point a

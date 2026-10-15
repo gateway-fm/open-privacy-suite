@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"reflect"
+	"strconv"
 	"strings"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
@@ -147,8 +148,8 @@ type AdminContractsResolver interface {
 // addresses where the per-contract `allow_visibleto_unlock` flag is set
 // AND the viewer is eligible for the unlock — both gates from RD-874.
 // The map is consumed by Phase 4 of RedactLogs along with the
-// visibleTxHashes opt: when both the contract is unlockable AND the
-// log's tx hash is in the visibleTo set, the log passes unredacted
+// ListedTxHashes opt: when both the contract is unlockable AND the
+// log's tx hash is one the viewer is genuinely listed on, the log passes unredacted
 // (bypasses event_rules, param_rules, and the deny-when-no-ABI gate).
 //
 // Implementations MUST be org-scoped: a viewer who is in another org
@@ -255,7 +256,13 @@ type RedactionEngine struct {
 	visibleToUnlockResolver       VisibleToUnlockResolver
 	dynamicPayloadAllowedResolver DynamicPayloadAllowedResolver
 	logParticipantStore           LogParticipantStore
+	txDataResolver                TxDataResolver
 	pseudonymKey                  []byte // RD-1164 #8: HMAC key for address pseudonyms (nil = unkeyed HMAC, still non-reversible)
+
+	// readProfile is the deployment-wide read privacy profile (RD-1299),
+	// fixed at construction. The zero value (unset) is enforced as strict,
+	// so an engine whose profile was never wired fails closed.
+	readProfile rbac.ReadProfile
 }
 
 // Database interface for the methods RedactionEngine needs from the main DB
@@ -271,11 +278,19 @@ type Database interface {
 	GetBatchEventAccess(ctx context.Context, viewerDID string, contractAddresses []string) (map[string]bool, error)
 }
 
-func NewRedactionEngine(store ContractStore, db Database) *RedactionEngine {
+// NewRedactionEngine builds a redaction engine. The read profile is required
+// (RD-1299): pass the configured PRIVACY_READ_PROFILE value.
+func NewRedactionEngine(store ContractStore, db Database, profile rbac.ReadProfile) *RedactionEngine {
 	return &RedactionEngine{
-		store: store,
-		db:    db,
+		store:       store,
+		db:          db,
+		readProfile: profile,
 	}
+}
+
+// ReadProfile reports the read privacy profile this engine enforces.
+func (r *RedactionEngine) ReadProfile() rbac.ReadProfile {
+	return r.readProfile
 }
 
 // SetEventRuleChecker sets an optional event rule checker for log-level filtering.
@@ -364,6 +379,34 @@ func (r *RedactionEngine) SetPseudonymKey(key []byte) {
 // the other paths still fire).
 func (r *RedactionEngine) SetLogParticipantStore(store LogParticipantStore) {
 	r.logParticipantStore = store
+}
+
+// TxDataResolver gives the redactor the parent-transaction data it needs to
+// judge rows derived from a transaction under the strict read profile
+// (RD-1299): a token-transfer row survives only if the Transfer log it derives
+// from is admitted by the strict event predicate, and an internal call only if
+// the viewer is a participant of its parent transaction. In production this is
+// the explorer backend (SQL store or chain-indexer client).
+type TxDataResolver interface {
+	GetTransaction(ctx context.Context, hash string) (*Transaction, error)
+	GetLogsByTransaction(ctx context.Context, txHash string) ([]Log, error)
+}
+
+// TxDataBatchResolver is an optional extension of a TxDataResolver that loads
+// many transactions, or the logs of many transactions, in one round trip. The
+// strict profile resolves a whole page through it when the data source
+// implements it (the SQL store); otherwise it falls back to one TxDataResolver
+// call per distinct transaction hash. Unknown hashes are simply absent.
+type TxDataBatchResolver interface {
+	GetTransactionsByHashes(ctx context.Context, hashes []string) ([]Transaction, error)
+	GetLogsByTransactions(ctx context.Context, txHashes []string) ([]Log, error)
+}
+
+// SetTxDataResolver wires the parent-transaction data source for the strict
+// read profile. Without it, strict drops every token-transfer and internal-call
+// row (fail closed); the standard profile never consults it.
+func (r *RedactionEngine) SetTxDataResolver(res TxDataResolver) {
+	r.txDataResolver = res
 }
 
 // resolveContractABI returns the resolved ABI JSON for an address, or
@@ -597,20 +640,22 @@ func anyAddressMatches(v any, viewerAddrs map[string]bool) bool {
 
 // RedactOpts provides optional overrides for transaction redaction.
 type RedactOpts struct {
-	// VisibleTxHashes is the set of tx hashes that are always visible to
-	// the viewer (via the visibleTo param). Transactions matching these
-	// hashes are never dropped, and their addresses get full visibility.
+	// VisibleTxHashes is the set of tx hashes whose transaction rows are
+	// always kept for the viewer: genuine visibleTo shares plus the RD-1009
+	// transfer-participant union. Membership alone only keeps the tx row
+	// (RedactTransactions) — it keeps no transfer or internal-frame row and
+	// reveals no address; reveals are keyed on ListedTxHashes (a genuine
+	// share) only (RD-1316).
 	VisibleTxHashes map[string]bool
 
-	// ParticipantTxHashes is a LABEL-ONLY subset of VisibleTxHashes: the tx
-	// hashes visible to the viewer because the viewer is a transfer
-	// participant of them (the RD-1009 union), as opposed to a genuine
-	// visibleTo share. It does NOT affect row survival — VisibleTxHashes
-	// alone drives that. It only lets a redactor tag a revealed counterparty
-	// address as ReasonParticipantOverride ("Counterparty") rather than
-	// ReasonVisibleToGrant ("Shared") when the reveal is due to participation,
-	// not sharing (RD-1155). A nil map reproduces the pre-RD-1155 labels.
-	ParticipantTxHashes map[string]bool
+	// ListedTxHashes is the set of tx hashes whose visibleTo row genuinely
+	// lists the viewer (tx_visible_to only — never the RD-1009
+	// transfer-participant union that also feeds VisibleTxHashes). It is the
+	// only input the redactors accept for "the sender listed this viewer on
+	// this tx": the address reveal on tx, transfer and internal rows (RD-1316),
+	// and the RD-874 visibleTo log unlock and ordinary param-rule fallback
+	// (RD-1307). A nil map lists nothing (fail-closed).
+	ListedTxHashes map[string]bool
 
 	// ParentParticipants are the parent transaction's from/to addresses,
 	// threaded into RedactInternalTransactions by the single-hash handler
@@ -646,9 +691,10 @@ type RedactOpts struct {
 // RedactStats accumulates side-channel counts from a redaction pass so the
 // caller can react (e.g. emit an audit-log entry) without re-deriving them.
 type RedactStats struct {
-	// AdminUserTxsRevealed counts rows that were kept ONLY because the
-	// elevated org-admin audit view (OrgAdminViewUserTxs) was enabled —
-	// i.e. rows that would have been dropped under strict privacy.
+	// AdminUserTxsRevealed counts rows the elevated org-admin audit view
+	// (OrgAdminViewUserTxs) exposed: rows strict privacy would have dropped,
+	// and union-kept rows with both sides (or the deployer) private, whose
+	// value only the audit view reveals (RD-1316).
 	AdminUserTxsRevealed int
 	// GrantFullReveals counts rows where a Full disclosure grant on one
 	// party caused the counterparty's effective level to be promoted above
@@ -762,6 +808,19 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 	viewerIsAdmin := ropts.ViewerIsAdmin
 	adminAuditView := ropts.adminAuditView()
 
+	// RD-1299 strict read profile: a transaction is returned only to its
+	// participant (tx from/to), as on the RPC (rbac.DecideTxEnvelope). The
+	// admin claim, the admin audit view, visibleTo shares, the RD-1009
+	// transfer-participant union and calldata/log-derived participation grant
+	// nothing; the only surviving exception is an approved disclosure grant.
+	strict := r.readProfile.Strict()
+	if strict {
+		visibleHashes = nil
+		viewerIsAdmin = false
+		adminAuditView = false
+		ropts.ListedTxHashes = nil
+	}
+
 	// 1. Extract unique addresses
 	uniqueAddrs := extractUniqueAddresses(txs)
 
@@ -804,7 +863,7 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 	// skip the log signal — tx.from/to and the legacy calldata heuristic
 	// still apply.
 	logParticipantTxs := make(map[string]bool)
-	if r.logParticipantStore != nil && len(viewerAddrs) > 0 && len(txs) > 0 {
+	if !strict && r.logParticipantStore != nil && len(viewerAddrs) > 0 && len(txs) > 0 {
 		addrSlice := make([]string, 0, len(viewerAddrs))
 		for a := range viewerAddrs {
 			addrSlice = append(addrSlice, a)
@@ -836,11 +895,20 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 		//      Authoritative — the EVM emitted it.
 		viewerIsFrom := tx.From != "" && viewerAddrs[strings.ToLower(tx.From)]
 		viewerIsTo := tx.HasRecipient() && viewerAddrs[strings.ToLower(*tx.To)]
-		viewerIsCalldataLegacy := isViewerInCalldata(tx.InputData, viewerAddrs)
-		viewerIsCalldataABI := r.isViewerInCalldataABI(ctx, tx, viewerAddrs)
-		viewerIsLogParticipant := logParticipantTxs[strings.ToLower(tx.Hash)]
-		viewerIsParticipant := viewerIsFrom || viewerIsTo ||
-			viewerIsCalldataLegacy || viewerIsCalldataABI || viewerIsLogParticipant
+		var viewerIsParticipant bool
+		if strict {
+			// Strict: the shared tx-level decision, from/to only.
+			viewerIsParticipant = rbac.DecideTxEnvelope(r.readProfile, rbac.TxEnvelopeFacts{
+				Surface:       rbac.TxSurfaceTransaction,
+				IsParticipant: viewerIsFrom || viewerIsTo,
+			})
+		} else {
+			viewerIsCalldataLegacy := isViewerInCalldata(tx.InputData, viewerAddrs)
+			viewerIsCalldataABI := r.isViewerInCalldataABI(ctx, tx, viewerAddrs)
+			viewerIsLogParticipant := logParticipantTxs[strings.ToLower(tx.Hash)]
+			viewerIsParticipant = viewerIsFrom || viewerIsTo ||
+				viewerIsCalldataLegacy || viewerIsCalldataABI || viewerIsLogParticipant
+		}
 
 		// Resolve base visibility from the shared map.
 		baseFromLevel := VisibilityFull
@@ -855,19 +923,23 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 		// visibleTo override: if this tx was shared with the viewer via the
 		// visibleTo param, upgrade both addresses to full visibility — the
 		// sender explicitly chose to share this transaction with the viewer.
-		txVisibleToViewer := visibleHashes[strings.ToLower(tx.Hash)]
+		// RD-1316: only a genuine tx_visible_to listing (ListedTxHashes)
+		// reveals. A hash that is in VisibleTxHashes without a listing came
+		// from the RD-1009 transfer-participant union: it keeps the row
+		// (txKeptByUnion) but every address renders at the viewer's own level.
+		txVisibleToViewer := ropts.ListedTxHashes[strings.ToLower(tx.Hash)]
+		txKeptByUnion := visibleHashes[strings.ToLower(tx.Hash)] && !txVisibleToViewer
 
-		// Participant override: the counterparty address is revealed (so we don't
-		// replace it with [PRIVATE]), but sensitive metadata like nonce is still
-		// stripped based on the BASE visibility — the participant override only
-		// makes the address visible, not the sender's activity metadata.
+		// Strict participants receive the full transaction envelope. Standard
+		// participant views retain their base visibility policy for pseudonymous
+		// addresses and the sender's nonce.
 		fromLevel := baseFromLevel
 		toLevel := baseToLevel
 		if viewerIsParticipant || txVisibleToViewer {
-			if fromLevel == VisibilityHidden || fromLevel == VisibilityRedacted {
+			if (strict && viewerIsParticipant) || fromLevel == VisibilityHidden || fromLevel == VisibilityRedacted {
 				fromLevel = VisibilityFull
 			}
-			if toLevel == VisibilityHidden || toLevel == VisibilityRedacted {
+			if (strict && viewerIsParticipant) || toLevel == VisibilityHidden || toLevel == VisibilityRedacted {
 				toLevel = VisibilityFull
 			}
 		}
@@ -934,6 +1006,12 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 			}
 		}
 
+		// Strict read profile: only a participant or an approved disclosure
+		// grant admits the row.
+		if strict && !viewerIsParticipant && !txVisibleViaGrant {
+			continue
+		}
+
 		// If BOTH participants are non-identifiable to the viewer (hidden or
 		// redacted after participant override), the row is dropped under strict
 		// privacy — showing "[PRIVATE] → [PRIVATE]" leaks transaction existence
@@ -950,12 +1028,18 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 		// viewer (Hidden) and the granted party renders as [PRIVATE] under
 		// the redacted lens — both sides non-identifiable, yet the row
 		// must survive per the matrix ("proof of activity" audit lens).
+		//
+		// Union override (RD-1316): a row kept by the transfer-participant
+		// union survives with both sides [PRIVATE]. Under the audit view its
+		// value is revealed below, so that reveal is counted too.
 		bothHidden := isNonIdentifiable(fromLevel) && isNonIdentifiable(toLevel)
 		if bothHidden && !txVisibleViaGrant {
-			if !adminAuditView {
+			if !adminAuditView && !txKeptByUnion {
 				continue
 			}
-			ropts.recordAdminReveal()
+			if adminAuditView {
+				ropts.recordAdminReveal()
+			}
 		}
 
 		// Contract creation transactions: if the deployer is non-identifiable,
@@ -966,13 +1050,16 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 		//
 		// Grant override mirrors the bothHidden block above: the granted
 		// party may have deployed a contract and the viewer is entitled to
-		// see it under the grant's lens — keep the row.
+		// see it under the grant's lens — keep the row. A union-kept deploy
+		// survives the same way as a union-kept bothHidden row above.
 		deployHidden := tx.IsContractCreation() && isNonIdentifiable(fromLevel)
 		if deployHidden && !bothHidden && !txVisibleViaGrant {
-			if !adminAuditView {
+			if !adminAuditView && !txKeptByUnion {
 				continue
 			}
-			ropts.recordAdminReveal()
+			if adminAuditView {
+				ropts.recordAdminReveal()
+			}
 		}
 
 		// G10 fix: Non-participant, non-visibleTo txs where one side is hidden
@@ -984,7 +1071,7 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 		//   the row regardless of the counterparty's own (Hidden/Redacted)
 		//   level. Field-level rendering still applies via applyRedaction —
 		//   the flag only affects row-survival.
-		if !viewerIsParticipant && !txVisibleToViewer && !viewerIsAdmin && !txVisibleViaGrant {
+		if !viewerIsParticipant && !txVisibleToViewer && !viewerIsAdmin && !txVisibleViaGrant && !txKeptByUnion {
 			if isNonIdentifiable(fromLevel) || isNonIdentifiable(toLevel) {
 				continue
 			}
@@ -995,11 +1082,6 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 		setMeta := func(addr string, baseLvl VisibilityLevel) {
 			aLower := strings.ToLower(addr)
 			if viewerIsParticipant && isNonIdentifiable(baseLvl) {
-				redactedTx.AddressMetadata[aLower] = ReasonParticipantOverride
-			} else if ropts.ParticipantTxHashes[strings.ToLower(tx.Hash)] && isNonIdentifiable(baseLvl) {
-				// RD-1155: the parent tx is visible because the viewer is a
-				// transfer participant of it (RD-1009 union), not via a
-				// visibleTo share — label "Counterparty", not "Shared".
 				redactedTx.AddressMetadata[aLower] = ReasonParticipantOverride
 			} else if txVisibleToViewer && isNonIdentifiable(baseLvl) {
 				redactedTx.AddressMetadata[aLower] = ReasonVisibleToGrant
@@ -1024,7 +1106,7 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 		if tx.ContractAddress != nil && *tx.ContractAddress != "" {
 			caBase := visibilityMap[strings.ToLower(*tx.ContractAddress)]
 			caLevel := caBase
-			if (viewerIsParticipant || txVisibleToViewer) && isNonIdentifiable(caLevel) {
+			if (strict && viewerIsParticipant) || ((viewerIsParticipant || txVisibleToViewer) && isNonIdentifiable(caLevel)) {
 				caLevel = VisibilityFull
 			}
 			if caLevel == VisibilityFull || caLevel == VisibilityPseudonymous {
@@ -1093,14 +1175,28 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 			setMeta(*tx.To, baseToLevel)
 		}
 
-		// Participant override: even when the counterparty address is revealed,
-		// strip the sender's nonce if the sender is base-level private. The nonce
-		// reveals their lifetime tx count — the receiver doesn't need that.
-		if viewerIsParticipant && (baseFromLevel == VisibilityHidden || baseFromLevel == VisibilityRedacted) {
+		// Standard participant views keep the sender's nonce policy based on
+		// base visibility. Strict participants receive the same transaction
+		// fields as the admitted JSON-RPC envelope.
+		if !strict && viewerIsParticipant && (baseFromLevel == VisibilityHidden || baseFromLevel == VisibilityRedacted) {
 			redactedTx.Nonce = nil
 		}
 
 		redactedTxs = append(redactedTxs, redactedTx)
+	}
+
+	// RD-1299 strict transaction rows omit token-transfer counts and categories.
+	// The transfers view lists events admitted for the current viewer.
+	if r.readProfile.Strict() {
+		for i := range redactedTxs {
+			redactedTxs[i].TokenTransferCount = 0
+			cats := removeCategory(redactedTxs[i].TxCategories, "token_transfer")
+			if len(cats) == 0 && len(redactedTxs[i].TxCategories) > 0 && redactedTxs[i].HasRecipient() {
+				cats = []string{"contract_call"}
+			}
+			redactedTxs[i].TxCategories = cats
+		}
+		return redactedTxs, nil
 	}
 
 	// Strip token transfer info from transactions where the viewer lacks event access
@@ -1200,16 +1296,47 @@ func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []Token
 	if len(opts) > 0 {
 		ropts = opts[0]
 	}
-	visibleHashes := ropts.VisibleTxHashes
 	viewerIsAdminT := ropts.ViewerIsAdmin
 	adminAuditView := ropts.adminAuditView()
 
+	// RD-1299 strict read profile: a token-transfer row is a rendering of the
+	// Transfer event it derives from, so it survives only when that exact log
+	// (tx hash, log index) is admitted by the strict event predicate — the
+	// same decision eth_getLogs applies. Its counterparty is rendered at its own
+	// visibility (as the log's embedded address is masked), its amount kept (a
+	// value, not an address). Admin, the audit view, visibleTo and the RD-1009
+	// union grant nothing; an approved disclosure grant still applies its lens.
+	strict := r.readProfile.Strict()
+	var strictAdmitted map[string]bool
+	if strict {
+		viewerIsAdminT = false
+		adminAuditView = false
+		ropts.ListedTxHashes = nil
+		strictAdmitted, err = r.strictAdmittedTransferLogs(ctx, transfers, viewerDID)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	var result []TokenTransfer
+	// exempt[i] marks result[i] as admitted by the strict event decision, which
+	// already covers event access; it is not re-filtered by GetBatchEventAccess.
+	var exempt []bool
 	for _, t := range transfers {
 		viewerIsFrom := t.From != "" && viewerAddrs[strings.ToLower(t.From)]
 		viewerIsTo := t.To != "" && viewerAddrs[strings.ToLower(t.To)]
 		viewerIsParticipant := viewerIsFrom || viewerIsTo
-		txVisibleToViewer := visibleHashes[strings.ToLower(t.TxHash)]
+		strictRow := false
+		if strict {
+			strictRow = strictAdmitted[transferLogKey(t.TxHash, t.LogIndex)]
+			// No counterparty reveal under strict: the row renders like the
+			// masked log it derives from.
+			viewerIsParticipant = false
+		}
+		// Only genuine tx_visible_to listings reveal transfer fields. The
+		// transfer-participant union controls parent-row survival and does not
+		// admit sibling transfer rows.
+		txVisibleToViewer := ropts.ListedTxHashes[strings.ToLower(t.TxHash)]
 
 		baseFromLevel := visMap[strings.ToLower(t.From)]
 		baseToLevel := visMap[strings.ToLower(t.To)]
@@ -1274,6 +1401,15 @@ func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []Token
 			}
 		}
 
+		if strict && !txVisibleViaGrant {
+			if !strictRow {
+				continue
+			}
+			result = append(result, r.renderStrictTransfer(t, baseFromLevel, baseToLevel, visMapDetailed))
+			exempt = append(exempt, true)
+			continue
+		}
+
 		// Drop if both sides are non-identifiable. Under strict privacy this
 		// keeps the surrounding transferCount aggregate out of sync with the
 		// rows, but that is the conservative default. The elevated org-admin
@@ -1306,10 +1442,6 @@ func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []Token
 		setMeta := func(addr string, baseLvl VisibilityLevel) {
 			aLower := strings.ToLower(addr)
 			if viewerIsParticipant && isNonIdentifiable(baseLvl) {
-				redacted.AddressMetadata[aLower] = ReasonParticipantOverride
-			} else if ropts.ParticipantTxHashes[strings.ToLower(t.TxHash)] && isNonIdentifiable(baseLvl) {
-				// RD-1155: parent tx visible via the transfer-participant union
-				// (RD-1009), not a visibleTo share — "Counterparty", not "Shared".
 				redacted.AddressMetadata[aLower] = ReasonParticipantOverride
 			} else if txVisibleToViewer && isNonIdentifiable(baseLvl) {
 				redacted.AddressMetadata[aLower] = ReasonVisibleToGrant
@@ -1348,6 +1480,7 @@ func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []Token
 				redacted.To = t.To
 			}
 			result = append(result, redacted)
+			exempt = append(exempt, false)
 			continue
 		}
 
@@ -1358,6 +1491,7 @@ func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []Token
 		setMeta(t.To, baseToLevel)
 
 		result = append(result, redacted)
+		exempt = append(exempt, false)
 	}
 
 	// Strip transfers where the viewer lacks event access to the token contract.
@@ -1378,8 +1512,8 @@ func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []Token
 				return nil, err
 			}
 			var filtered []TokenTransfer
-			for _, t := range result {
-				if eventAccess[strings.ToLower(t.TokenAddress)] {
+			for i, t := range result {
+				if exempt[i] || eventAccess[strings.ToLower(t.TokenAddress)] {
 					filtered = append(filtered, t)
 				}
 			}
@@ -1388,6 +1522,108 @@ func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []Token
 	}
 
 	return result, nil
+}
+
+// transferLogKey identifies the log a token-transfer row derives from.
+func transferLogKey(txHash string, logIndex int) string {
+	return strings.ToLower(txHash) + ":" + strconv.Itoa(logIndex)
+}
+
+// strictAdmittedTransferLogs returns the (tx hash, log index) keys of the logs
+// behind these transfer rows that the strict event predicate admits for the
+// viewer, evaluated by RedactLogsWithOpts on the logs themselves (RD-1299). The
+// page costs one log lookup (batched when the data source supports it, else one
+// per distinct transaction) and ONE log-redaction pass over every row's log. No
+// data source → nothing is admitted (fail closed).
+func (r *RedactionEngine) strictAdmittedTransferLogs(ctx context.Context, transfers []TokenTransfer, viewerDID string) (map[string]bool, error) {
+	admitted := make(map[string]bool)
+	if r.txDataResolver == nil || viewerDID == "" {
+		return admitted, nil
+	}
+	wanted := make(map[string]bool, len(transfers))
+	var hashes []string
+	seen := make(map[string]bool)
+	for _, t := range transfers {
+		h := strings.ToLower(t.TxHash)
+		if h == "" {
+			continue
+		}
+		wanted[transferLogKey(h, t.LogIndex)] = true
+		if !seen[h] {
+			seen[h] = true
+			hashes = append(hashes, h)
+		}
+	}
+	if len(hashes) == 0 {
+		return admitted, nil
+	}
+	logs, err := r.strictTxLogs(ctx, hashes)
+	if err != nil {
+		return nil, err
+	}
+	// Only the logs the rows derive from are judged; each log is decided on
+	// its own, so judging them together equals judging them per transaction.
+	var behind []Log
+	for _, l := range logs {
+		if wanted[transferLogKey(l.TxHash, l.LogIndex)] {
+			behind = append(behind, l)
+		}
+	}
+	if len(behind) == 0 {
+		return admitted, nil
+	}
+	kept, err := r.RedactLogsWithOpts(ctx, behind, viewerDID, nil)
+	if err != nil {
+		return nil, err
+	}
+	for _, l := range kept {
+		admitted[transferLogKey(l.TxHash, l.LogIndex)] = true
+	}
+	return admitted, nil
+}
+
+// strictTxLogs returns the logs of the given distinct, lower-case transaction
+// hashes: one batched lookup when the data source supports it, else one lookup
+// per hash. Callers have checked r.txDataResolver != nil.
+func (r *RedactionEngine) strictTxLogs(ctx context.Context, hashes []string) ([]Log, error) {
+	if b, ok := r.txDataResolver.(TxDataBatchResolver); ok {
+		return b.GetLogsByTransactions(ctx, hashes)
+	}
+	var out []Log
+	for _, h := range hashes {
+		logs, err := r.txDataResolver.GetLogsByTransaction(ctx, h)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, logs...)
+	}
+	return out, nil
+}
+
+// renderStrictTransfer renders a token-transfer row admitted under the strict
+// profile: each side at its own visibility level (the viewer's own address is
+// Full; another user's private address is [PRIVATE], as the log masks it), the
+// zero address as-is, and the amount kept.
+func (r *RedactionEngine) renderStrictTransfer(t TokenTransfer, fromLevel, toLevel VisibilityLevel, detailed map[string]AddressVisibility) TokenTransfer {
+	out := t
+	out.AddressMetadata = make(map[string]VisibilityReason)
+	side := func(addr string, lvl VisibilityLevel) string {
+		if isZeroEVMAddress(addr) {
+			return addr
+		}
+		if isNonIdentifiable(lvl) {
+			return "[PRIVATE]"
+		}
+		if lvl == VisibilityFull {
+			if meta, ok := detailed[strings.ToLower(addr)]; ok {
+				out.AddressMetadata[strings.ToLower(addr)] = meta.Reason
+			}
+		}
+		return r.applyRedaction(addr, lvl)
+	}
+	out.From = side(t.From, fromLevel)
+	out.To = side(t.To, toLevel)
+	return out
 }
 
 // RedactInternalTransactions applies privacy rules to a list of internal transactions.
@@ -1401,8 +1637,25 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 	if len(opts) > 0 {
 		ropts = opts[0]
 	}
-	visibleHashes := ropts.VisibleTxHashes
 	adminAuditView := ropts.adminAuditView()
+
+	// RD-1299 strict read profile: an internal call is part of its parent
+	// transaction's trace, so it is returned only to a participant of that
+	// parent (tx from/to, the rbac.DecideTxEnvelope rule), resolved per parent
+	// from the chain data. Admin, the audit view, visibleTo and the RD-1009
+	// union grant nothing; an approved disclosure grant still applies its lens.
+	strict := r.readProfile.Strict()
+	if strict {
+		adminAuditView = false
+		ropts.ListedTxHashes = nil
+	}
+	var parents map[string]*Transaction
+	if strict {
+		var err error
+		if parents, err = r.strictParentTxs(ctx, itxs); err != nil {
+			return nil, err
+		}
+	}
 
 	addrMap := make(map[string]bool)
 	for _, t := range itxs {
@@ -1462,9 +1715,31 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 
 	var result []InternalTransaction
 	for _, t := range itxs {
+		ppSet, ppViewer := parentParticipantSet, viewerIsParentParticipant
+		if strict {
+			parent := parents[strings.ToLower(t.TxHash)]
+			ppSet, ppViewer = map[string]bool{}, false
+			if parent != nil {
+				if parent.From != "" {
+					ppSet[strings.ToLower(parent.From)] = true
+				}
+				if parent.HasRecipient() {
+					ppSet[strings.ToLower(*parent.To)] = true
+				}
+				ppViewer = rbac.DecideTxEnvelope(r.readProfile, rbac.TxEnvelopeFacts{
+					Surface:       rbac.TxSurfaceTransaction,
+					IsParticipant: (parent.From != "" && viewerAddrs[strings.ToLower(parent.From)]) || (parent.HasRecipient() && viewerAddrs[strings.ToLower(*parent.To)]),
+				})
+			}
+		}
 		viewerIsFrom := t.From != "" && viewerAddrs[strings.ToLower(t.From)]
 		viewerIsTo := t.To != nil && *t.To != "" && viewerAddrs[strings.ToLower(*t.To)]
 		viewerIsParticipant := viewerIsFrom || viewerIsTo
+		if strict {
+			// Frame-level participation counts only within a parent the
+			// viewer participated in.
+			viewerIsParticipant = viewerIsParticipant && ppViewer
+		}
 
 		// RD-1122 per-side parent-participant flags: a frame side qualifies for
 		// reveal ONLY when its own address is itself one of the parent's two
@@ -1474,18 +1749,21 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 		// frame would leak a foreign-org private address. Revealing exactly the
 		// parent's parties discloses nothing new (they are already shown at the
 		// tx/Overview level by the existing top-frame participant override).
-		fromIsParentParty := viewerIsParentParticipant && t.From != "" && parentParticipantSet[strings.ToLower(t.From)]
-		toIsParentParty := viewerIsParentParticipant && t.To != nil && *t.To != "" && parentParticipantSet[strings.ToLower(*t.To)]
+		fromIsParentParty := ppViewer && t.From != "" && ppSet[strings.ToLower(t.From)]
+		toIsParentParty := ppViewer && t.To != nil && *t.To != "" && ppSet[strings.ToLower(*t.To)]
 
-		// visibleTo override: an internal tx inherits its parent's allowlist
-		// membership. When the parent tx is in VisibleTxHashes (either because
-		// the sender explicitly shared the hash, or because RD-1009's
-		// transfer-participant union added it), the internal tx must survive
-		// — otherwise /transactions/:hash/internal would drop a row whose
-		// parent /transactions and /transfers feeds just rendered. Same
-		// cross-surface row-survival bug class as RD-1009; same fix shape
-		// (parent-tx allowlist threaded into the drop predicate).
-		txVisibleToViewer := visibleHashes[strings.ToLower(t.TxHash)]
+		// visibleTo override: a frame inherits its parent's genuine share. When
+		// the sender listed the viewer on the parent tx (ListedTxHashes), the
+		// frame survives and its addresses are revealed, mirroring
+		// RedactTransactions/RedactTransfers.
+		//
+		// RD-1316: the RD-1009 transfer-participant union (VisibleTxHashes)
+		// plays no part here, as in RedactTransfers. It keeps the parent row
+		// only; the parent's frames follow the ordinary rules below, so a
+		// frame with both sides private — another org's call tree, since a
+		// frame's target can be any org's private contract (the RD-1122 /
+		// RD-1223 concern) — is dropped unless the admin audit view keeps it.
+		txVisibleToViewer := ropts.ListedTxHashes[strings.ToLower(t.TxHash)]
 
 		baseFromLevel := visMap[strings.ToLower(t.From)]
 		baseToLevel := VisibilityFull
@@ -1495,10 +1773,9 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 		fromLevel := baseFromLevel
 		toLevel := baseToLevel
 
-		// Participant or visibleTo override: reveal counterparty. visibleTo
-		// mirrors RedactTransactions/RedactTransfers — the parent tx already
-		// exposes these participants to the viewer via the surviving feed,
-		// so revealing them on the internal tx adds no information.
+		// Participant or visibleTo override: reveal counterparty. A genuine
+		// share mirrors RedactTransactions/RedactTransfers — the sender chose
+		// to show this tx to the viewer, so its frames are revealed too.
 		if viewerIsParticipant || txVisibleToViewer {
 			if isNonIdentifiable(fromLevel) {
 				fromLevel = VisibilityFull
@@ -1565,14 +1842,18 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 		// contradict the surrounding count for the admin under the flag.
 		//
 		// txVisibleToViewer above already upgraded fromLevel/toLevel to Full
-		// when the parent tx is in the allowlist, so the bothHidden branch
-		// here cannot fire for visibleTo parents — closing the RD-1009-class
-		// gap. Kept as an explicit early-out for clarity even though the
-		// override would also have cleared it.
+		// when the parent tx is genuinely shared, so the bothHidden branch
+		// cannot fire for those.
 		//
 		// Grant override mirrors RedactTransactions: a disclosure grant on
 		// either party keeps the row regardless of bothHidden — required
 		// for the redacted-grant cell of the matrix.
+		// Strict: only a participant of the parent tx or an approved
+		// disclosure grant admits the frame.
+		if strict && !ppViewer && !txVisibleViaGrant {
+			continue
+		}
+
 		bothHidden := isNonIdentifiable(fromLevel) && isNonIdentifiable(toLevel)
 		if bothHidden && !txVisibleViaGrant {
 			if !adminAuditView {
@@ -1587,11 +1868,7 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 			aLower := strings.ToLower(addr)
 			if viewerIsParticipant && isNonIdentifiable(baseLvl) {
 				redacted.AddressMetadata[aLower] = ReasonParticipantOverride
-			} else if ropts.ParticipantTxHashes[strings.ToLower(t.TxHash)] && isNonIdentifiable(baseLvl) {
-				// RD-1155: parent tx visible via the transfer-participant union
-				// (RD-1009), not a visibleTo share — "Counterparty", not "Shared".
-				redacted.AddressMetadata[aLower] = ReasonParticipantOverride
-			} else if viewerIsParentParticipant && parentParticipantSet[aLower] && isNonIdentifiable(baseLvl) {
+			} else if ppViewer && ppSet[aLower] && isNonIdentifiable(baseLvl) {
 				// RD-1122: revealed because it is a party of the parent tx the
 				// viewer participated in (already shown at the tx/Overview level).
 				redacted.AddressMetadata[aLower] = ReasonParticipantOverride
@@ -1622,7 +1899,9 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 			// (they can embed addresses / decoded private data).
 			// txVisibleViaGrant preserves value per the matrix (line 141):
 			// redacted/pseudonymous-grant rows keep volume/timing.
-			if !adminAuditView && !txVisibleViaGrant {
+			// A strict parent participant may see the internal amount even
+			// when the unrelated frame counterparty remains private.
+			if !adminAuditView && !txVisibleViaGrant && !(strict && ppViewer) {
 				redacted.Value = JSONString("")
 			}
 			redacted.Input = nil
@@ -1650,6 +1929,50 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 		result = append(result, redacted)
 	}
 	return result, nil
+}
+
+// strictParentTxs resolves the parent transactions of a page of internal calls
+// for the strict profile, keyed by lower-case hash: one batched lookup when the
+// data source supports it, else one lookup per distinct parent. No data source
+// or an unknown parent → absent, which admits nothing (fail closed).
+func (r *RedactionEngine) strictParentTxs(ctx context.Context, itxs []InternalTransaction) (map[string]*Transaction, error) {
+	parents := make(map[string]*Transaction)
+	if r.txDataResolver == nil {
+		return parents, nil
+	}
+	var hashes []string
+	seen := make(map[string]bool)
+	for _, t := range itxs {
+		h := strings.ToLower(t.TxHash)
+		if h != "" && !seen[h] {
+			seen[h] = true
+			hashes = append(hashes, h)
+		}
+	}
+	if len(hashes) == 0 {
+		return parents, nil
+	}
+	if b, ok := r.txDataResolver.(TxDataBatchResolver); ok {
+		txs, err := b.GetTransactionsByHashes(ctx, hashes)
+		if err != nil {
+			return nil, err
+		}
+		for i := range txs {
+			tx := txs[i]
+			parents[strings.ToLower(tx.Hash)] = &tx
+		}
+		return parents, nil
+	}
+	for _, h := range hashes {
+		tx, err := r.txDataResolver.GetTransaction(ctx, h)
+		if err != nil {
+			return nil, err
+		}
+		if tx != nil {
+			parents[h] = tx
+		}
+	}
+	return parents, nil
 }
 
 // extractTopicAddress checks if a 32-byte topic hex string encodes an address
@@ -1718,7 +2041,7 @@ func redactTopicAddress(addr string, level VisibilityLevel) string {
 // embedded addresses for a given (viewer, log) — symmetry by construction
 // (RD-1214, completing RD-887).
 //
-// It performs NO admission decision (that is rbac.DecideLogEmitterAccess,
+// It performs NO admission decision (that is rbac.DecideLogEmitter,
 // resolved upstream) and NO metadata emission (explorer-only, and only for the
 // addresses this primitive leaves visible). Both callers resolve visMap from the
 // SAME source — db.GetBatchVisibilityDetailed — so the per-address verdict is
@@ -2051,9 +2374,10 @@ func (r *RedactionEngine) RedactLogs(ctx context.Context, logs []Log, viewerDID 
 
 // RedactLogsWithOpts is RedactLogs with visibleTo support.
 func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, viewerDID string, opts *RedactOpts, participantAddrs ...string) ([]Log, error) {
-	var visibleTxHashes map[string]bool
+	var visibleTxHashes, listedTxHashes map[string]bool
 	if opts != nil {
 		visibleTxHashes = opts.VisibleTxHashes
+		listedTxHashes = opts.ListedTxHashes
 	}
 	if len(logs) == 0 {
 		return logs, nil
@@ -2230,15 +2554,15 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 
 	// Phase 3d (RD-874): resolve the per-contract visibleTo unlock map.
 	// True for contracts where (a) `allow_visibleto_unlock` is set in the
-	// DB AND (b) the viewer holds a contract_grant via an eligible
-	// (non-system) group in the contract's owning org. Both gates must
-	// hold; the resolver returns the conjunction. Combined with a per-tx
-	// visibleTxHashes membership check below, this drives the unlock
-	// branch in Phase 4. Mirrors processor_event_rules.go's
-	// buildVisibleToUnlockableMap so RPC and explorer agree on the
-	// (viewer, contract, tx) triple.
+	// DB AND (b) the viewer is unlock-eligible there (rbac.UnlockableContracts
+	// — the same helper the RPC's buildVisibleToUnlockableMap calls). Combined
+	// with the per-tx ListedTxHashes check below, this drives the unlock
+	// branch in Phase 4, so RPC and explorer agree on the (viewer, contract,
+	// tx) triple.
 	unlockableContracts := map[string]bool{}
-	if r.visibleToUnlockResolver != nil && viewerDID != "" && len(addrMap) > 0 {
+	// The unlock only fires on a tx the viewer is listed on, so skip the
+	// eligibility lookups entirely when this page has no listed tx.
+	if r.visibleToUnlockResolver != nil && viewerDID != "" && len(addrMap) > 0 && len(listedTxHashes) > 0 {
 		uniqueAddrs := make([]string, 0, len(addrMap))
 		for a := range addrMap {
 			uniqueAddrs = append(uniqueAddrs, a)
@@ -2258,6 +2582,35 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 			uniqueAddrs = append(uniqueAddrs, a)
 		}
 		allowDynamicPayload = r.dynamicPayloadAllowedResolver.Resolve(ctx, uniqueAddrs)
+	}
+
+	// Per-call memo of the ABI resolver (uncached DB lookup), so resolving the
+	// ABI fact for every candidate log costs one lookup per emitter.
+	abiByContract := make(map[string]string)
+	resolveABIOnce := func(addr string) string {
+		if r.abiResolver == nil {
+			return ""
+		}
+		if v, ok := abiByContract[addr]; ok {
+			return v
+		}
+		// Phase 3 already asked the same resolver (resolveContractABI prefers
+		// it when wired), including for emitters that have no ABI.
+		if raw, ok := contractABIs[addr]; ok {
+			abiByContract[addr] = string(raw)
+			return string(raw)
+		}
+		v := r.abiResolver.Resolve(ctx, addr)
+		abiByContract[addr] = v
+		return v
+	}
+
+	// RD-1299: under the strict read profile every log must name one of the
+	// viewer's linked addresses in an ABI-indexed address parameter.
+	strict := r.readProfile.Strict()
+	var selfMatcher *rbac.IndexedSelfMatcher
+	if strict {
+		selfMatcher = rbac.NewIndexedSelfMatcher()
 	}
 
 	// Phase 4: apply redactions.
@@ -2282,7 +2635,7 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 		}
 
 		// Resolve the per-log facts and defer the admit/deny verdict to the
-		// shared decision engine (rbac.DecideLogEmitterAccess, RD-1214) — the
+		// shared decision engine (rbac.DecideLogEmitter, RD-1214/RD-1300) — the
 		// SAME function the RPC filter (rbac.FilterEventLogs) uses, so the two
 		// layers reach identical verdicts and cannot drift. The engine owns the
 		// gate order; this block only resolves the facts from the explorer's
@@ -2291,16 +2644,20 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 		facts := rbac.LogEmitterFacts{
 			// RD-890 admin bypass (per-contract, org-scoped).
 			IsAdmin: adminContracts[contractAddr],
-			// RD-874 visibleTo unlock — the only standalone-grant path.
-			Unlocked: unlockableContracts[contractAddr] && visibleTxHashes[strings.ToLower(l.TxHash)],
+			// RD-874 visibleTo unlock — the only standalone-grant path. Keyed on
+			// the viewer's genuine listing for THIS tx (ListedTxHashes), never on
+			// the RD-1009 transfer-participant union in VisibleTxHashes (RD-1307).
+			Unlocked: unlockableContracts[contractAddr] && listedTxHashes[strings.ToLower(l.TxHash)],
 			// Grant eligibility: a contract grant resolves the emitter to Full
 			// for this viewer (GetBatchVisibilityDetailed). No grant → Redacted
 			// (registered) or Hidden (unregistered/EOA). Load-bearing (RD-1208).
 			HasGrant: level == VisibilityFull,
 			// RD-1162 participant/sender (grant-bounded inside the engine).
 			IsParticipant: isParticipant,
-			// Ordinary visibleTo — additive param-rule fallback only.
-			InVisibleTo: visibleTxHashes[strings.ToLower(l.TxHash)],
+			// Ordinary visibleTo — additive param-rule fallback only. Like the
+			// unlock, keyed on the genuine listing, never the RD-1009 union
+			// (RD-1307) — matching the RPC's tx_visible_to check.
+			InVisibleTo: listedTxHashes[strings.ToLower(l.TxHash)],
 			HasTopic0:   l.Topic0 != nil,
 		}
 
@@ -2315,26 +2672,31 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 		}
 
 		// RD-889 deny-when-no-ABI + M15 dynamic-payload — the embedded-address
-		// protections. Skipped for admin/unlock (the engine admits them before
-		// these gates). Without a resolvable ABI, non-indexed address params in
-		// `data` can't be decoded/redacted.
-		facts.ABIResolvable = true
-		if r.abiResolver != nil && !facts.IsAdmin && !facts.Unlocked {
-			facts.ABIResolvable = r.abiResolver.Resolve(ctx, contractAddr) != ""
+		// protections. Resolved for EVERY candidate log, admin and unlock
+		// included, exactly as rbac.FilterEventLogs does: the engine admits
+		// admin/unlock before reading these facts, but a policy profile that
+		// switches the unlock off falls back to the ordinary verdict, which
+		// must then see the real ABI/M15 facts rather than permissive defaults.
+		// Without a resolvable ABI, non-indexed address params in `data` can't
+		// be decoded/redacted.
+		resolvedABI := resolveABIOnce(contractAddr)
+		facts.ABIResolvable = r.abiResolver == nil || resolvedABI != ""
+		var abiForCheck json.RawMessage
+		if raw, ok := contractABIs[contractAddr]; ok && len(raw) > 0 {
+			abiForCheck = raw
+		} else if resolvedABI != "" {
+			abiForCheck = json.RawMessage(resolvedABI)
 		}
-		if !facts.IsAdmin && !facts.Unlocked && l.Topic0 != nil {
-			var abiForCheck json.RawMessage
-			if raw, ok := contractABIs[contractAddr]; ok && len(raw) > 0 {
-				abiForCheck = raw
-			} else if r.abiResolver != nil {
-				if s := r.abiResolver.Resolve(ctx, contractAddr); s != "" {
-					abiForCheck = json.RawMessage(s)
-				}
-			}
+		if l.Topic0 != nil {
 			if len(abiForCheck) > 0 && !allowDynamicPayload[contractAddr] &&
 				eventHasDynamicNonIndexedParam(abiForCheck, *l.Topic0) {
 				facts.DynamicPayloadDropped = true
 			}
+		}
+		// Strict read profile (RD-1299): the same IndexedSelf predicate the RPC
+		// filter applies, on the same ABI. No ABI → never matches.
+		if strict {
+			facts.IndexedSelf = selfMatcher.Match(string(abiForCheck), collectLogTopics(l), l.Data, viewerAddrs)
 		}
 
 		// event_rules resolution (RD-888). When no checker is wired (legacy
@@ -2384,13 +2746,17 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 			facts.Rules = rbac.LogEventRulesWildcard
 		}
 
-		if !rbac.DecideLogEmitterAccess(facts) {
+		decision := rbac.DecideLogEmitter(r.readProfile, facts)
+		if !decision.Admit {
 			continue
 		}
 
-		// RD-874 visibleTo unlock: full reveal, no field redaction — the
-		// contract owner opted in via allow_visibleto_unlock.
-		if facts.Unlocked {
+		// Payload policy from the shared decision (RD-1300) — the SAME value the
+		// RPC renderer consumes. LogPayloadFull (the RD-874 visibleTo unlock:
+		// the contract owner opted in via allow_visibleto_unlock and the sender
+		// listed this viewer on this tx) is a full reveal with no field
+		// redaction; everything else is masked below.
+		if decision.Payload == rbac.LogPayloadFull {
 			redacted := l
 			redacted.AddressMetadata = make(map[string]VisibilityReason)
 			result = append(result, redacted)

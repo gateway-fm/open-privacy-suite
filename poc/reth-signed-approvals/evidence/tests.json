@@ -1,0 +1,194 @@
+[
+  {
+    "test": "same_org_nested_call_executes",
+    "passed": true,
+    "hash": "0x6a043a1667ad307c143462bd590d142e28a7ea71e53aa1deb5d9c8ebdfcffb35"
+  },
+  {
+    "test": "delegatecall_uses_caller_storage",
+    "passed": true
+  },
+  {
+    "test": "EIP1559_signed_transaction",
+    "passed": true
+  },
+  {
+    "test": "same_block_cross_org_divergence",
+    "passed": true,
+    "hash": "0x6a043a1667ad307c143462bd590d142e28a7ea71e53aa1deb5d9c8ebdfcffb35"
+  },
+  {
+    "test": "caught_call_cannot_bypass",
+    "passed": true,
+    "hash": "0x65074c44aa438aeaadfc27ef9e96ba3ff472f9ff77cbbef717fd84353eeb88e0"
+  },
+  {
+    "test": "same_org_storage_divergence",
+    "passed": true,
+    "hash": "0x6a043a1667ad307c143462bd590d142e28a7ea71e53aa1deb5d9c8ebdfcffb35"
+  },
+  {
+    "test": "stock_control_executes_cross_org",
+    "passed": true,
+    "hash": "0x6a043a1667ad307c143462bd590d142e28a7ea71e53aa1deb5d9c8ebdfcffb35"
+  },
+  {
+    "test": "no_write_cross_org_call_denied_despite_identical_return_and_storage",
+    "passed": true
+  },
+  {
+    "test": "fingerprint_zero_deletion_unchanged_write_and_read",
+    "passed": true
+  },
+  {
+    "test": "fingerprint_log_positions_dynamic_output_and_caught_revert",
+    "passed": true
+  },
+  {
+    "test": "waiting_tx_does_not_block_ready_sender",
+    "passed": true,
+    "ready_block_wall_ms": 262.2
+  },
+  {
+    "test": "timeout_then_client_retry_same_signed_tx",
+    "passed": true
+  },
+  {
+    "test": "128_missing_approvals_do_not_block_ready_sender",
+    "passed": true,
+    "ready_block_wall_ms": 278.7752919830382
+  },
+  {
+    "test": "forged_signature_denied_then_valid_retry",
+    "passed": true,
+    "refusal": {
+      "code": "UNAUTHENTICATED",
+      "message": "signature does not verify"
+    }
+  },
+  {
+    "test": "expired_approval_is_absent_at_the_gate_then_fresh_approval_is_used",
+    "passed": true,
+    "hash": "0x03525110a0bc73a977490ec99c48235a8f556efa163f8df69df2e09ca747babe"
+  },
+  {
+    "test": "approval_expiring_before_arrival_drops_the_transaction_and_refused_batches_store_nothing",
+    "passed": true,
+    "refusals": {
+      "expired": {
+        "code": "FAILED_PRECONDITION",
+        "message": "batch expired"
+      },
+      "lifetime_above_max_ttl": {
+        "code": "INVALID_ARGUMENT",
+        "message": "lifetime above the maximum TTL"
+      },
+      "issued_ahead_of_clock": {
+        "code": "FAILED_PRECONDITION",
+        "message": "issued_at ahead of this clock"
+      }
+    },
+    "stats": {
+      "batch_sizes": [
+        0,
+        3,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "evicted_approvals": 0,
+      "expired_approvals": 2,
+      "invalid_envelopes": 3,
+      "max_wait_ns": 1470789292,
+      "ready_on_first_seen": 1,
+      "released_on_finality": 1,
+      "resolved_waits": 1,
+      "retained_entries": 1,
+      "store_full_batches": 0,
+      "verification_ns": 142834,
+      "verified": 3,
+      "verified_batches": 3,
+      "wait_bucket_upper_us": [
+        100,
+        500,
+        1000,
+        5000,
+        10000,
+        50000,
+        100000,
+        null
+      ],
+      "wait_histogram": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "wait_ns": 1470789292,
+      "waiting_on_first_seen": 2
+    }
+  },
+  {
+    "test": "actual_restart_loses_approval_then_client_retry_succeeds",
+    "passed": true
+  },
+  {
+    "test": "restart_then_resend_retained_batch_under_new_boot_id",
+    "passed": true,
+    "boot_ids": [
+      "9c07afbafbc8e4fbac12bd2f00401552",
+      "e64e8c584c287ddd92e7fe40b6ecbd16"
+    ]
+  },
+  {
+    "test": "reorg_returns_the_transaction_and_its_kept_approval_includes_it_again",
+    "passed": true,
+    "block": "0x2a748a46e1931f745aa605594df9fe3e46899283804abc2110ef3e4bc2574462",
+    "stats": {
+      "verified": 1,
+      "released_on_finality": 0
+    }
+  },
+  {
+    "test": "historical_import_without_approvals",
+    "passed": true,
+    "block": "0x139212096feabcd554960c618f41c2139aabc1fb85ea4d56d4b038ef8af89461"
+  },
+  {
+    "test": "real_OPS_DB_RBAC_trace_signature_forwarding_and_Reth_commit",
+    "passed": true,
+    "hash": "0x6a043a1667ad307c143462bd590d142e28a7ea71e53aa1deb5d9c8ebdfcffb35"
+  }
+]

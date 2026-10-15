@@ -99,7 +99,7 @@ CHAIN_INDEXER_PATH=/path/to/chain-indexer \
 | privacy-postgres | — | image | Open Privacy Suite database |
 | anvil | 8545 | image | Local Ethereum node |
 | redis | — | image | Per-user rate limit + session store |
-| chain-indexer | 50051 (gRPC) | published image, tag `INDEXER_VERSION` (default `0.3.0`) | Block indexer feeding the BFF |
+| chain-indexer | 50051 (gRPC) | published image, tag `INDEXER_VERSION` (default `0.4.0`) | Block indexer feeding the BFF |
 | indexer-postgres | — | image | Chain-indexer database |
 | block-explorer-api | — | local build from `BLOCK_EXPLORER_PATH/backend` | Block-explorer BFF (privacy-mode build, chain-indexer client compiled out) |
 | block-explorer-frontend | 3001 | local build from `BLOCK_EXPLORER_PATH/frontend` | Block-explorer UI (nginx) |

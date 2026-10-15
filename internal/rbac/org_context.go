@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"privacy-proxy/internal/evm/precompile"
+	"privacy-proxy/internal/viewscope"
 )
 
 // OrgContext encapsulates organization-scoped access decisions.
@@ -53,6 +54,7 @@ func NewOrgContext(ctx context.Context, store Store, user *User, targetAddress s
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user organizations: %w", err)
 	}
+	userOrgIDs = scopeUserOrgIDs(ctx, userOrgIDs)
 
 	oc := &OrgContext{
 		user:       user,
@@ -103,6 +105,7 @@ func NewOrgContextForOrg(ctx context.Context, store Store, user *User, orgID str
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user organizations: %w", err)
 	}
+	userOrgIDs = scopeUserOrgIDs(ctx, userOrgIDs)
 
 	// Verify user is a member of the specified org
 	if !userOrgIDs[orgID] {
@@ -120,6 +123,20 @@ func NewOrgContextForOrg(ctx context.Context, store Store, user *User, orgID str
 		userOrgIDs: userOrgIDs,
 		store:      store,
 	}, nil
+}
+
+// scopeUserOrgIDs keeps the named organization as the only membership used
+// by an impersonated access check. Ordinary requests retain every membership.
+func scopeUserOrgIDs(ctx context.Context, orgIDs map[string]bool) map[string]bool {
+	orgID, scoped := viewscope.Org(ctx)
+	if !scoped {
+		return orgIDs
+	}
+	result := make(map[string]bool)
+	if orgID != "" && orgIDs[orgID] {
+		result[orgID] = true
+	}
+	return result
 }
 
 // OrgID returns the organization ID, or empty string if public context.

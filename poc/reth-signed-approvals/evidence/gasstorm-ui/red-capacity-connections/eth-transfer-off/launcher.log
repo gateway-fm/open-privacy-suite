@@ -1,0 +1,72 @@
+Building Gasstorm dashboard (cached after the first start)...
+Warning: "selfdestruct" has been deprecated. Note that, starting from the Cancun hard fork, the underlying opcode no longer deletes the code and data associated with an account and only transfers its Ether to the beneficiary, unless executed in the same transaction in which the contract was created (see EIP-6780). Any use in newly deployed contracts is strongly discouraged even if the new behavior is taken into account. Future changes to the EVM might further reduce the functionality of the opcode.
+   --> contracts/Applications.sol:128:57:
+    |
+128 |     function destroy(address payable target) external { selfdestruct(target); }
+    |                                                         ^^^^^^^^^^^^
+
+Warning: "selfdestruct" has been deprecated. Note that, starting from the Cancun hard fork, the underlying opcode no longer deletes the code and data associated with an account and only transfers its Ether to the beneficiary, unless executed in the same transaction in which the contract was created (see EIP-6780). Any use in newly deployed contracts is strongly discouraged even if the new behavior is taken into account. Future changes to the EVM might further reduce the functionality of the opcode.
+   --> contracts/Applications.sol:156:57:
+    |
+156 |     function destroy(address payable target) external { selfdestruct(target); }
+    |                                                         ^^^^^^^^^^^^
+
+READY http://127.0.0.1:18000/load-test/
+Enforcement OFF; ten wallets; block gas limit 200,000,000.
+Choose Through Privacy Proxy -> Adaptive -> Start. Leave JWT empty and Gasless off.
+Ctrl+C stops this session. Evidence: <repo>/poc/reth-signed-approvals/evidence/gasstorm-ui/capacity/eth-transfer-off
+Pool sample failed: [Errno 60] Operation timed out
+Traceback (most recent call last):
+  File "<repo>/poc/reth-signed-approvals/gasstorm_ui.py", line 200, in main
+    time.sleep(1)
+    ~~~~~~~~~~^^^
+  File "<repo>/poc/reth-signed-approvals/gasstorm_ui.py", line 160, in stop
+    raise KeyboardInterrupt
+KeyboardInterrupt
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "<repo>/poc/reth-signed-approvals/gasstorm_ui.py", line 206, in <module>
+    main()
+    ~~~~^^
+  File "<repo>/poc/reth-signed-approvals/gasstorm_ui.py", line 163, in main
+    with contextlib.ExitStack() as resources:
+         ~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/contextlib.py", line 619, in __exit__
+    raise exc
+  File "/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/contextlib.py", line 604, in __exit__
+    if cb(*exc_details):
+       ~~^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/contextlib.py", line 364, in __exit__
+    self.thing.close()
+    ~~~~~~~~~~~~~~~~^^
+  File "<repo>/poc/reth-signed-approvals/gasstorm_compare.py", line 209, in close
+    self.check()
+    ~~~~~~~~~~^^
+  File "<repo>/poc/reth-signed-approvals/gasstorm_compare.py", line 202, in check
+    raise self.error
+  File "<repo>/poc/reth-signed-approvals/gasstorm_compare.py", line 183, in run
+    answer = n.engine("engine_forkchoiceUpdatedV2", state, attrs)
+  File "<repo>/poc/reth-signed-approvals/harness.py", line 181, in engine
+    return self.request(method, list(params), engine=True)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<repo>/poc/reth-signed-approvals/harness.py", line 169, in request
+    with urllib.request.urlopen(req, timeout=30) as response:
+         ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/urllib/request.py", line 187, in urlopen
+    return opener.open(url, data, timeout)
+           ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/urllib/request.py", line 487, in open
+    response = self._open(req, data)
+  File "/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/urllib/request.py", line 504, in _open
+    result = self._call_chain(self.handle_open, protocol, protocol +
+                              '_open', req)
+  File "/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/urllib/request.py", line 464, in _call_chain
+    result = func(*args)
+  File "/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/urllib/request.py", line 1350, in http_open
+    return self.do_open(http.client.HTTPConnection, req)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/urllib/request.py", line 1324, in do_open
+    raise URLError(err)
+urllib.error.URLError: <urlopen error [Errno 49] Can't assign requested address>

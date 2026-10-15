@@ -1,0 +1,33 @@
+{"time":"2026-09-11T21:07:24.624273+02:00","level":"INFO","msg":"pprof listening","addr":"localhost:6061"}
+{"time":"2026-09-11T21:07:24.631416+02:00","level":"INFO","msg":"initialized storage","path":"<repo>/.tmp/approval-runs/gasstorm-ui-1789153636167702000/loadgen.db"}
+{"time":"2026-09-11T21:07:24.631436+02:00","level":"INFO","msg":"resolved execution layer capabilities","layer":"reth-ext-native","hasBlockBuilder":false,"supportsPreconf":false,"requiresLegacyTx":false}
+{"time":"2026-09-11T21:07:24.631897+02:00","level":"INFO","msg":"privacy route-all: all RPC routed through privacy proxy","url":"http://127.0.0.1:57026/rpc/4ed640d8-9d4b-4885-9b5b-7388bf1b3435"}
+{"time":"2026-09-11T21:07:24.631904+02:00","level":"INFO","msg":"privacy proxy available (client created on first privacy-mode test)","url":"http://127.0.0.1:57026"}
+{"time":"2026-09-11T21:07:24.633627+02:00","level":"INFO","msg":"starting HTTP server","addr":"127.0.0.1:57209"}
+{"time":"2026-09-11T21:07:27.781068+02:00","level":"INFO","msg":"privacy route-all: all RPC routed through proxy (current token)","url":"http://127.0.0.1:57026/rpc/4ed640d8-9d4b-4885-9b5b-7388bf1b3435"}
+{"time":"2026-09-11T21:07:27.789658+02:00","level":"WARN","msg":"insufficient accounts for target TPS","numAccounts":10,"targetTPS":2000,"recommended":200,"achievableTPS":150}
+{"time":"2026-09-11T21:07:27.789701+02:00","level":"INFO","msg":"Initializing account nonces (parallel, through builder)...","count":10}
+{"time":"2026-09-11T21:07:28.610954+02:00","level":"INFO","msg":"Account nonces initialized","count":10}
+{"time":"2026-09-11T21:07:28.620641+02:00","level":"INFO","msg":"gas pricing configured","gasTipCap":1000000,"gasFeeCap":3000000000,"baseFee":90563985,"baseFeeGwei":0.090563985}
+{"time":"2026-09-11T21:07:28.622809+02:00","level":"WARN","msg":"failed to connect to L2 WebSocket for block metrics","error":"websocket: bad handshake","url":"ws://127.0.0.1:57026/rpc/4ed640d8-9d4b-4885-9b5b-7388bf1b3435"}
+{"time":"2026-09-11T21:07:28.628433+02:00","level":"INFO","msg":"recorded test start block number","block":18}
+{"time":"2026-09-11T21:07:28.628518+02:00","level":"INFO","msg":"chain poller: confirmation tracking via eth_getBlockByNumber","startBlock":19}
+{"time":"2026-09-11T21:07:28.628555+02:00","level":"INFO","msg":"adaptive controller started","targetPending":10000,"rateStep":250,"configTargetPending":10000,"configRateStep":250}
+{"time":"2026-09-11T21:07:28.641318+02:00","level":"INFO","msg":"fetched builder tx ordering for verification","ordering":""}
+{"time":"2026-09-11T21:07:28.641473+02:00","level":"INFO","msg":"test started","pattern":"adaptive","txType":"eth-transfer","duration":120000000000,"accounts":10}
+{"time":"2026-09-11T21:07:28.641497+02:00","level":"INFO","msg":"started incremental verification","interval":"5m"}
+{"time":"2026-09-11T21:08:03.402037+02:00","level":"INFO","msg":"shutting down..."}
+{"time":"2026-09-11T21:08:03.402188+02:00","level":"INFO","msg":"stopped incremental verification"}
+{"time":"2026-09-11T21:08:03.402181+02:00","level":"INFO","msg":"incremental verification data collected","recentBlocks":0,"recentHashes":1000}
+{"time":"2026-09-11T21:08:03.402233+02:00","level":"INFO","msg":"incremental verification snapshot","firstBlock":0,"lastBlock":0,"blocksSampled":0,"receiptsSampled":0,"violations":0,"receiptsReverted":0,"totalSnapshots":1}
+{"time":"2026-09-11T21:08:03.402801+02:00","level":"INFO","msg":"adaptive controller stopped"}
+{"time":"2026-09-11T21:08:04.505183+02:00","level":"INFO","msg":"all workers stopped gracefully"}
+{"time":"2026-09-11T21:08:04.523366+02:00","level":"INFO","msg":"recorded test end block number","block":32}
+{"time":"2026-09-11T21:08:04.52653+02:00","level":"INFO","msg":"force stop: skipping confirmation grace period","pendingTxs":33997}
+{"time":"2026-09-11T21:08:04.5291+02:00","level":"INFO","msg":"force stop: skipping pending-tx receipt resolution"}
+{"time":"2026-09-11T21:08:04.531558+02:00","level":"INFO","msg":"discarded pending transactions at test end","discardedCount":33997}
+{"time":"2026-09-11T21:08:04.537886+02:00","level":"INFO","msg":"test finished, starting verification"}
+{"time":"2026-09-11T21:08:04.538357+02:00","level":"INFO","msg":"force stop: skipping on-chain verification"}
+{"time":"2026-09-11T21:08:04.598498+02:00","level":"INFO","msg":"persisted time-series data","count":37}
+{"time":"2026-09-11T21:08:04.609458+02:00","level":"INFO","msg":"TX log persistence started in background","count":43115}
+{"time":"2026-09-11T21:08:04.612106+02:00","level":"INFO","msg":"test stopped"}

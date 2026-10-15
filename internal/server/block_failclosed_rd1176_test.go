@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"privacy-proxy/internal/rbac"
 )
 
 // RD-1176 regression guard. The eth_getBlockByHash/ByNumber and
@@ -24,7 +26,7 @@ func TestBlockFilters_NilAddresses_FailClosed_RD1176(t *testing.T) {
 		`]}}`
 
 	for _, addrs := range [][]string{nil, {}} {
-		out := FilterBlockTransactions([]byte(blockResp), addrs, true)
+		out := FilterBlockTransactions(rbac.ReadProfileStandard, []byte(blockResp), addrs, true)
 		var parsed struct {
 			Result struct {
 				Transactions []json.RawMessage `json:"transactions"`
@@ -50,7 +52,7 @@ func TestBlockFilters_NilAddresses_FailClosed_RD1176(t *testing.T) {
 		`]}`
 
 	for _, addrs := range [][]string{nil, {}} {
-		out := FilterBlockReceipts([]byte(receiptsResp), addrs)
+		out := FilterBlockReceipts(rbac.ReadProfileStandard, []byte(receiptsResp), addrs, nil, nil, nil, nil, nil)
 		var parsed struct {
 			Result []json.RawMessage `json:"result"`
 		}

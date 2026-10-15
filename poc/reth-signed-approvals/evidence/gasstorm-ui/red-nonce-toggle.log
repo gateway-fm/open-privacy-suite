@@ -1,0 +1,14 @@
+.F
+======================================================================
+FAIL: test_configuration_errors_are_explicit (test_ui_config.UIConfigurationTest.test_configuration_errors_are_explicit) (override={'fixNonceGaps': True})
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<repo>/poc/reth-signed-approvals/test_ui_config.py", line 21, in test_configuration_errors_are_explicit
+    with self.subTest(override=override), self.assertRaisesRegex(ValueError, message):
+                                          ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+AssertionError: ValueError not raised
+
+----------------------------------------------------------------------
+Ran 2 tests in 0.001s
+
+FAILED (failures=1)

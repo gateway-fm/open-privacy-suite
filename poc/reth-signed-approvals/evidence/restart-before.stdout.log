@@ -1,0 +1,39 @@
+[2m2026-09-24T18:18:35.932390Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m Initialized tracing, debug log directory: <repo>/.tmp/approval-runs/restart-before-hfzdbzyr/logs/anvil-hardhat
+[2m2026-09-24T18:18:36.132575Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m Starting Reth [3mversion[0m[2m=[0m"2.5.2 (5a6940e)"
+[2m2026-09-24T18:18:36.132614Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m Opening database [3mpath[0m[2m=[0m"<repo>/.tmp/approval-runs/restart-before-hfzdbzyr/data/db"
+[2m2026-09-24T18:18:36.136656Z[0m [32m INFO[0m [2mops_reth_approvals_poc[0m[2m:[0m OPS approval delivery [3mlisten[0m[2m=[0m127.0.0.1:56341 [3mboot_id[0m[2m=[0mbd5c450f5ae6b8fa275805aec8503038
+[2m2026-09-24T18:18:36.137013Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m Configuration loaded [3mpath[0m[2m=[0m"<repo>/.tmp/approval-runs/restart-before-hfzdbzyr/data/reth.toml"
+[2m2026-09-24T18:18:36.137308Z[0m [33m WARN[0m [2mproviders::rocksdb[0m[2m:[0m RocksDB will not keep all files open; performance may be reduced [3mfile_descriptor_limit[0m[2m=[0mSome(122880) [3mthreshold[0m[2m=[0m131072 [3mmax_open_files[0m[2m=[0m512
+[2m2026-09-24T18:18:36.150658Z[0m [32m INFO[0m [1mcheck_consistency[0m[2m:[0m [2mreth::cli[0m[2m:[0m Healing static file inconsistencies.
+[2m2026-09-24T18:18:36.234179Z[0m [32m INFO[0m [1mcheck_consistency[0m[2m:[0m[1mcheck_consistency[0m[1m{[0m[3mread_only[0m[2m=[0mfalse[1m}[0m[2m:[0m [2mreth::cli[0m[2m:[0m Verifying storage consistency.
+[2m2026-09-24T18:18:36.234333Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m Database opened
+[2m2026-09-24T18:18:36.432101Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m 
+Pre-merge hard forks (block based):
+- Frontier                         @0
+- Homestead                        @0
+- Tangerine                        @0
+- SpuriousDragon                   @0
+- Byzantium                        @0
+- Constantinople                   @0
+- Petersburg                       @0
+- Istanbul                         @0
+- Berlin                           @0
+- London                           @0
+Merge hard forks:
+- Paris                            @0 (network is known to be merged)
+Post-merge hard forks (timestamp based):
+- Shanghai                         @0
+[2m2026-09-24T18:18:36.432152Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m Loaded storage settings [3msettings[0m[2m=[0mStorageSettings { storage_v2: true } [3mpruning_mode[0m[2m=[0m"archive"
+[2m2026-09-24T18:18:36.432676Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m Transaction pool initialized
+[2m2026-09-24T18:18:36.446367Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m P2P networking initialized [3menode[0m[2m=[0menode://5a28cf64021d860a164e4dadb044133dbe6f421f1d93427ce6f3c66b76281fee6c5645c63985766bebcd90ae9fabc2ac64a4d0c58dd2820344e0a92b61ccb3dd@127.0.0.1:56360
+[2m2026-09-24T18:18:36.446553Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m StaticFileProducer initialized
+[2m2026-09-24T18:18:36.446705Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m Pruner initialized [3mprune_config[0m[2m=[0mPruneConfig { block_interval: 5, segments: PruneModes { sender_recovery: None, transaction_lookup: None, receipts: None, account_history: None, storage_history: None, bodies_history: None, receipts_log_filter: ReceiptsLogPruneConfig({}) }, minimum_pruning_distance: 10064 }
+[2m2026-09-24T18:18:36.447263Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m Consensus engine initialized
+[2m2026-09-24T18:18:36.447346Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m Engine API handler initialized
+[2m2026-09-24T18:18:36.448310Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m RPC HTTP server started [3murl[0m[2m=[0m127.0.0.1:56339
+[2m2026-09-24T18:18:36.448347Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m RPC auth server started [3murl[0m[2m=[0m127.0.0.1:56340
+[2m2026-09-24T18:18:36.448441Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m Starting consensus engine
+[2m2026-09-24T18:18:36.487276Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m Received SIGTERM
+[2m2026-09-24T18:18:36.487441Z[0m [32m INFO[0m [2mtxpool[0m[2m:[0m Saving current local transactions [3mtxs_file[0m[2m=[0m"<repo>/.tmp/approval-runs/restart-before-hfzdbzyr/data/txpool-transactions-backup.rlp" [3mnum_txs[0m[2m=[0m1
+[2m2026-09-24T18:18:36.487607Z[0m [32m INFO[0m [2mreth::cli[0m[2m:[0m Wrote network peers to file [3mpeers_file[0m[2m=[0m"<repo>/.tmp/approval-runs/restart-before-hfzdbzyr/data/known-peers.json"
+[2m2026-09-24T18:18:36.487671Z[0m [32m INFO[0m [2mtxpool[0m[2m:[0m Wrote local transactions to file [3mtxs_file[0m[2m=[0m"<repo>/.tmp/approval-runs/restart-before-hfzdbzyr/data/txpool-transactions-backup.rlp"

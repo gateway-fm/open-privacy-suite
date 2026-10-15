@@ -1,0 +1,7 @@
+=== RUN   TestPreflightRPCReusesConnectionsAcrossBursts
+    rpc_pool_test.go:75: 160 requests, 152 TCP connections
+    rpc_pool_test.go:77: preflight RPC churns connections: got 152 connections for 160 requests; want at most 34
+--- FAIL: TestPreflightRPCReusesConnectionsAcrossBursts (0.01s)
+FAIL
+FAIL	privacy-proxy/internal/nodeapproval	0.504s
+FAIL

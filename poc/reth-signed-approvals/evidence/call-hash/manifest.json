@@ -1,0 +1,61 @@
+{
+  "source_sha256": {
+    "internal/nodeapproval/transport.go": "3d83fb925844ac90cd9d89466d330cf645cecb8ab97c7a7c363a93ccf8228106",
+    "internal/nodeapproval/service.go": "88883159c65ed172eaf63b7971a5f3efea8e36b967ea519e9650c6c7e36793c6",
+    "internal/nodeapproval/service_test.go": "f9358d48b375a3c53a675e2f4d143057d59843467807ddcd031b40fd3d0c15b1",
+    "internal/nodeapproval/batch.go": "70ede67f8a3335e130fb93150dc880d8e3c8623603265a643c494b6c6e5fc365",
+    "internal/nodeapproval/fingerprint.go": "e634c03a3185acee72e0d51cba957f98468149deca618ddeb38f5d93e8ab5683",
+    "internal/nodeapproval/rpc_pool_test.go": "bb4407cd7536d93daf250c88d5fac31856aa46e91fff8807ef85e87fa74b4553",
+    "internal/nodeapproval/call_golden_test.go": "e3ea9f2bd6611480246355996dfc2c77e5eda61622e5da6e9d75fa8739ab5ee2",
+    "internal/nodeapproval/prepare_test.go": "6a4f5497813c84c352961d6ef5ab1961d1db09da9c144945f9f32851c524863c",
+    "internal/nodeapproval/hops.go": "07fb3240298ed800847707e266373c0974a67ac9558e1241dedc5cc61d7d27ac",
+    "internal/nodeapproval/call_fingerprint_test.go": "431a19e05d5d95749081537ff0c4174a6167648b5e1dcfcba66a78fcf82c1c02",
+    "internal/nodeapproval/call_fingerprint.go": "2b4949389a0258bdff46fdab5f2cbdc0ff49dd5ca1d4ce107318dfaf51cd062e",
+    "internal/nodeapproval/batch_test.go": "eb391243d81c4c44b49f155a0b75e6a1daaa84db93fdbeba84be88a280d36eb6",
+    "internal/nodeapproval/transport_test.go": "68ba999e492405e4141527e7b1864331b0214673e4ae100086dfa2d94f8a09e8",
+    "internal/nodeapproval/lifecycle_test.go": "879f4a3c4c15b753e1c6ac74398e47ca46f2a8e863d63398a36a453e2959ddaa",
+    "poc/reth-signed-approvals/src/call_hash.rs": "f4691a3dabcf140768e76df6b507ad2bf22ad2e0199af0dee8bf37717f1113ec",
+    "poc/reth-signed-approvals/src/fingerprint.rs": "3d898bf86ca4ad68198c2ebe36789aa2ad3bd90d10ed6835b0b234258a3e2891",
+    "poc/reth-signed-approvals/src/batch.rs": "7da3fa0fadde68439a8d8de7971d744de9ec02f7c60ce41fc9ca1639c3b22a73",
+    "poc/reth-signed-approvals/src/profile.rs": "7d34b43bea2a08c8ce755e1250a447eed7b8b7750c7e3a37a8e47811fd5204ac",
+    "poc/reth-signed-approvals/src/execution.rs": "f64de58392d3764e77467b54dcd79e7ef83292d2e1ee60fc9b5265db96948068",
+    "poc/reth-signed-approvals/src/verification.rs": "ccef3dd209fbbf74a191a57bff730e1a491a1366b4aa2541e1d8664ffe9ed2d1",
+    "poc/reth-signed-approvals/src/approvals.rs": "82ba234d4fdf8f8474c42d81620b48558103aed8d4e34b93a498a7243c6c1ce5",
+    "poc/reth-signed-approvals/src/direct.rs": "eec20034efdb6c5c2382f4378292ed0c2df686370420beb854699346d3ce532d",
+    "poc/reth-signed-approvals/src/main.rs": "7f3277235f0cc86ff22c3526581cba173e59659e21550a458b228a8280679026",
+    "poc/reth-signed-approvals/src/hops.rs": "f58ad5efd25724f49e27c89eebbefa8732a3618038dd9cb188f78b52649e8157",
+    "poc/reth-signed-approvals/src/payload.rs": "126a1cfae32288155cb6f8279e80615670754ff5130d70999cee567256fedb5d",
+    "poc/reth-signed-approvals/contracts/Applications.sol": "a085efe3e1ea35ca88f3dcf23b2554c5125765ead57285a67633dba9bbab2a42",
+    "poc/reth-signed-approvals/call_hash_tests.py": "475f3d5d3b4d4e7cb6ec01457a735995dba71855cf08257352773d5e434e92f6",
+    "poc/reth-signed-approvals/call_hash_bench.py": "25da1c514ddb51dc765f64ec80272a4e50aa64bbaffe889f453aa71c02af113f",
+    "poc/reth-signed-approvals/demo.py": "22a07141059ee4faf05aaab3535639c5f82ca1bff854d2b76b87c5f4d419b837",
+    "poc/reth-signed-approvals/gasstorm_ui.py": "f9aa1f9ac8a2082323eda5dfd948a0da7b5912c8b773326857b7b6bf543ba09c",
+    "poc/reth-signed-approvals/CALL-HASH-PLAN.md": "dfe8b8e9136a67f5d0b1201c4be95d5e4b3a70cc75d5b38ceaddb5baec8010cd",
+    "poc/reth-signed-approvals/CALL-HASH-REVIEW.md": "d6dfa6bac7762a33ae3f8f9a3d6657e32d10e5752ff392c7a6cf97462ca99b77",
+    "poc/reth-signed-approvals/ui_browser_test.mjs": "d9ce9b72a13cdd0a876831481ed49e80bbd2c0f56c1c9f73347724c2c867fdf5",
+    "poc/reth-signed-approvals/CALL-HASH.md": "339b0975f35643341c28b013c7714df1be0d7fde29f6c652031491e7b8e6ea5b",
+    "internal/nodeapproval/testdata/call-v3.json": "9eae6f1fe73bb85e9b5343b570777304230d175268bfa39070e92f370951ff2d",
+    "internal/nodeapproval/testdata/call-batch.json": "21abb99a1fabe24c0e92fbea0022c1f1b7ce2653cc92e05be48e4ffdb5c99878"
+  },
+  "benchmark": "benchmark/comparison.json",
+  "checks": {
+    "node-final": 19,
+    "ops": 2,
+    "lifecycle": 35,
+    "lifecycle-ops": 12
+  },
+  "Reth": {
+    "commit": "5a6940e351fed80458fe6c9da8581cbe4b8bd036",
+    "unchanged": true
+  },
+  "Gasstorm": {
+    "commit": "c7cb9cb1ca73959fc413632e1bf5a1156ed06e0b",
+    "unchanged": true
+  },
+  "loadgenerator": {
+    "commit": "d24667e23b010ded9a1d2e80f4d90741c6ab51f2",
+    "unchanged": true
+  },
+  "browser": "../gasstorm-ui/stability/call-hash-ui/browser/browser-results.json",
+  "live_session": "../gasstorm-ui/stability/call-hash-ui/ui-session.json"
+}

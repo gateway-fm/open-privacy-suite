@@ -41,7 +41,7 @@ func setupImpersonationViewerRouter(srv *Server) *gin.Engine {
 			c.Set("subject", sub)
 		}
 		if ov := c.GetHeader("X-Test-Override"); ov != "" {
-			c.Set(viewerDIDOverrideContextKey, ov)
+			setImpersonationContext(c, ov, c.GetString("subject"), "")
 		}
 		c.Next()
 	})

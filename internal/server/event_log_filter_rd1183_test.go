@@ -85,7 +85,7 @@ func TestFilterReceipt_RD1183_NonParticipantEntitledViaParamRule_ReturnsReceipt(
 		{"address": contract, "topics": []string{integTransferTopic0, paddedViewer, otherPadded},
 			"data": "0x0000000000000000000000000000000000000000000000000000000000000064"},
 	}
-	out := FilterReceiptLogsWithEventRules(
+	out := FilterReceiptLogsWithEventRules(rbac.ReadProfileStandard,
 		buildRD1183Receipt(t, rd1183PayerEOA, contract, logs), []string{viewer}, perms, abi, nil, nil)
 
 	got := rd1183ReceiptResult(t, out)
@@ -116,7 +116,7 @@ func TestFilterReceipt_RD1183_NonParticipantNotEntitled_ReturnsNull(t *testing.T
 		{"address": contract, "topics": []string{integTransferTopic0, otherPadded, otherPadded},
 			"data": "0x0000000000000000000000000000000000000000000000000000000000000064"},
 	}
-	out := FilterReceiptLogsWithEventRules(
+	out := FilterReceiptLogsWithEventRules(rbac.ReadProfileStandard,
 		buildRD1183Receipt(t, rd1183PayerEOA, contract, logs), []string{viewer}, perms, abi, nil, nil)
 
 	if got := rd1183ReceiptResult(t, out); got != nil {
@@ -134,7 +134,7 @@ func TestFilterReceipt_RD1183_NonParticipantNoLogsField_ReturnsNull(t *testing.T
 
 	receipt := map[string]any{"from": rd1183PayerEOA, "to": contract, "status": "0x1"} // no "logs"
 	b, _ := json.Marshal(receipt)
-	out := FilterReceiptLogsWithEventRules(
+	out := FilterReceiptLogsWithEventRules(rbac.ReadProfileStandard,
 		[]byte(`{"jsonrpc":"2.0","id":1,"result":`+string(b)+`}`),
 		[]string{viewer}, perms, &testABIProviderServer{}, nil, nil)
 
@@ -173,7 +173,7 @@ func TestFilterReceipt_RD1183_DeploymentReceiptNotAdmitted(t *testing.T) {
 		},
 	}
 	b, _ := json.Marshal(receipt)
-	out := FilterReceiptLogsWithEventRules(
+	out := FilterReceiptLogsWithEventRules(rbac.ReadProfileStandard,
 		[]byte(`{"jsonrpc":"2.0","id":1,"result":`+string(b)+`}`),
 		[]string{viewer}, perms, abi, nil, nil)
 
@@ -212,7 +212,7 @@ func TestFilterReceipt_RD1183_NonParticipantNoSiblingOverAdmission(t *testing.T)
 		// would surface it. A non-participant must NOT see it.
 		{"address": contract, "topics": []string{integApprovalTopic0}, "data": "0x"},
 	}
-	out := FilterReceiptLogsWithEventRules(
+	out := FilterReceiptLogsWithEventRules(rbac.ReadProfileStandard,
 		buildRD1183Receipt(t, rd1183PayerEOA, contract, logs), []string{viewer}, perms, abi, nil, nil)
 
 	got := rd1183ReceiptResult(t, out)

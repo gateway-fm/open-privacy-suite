@@ -13,6 +13,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"privacy-proxy/internal/nodepolicy"
 	"privacy-proxy/internal/rbac"
+	"privacy-proxy/internal/tracer"
 )
 
 // NodeExecutionIdentityRequest carries identity and an exact execution binding.
@@ -49,6 +50,17 @@ func nodeExecutionMethod(method string) bool {
 func (p *JSONRPCProcessor) processNodeExecution(ctx context.Context, req *ProcessRequest) *ProcessResult {
 	start := time.Now()
 	method := rbac.ResolveMethodAlias(req.Method)
+	if !rbac.IsForwardableMethod(req.Method) {
+		return p.nodeExecutionError(ctx, req, http.StatusNotFound, "method not found", ReasonMethodNotAllowed)
+	}
+	if denied, _ := rbac.DetectStateOverride(req.Method, req.Params); denied {
+		return p.nodeExecutionError(ctx, req, http.StatusNotFound, "method not found", ReasonStateOverrideNotAllowed)
+	}
+	if method == "debug_traceCall" {
+		if err := vetDebugTraceConfig(method, req.Params); err != nil {
+			return p.nodeExecutionError(ctx, req, err.StatusCode, err.Message, err.Reason)
+		}
+	}
 	if method == "debug_traceTransaction" || method == "eth_createAccessList" {
 		return p.nodeExecutionError(ctx, req, http.StatusBadRequest, "method is unavailable in Reth policy mode", ReasonInvalidRequestShape)
 	}
@@ -142,6 +154,9 @@ func (p *JSONRPCProcessor) processNodeExecution(ctx context.Context, req *Proces
 	}
 	var visibleTo []string
 	if transaction != nil {
+		if denied := p.strictProfileRejectsVisibleTo(ctx, req, true); denied != nil {
+			return denied
+		}
 		if denied := p.checkCompliance(ctx, req, admission.OrgID, admission.UserID, admission.Signer, to, data, value); denied != nil {
 			return denied
 		}
@@ -170,6 +185,10 @@ func (p *JSONRPCProcessor) processNodeExecution(ctx context.Context, req *Proces
 		identityRequest.BindingHash = strings.ToLower(transaction.Hash().Hex())
 	} else {
 		params[0].(map[string]any)["from"] = admission.Signer
+		if method == "debug_traceCall" {
+			// Never let an omitted tracer select Reth's storage/stack logger.
+			params = nodeCallTraceParams(params)
+		}
 		payload, err := json.Marshal(params)
 		if err != nil {
 			return p.nodeExecutionError(ctx, req, http.StatusBadRequest, "invalid simulation request", "")
@@ -206,6 +225,17 @@ func (p *JSONRPCProcessor) processNodeExecution(ctx context.Context, req *Proces
 		if !json.Valid(result) {
 			return p.nodeExecutionFailure(ctx, req, nodepolicy.ErrNodeResponse)
 		}
+		if method == "debug_traceCall" {
+			sanitized, _, err := tracer.ParseStrictCallTrace(result)
+			if err != nil {
+				return p.nodeExecutionFailure(ctx, req, nodepolicy.ErrNodeResponse)
+			}
+			var denied *ProcessError
+			result, denied = p.redactClientTraceValues(ctx, req, map[string]bool{admission.OrgID: true}, sanitized)
+			if denied != nil {
+				return p.nodeExecutionError(ctx, req, denied.StatusCode, denied.Message, denied.Reason)
+			}
+		}
 	}
 	if p.circuitBreaker != nil {
 		p.circuitBreaker.Reset(apiKey)
@@ -228,6 +258,16 @@ func (p *JSONRPCProcessor) processNodeExecution(ctx context.Context, req *Proces
 		return p.nodeExecutionFailure(ctx, req, nodepolicy.ErrNodeResponse)
 	}
 	return &ProcessResult{StatusCode: http.StatusOK, ResponseBody: body}
+}
+
+// The caller's options have already been vetted. Match the public RPC's
+// plain callTracer output without exposing logs, storage or stack snapshots.
+func nodeCallTraceParams(params []any) []any {
+	block := any("latest")
+	if len(params) > 1 && params[1] != nil {
+		block = params[1]
+	}
+	return []any{params[0], block, map[string]any{"tracer": "callTracer"}}
 }
 
 func (p *JSONRPCProcessor) nodeExecutionFailure(ctx context.Context, req *ProcessRequest, err error) *ProcessResult {

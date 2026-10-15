@@ -373,16 +373,17 @@ func (s *Server) updateContractABI(c *gin.Context) {
 //
 // PUT /orgs/:org_id/contracts/:address/visibleto-unlock
 //
-// Security note: setting this to true means any tx sender on this
-// contract can grant per-event visibility to any DID they list in
-// `visibleTo` (scoped to that one tx, gated by the viewer being in
-// some non-system group with a contract_grant). See decisions.md §12
-// for the full bypass surface (event_rules, param_rules,
-// deny-when-no-ABI gate are all bypassed for unlocked viewers on the
-// matching tx). Operators should review their grants before flipping.
+// Security note: setting this to true lets a tx sender share the full
+// event payload, including embedded addresses, from this contract in
+// that transaction with eligible DIDs listed in `visibleTo`. Eligibility
+// requires an in-org contract grant from a non-default, non-system group,
+// or org-admin membership in the owning org without a grant. Cross-org
+// and anonymous viewers are excluded. For eligible listed viewers, the
+// event rules, parameter rules and missing-ABI gate do not restrict the
+// matching events. Operators should review grants before enabling this.
 //
 // @Summary      Toggle a contract's visibleTo-unlock flag
-// @Description  Enables or disables the RD-874 per-contract opt-in that lets a tx sender grant per-event visibility to DIDs listed in the transaction's visibleTo. Enabling it widens who can see events on this contract, so review grants first. Scoped to {org_id}; the restricted operator token is rejected.
+// @Description  Enables or disables the per-contract opt-in that lets a tx sender share full event payloads, including embedded addresses, with eligible DIDs listed in that transaction's visibleTo. Eligibility requires an in-org contract grant through a non-default, non-system group, or org-admin membership without a grant. Cross-org and anonymous viewers remain denied. Review grants before enabling. Scoped to {org_id}; the restricted operator token is rejected.
 // @Tags         Admin: RBAC
 // @Accept       json
 // @Produce      json
@@ -1830,12 +1831,14 @@ func (s *Server) batchMoveContracts(c *gin.Context) {
 				}
 				return fmt.Errorf("failed to create group: %w", err)
 			}
-			// Create group access with deploy claims
+			// Create group access with deploy claims. The method list is the
+			// explicit "*" expansion, never a literal "*" (the stored row must
+			// say exactly what the group can call).
 			claims := rbac.ExpandClaims([]rbac.Claim{rbac.ClaimDeploy})
 			if err := tx.CreateGroupAccess(ctx, &rbac.GroupAccess{
 				ID:             uuid.New().String(),
 				GroupID:        newGroup.ID,
-				AllowedMethods: []string{"*"},
+				AllowedMethods: rbac.AllAllowedMethods(),
 				Claims:         claims,
 			}); err != nil {
 				return fmt.Errorf("failed to create group access: %w", err)

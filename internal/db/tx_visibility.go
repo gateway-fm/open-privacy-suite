@@ -51,6 +51,22 @@ func (d *DB) GetTxVisibility(ctx context.Context, txHash string) ([]string, erro
 // single query. Returns map[txHash][]string. Hashes not found are absent from
 // the map (not an error).
 func (d *DB) GetBatchTxVisibility(ctx context.Context, txHashes []string) (map[string][]string, error) {
+	return d.batchTxVisibility(ctx, txHashes, `SELECT tx_hash, visible_to_dids FROM tx_visible_to WHERE tx_hash = ANY($1)`)
+}
+
+// GetBatchTxVisibilityInOrg is GetBatchTxVisibility restricted to shares whose
+// sender acted in orgID (tx_visible_to.org_id, the org the send resolved to).
+// Impersonated reads anchored to one org use it so a share made in another org
+// never becomes part of that org's view (RD-1308). An empty orgID matches
+// nothing.
+func (d *DB) GetBatchTxVisibilityInOrg(ctx context.Context, txHashes []string, orgID string) (map[string][]string, error) {
+	if orgID == "" {
+		return nil, nil
+	}
+	return d.batchTxVisibility(ctx, txHashes, `SELECT tx_hash, visible_to_dids FROM tx_visible_to WHERE tx_hash = ANY($1) AND org_id = $2`, orgID)
+}
+
+func (d *DB) batchTxVisibility(ctx context.Context, txHashes []string, query string, extra ...any) (map[string][]string, error) {
 	if len(txHashes) == 0 {
 		return nil, nil
 	}
@@ -61,8 +77,7 @@ func (d *DB) GetBatchTxVisibility(ctx context.Context, txHashes []string) (map[s
 		lower[i] = strings.ToLower(h)
 	}
 
-	query := `SELECT tx_hash, visible_to_dids FROM tx_visible_to WHERE tx_hash = ANY($1)`
-	rows, err := d.conn.QueryContext(ctx, query, lower)
+	rows, err := d.conn.QueryContext(ctx, query, append([]any{lower}, extra...)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to batch get tx visibility: %w", err)
 	}

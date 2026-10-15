@@ -91,6 +91,7 @@ func setupTestServerForContractProof(t *testing.T) *testServerContractProof {
 	t.Cleanup(mockNode.Close)
 
 	cfg := &config.Config{
+		ReadProfile: rbac.ReadProfileStandard,
 		NodeURL:     mockNode.URL,
 		JWTSecret:   "test-secret-key-for-jwt-signing-123",
 		BaseURL:     "http://localhost:8080",

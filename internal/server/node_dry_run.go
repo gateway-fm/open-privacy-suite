@@ -54,15 +54,19 @@ func (s *Server) handleNodeDryRun(c *gin.Context, req apimodels.DryRunRequest, u
 	if *verdict.WouldAllow {
 		response.Decision = "allow"
 	}
-	if trace {
+	if s.readProfile().Strict() {
+		// Match the ordinary dry-run endpoint: only the verdict may leave
+		// a privileged diagnostic under the strict read profile.
+		response.Policy = nil
+	} else if trace {
 		response.Trace = out.Result
 		response.LogsEmitted = extractLogsFromCallTrace(out.Result)
-		perms, err := s.rbacAccessCtrl.GetEffectivePermissionsByIDs(c.Request.Context(), user.ID, c.Param("org_id"))
+		var err error
+		response.LogsVisibleToUser, err = s.dryRunTraceLogsVisibleToUser(c.Request.Context(), &dryRunTraceResult{Trace: out.Result, Logs: response.LogsEmitted}, user.ExternalID, c.Param("org_id"), &rbac.AccessCheckResult{Allowed: true, UserID: user.ID, OrgID: c.Param("org_id")})
 		if err != nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "visibility rules unavailable"})
 			return
 		}
-		response.LogsVisibleToUser = s.filterDryRunLogs(c.Request.Context(), response.LogsEmitted, perms, user, user.ExternalID, c.Param("org_id"))
 	} else {
 		response.Response, _ = json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "result": out.Result})
 	}

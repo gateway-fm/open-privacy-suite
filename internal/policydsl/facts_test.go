@@ -117,7 +117,7 @@ func executeFactsFixture(t *testing.T, e *EVMEvaluator, facts factsWireFixture, 
 	evm := vm.NewEVM(e.blockCtx, e.stateDB, e.chainCfg, vm.Config{NoBaseFee: true})
 	evm.SetTxContext(vm.TxContext{Origin: callerAddress, GasPrice: uint256.NewInt(0)})
 	// These representative policies must fit the agreed node-internal budget.
-	ret, _, err := evm.StaticCall(callerAddress, policyAddress, wire, vm.GasBudget{RegularGas: 100_000})
+	ret, _, err := evm.StaticCall(callerAddress, policyAddress, wire, vm.NewGasBudget(100_000, 0))
 	if err != nil {
 		t.Fatalf("facts-based policy call failed: %v", err)
 	}

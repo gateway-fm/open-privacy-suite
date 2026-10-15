@@ -69,6 +69,7 @@ type nodeRPCService struct {
 	wrongHash     bool
 	invalidResult bool
 	metadata      []NodeSubmissionMetadata
+	result        json.RawMessage
 }
 
 func (n *nodeRPCService) PrepareIdentity(_ context.Context, r NodeExecutionIdentityRequest) ([]byte, error) {
@@ -103,6 +104,13 @@ func (n *nodeRPCService) Simulate(_ context.Context, identity, request []byte) (
 	if n.invalidResult {
 		return json.RawMessage(`{"broken":`), nil
 	}
+	if n.result != nil {
+		return n.result, nil
+	}
+	var simulation nodepolicy.SimulationRequest
+	if json.Unmarshal(request, &simulation) == nil && simulation.Method == "debug_traceCall" {
+		return json.RawMessage(`{"type":"CALL","to":"` + nodeRPCTarget + `","input":"0x","output":"0x"}`), nil
+	}
 	return json.RawMessage(`"0x1234"`), nil
 }
 
@@ -124,7 +132,7 @@ func nodeRPCFixture(t *testing.T) (*JSONRPCProcessor, *nodeRPCStore, *nodeRPCSer
 	}
 	store := &nodeRPCStore{user: &rbac.User{ID: "principal-node", ExternalID: "did:test:node", KYC: true}, linked: []string{signer}, methods: []string{"eth_call", "eth_estimateGas", "debug_traceCall", "eth_sendTransaction"}}
 	service := &nodeRPCService{}
-	p := NewJSONRPCProcessor(JSONRPCProcessorConfig{RBACAccessCtrl: rbac.NewAccessController(store, time.Minute), NodeExecution: service, AccessLogger: &nodeRPCLogger{}, RateLimiter: &noopRateLimiter{}, ConcurrencyLimiter: middleware.NewConcurrencyLimiter(3, 0)})
+	p := NewJSONRPCProcessor(JSONRPCProcessorConfig{RBACAccessCtrl: rbac.NewAccessController(store, time.Minute), NodeExecution: service, AccessLogger: &nodeRPCLogger{}, RateLimiter: &noopRateLimiter{}, ConcurrencyLimiter: middleware.NewConcurrencyLimiter(3, 0), ReadProfile: rbac.ReadProfileStandard})
 	t.Cleanup(p.rbacAccessCtrl.Stop)
 	return p, store, service, "0x" + hex.EncodeToString(b)
 }

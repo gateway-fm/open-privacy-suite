@@ -1,0 +1,43 @@
+# The supported client/toolchain are pinned in node-approvals/compatibility.json.
+FROM rust:1.98.1-trixie AS builder
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
+    clang libclang-dev pkg-config libssl-dev cmake protobuf-compiler git python3 \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY node-approvals/compatibility.json node-approvals/compatibility.json
+RUN python3 - <<'PY'
+import json, subprocess
+from pathlib import Path
+p = json.loads(Path('node-approvals/compatibility.json').read_text())['reth']
+subprocess.run(['git', 'clone', '--depth', '1', '--branch', 'v' + p['version'], p['repository'], '.tmp/reth'], check=True)
+actual = subprocess.check_output(['git', '-C', '.tmp/reth', 'rev-parse', 'HEAD'], text=True).strip()
+if actual != p['commit']:
+    raise SystemExit('Reth source differs from compatibility.json')
+PY
+COPY proto/ proto/
+COPY node-approvals/reth/ node-approvals/reth/
+ARG CARGO_BUILD_JOBS=4
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/app/target \
+    CARGO_TARGET_DIR=/app/target cargo build --release --locked \
+    --jobs "${CARGO_BUILD_JOBS}" --manifest-path node-approvals/reth/Cargo.toml \
+    && cp /app/target/release/ops-reth-approvals /app/ops-reth-approvals
+RUN python3 - <<'PY'
+import json, subprocess
+from pathlib import Path
+expected = json.loads(Path('node-approvals/compatibility.json').read_text())['reth']['rust']
+actual = subprocess.check_output(['rustc', '--version'], text=True).split()[1]
+if actual != expected:
+    raise SystemExit('Rust toolchain differs from compatibility.json')
+PY
+
+FROM debian:trixie-slim AS dev
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
+    ca-certificates libssl3t64 wget \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd -r -u 1000 -m appuser \
+    && mkdir /data && chown appuser:appuser /data
+COPY --from=builder /app/ops-reth-approvals /usr/local/bin/ops-reth-approvals
+USER appuser
+ENTRYPOINT ["ops-reth-approvals"]

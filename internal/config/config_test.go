@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
+
+	"privacy-proxy/internal/rbac"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -838,8 +841,15 @@ func TestDeriveAuditDatabaseURL(t *testing.T) {
 }
 
 func TestExtraRPCNamespaces_UnmarshalJSON(t *testing.T) {
+	parse := func(t *testing.T, input string) (ExtraRPCNamespaces, error) {
+		t.Helper()
+		var cfg ExtraRPCNamespaces
+		err := cfg.UnmarshalJSON([]byte(input))
+		return cfg, err
+	}
+
 	t.Run("valid config with aliases", func(t *testing.T) {
-		input := `{
+		cfg, err := parse(t, `{
 			"version": 1,
 			"namespaces": {
 				"Linea": [
@@ -847,9 +857,8 @@ func TestExtraRPCNamespaces_UnmarshalJSON(t *testing.T) {
 					{"method": "linea_getProof", "alias": "eth_getProof"}
 				]
 			}
-		}`
-		var cfg ExtraRPCNamespaces
-		if err := cfg.UnmarshalJSON([]byte(input)); err != nil {
+		}`)
+		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if cfg.Version != 1 {
@@ -859,47 +868,66 @@ func TestExtraRPCNamespaces_UnmarshalJSON(t *testing.T) {
 		if len(methods) != 2 {
 			t.Fatalf("expected 2 methods, got %d", len(methods))
 		}
-		if methods[0].Method != "linea_estimateGas" || methods[0].Alias != "eth_estimateGas" {
+		if methods[0].Method != "linea_estimateGas" || methods[0].Alias != "eth_estimateGas" || methods[0].Passthrough {
 			t.Errorf("method[0] = %+v, want linea_estimateGas/eth_estimateGas", methods[0])
 		}
-		if cfg.Namespaces["Linea"].Wildcard != nil {
-			t.Errorf("expected nil wildcard for v1 array form, got %+v", cfg.Namespaces["Linea"].Wildcard)
+		if got := cfg.Passthrough(); len(got) != 0 {
+			t.Errorf("Passthrough() = %v, want none", got)
 		}
 	})
 
-	t.Run("plain string rejected — alias required", func(t *testing.T) {
-		input := `{
+	t.Run("passthrough entry by exact name", func(t *testing.T) {
+		cfg, err := parse(t, `{
 			"version": 1,
 			"namespaces": {
-				"Linea": ["linea_estimateGas"]
+				"Linea": [
+					{"method": "linea_estimateGas", "alias": "eth_estimateGas"},
+					{"method": "linea_getTransactionExclusionStatusV1", "passthrough": true}
+				],
+				"Trace": [{"method": "trace_block", "passthrough": true}]
 			}
-		}`
-		var cfg ExtraRPCNamespaces
-		err := cfg.UnmarshalJSON([]byte(input))
-		if err == nil {
-			t.Fatal("expected error for plain string method (no alias), got nil")
+		}`)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		want := []string{"linea_getTransactionExclusionStatusV1", "trace_block"}
+		if got := cfg.Passthrough(); strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Errorf("Passthrough() = %v, want %v (sorted)", got, want)
+		}
+		if _, aliased := cfg.Aliases()["trace_block"]; aliased {
+			t.Error("a passthrough entry must not appear in Aliases()")
+		}
+		names := cfg.MethodNames()
+		if len(names["Linea"]) != 2 || len(names["Trace"]) != 1 {
+			t.Errorf("MethodNames() = %v, want aliased and passthrough entries listed", names)
 		}
 	})
 
-	t.Run("object without alias rejected", func(t *testing.T) {
-		input := `{
-			"version": 1,
-			"namespaces": {
-				"Linea": [{"method": "linea_estimateGas"}]
-			}
-		}`
-		var cfg ExtraRPCNamespaces
-		err := cfg.UnmarshalJSON([]byte(input))
-		if err == nil {
-			t.Fatal("expected error for method without alias, got nil")
+	t.Run("plain string rejected", func(t *testing.T) {
+		if _, err := parse(t, `{"version": 1, "namespaces": {"Linea": ["linea_estimateGas"]}}`); err == nil {
+			t.Fatal("expected error for plain string method, got nil")
 		}
-		if !strings.Contains(err.Error(), "missing 'alias'") {
-			t.Errorf("error should mention missing alias, got: %v", err)
+	})
+
+	t.Run("entry without alias or passthrough rejected", func(t *testing.T) {
+		_, err := parse(t, `{"version": 1, "namespaces": {"Linea": [{"method": "linea_estimateGas"}]}}`)
+		if err == nil {
+			t.Fatal("expected error for method without alias or passthrough, got nil")
+		}
+		if !strings.Contains(err.Error(), "needs an 'alias'") || !strings.Contains(err.Error(), "passthrough") {
+			t.Errorf("error should name both options, got: %v", err)
+		}
+	})
+
+	t.Run("entry with both alias and passthrough rejected", func(t *testing.T) {
+		_, err := parse(t, `{"version": 1, "namespaces": {"Linea": [{"method": "linea_x", "alias": "eth_call", "passthrough": true}]}}`)
+		if err == nil || !strings.Contains(err.Error(), "both 'alias' and 'passthrough'") {
+			t.Fatalf("expected alias+passthrough error, got %v", err)
 		}
 	})
 
 	t.Run("aliases helper", func(t *testing.T) {
-		input := `{
+		cfg, err := parse(t, `{
 			"version": 1,
 			"namespaces": {
 				"Linea": [
@@ -907,9 +935,8 @@ func TestExtraRPCNamespaces_UnmarshalJSON(t *testing.T) {
 					{"method": "linea_getProof", "alias": "eth_getProof"}
 				]
 			}
-		}`
-		var cfg ExtraRPCNamespaces
-		if err := cfg.UnmarshalJSON([]byte(input)); err != nil {
+		}`)
+		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		aliases := cfg.Aliases()
@@ -923,116 +950,86 @@ func TestExtraRPCNamespaces_UnmarshalJSON(t *testing.T) {
 
 	// ----- v2 schema -----
 
-	t.Run("v2 array form (no wildcard) parses identically to v1", func(t *testing.T) {
-		input := `{
+	t.Run("v2 array form parses identically to v1", func(t *testing.T) {
+		cfg, err := parse(t, `{
 			"version": 2,
-			"namespaces": {
-				"Linea": [
-					{"method": "linea_estimateGas", "alias": "eth_estimateGas"}
-				]
-			}
-		}`
-		var cfg ExtraRPCNamespaces
-		if err := cfg.UnmarshalJSON([]byte(input)); err != nil {
+			"namespaces": {"Linea": [{"method": "linea_estimateGas", "alias": "eth_estimateGas"}]}
+		}`)
+		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
-		}
-		if cfg.Namespaces["Linea"].Wildcard != nil {
-			t.Errorf("expected nil wildcard for array-form namespace, got %+v", cfg.Namespaces["Linea"].Wildcard)
 		}
 		if got := len(cfg.Namespaces["Linea"].Explicit); got != 1 {
 			t.Errorf("expected 1 explicit method, got %d", got)
 		}
 	})
 
-	t.Run("v2 object form with explicit + wildcard", func(t *testing.T) {
-		input := `{
+	t.Run("v2 object form with explicit entries", func(t *testing.T) {
+		cfg, err := parse(t, `{
 			"version": 2,
 			"namespaces": {
-				"Linea": {
-					"explicit": [
-						{"method": "linea_estimateGas", "alias": "eth_estimateGas"}
-					],
-					"wildcard": {
-						"prefix": "linea_",
-						"deny": ["linea_sendTransaction", "linea_sign*"]
-					}
-				}
+				"Linea": {"explicit": [
+					{"method": "linea_estimateGas", "alias": "eth_estimateGas"},
+					{"method": "linea_getTransactionExclusionStatusV1", "passthrough": true}
+				]}
 			}
-		}`
-		var cfg ExtraRPCNamespaces
-		if err := cfg.UnmarshalJSON([]byte(input)); err != nil {
+		}`)
+		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		nc := cfg.Namespaces["Linea"]
-		if len(nc.Explicit) != 1 || nc.Explicit[0].Method != "linea_estimateGas" {
-			t.Errorf("explicit[0] = %+v, want linea_estimateGas", nc.Explicit)
+		if len(nc.Explicit) != 2 || nc.Explicit[0].Method != "linea_estimateGas" {
+			t.Errorf("explicit = %+v", nc.Explicit)
 		}
-		if nc.Wildcard == nil {
-			t.Fatal("expected non-nil wildcard")
-		}
-		if nc.Wildcard.Prefix != "linea_" {
-			t.Errorf("wildcard prefix = %q, want linea_", nc.Wildcard.Prefix)
-		}
-		if len(nc.Wildcard.Deny) != 2 {
-			t.Errorf("wildcard deny count = %d, want 2", len(nc.Wildcard.Deny))
-		}
-		// Aliases() still only enumerates explicit methods.
 		if cfg.Aliases()["linea_estimateGas"] != "eth_estimateGas" {
 			t.Error("explicit alias missing from Aliases() result")
 		}
-		// Wildcards() returns the wildcard config keyed by namespace.
-		ws := cfg.Wildcards()
-		if ws["Linea"] == nil || ws["Linea"].Prefix != "linea_" {
-			t.Errorf("Wildcards() = %+v, want Linea→linea_", ws)
+		if got := cfg.Passthrough(); len(got) != 1 || got[0] != "linea_getTransactionExclusionStatusV1" {
+			t.Errorf("Passthrough() = %v", got)
 		}
 	})
 
-	t.Run("v2 wildcard-only namespace (empty explicit) is valid", func(t *testing.T) {
-		input := `{
-			"version": 2,
-			"namespaces": {
-				"Trace": {
-					"explicit": [],
-					"wildcard": {"prefix": "trace_"}
+	// A prefix wildcard admits methods nobody reviewed, so a config that
+	// still carries one fails startup with an actionable message instead of
+	// being silently honored or silently dropped.
+	t.Run("v2 wildcard block rejected", func(t *testing.T) {
+		for name, input := range map[string]string{
+			"with explicit": `{"version": 2, "namespaces": {"Linea": {
+				"explicit": [{"method": "linea_estimateGas", "alias": "eth_estimateGas"}],
+				"wildcard": {"prefix": "linea_", "deny": ["linea_sendTransaction", "linea_sign*"]}}}}`,
+			"wildcard only":  `{"version": 2, "namespaces": {"Trace": {"explicit": [], "wildcard": {"prefix": "trace_"}}}}`,
+			"empty wildcard": `{"version": 2, "namespaces": {"Trace": {"explicit": [], "wildcard": {}}}}`,
+		} {
+			t.Run(name, func(t *testing.T) {
+				_, err := parse(t, input)
+				if err == nil || !strings.Contains(err.Error(), "prefix wildcards are not supported") {
+					t.Fatalf("expected wildcard rejection, got %v", err)
 				}
-			}
-		}`
-		var cfg ExtraRPCNamespaces
-		if err := cfg.UnmarshalJSON([]byte(input)); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		nc := cfg.Namespaces["Trace"]
-		if len(nc.Explicit) != 0 {
-			t.Errorf("expected empty explicit, got %d entries", len(nc.Explicit))
-		}
-		if nc.Wildcard == nil || nc.Wildcard.Prefix != "trace_" {
-			t.Errorf("wildcard not parsed: %+v", nc.Wildcard)
+			})
 		}
 	})
 
-	t.Run("v2 missing prefix on wildcard fails", func(t *testing.T) {
-		input := `{
-			"version": 2,
-			"namespaces": {
-				"Linea": {"explicit": [], "wildcard": {"deny": ["foo"]}}
-			}
-		}`
-		var cfg ExtraRPCNamespaces
-		err := cfg.UnmarshalJSON([]byte(input))
-		if err == nil || !strings.Contains(err.Error(), "'prefix' is required") {
-			t.Fatalf("expected prefix-required error, got %v", err)
+	// One method name names one gate: the same method declared twice (in
+	// one namespace or across two) would resolve to whichever alias the map
+	// merge kept.
+	t.Run("duplicate method rejected", func(t *testing.T) {
+		for name, input := range map[string]string{
+			"across namespaces": `{"version": 1, "namespaces": {
+				"A": [{"method": "linea_x", "alias": "eth_call"}],
+				"B": [{"method": "linea_x", "alias": "eth_getBalance"}]}}`,
+			"within a namespace": `{"version": 1, "namespaces": {
+				"A": [{"method": "linea_x", "alias": "eth_call"}, {"method": "linea_x", "passthrough": true}]}}`,
+		} {
+			t.Run(name, func(t *testing.T) {
+				_, err := parse(t, input)
+				if err == nil || !strings.Contains(err.Error(), "declared more than once") {
+					t.Fatalf("expected duplicate-method error, got %v", err)
+				}
+			})
 		}
 	})
 
 	t.Run("v1 object form rejected (object requires v2)", func(t *testing.T) {
-		input := `{
-			"version": 1,
-			"namespaces": {
-				"Linea": {"explicit": [], "wildcard": {"prefix": "linea_"}}
-			}
-		}`
-		var cfg ExtraRPCNamespaces
-		err := cfg.UnmarshalJSON([]byte(input))
+		_, err := parse(t, `{"version": 1, "namespaces": {"Linea": {"explicit": []}}}`)
 		if err == nil || !strings.Contains(err.Error(), "requires version >= 2") {
 			t.Fatalf("expected version-mismatch error, got %v", err)
 		}
@@ -1121,5 +1118,110 @@ func TestConfig_VerifyFirstPartyClientSecret(t *testing.T) {
 	}
 	if c.VerifyFirstPartyClientSecret("", "anything") {
 		t.Fatalf("empty client_id should not verify")
+	}
+}
+
+// Standard names remain separate from operator-defined methods in both
+// namespace schema versions.
+func TestExtraRPCNamespaces_RejectsStandardMethodAsExtraMethod(t *testing.T) {
+	for _, input := range []string{
+		`{"version": 1, "namespaces": {"X": [{"method": "eth_getStorageAt", "alias": "eth_call"}]}}`,
+		`{"version": 1, "namespaces": {"X": [{"method": "ETH_SENDTRANSACTION", "alias": "eth_call"}]}}`,
+		`{"version": 2, "namespaces": {"X": {"explicit": [{"method": "eth_getProof", "alias": "eth_getBalance"}]}}}`,
+		`{"version": 2, "namespaces": {"Linea": {"explicit": [{"method": "linea_getProof", "alias": "eth_getProof"}, {"method": "debug_traceCall", "alias": "eth_call"}]}}}`,
+		`{"version": 1, "namespaces": {"X": [{"method": "eth_getBlockReceipts", "alias": "eth_blockNumber"}]}}`,
+	} {
+		var cfg ExtraRPCNamespaces
+		err := cfg.UnmarshalJSON([]byte(input))
+		if err == nil || !strings.Contains(err.Error(), "standard RPC method") {
+			t.Errorf("expected a standard method to be rejected as an extra method, got %v: %s", err, input)
+		}
+	}
+
+	var ok ExtraRPCNamespaces
+	if err := ok.UnmarshalJSON([]byte(`{"version": 1, "namespaces": {"Linea": [{"method": "linea_getProof", "alias": "eth_getProof"}]}}`)); err != nil {
+		t.Fatalf("a chain-specific method must still load: %v", err)
+	}
+}
+
+func TestExtraRPCNamespaces_ValidatesAliasTargets(t *testing.T) {
+	for _, target := range []string{" ", "linea_unknown", "eth_getProoof"} {
+		var cfg ExtraRPCNamespaces
+		input := `{"version": 1, "namespaces": {"Linea": [{"method": "linea_getProof", "alias": ` + strconv.Quote(target) + `}]}}`
+		if err := cfg.UnmarshalJSON([]byte(input)); err == nil {
+			t.Errorf("alias target %q must be rejected", target)
+		}
+	}
+
+	var cfg ExtraRPCNamespaces
+	if err := cfg.UnmarshalJSON([]byte(`{"version": 1, "namespaces": {"Linea": [{"method": "linea_getProof", "alias": " ETH_GETPROOF "}, {"method": "linea_getBlockReceipts", "alias": " ETH_GETBLOCKRECEIPTS "}]}}`)); err != nil {
+		t.Fatalf("a padded standard alias target must be accepted: %v", err)
+	}
+	if got := cfg.Aliases()["linea_getProof"]; got != "eth_getProof" {
+		t.Errorf("alias target = %q, want canonical eth_getProof", got)
+	}
+	if got := cfg.Aliases()["linea_getBlockReceipts"]; got != "eth_getBlockReceipts" {
+		t.Errorf("alias target = %q, want canonical eth_getBlockReceipts", got)
+	}
+}
+
+// TestExtraRPCNamespaces_ShippedExampleRegisters keeps the example operators
+// copy (rpc-namespaces.example.json) valid end to end: it must parse and pass
+// the rbac registration rules, so a copied example never fails startup.
+func TestExtraRPCNamespaces_ShippedExampleRegisters(t *testing.T) {
+	raw, err := os.ReadFile("../../rpc-namespaces.example.json")
+	if err != nil {
+		t.Fatalf("read example: %v", err)
+	}
+	var cfg ExtraRPCNamespaces
+	if err := cfg.UnmarshalJSON(raw); err != nil {
+		t.Fatalf("example must parse: %v", err)
+	}
+	defer rbac.SnapshotMethodRegistriesForTest()()
+	rbac.ExtraMethods = map[string]bool{}
+	rbac.ExtraNamespaces = nil
+	rbac.MethodAliases = map[string]string{}
+	rbac.PassthroughMethods = map[string]bool{}
+	if err := rbac.RegisterExtraNamespaces(cfg.MethodNames(), cfg.Aliases(), cfg.Passthrough()); err != nil {
+		t.Fatalf("example must register: %v", err)
+	}
+	for method, target := range cfg.Aliases() {
+		if !rbac.IsCatalogMethod(target) {
+			t.Errorf("example alias %s → %s targets a method the proxy does not model", method, target)
+		}
+	}
+}
+
+// Alias normalization at config load satisfies the registry's exact catalog
+// target contract while retaining named passthrough entries.
+func TestExtraRPCNamespaces_NormalizedAliasesRegister(t *testing.T) {
+	entries := `[{"method":"custom_getProof","alias":" ETH_GETPROOF "},{"method":"custom_getBlockReceipts","alias":" ETH_GETBLOCKRECEIPTS "},{"method":"custom_status","passthrough":true}]`
+	for _, version := range []int{1, 2} {
+		t.Run(strconv.Itoa(version), func(t *testing.T) {
+			defer rbac.SnapshotMethodRegistriesForTest()()
+			rbac.ExtraMethods = map[string]bool{}
+			rbac.ExtraNamespaces = nil
+			rbac.MethodAliases = map[string]string{}
+			rbac.PassthroughMethods = map[string]bool{}
+			namespace := entries
+			if version == 2 {
+				namespace = `{"explicit":` + entries + `}`
+			}
+			var cfg ExtraRPCNamespaces
+			if err := cfg.UnmarshalJSON([]byte(`{"version":` + strconv.Itoa(version) + `,"namespaces":{"Custom":` + namespace + `}}`)); err != nil {
+				t.Fatalf("namespace config: %v", err)
+			}
+			if err := rbac.RegisterExtraNamespaces(cfg.MethodNames(), cfg.Aliases(), cfg.Passthrough()); err != nil {
+				t.Fatalf("normalized aliases must register: %v", err)
+			}
+			for method, target := range map[string]string{"custom_getProof": rbac.MethodGetProof, "custom_getBlockReceipts": rbac.MethodGetBlockReceipts} {
+				if got := rbac.ResolveMethodAlias(method); got != target || !rbac.IsForwardableMethod(method) {
+					t.Errorf("%s target = %q, want forwardable %q", method, got, target)
+				}
+			}
+			if !rbac.IsForwardableMethod("custom_status") || !rbac.PassthroughMethods["custom_status"] {
+				t.Fatal("named passthrough entry must retain its registration")
+			}
+		})
 	}
 }

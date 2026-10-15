@@ -19,6 +19,8 @@ The disclosure system provides:
 - **Audit trail** of all disclosure access events
 - **Multiple disclosure levels** from full transparency to complete redaction
 
+Under `PRIVACY_READ_PROFILE=strict`, an approved disclosure grant is the only way for a viewer who is not a transaction participant to see that transaction on the Explorer Data API. Disclosure grants do not add JSON-RPC access. See [Strict Read Profile](/docs/security/strict-read-profile).
+
 ## Disclosure Levels
 
 | Level | Address Display | Use Case |
@@ -219,6 +221,16 @@ For **pseudonymous** and **redacted** disclosures:
 
 - **Approval cannot widen the request.** When approving a request, the approver can only narrow the requested `scope` (tighten the `date_range`, drop `addresses`, lower the `disclosure_level`) — never broaden it. A grant can never disclose more than the requester originally asked for and the data owner reviewed.
 - **The grant's scope bounds every response.** The `date_range` and `addresses` on the grant are enforced on all disclosed transaction and log data, so a viewer cannot reach activity outside the window or contracts they were granted.
+
+### Grants Belong to the Grantee
+
+A grant discloses data to the requester the data owner approved, and to no one else. An org admin who views the explorer as the grantee ([View as user](/docs/security/view-as-user)) or dry-runs a call as them does **not** get the grantee's disclosures:
+
+- `/grant/{grant_id}/...` pages return **404 Not Found**, whether or not the grant exists.
+- The grantee's list of disclosed addresses is empty.
+- Transactions, transfers and logs render the disclosed party at the grantee's own visibility without the grant: a disclosed wallet stays `[PRIVATE]` or the row is dropped in the explorer, and is zeroed in RPC logs.
+
+No disclosure-grant reveal is recorded against the grantee for those views, because the grant was never used.
 
 ### Opaque Address IDs
 

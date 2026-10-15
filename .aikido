@@ -1,0 +1,86 @@
+# Reviewed for PR #549 on 2026-10-15. Exact advisory IDs and their aliases only.
+# Keep source, secret, license and dependency scanning enabled; no path exclusions.
+#
+# Netty exceptions apply while both Gradle builds enforce 4.2.17.Final.
+# Reassess on dependency changes. Findings requiring 4.2.18.Final remain open.
+#
+# Bouncy Castle is deferred, not fixed or classified as a false positive.
+# Follow-up: https://linear.app/gateway-fm/issue/RD-1347
+# Repository separation: https://linear.app/gateway-fm/issue/RD-1358
+# Remove/reassess these deferrals during extraction and before integration delivery.
+# Preserve the outstanding findings in the integration repository; do not carry
+# this OPS PR exception forward as security clearance for integration releases.
+ignore:
+  cves:
+    # Netty: verified version-resolution false positives.
+    AIKIDO-2026-240696:
+      reason: "False positive for the current dependency graph: both Gradle builds enforce Netty 4.2.17.Final, which contains this fix; Aikido reports the overridden 4.1.130.Final dependency. Reassess on dependency changes. Newer 4.2.18 findings remain open."
+    AIKIDO-2026-421700:
+      reason: "False positive for the current dependency graph: both Gradle builds enforce Netty 4.2.17.Final, which contains this fix; Aikido reports the overridden 4.1.130.Final dependency. Reassess on dependency changes. Newer 4.2.18 findings remain open."
+    AIKIDO-2026-445867:
+      reason: "False positive for the current dependency graph: both Gradle builds enforce Netty 4.2.17.Final, which contains this fix; Aikido reports the overridden 4.1.130.Final dependency. Reassess on dependency changes. Newer 4.2.18 findings remain open."
+    AIKIDO-2026-739270:
+      reason: "False positive for the current dependency graph: both Gradle builds enforce Netty 4.2.17.Final, which contains this fix; Aikido reports the overridden 4.1.130.Final dependency. Reassess on dependency changes. Newer 4.2.18 findings remain open."
+    CVE-2026-56819:
+      reason: "False positive for the current dependency graph: both Gradle builds enforce Netty 4.2.17.Final, which contains this fix; Aikido reports the overridden 4.1.130.Final dependency. Reassess on dependency changes. Newer 4.2.18 findings remain open."
+    CVE-2026-59903:
+      reason: "False positive for the current dependency graph: both Gradle builds enforce Netty 4.2.17.Final, which contains this fix; Aikido reports the overridden 4.1.130.Final dependency. Reassess on dependency changes. Newer 4.2.18 findings remain open."
+    CVE-2026-75595:
+      reason: "False positive for the current dependency graph: both Gradle builds enforce Netty 4.2.17.Final, which contains this fix; Aikido reports the overridden 4.1.130.Final dependency. Reassess on dependency changes. Newer 4.2.18 findings remain open."
+    GHSA-cc6x-ffm5-83wf:
+      reason: "False positive for the current dependency graph: both Gradle builds enforce Netty 4.2.17.Final, which contains this fix; Aikido reports the overridden 4.1.130.Final dependency. Reassess on dependency changes. Newer 4.2.18 findings remain open."
+    GHSA-p85m-gvr3-788c:
+      reason: "False positive for the current dependency graph: both Gradle builds enforce Netty 4.2.17.Final, which contains this fix; Aikido reports the overridden 4.1.130.Final dependency. Reassess on dependency changes. Newer 4.2.18 findings remain open."
+    # Bouncy Castle: explicit follow-up, current PR findings only.
+    AIKIDO-2026-307106:
+      reason: "Deferred from OPS reconciliation PR #549 to https://linear.app/gateway-fm/issue/RD-1347 and repository extraction https://linear.app/gateway-fm/issue/RD-1358. Not a false positive or security clearance; review/fix before integration delivery and remove/reassess during extraction."
+    AIKIDO-2026-38955:
+      reason: "Deferred from OPS reconciliation PR #549 to https://linear.app/gateway-fm/issue/RD-1347 and repository extraction https://linear.app/gateway-fm/issue/RD-1358. Not a false positive or security clearance; review/fix before integration delivery and remove/reassess during extraction."
+    AIKIDO-2026-391408:
+      reason: "Deferred from OPS reconciliation PR #549 to https://linear.app/gateway-fm/issue/RD-1347 and repository extraction https://linear.app/gateway-fm/issue/RD-1358. Not a false positive or security clearance; review/fix before integration delivery and remove/reassess during extraction."
+    AIKIDO-2026-439774:
+      reason: "Deferred from OPS reconciliation PR #549 to https://linear.app/gateway-fm/issue/RD-1347 and repository extraction https://linear.app/gateway-fm/issue/RD-1358. Not a false positive or security clearance; review/fix before integration delivery and remove/reassess during extraction."
+    AIKIDO-2026-448914:
+      reason: "Deferred from OPS reconciliation PR #549 to https://linear.app/gateway-fm/issue/RD-1347 and repository extraction https://linear.app/gateway-fm/issue/RD-1358. Not a false positive or security clearance; review/fix before integration delivery and remove/reassess during extraction."
+    AIKIDO-2026-473893:
+      reason: "Deferred from OPS reconciliation PR #549 to https://linear.app/gateway-fm/issue/RD-1347 and repository extraction https://linear.app/gateway-fm/issue/RD-1358. Not a false positive or security clearance; review/fix before integration delivery and remove/reassess during extraction."
+    AIKIDO-2026-511225:
+      reason: "Deferred from OPS reconciliation PR #549 to https://linear.app/gateway-fm/issue/RD-1347 and repository extraction https://linear.app/gateway-fm/issue/RD-1358. Not a false positive or security clearance; review/fix before integration delivery and remove/reassess during extraction."
+    AIKIDO-2026-572912:
+      reason: "Deferred from OPS reconciliation PR #549 to https://linear.app/gateway-fm/issue/RD-1347 and repository extraction https://linear.app/gateway-fm/issue/RD-1358. Not a false positive or security clearance; review/fix before integration delivery and remove/reassess during extraction."
+    AIKIDO-2026-582928:
+      reason: "Deferred from OPS reconciliation PR #549 to https://linear.app/gateway-fm/issue/RD-1347 and repository extraction https://linear.app/gateway-fm/issue/RD-1358. Not a false positive or security clearance; review/fix before integration delivery and remove/reassess during extraction."
+    AIKIDO-2026-652915:
+      reason: "Deferred from OPS reconciliation PR #549 to https://linear.app/gateway-fm/issue/RD-1347 and repository extraction https://linear.app/gateway-fm/issue/RD-1358. Not a false positive or security clearance; review/fix before integration delivery and remove/reassess during extraction."
+    AIKIDO-2026-677785:
+      reason: "Deferred from OPS reconciliation PR #549 to https://linear.app/gateway-fm/issue/RD-1347 and repository extraction https://linear.app/gateway-fm/issue/RD-1358. Not a false positive or security clearance; review/fix before integration delivery and remove/reassess during extraction."
+    AIKIDO-2026-845849:
+      reason: "Deferred from OPS reconciliation PR #549 to https://linear.app/gateway-fm/issue/RD-1347 and repository extraction https://linear.app/gateway-fm/issue/RD-1358. Not a false positive or security clearance; review/fix before integration delivery and remove/reassess during extraction."
+    AIKIDO-2026-98906:
+      reason: "Deferred from OPS reconciliation PR #549 to https://linear.app/gateway-fm/issue/RD-1347 and repository extraction https://linear.app/gateway-fm/issue/RD-1358. Not a false positive or security clearance; review/fix before integration delivery and remove/reassess during extraction."
+    CVE-2026-12803:
+      reason: "Deferred from OPS reconciliation PR #549 to https://linear.app/gateway-fm/issue/RD-1347 and repository extraction https://linear.app/gateway-fm/issue/RD-1358. Not a false positive or security clearance; review/fix before integration delivery and remove/reassess during extraction."
+    CVE-2026-12816:
+      reason: "Deferred from OPS reconciliation PR #549 to https://linear.app/gateway-fm/issue/RD-1347 and repository extraction https://linear.app/gateway-fm/issue/RD-1358. Not a false positive or security clearance; review/fix before integration delivery and remove/reassess during extraction."
+    CVE-2026-12860:
+      reason: "Deferred from OPS reconciliation PR #549 to https://linear.app/gateway-fm/issue/RD-1347 and repository extraction https://linear.app/gateway-fm/issue/RD-1358. Not a false positive or security clearance; review/fix before integration delivery and remove/reassess during extraction."
+    CVE-2026-13506:
+      reason: "Deferred from OPS reconciliation PR #549 to https://linear.app/gateway-fm/issue/RD-1347 and repository extraction https://linear.app/gateway-fm/issue/RD-1358. Not a false positive or security clearance; review/fix before integration delivery and remove/reassess during extraction."
+    CVE-2026-14682:
+      reason: "Deferred from OPS reconciliation PR #549 to https://linear.app/gateway-fm/issue/RD-1347 and repository extraction https://linear.app/gateway-fm/issue/RD-1358. Not a false positive or security clearance; review/fix before integration delivery and remove/reassess during extraction."
+    CVE-2026-18036:
+      reason: "Deferred from OPS reconciliation PR #549 to https://linear.app/gateway-fm/issue/RD-1347 and repository extraction https://linear.app/gateway-fm/issue/RD-1358. Not a false positive or security clearance; review/fix before integration delivery and remove/reassess during extraction."
+    CVE-2026-18040:
+      reason: "Deferred from OPS reconciliation PR #549 to https://linear.app/gateway-fm/issue/RD-1347 and repository extraction https://linear.app/gateway-fm/issue/RD-1358. Not a false positive or security clearance; review/fix before integration delivery and remove/reassess during extraction."
+    CVE-2026-58060:
+      reason: "Deferred from OPS reconciliation PR #549 to https://linear.app/gateway-fm/issue/RD-1347 and repository extraction https://linear.app/gateway-fm/issue/RD-1358. Not a false positive or security clearance; review/fix before integration delivery and remove/reassess during extraction."
+    CVE-2026-58061:
+      reason: "Deferred from OPS reconciliation PR #549 to https://linear.app/gateway-fm/issue/RD-1347 and repository extraction https://linear.app/gateway-fm/issue/RD-1358. Not a false positive or security clearance; review/fix before integration delivery and remove/reassess during extraction."
+    CVE-2026-58062:
+      reason: "Deferred from OPS reconciliation PR #549 to https://linear.app/gateway-fm/issue/RD-1347 and repository extraction https://linear.app/gateway-fm/issue/RD-1358. Not a false positive or security clearance; review/fix before integration delivery and remove/reassess during extraction."
+    CVE-2026-59650:
+      reason: "Deferred from OPS reconciliation PR #549 to https://linear.app/gateway-fm/issue/RD-1347 and repository extraction https://linear.app/gateway-fm/issue/RD-1358. Not a false positive or security clearance; review/fix before integration delivery and remove/reassess during extraction."
+    CVE-2026-71889:
+      reason: "Deferred from OPS reconciliation PR #549 to https://linear.app/gateway-fm/issue/RD-1347 and repository extraction https://linear.app/gateway-fm/issue/RD-1358. Not a false positive or security clearance; review/fix before integration delivery and remove/reassess during extraction."
+    CVE-2026-8763:
+      reason: "Deferred from OPS reconciliation PR #549 to https://linear.app/gateway-fm/issue/RD-1347 and repository extraction https://linear.app/gateway-fm/issue/RD-1358. Not a false positive or security clearance; review/fix before integration delivery and remove/reassess during extraction."

@@ -1,0 +1,19 @@
+Historical strict V2 investigation. Shared-counter behavior has since changed; see [current results and caveats](CALL-HASH.md).
+
+| Checked | Finding / evidence |
+|---|---|
+| Actual load generator | Unmodified sibling `loadgenerator`, commit `d24667e23b010ded9a1d2e80f4d90741c6ab51f2`. Native Reth capability, privacy routing, local nonce reservations and HTTP `/start` API. |
+| Gasstorm checkout | Local `main` at `c7cb9cb1ca73959fc413632e1bf5a1156ed06e0b` already contains the relevant privacy-routing fixes from `fix/privacy-loadtest-org-routing`. No branch switch or edit to either sibling repository. Remote freshness was not checked. |
+| Bundled scripts | `make loadtest-privacy` selects op-reth/blockbuilder and builds the main OPS checkout; it omits the load generator moved into a separate compose file. The local-build overlay has incomplete loadgenerator service definitions. `make up` resets volumes. The new runner targets this worktree and isolated services. |
+| Setup | Ten actual Gasstorm wallets, one test DID, real wallet-link signatures, org/group membership, deploy claim and explicit contract grants. Addresses are derived from the keys: Gasstorm's setup script has an incorrect wallet-7 address. |
+| Contract workload | Deploy Gasstorm's actual ERC20/GasConsumer/NFT bytecode through OPS. Populate its existing deployment cache with verified addresses. Initialize ERC20 allowances before measuring repeated, idempotent approvals. Shared-counter writes have a separate contention test. |
+| Same configuration | One binary per component for both modes; toggle OPS approvals and Reth enforcement together. Same genesis, wallet funding, DB settings, one-second block schedule and workload. Reverse mode order for the second pair. |
+| Real / fixtures | Real OPS HTTP, PostgreSQL, Redis, EVM, mempool, signatures, policies and receipts. Development identity-provider login and local Engine API scheduling are fixtures. No indexer, browser or external blockbuilder. |
+| Production bug found | The new preflight RPC client used Geth's default HTTP transport. A regression test first failed: 160 concurrent-burst requests opened 152 TCP connections. It now uses OPS's configured upstream pool; the same test opens 32 connections and reuses them. [Red](evidence/gasstorm/red-rpc-pool.log), [green with race checks](evidence/gasstorm/green-go.log). |
+| Receipt checker | Reuse connections rather than opening a socket per receipt. Check every logged hash through OPS, then match successful receipts to canonical blocks. Report missing hashes separately from successes. |
+| Gasstorm reporting | `txSent` counts transactions queued before submission; cancellation can leave unsent transactions and nonce gaps. Its on-chain window and final confirmation counters cover different periods. Some verification paths still try unsupported JSON-RPC batches and WebSocket subscriptions before falling back. Preserve those diagnostics; use independently reconciled receipts for the comparison. |
+| Durable evidence | Wait for Gasstorm's asynchronous transaction-log commit after `completed`; use SQLite backup so WAL contents are included. Resume only complete mode/pair groups; archive and repeat interrupted groups. |
+| Timing scope | Fixed-rate end-to-end tests, not a capacity search. Reth timing measures the selected canonical payload build (execution and roots), excluding other candidates, preflight, delivery and import. Signature verification still consumes CPU outside this timer. |
+| Regressions after pool fix | [55 real-node scenarios](evidence/gasstorm/regression-final/tests.json), [12 OPS HTTP scenarios](evidence/gasstorm/ops-final/tests.json) and Go race suites for approvals, RBAC and tracer passed. Rust implementation unchanged. |
+
+[Results and rerun command](GASSTORM.md) · [Plan and critique](GASSTORM-PLAN.md) · [Raw comparison](evidence/gasstorm/final/comparison.json)

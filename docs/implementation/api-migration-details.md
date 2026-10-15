@@ -444,7 +444,7 @@ The artifact is not a separate store and not part of the authored text: both are
 columns of one row in Postgres — `configuration_revisions.source` (what the
 person wrote and reviewed, digest-pinned and immutable) and
 `configuration_revisions.compiled_artifact` beside it (what the server produced
-from that source with the pinned compiler; migration 074). They are split because the source is
+from that source with the pinned compiler; migration 075). They are split because the source is
 **input** and the artifact is **evidence** derived from it: bytecode inside the
 authored text would be code the reviewer cannot read and the author could
 choose — so the schema refuses it, the server compiles, and both digests are
@@ -743,7 +743,7 @@ A submission must name the currently active revision as its `baseRevision`; a
 stale one is rejected with 409 (`configuration_revision_store.go:107`), and
 activation re-checks the base inside the transaction under a scope lock
 (`pg_advisory_xact_lock` for platform, `SELECT … FOR UPDATE` on the
-organisation row, migration 075), so simultaneous activations serialise instead
+organisation row, migration 076), so simultaneous activations serialise instead
 of interleaving. The loser re-reads the context, re-applies the change and
 resubmits — the same loop as a rejected `git push`.
 

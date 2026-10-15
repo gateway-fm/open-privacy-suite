@@ -36,6 +36,15 @@ import (
 // POST /rpc/{org_id}: a single JSON-RPC 2.0 request object. Batch requests
 // (a top-level JSON array) are rejected with 400.
 //
+// Member names are exact-case and unique. A request is rejected with 400, and
+// never forwarded, if it repeats a member name or holds two names that differ
+// only in letter case in the same object at any depth, if it carries a case
+// variant of a member below (e.g. `Method`), or, for methods whose params the
+// proxy checks, if params holds a case variant of a standard request field
+// (e.g. `To`) or data and input that differ. The node receives only jsonrpc, id,
+// method and params; visibleTo/privateFor and other top-level members are not
+// forwarded.
+//
 // For the transaction-sending methods (eth_sendTransaction /
 // eth_sendRawTransaction) the object may additionally carry a top-level
 // `visibleTo` array (alias: `privateFor`) of viewer identifiers — DIDs
