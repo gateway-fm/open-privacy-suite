@@ -1,8 +1,8 @@
 # Signed approval contract
 
 The canonical wire, signature and receiver semantics are maintained in the
-[OPS node integrations contract](https://github.com/gateway-fm/ops-node-integrations/blob/7a9dbf8d229af64470a367a06f4666e172f5f2de/docs/implementation/approvals-wire-contract.md).
-The matching [fingerprint contract](https://github.com/gateway-fm/ops-node-integrations/blob/7a9dbf8d229af64470a367a06f4666e172f5f2de/docs/fingerprints.md)
+[OPS node integrations contract](https://github.com/gateway-fm/ops-node-integrations/blob/f9e039cbfabe82c3f8cc668d71fa437cde4856a0/docs/implementation/approvals-wire-contract.md).
+The matching [fingerprint contract](https://github.com/gateway-fm/ops-node-integrations/blob/f9e039cbfabe82c3f8cc668d71fa437cde4856a0/docs/fingerprints.md)
 describes strict and Calls V3 execution projections.
 
 OPS consumes version 1.0.0 through the immutable commit and manifest hash in
@@ -19,5 +19,5 @@ step after qualified releases are available.
 
 ## Settings
 
-The [canonical settings table](https://github.com/gateway-fm/ops-node-integrations/blob/7a9dbf8d229af64470a367a06f4666e172f5f2de/docs/implementation/approvals-wire-contract.md#7-settings)
+The [canonical settings table](https://github.com/gateway-fm/ops-node-integrations/blob/f9e039cbfabe82c3f8cc668d71fa437cde4856a0/docs/implementation/approvals-wire-contract.md#7-settings)
 lists sender TTL, delivery bounds, receiver capacity, wait windows and trusted-key configuration.
