@@ -128,7 +128,7 @@ export default function ComplianceConfig() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h3 className="text-base font-medium text-neutral-700">Compliance Configuration</h3>
+        <h3 className="text-base font-medium text-neutral-700">Controls Configuration</h3>
         <div className="flex items-center gap-2">
           {isDirty && !isReadonlyAdmin && (
             <Badge variant="warning">Unsaved changes</Badge>

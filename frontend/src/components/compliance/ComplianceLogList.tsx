@@ -103,7 +103,7 @@ export default function ComplianceLogList() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h3 className="text-base font-medium text-neutral-700">Compliance Logs</h3>
+        <h3 className="text-base font-medium text-neutral-700">Controls Logs</h3>
       </div>
 
       {/* Filters */}
@@ -255,7 +255,7 @@ export default function ComplianceLogList() {
       <Dialog open={!!selectedLog} onOpenChange={open => { if (!open) setSelectedLog(null); }}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Compliance Log Detail</DialogTitle>
+            <DialogTitle>Controls Log Detail</DialogTitle>
           </DialogHeader>
           {selectedLog && (
             <div className="space-y-4">

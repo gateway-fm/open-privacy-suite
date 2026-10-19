@@ -103,7 +103,7 @@ describe('ComplianceManager Integration Tests', () => {
       renderComplianceManager();
 
       await waitFor(() => {
-        expect(screen.getByText('Compliance')).toBeInTheDocument();
+        expect(screen.getByText('Controls')).toBeInTheDocument();
         expect(screen.getByText('Travel rule enforcement, token prices, and sanctions')).toBeInTheDocument();
       });
     });
@@ -147,7 +147,7 @@ describe('ComplianceManager Integration Tests', () => {
 
       // Wait for initial load
       await waitFor(() => {
-        expect(screen.getByText('Compliance Configuration')).toBeInTheDocument();
+        expect(screen.getByText('Controls Configuration')).toBeInTheDocument();
       });
 
       // Click Token Prices tab
@@ -156,7 +156,7 @@ describe('ComplianceManager Integration Tests', () => {
 
       // After navigating, the config content should disappear and token content should appear
       await waitFor(() => {
-        expect(screen.queryByText('Compliance Configuration')).not.toBeInTheDocument();
+        expect(screen.queryByText('Controls Configuration')).not.toBeInTheDocument();
       });
 
       // The Token Prices sub-component should render (shows Add Token button)

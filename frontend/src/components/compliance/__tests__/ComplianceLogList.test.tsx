@@ -208,7 +208,7 @@ describe('ComplianceLogList', () => {
       renderWithComplianceContext(<ComplianceLogList />);
 
       await waitFor(() => {
-        expect(screen.getByText('Compliance Logs')).toBeInTheDocument();
+        expect(screen.getByText('Controls Logs')).toBeInTheDocument();
       });
 
       expect(screen.getByPlaceholderText('Search by user DID...')).toBeInTheDocument();

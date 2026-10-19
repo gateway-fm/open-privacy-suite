@@ -225,7 +225,7 @@ describe('Backend Response Contract Tests', () => {
     renderWithComplianceContext(<ComplianceConfig />);
 
     await waitFor(() => {
-      expect(screen.getByText('Compliance Configuration')).toBeInTheDocument();
+      expect(screen.getByText('Controls Configuration')).toBeInTheDocument();
     });
 
     // Verify the enabled badge renders
@@ -336,7 +336,7 @@ describe('Backend Response Contract Tests', () => {
     renderWithComplianceContext(<ComplianceLogList />);
 
     await waitFor(() => {
-      expect(screen.getByText('Compliance Logs')).toBeInTheDocument();
+      expect(screen.getByText('Controls Logs')).toBeInTheDocument();
     });
 
     // Verify the user DID is displayed (truncated since > 20 chars)

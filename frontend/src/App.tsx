@@ -118,7 +118,7 @@ function App() {
               </div>
 
               {/* Navigation Tabs — order: primary daily-driver tabs first
-                  (RBAC → Compliance → Disclosure), forensic / diagnostic
+                  (RBAC → Controls → Disclosure), forensic / diagnostic
                   tabs last (Access Logs, Diagnostics). Diagnostics replaces
                   the prior "Dashboard" landing tab; its content (system
                   status + test request panel + demo deploy) is dev / ops
@@ -131,7 +131,7 @@ function App() {
                   </TabsTrigger>
                   <TabsTrigger value="compliance" className="gap-2">
                     <Scale className="w-4 h-4" />
-                    <span className="hidden sm:inline">Compliance</span>
+                    <span className="hidden sm:inline">Controls</span>
                   </TabsTrigger>
                   <TabsTrigger value="disclosure" className="gap-2">
                     <FileKey className="w-4 h-4" />

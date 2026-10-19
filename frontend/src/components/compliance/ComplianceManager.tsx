@@ -187,7 +187,7 @@ export default function ComplianceManager() {
                 <Scale className="w-5 h-5 text-primary" />
               </div>
               <div>
-                <CardTitle className="text-lg">Compliance</CardTitle>
+                <CardTitle className="text-lg">Controls</CardTitle>
                 <p className="text-sm text-neutral-500 mt-0.5">
                   Travel rule enforcement, token prices, and sanctions
                 </p>

@@ -44,7 +44,7 @@ describe('ComplianceConfig', () => {
       renderWithComplianceContext(<ComplianceConfig />);
 
       await waitFor(() => {
-        expect(screen.getByText('Compliance Configuration')).toBeInTheDocument();
+        expect(screen.getByText('Controls Configuration')).toBeInTheDocument();
       });
 
       expect(screen.getByText('Enforcement')).toBeInTheDocument();
@@ -129,7 +129,7 @@ describe('ComplianceConfig', () => {
       renderWithComplianceContext(<ComplianceConfig />);
 
       await waitFor(() => {
-        expect(screen.getByText('Compliance Configuration')).toBeInTheDocument();
+        expect(screen.getByText('Controls Configuration')).toBeInTheDocument();
       });
 
       // Initially enabled — button says "Click to disable"
@@ -168,7 +168,7 @@ describe('ComplianceConfig', () => {
       renderWithComplianceContext(<ComplianceConfig />);
 
       await waitFor(() => {
-        expect(screen.getByText('Compliance Configuration')).toBeInTheDocument();
+        expect(screen.getByText('Controls Configuration')).toBeInTheDocument();
       });
 
       // No changes yet → Save disabled, no dirty-state cues.
@@ -194,7 +194,7 @@ describe('ComplianceConfig', () => {
       renderWithComplianceContext(<ComplianceConfig />);
 
       await waitFor(() => {
-        expect(screen.getByText('Compliance Configuration')).toBeInTheDocument();
+        expect(screen.getByText('Controls Configuration')).toBeInTheDocument();
       });
 
       // Loaded config is enforce + enabled → nothing changed yet → Save disabled.
