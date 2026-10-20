@@ -485,15 +485,18 @@ proto-lint:
 	@which buf > /dev/null || (echo "buf not installed"; exit 1)
 	buf lint
 
+# Optional external wallet-emulator checkout, used only by staging helpers.
+# Set an absolute path; see CONTRIBUTING.md for setup. Builds and CI do not
+# require this tool.
+WALLET_EMULATOR_DIR ?=
+
 ## staging-create-test-accs: Generate the five deterministic staging test
 ##                           identities (alice/bob/carol/dave/eve) under
-##                           tools/wallet-emulator-js/identities/. Idempotent
-##                           + self-healing. Files are committed to git on
-##                           purpose; see the script header for the security
-##                           rationale.
+##                           WALLET_EMULATOR_DIR/identities/. Idempotent
+##                           + self-healing; see the external script header.
 .PHONY: staging-create-test-accs
-staging-create-test-accs: require-wallet-emulator-submodule
-	@cd tools/wallet-emulator-js && ./scripts/create-test-identities.sh
+staging-create-test-accs: require-wallet-emulator
+	@cd "$(WALLET_EMULATOR_DIR)" && ./scripts/create-test-identities.sh
 
 ## wallet-emulator-circuits: Fetch the auth-v2 ZK circuit artifacts to
 ##                           PRIVADO_CIRCUITS_DIR (default: ~/.privado-circuits)
@@ -525,13 +528,11 @@ staging-circuits: wallet-emulator-circuits
 ## staging-auth-users: Authenticate every named test identity (alice/bob/carol/
 ##                     dave/eve) against the staging proxy and print a
 ##                     name → DID table. Use ./scripts/auth-as.sh <name> from
-##                     tools/wallet-emulator-js/ to grab an actual JWT.
-##                     Ensures circuits + identities exist via deps; safe to
-##                     run on a fresh clone.
+##                     WALLET_EMULATOR_DIR to grab an actual JWT.
+##                     Requires an external wallet-emulator checkout, then
+##                     ensures circuits + identities exist.
 ##                     Override the proxy with: make staging-auth-users PROXY_URL=https://...
-# `require-PROXY_URL` runs before any auth-bearing target's deps so we
-# fail fast — without it, a forgotten PROXY_URL still triggers the ~500
-# MB circuit download before erroring out.
+# Validate the URL and external checkout before starting any circuit download.
 .PHONY: require-PROXY_URL
 require-PROXY_URL:
 	@if [ -z "$(PROXY_URL)" ]; then \
@@ -540,24 +541,30 @@ require-PROXY_URL:
 	  exit 2; \
 	fi
 
-# wallet-emulator-js lives in its own repo (gateway-fm/wallet-emulator-js)
-# and is consumed here as a git submodule at tools/wallet-emulator-js/.
-# A fresh clone without --recurse-submodules leaves the dir empty, so any
-# target that shells into it fails with a confusing "no such file" — this
-# gate gives the real fix instead.
-.PHONY: require-wallet-emulator-submodule
-require-wallet-emulator-submodule:
-	@if [ ! -f tools/wallet-emulator-js/package.json ]; then \
-	  echo "error: tools/wallet-emulator-js/ submodule is not initialized."; \
-	  echo "       Run: git submodule update --init --recursive tools/wallet-emulator-js"; \
+# wallet-emulator-js is obtained separately; it is not a project submodule.
+.PHONY: require-wallet-emulator
+require-wallet-emulator:
+	@case "$(WALLET_EMULATOR_DIR)" in \
+	  /*) ;; \
+	  *) echo "error: set WALLET_EMULATOR_DIR to the absolute path of a separate wallet-emulator-js checkout."; \
+	     echo "       See CONTRIBUTING.md (Optional staging authentication tools)."; \
+	     exit 2 ;; \
+	esac
+	@if [ ! -f "$(WALLET_EMULATOR_DIR)/package.json" ] || \
+	    [ ! -x "$(WALLET_EMULATOR_DIR)/scripts/create-test-identities.sh" ] || \
+	    [ ! -x "$(WALLET_EMULATOR_DIR)/scripts/auth-all.sh" ] || \
+	    [ ! -x "$(WALLET_EMULATOR_DIR)/scripts/auth-as.sh" ]; then \
+	  echo "error: WALLET_EMULATOR_DIR must contain wallet-emulator-js and its staging scripts."; \
+	  echo "       Install the tool using its own setup instructions; see CONTRIBUTING.md."; \
 	  exit 2; \
 	fi
 
 .PHONY: staging-auth-users
-staging-auth-users: require-PROXY_URL require-wallet-emulator-submodule staging-circuits staging-create-test-accs
+staging-auth-users: require-PROXY_URL require-wallet-emulator
+	@$(MAKE) --no-print-directory staging-circuits staging-create-test-accs
 	@echo "Authenticating against: $(PROXY_URL)"
 	@echo
-	@cd tools/wallet-emulator-js && PROXY_URL="$(PROXY_URL)" PRIVADO_CIRCUITS_DIR="$(PRIVADO_CIRCUITS_DIR)" ./scripts/auth-all.sh
+	@cd "$(WALLET_EMULATOR_DIR)" && PROXY_URL="$(PROXY_URL)" PRIVADO_CIRCUITS_DIR="$(PRIVADO_CIRCUITS_DIR)" ./scripts/auth-all.sh
 
 ## staging-cleanup: Wipe the fetched circuit artifacts and the persisted
 ##                  identity JSON files so the next `make staging-test-accs`
@@ -565,11 +572,11 @@ staging-auth-users: require-PROXY_URL require-wallet-emulator-submodule staging-
 ##                  testing; the identities regenerate deterministically so
 ##                  the DIDs after a wipe are bit-identical to before.
 .PHONY: staging-cleanup
-staging-cleanup:
+staging-cleanup: require-wallet-emulator
 	@echo "Removing $(PRIVADO_CIRCUITS_DIR)/authV2/ ..."
 	@rm -rf "$(PRIVADO_CIRCUITS_DIR)/authV2"
-	@echo "Removing tools/wallet-emulator-js/identities/ ..."
-	@rm -rf tools/wallet-emulator-js/identities
+	@echo "Removing $(WALLET_EMULATOR_DIR)/identities/ ..."
+	@rm -rf "$(WALLET_EMULATOR_DIR)/identities"
 	@echo "Done. Re-run 'make staging-test-accs' to exercise the full flow."
 
 ## staging-test-accs: Does it all. Init circuits if missing, create identities
@@ -580,7 +587,7 @@ staging-cleanup:
 staging-test-accs: staging-auth-users
 	@echo
 	@echo "Refresh a single user's JWT (tokens are ~5 min):"
-	@echo "  PROXY_URL=$(PROXY_URL) tools/wallet-emulator-js/scripts/auth-as.sh alice"
+	@printf '%s\n' '  PROXY_URL="$(PROXY_URL)" "$(WALLET_EMULATOR_DIR)/scripts/auth-as.sh" alice'
 	@echo
 	@echo "Capture for reuse:"
-	@echo "  JWT=\$$(PROXY_URL=$(PROXY_URL) tools/wallet-emulator-js/scripts/auth-as.sh alice)"
+	@printf '%s\n' '  JWT=$$(PROXY_URL="$(PROXY_URL)" "$(WALLET_EMULATOR_DIR)/scripts/auth-as.sh" alice)'

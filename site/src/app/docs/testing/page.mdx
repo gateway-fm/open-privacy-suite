@@ -124,7 +124,7 @@ e2e/playwright/
 
 The demo project is a cross-product privacy contract, not a presence-only smoke test. It creates two organizations and ten user personas, deploys real `Counter` and ERC-20 contracts, configures method/function/event grants, writes indexed transactions, approves full/pseudonymous/redacted disclosures, and configures travel-rule prices.
 
-Each story compares the proxy RPC result, explorer BFF JSON, and rendered browser view where applicable. It asserts exact rows, counters, labels, log counts, addresses, amounts, and disclosure representations. Protected addresses, transaction hashes, and calldata are also used as canaries: tests fail if any forbidden value appears in a raw response, search result, or page. See the [executable story catalog](https://github.com/gateway-fm/privacy-proxy/blob/main/e2e/playwright/tests/demo/README.md) for the complete acceptance matrix and maintenance rules.
+Each story compares the proxy RPC result, explorer BFF JSON, and rendered browser view where applicable. It asserts exact rows, counters, labels, log counts, addresses, amounts, and disclosure representations. Protected addresses, transaction hashes, and calldata are also used as canaries: tests fail if any forbidden value appears in a raw response, search result, or page. See the [executable story catalog](https://github.com/LFDT-Permissioned-Privacy-Control/permissioned-privacy-control/blob/main/e2e/playwright/tests/demo/README.md) for the complete acceptance matrix and maintenance rules.
 
 ### Test Isolation
 

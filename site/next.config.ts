@@ -3,13 +3,17 @@ import createMDX from "@next/mdx";
 import path from "node:path";
 
 const isDev = process.env.NODE_ENV === "development";
+// CI builds use their repository's Pages path; standalone production builds
+// default to the LFDT destination. DOCS_BASE_PATH still supports custom hosts.
+const repositoryName =
+  process.env.GITHUB_REPOSITORY?.split("/").pop() || "permissioned-privacy-control";
 
 const basePath =
   process.env.DOCS_BASE_PATH !== undefined
     ? process.env.DOCS_BASE_PATH
     : isDev
       ? ""
-      : "/open-privacy-suite";
+      : `/${repositoryName}`;
 
 const nextConfig: NextConfig = {
   pageExtensions: ["ts", "tsx", "md", "mdx"],
