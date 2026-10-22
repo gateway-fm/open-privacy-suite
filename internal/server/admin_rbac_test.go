@@ -578,7 +578,7 @@ func TestGroupAccessValidation(t *testing.T) {
 		// Unsupported method names are refused when group access is saved.
 		body := map[string]any{
 			"allowed_methods": []string{"some_unknown_method", "another_custom_method"},
-			"claims":          []string{},
+			"claims":          []string{}, // No claims needed for unknown methods
 		}
 		jsonBody, _ := json.Marshal(body)
 

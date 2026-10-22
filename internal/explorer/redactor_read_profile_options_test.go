@@ -51,7 +51,7 @@ func readProfileOptionEngine(profile rbac.ReadProfile, grantLevel *VisibilityLev
 	db := newCountingDB(VisibilityMap{sbOther: VisibilityHidden, sbToken: VisibilityRedacted}, []string{sbViewer})
 	db.eventAccessMap = map[string]bool{sbToken: true}
 	if grantLevel != nil {
-		db.detailed[sbToken] = AddressVisibility{Address: sbToken, Level: *grantLevel, Reason: ReasonDisclosureGrant, Visible: true}
+		db.detailed[sbToken] = AddressVisibility{Address: sbToken, Level: *grantLevel, Reason: ReasonNoAccess, Visible: true}
 	}
 	engine := NewRedactionEngine(nil, db, profile)
 	to := sbToken
@@ -76,7 +76,7 @@ func readProfileShareOpts(listed, union bool) RedactOpts {
 }
 
 // Standard honors genuine transaction shares. Strict still requires its
-// participant, exact-event or approved-disclosure decision on each surface.
+// participant or exact-event decision on each surface.
 func TestRedactors_GenuineShareOptionsByReadProfile(t *testing.T) {
 	for _, profile := range []rbac.ReadProfile{rbac.ReadProfileStandard, rbac.ReadProfileStrict} {
 		for _, surface := range []string{"transactions", "transfers", "internal"} {
@@ -102,45 +102,20 @@ func TestRedactors_GenuineShareOptionsByReadProfile(t *testing.T) {
 	}
 }
 
-// Strict disclosure views keep the approved lens and its audit count,
-// regardless of the optional share and transfer-participant sets supplied.
-func TestRedactors_StrictGrantLensIgnoresShareOptions(t *testing.T) {
+// Strict nonparticipants remain hidden regardless of legacy address levels or
+// optional shares. Disclosure grants no longer create a strict exception.
+func TestRedactors_StrictNonparticipantIgnoresShareOptions(t *testing.T) {
 	for _, level := range []VisibilityLevel{VisibilityFull, VisibilityPseudonymous, VisibilityRedacted} {
 		for _, surface := range []string{"transactions", "transfers", "internal"} {
-			for _, option := range []struct {
-				name          string
-				listed, union bool
-			}{{"union", false, true}, {"share", true, false}, {"share-and-union", true, true}} {
-				t.Run(string(level)+"/"+surface+"/"+option.name, func(t *testing.T) {
+			for _, option := range []struct{ listed, union bool }{{false, false}, {false, true}, {true, false}, {true, true}} {
+				t.Run(string(level)+"/"+surface+"/"+strconv.FormatBool(option.listed)+strconv.FormatBool(option.union), func(t *testing.T) {
 					engine := readProfileOptionEngine(rbac.ReadProfileStrict, &level)
-					baselineStats := &RedactStats{}
-					baseline, err := redactReadProfileOptionRows(engine, surface, RedactOpts{Stats: baselineStats})
+					got, err := redactReadProfileOptionRows(engine, surface, readProfileShareOpts(option.listed, option.union))
 					if err != nil {
 						t.Fatal(err)
 					}
-					if len(baseline) != 1 || baseline[0].Value != "42" {
-						t.Fatalf("approved grant must retain its activity row and amount: %+v", baseline)
-					}
-					wantAddress := func(addr string) string { return engine.applyRedaction(addr, level) }
-					if baseline[0].From != wantAddress(sbOther) || baseline[0].To != wantAddress(sbToken) {
-						t.Fatalf("grant %s must determine both address fields: %+v", level, baseline)
-					}
-					wantReveals := 0
-					if level == VisibilityFull {
-						wantReveals = 1
-					}
-					if baselineStats.GrantFullReveals != wantReveals {
-						t.Fatalf("grant audit count = %d, want %d", baselineStats.GrantFullReveals, wantReveals)
-					}
-					stats := &RedactStats{}
-					opts := readProfileShareOpts(option.listed, option.union)
-					opts.Stats = stats
-					got, err := redactReadProfileOptionRows(engine, surface, opts)
-					if err != nil {
-						t.Fatal(err)
-					}
-					if !reflect.DeepEqual(got, baseline) || *stats != *baselineStats {
-						t.Fatalf("strict options must preserve the approved lens and audit result: got %+v stats=%+v, want %+v stats=%+v", got, stats, baseline, baselineStats)
+					if len(got) != 0 {
+						t.Fatalf("strict nonparticipant row must remain hidden: %+v", got)
 					}
 				})
 			}

@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -110,6 +111,11 @@ func (p *Proxy) Forward(reqBody []byte) ([]byte, int, error) {
 	return p.ForwardWithAPIKey(reqBody, "", "")
 }
 
+// ForwardContext forwards a JSON-RPC request with caller cancellation.
+func (p *Proxy) ForwardContext(ctx context.Context, reqBody []byte) ([]byte, int, error) {
+	return p.forwardWithAPIKeyHeaderContext(ctx, reqBody, DefaultAPIKeyHeader, "", "")
+}
+
 // ForwardWithAPIKey forwards a JSON-RPC request with an optional API key
 // for upstream RPC proxy authentication. If apiKey is non-empty it is sent
 // as a Bearer token in the Authorization header. If clientIP is non-empty,
@@ -126,9 +132,30 @@ func (p *Proxy) ForwardWithAPIKey(reqBody []byte, apiKey string, clientIP string
 // for the exact rules — "Authorization" is sent as "Bearer <key>"; any
 // other header name sends the raw key value.
 func (p *Proxy) ForwardWithAPIKeyHeader(reqBody []byte, headerName, apiKey, clientIP string) ([]byte, int, error) {
-	req, err := http.NewRequest("POST", p.targetURL, bytes.NewReader(reqBody))
+	return p.forwardWithAPIKeyHeaderContext(context.Background(), reqBody, headerName, apiKey, clientIP)
+}
+
+// ForwardWithAPIKeyHeaderContext forwards a request with an upstream credential
+// and caller cancellation.
+func (p *Proxy) ForwardWithAPIKeyHeaderContext(ctx context.Context, reqBody []byte, headerName, apiKey, clientIP string) ([]byte, int, error) {
+	return p.forwardWithAPIKeyHeaderContext(ctx, reqBody, headerName, apiKey, clientIP)
+}
+
+// ForwardWithResponseHeaders is ForwardWithAPIKeyHeaderContext that also
+// returns the upstream response headers (e.g. Retry-After on a 429).
+func (p *Proxy) ForwardWithResponseHeaders(ctx context.Context, reqBody []byte, headerName, apiKey, clientIP string) ([]byte, int, http.Header, error) {
+	return p.forward(ctx, reqBody, headerName, apiKey, clientIP)
+}
+
+func (p *Proxy) forwardWithAPIKeyHeaderContext(ctx context.Context, reqBody []byte, headerName, apiKey, clientIP string) ([]byte, int, error) {
+	body, status, _, err := p.forward(ctx, reqBody, headerName, apiKey, clientIP)
+	return body, status, err
+}
+
+func (p *Proxy) forward(ctx context.Context, reqBody []byte, headerName, apiKey, clientIP string) ([]byte, int, http.Header, error) {
+	req, err := http.NewRequestWithContext(ctx, "POST", p.targetURL, bytes.NewReader(reqBody))
 	if err != nil {
-		return nil, http.StatusInternalServerError, fmt.Errorf("failed to create request: %w", err)
+		return nil, http.StatusInternalServerError, nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -139,7 +166,7 @@ func (p *Proxy) ForwardWithAPIKeyHeader(reqBody []byte, headerName, apiKey, clie
 
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return nil, http.StatusBadGateway, fmt.Errorf("failed to forward request: %w", err)
+		return nil, http.StatusBadGateway, nil, fmt.Errorf("failed to forward request: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -148,13 +175,13 @@ func (p *Proxy) ForwardWithAPIKeyHeader(reqBody []byte, headerName, apiKey, clie
 	// rejected with 502 so a misbehaving upstream cannot OOM the proxy.
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxRPCResponseSize+1))
 	if err != nil {
-		return nil, http.StatusBadGateway, fmt.Errorf("failed to read response: %w", err)
+		return nil, http.StatusBadGateway, nil, fmt.Errorf("failed to read response: %w", err)
 	}
 	if len(body) > maxRPCResponseSize {
-		return nil, http.StatusBadGateway, fmt.Errorf("upstream RPC response exceeded %d byte limit", maxRPCResponseSize)
+		return nil, http.StatusBadGateway, nil, fmt.Errorf("upstream RPC response exceeded %d byte limit", maxRPCResponseSize)
 	}
 
-	return body, resp.StatusCode, nil
+	return body, resp.StatusCode, resp.Header, nil
 }
 
 // ErrBatchRequest is returned when a batch JSON-RPC request is detected.

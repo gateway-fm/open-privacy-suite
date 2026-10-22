@@ -66,13 +66,23 @@ func linkAddressForE2E(t *testing.T, database *db.DB, did, address string) {
 
 func createDisclosureGrantForE2E(t *testing.T, database *db.DB, requesterDID, targetUserID string, expiresAt time.Time) string {
 	ctx := context.Background()
+	// A grant's requester must remain a member of the request organization.
+	groupID := uuid.New().String()
+	_, err := database.Conn().ExecContext(ctx,
+		`INSERT INTO groups (id, org_id, slug, name, depth, path)
+		 VALUES ($1, '00000000-0000-0000-0000-000000000001', 'e2e-disclosure', 'E2E disclosure', 0, 'e2e-disclosure')`, groupID)
+	require.NoError(t, err)
+	_, err = database.Conn().ExecContext(ctx,
+		`INSERT INTO user_memberships (id, user_id, group_id, source)
+		 SELECT $1, id, $2, 'admin' FROM users WHERE external_id = $3`, uuid.New().String(), groupID, requesterDID)
+	require.NoError(t, err)
 
 	// Create disclosure request
 	requestID := uuid.New().String()
-	_, err := database.Conn().ExecContext(ctx,
+	_, err = database.Conn().ExecContext(ctx,
 		`INSERT INTO disclosure_requests
 		(id, requester_did, target_user_id, org_id, scope, reason, status, requested_at)
-		VALUES ($1, $2, $3, '00000000-0000-0000-0000-000000000001', '{}', 'E2E test grant', 'approved', NOW())`,
+		VALUES ($1, $2, $3, '00000000-0000-0000-0000-000000000001', '{"disclosure_level":"full"}', 'E2E test grant', 'approved', NOW())`,
 		requestID, requesterDID, targetUserID)
 	require.NoError(t, err)
 
@@ -81,7 +91,7 @@ func createDisclosureGrantForE2E(t *testing.T, database *db.DB, requesterDID, ta
 	_, err = database.Conn().ExecContext(ctx,
 		`INSERT INTO disclosure_grants
 		(id, request_id, grant_token_hash, scope, granted_at, expires_at)
-		VALUES ($1, $2, $3, '{}', NOW(), $4)`,
+		VALUES ($1, $2, $3, '{"disclosure_level":"full"}', NOW(), $4)`,
 		grantID, requestID, "e2e-test-hash-"+grantID, expiresAt)
 	require.NoError(t, err)
 
@@ -131,7 +141,7 @@ func TestE2E_Explorer_ViewableAddresses(t *testing.T) {
 	assert.Equal(t, e2eViewerDID, result.ViewerDID)
 	assert.Len(t, result.OwnAddresses, 1)
 	assert.Equal(t, e2eViewerWallet, result.OwnAddresses[0].Address)
-	assert.Len(t, result.DisclosedAddresses, 1)
+	require.Len(t, result.DisclosedAddresses, 1)
 	assert.Equal(t, e2eTargetAddress, result.DisclosedAddresses[0].Address)
 	assert.Equal(t, e2eTargetDID, result.DisclosedAddresses[0].OwnerDID)
 }

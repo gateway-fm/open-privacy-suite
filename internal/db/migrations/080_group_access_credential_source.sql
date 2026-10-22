@@ -12,7 +12,7 @@
 -- AUTHORITATIVE RECORD: the reviewed groups revision (configuration_revisions)
 -- plus its transactional audit; this migration writes no audit rows.
 -- EXPAND-ONLY: one nullable column on an existing table; existing grants cover it.
--- The 075 projection guard keeps ignoring rpc_api_key on UPDATE for rows
--- whose source is NULL (079 narrows the exemption to those): the value stays
+-- The 077 projection guard keeps ignoring rpc_api_key on UPDATE for rows
+-- whose source is NULL (081 narrows the exemption to those): the value stays
 -- operational, only its declared source is desired state.
 ALTER TABLE group_access ADD COLUMN rpc_api_key_source TEXT;

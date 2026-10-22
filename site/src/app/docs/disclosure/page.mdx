@@ -19,7 +19,7 @@ The disclosure system provides:
 - **Audit trail** of all disclosure access events
 - **Multiple disclosure levels** from full transparency to complete redaction
 
-Under `PRIVACY_READ_PROFILE=strict`, an approved disclosure grant is the only way for a viewer who is not a transaction participant to see that transaction on the Explorer Data API. Disclosure grants do not add JSON-RPC access. See [Strict Read Profile](/docs/security/strict-read-profile).
+Under `PRIVACY_READ_PROFILE=strict`, ordinary transaction reads require participation. Approved disclosure grants provide a separate route through dedicated grant endpoints; they do not widen ordinary Explorer or JSON-RPC access in either profile. See [Strict Read Profile](/docs/security/strict-read-profile).
 
 ## Disclosure Levels
 
@@ -27,15 +27,21 @@ Under `PRIVACY_READ_PROFILE=strict`, an approved disclosure grant is the only wa
 |-------|-----------------|----------|
 | **Full** | Real addresses (`0xa32c...94cd`) | Regulatory subpoenas, law enforcement investigations |
 | **Pseudonymous** | Consistent pseudonyms (`Address-KDCM`) | Financial audits -- allows pattern analysis without revealing identity |
-| **Redacted** | Uniform `[PRIVATE]` placeholder for every address | Proof of activity -- timing, direction, gas, status visible, but no counterparty correlation across transactions |
+| **Redacted** | Uniform `[PRIVATE]` placeholder for every address | Proof of activity -- timing, direction, gas, status visible, without stable counterparty labels |
 
 The three levels form a privacy ladder:
 
 - **Full** = identity + transaction graph.
 - **Pseudonymous** = transaction graph without identity (same address renders as the same pseudonym within a grant, so patterns are visible).
-- **Redacted** = volume and timing without graph (every address renders as the same placeholder, so the auditor cannot correlate counterparties between transactions). `value` is also withheld at this level; transaction hashes are never returned.
+- **Redacted** = volume and timing without stable counterparty labels (every address renders as the same placeholder). `value` is also withheld at this level; transaction hashes are never returned. Block numbers and transaction indexes remain available and can identify transactions to someone with access to the raw chain.
 
 Activity log access (RPC method invocations as proof of activity, without addresses or parameters) is **orthogonal** to disclosure level — it is granted via the `activity_logs` or `full_disclosure` scope on the grant, not by the disclosure level.
+
+## Reading disclosed data
+
+Disclosure grants apply only through the dedicated grant APIs. Regular JSON-RPC and Explorer API responses always use the viewer's own permissions, in both read profiles. The Explorer Transactions page combines regular transactions with grant transaction feeds, removes duplicates, and marks disclosed rows. API clients can compose the same two sources.
+
+The grant holder must remain a current member of the grant's organization. Leaving that organization, membership expiry, grant expiry, or revocation ends access. Deploy the Explorer composition update before the corresponding proxy update.
 
 ## Workflow
 
@@ -66,7 +72,7 @@ A request from an authorized party to view someone's data:
   "target_user_id": "user-123",
   "org_id": "org-456",
   "scope": {
-    "addresses": ["0xa32c..."],
+    "addresses": ["0xa32c0000000000000000000000000000000094cd"],
     "date_range": {
       "start": "2024-01-01T00:00:00Z",
       "end": "2024-12-31T23:59:59Z"
@@ -102,7 +108,7 @@ An approved disclosure with access permissions:
   "id": "grant-789",
   "request_id": "550e8400-e29b-41d4-a716-446655440000",
   "scope": {
-    "addresses": ["0xa32c..."],
+    "addresses": ["0xa32c0000000000000000000000000000000094cd"],
     "disclosure_level": "pseudonymous"
   },
   "granted_at": "2024-06-16T09:00:00Z",
@@ -117,12 +123,12 @@ The scope defines what data can be accessed:
 
 | Field | Description |
 |-------|-------------|
-| `methods` | Specific RPC methods allowed (e.g., `eth_call`, `eth_getLogs`) |
-| `addresses` | Contract addresses to include in disclosure |
+| `methods` | Data categories: `transaction_history`, `activity_logs`, or `full_disclosure`; empty means transaction history only |
+| `addresses` | Counterparty or contract addresses that filter the subject's transactions |
 | `date_range` | Time period for transaction/log data |
 | `disclosure_level` | How addresses are displayed (full / pseudonymous / redacted) |
 
-**Scope is enforced on the disclosed data.** A grant with a `date_range` returns only transactions within that window, and a grant listing specific `addresses` returns only data for those contracts — activity outside the requested scope is never disclosed, regardless of the `disclosure_level`. Leaving a field unset means it is not narrowed (e.g. no `date_range` = the grant is not restricted by date).
+**Scope is enforced on the disclosed data.** A grant with a `date_range` returns only transactions within that window. When `addresses` is set, a transaction must also involve one of those addresses. The subject must be the transaction sender or recipient; appearing only in a token-transfer event does not qualify. An unset date range or address list adds no restriction. Activity-log reads reject address-restricted scopes because those logs cannot reliably enforce a counterparty filter.
 
 ## API Endpoints
 
@@ -158,7 +164,7 @@ The scope defines what data can be accessed:
 {
   "target_user_id": "user-123",
   "scope": {
-    "addresses": ["0xa32c..."],
+    "addresses": ["0xa32c0000000000000000000000000000000094cd"],
     "disclosure_level": "pseudonymous",
     "date_range": {
       "start": "2024-01-01T00:00:00Z",
@@ -180,7 +186,7 @@ The scope defines what data can be accessed:
 
 When a user views disclosed data in the block explorer:
 
-<ApiEndpoint method="GET" path="/api/v1/explorer/viewable-addresses?did=did:iden3:..." description="Get addresses visible to the authenticated user" />
+<ApiEndpoint method="GET" path="/api/v1/explorer/viewable-addresses" description="Get addresses visible to the authenticated user" />
 
 Response includes own addresses and disclosed addresses with their disclosure level:
 
@@ -194,7 +200,6 @@ Response includes own addresses and disclosed addresses with their disclosure le
     {
       "address": "Address-KDCM",
       "address_id": "c311e533...",
-      "owner_did": "did:iden3:...",
       "disclosure_level": "pseudonymous",
       "grant_id": "265991a8-...",
       "expires_at": "2024-07-16T09:00:00Z"
@@ -207,6 +212,10 @@ Response includes own addresses and disclosed addresses with their disclosure le
 
 <ApiEndpoint method="GET" path="/api/v1/explorer/grant/{grant_id}/{address_id}/transactions" description="Get pseudonymized transactions for a disclosed address" />
 
+<ApiEndpoint method="GET" path="/api/v1/explorer/grant/{grant_id}/{address_id}/transactions/{tx_hash}" description="Get transaction detail within a Full grant's scope" />
+
+Transaction detail is available only for Full grants. Other levels open the grant page and cannot look up transactions by hash. Grant pages do not report unrestricted balances, bytecode, or all-time statistics. The transaction feed's continuation cursor remains the signal that more pages can be read.
+
 ## Security Model
 
 ### Address Protection
@@ -214,13 +223,15 @@ Response includes own addresses and disclosed addresses with their disclosure le
 For **pseudonymous** and **redacted** disclosures:
 
 1. **Real addresses are never sent to the frontend.** The backend resolves `address_id` to the real address internally. Only pseudonyms or `[PRIVATE]` are returned to clients.
-2. **Transaction hashes are hidden.** This prevents lookup on other block explorers to find real addresses. Only block numbers, timestamps, and values are shown.
+2. **Transaction hashes are hidden by this API.** Block numbers, transaction indexes, timestamps, direction, gas, and status remain visible; values and calldata are withheld. A viewer with access to the raw chain can correlate the block and transaction index with a real transaction, so these levels do not provide anonymity against that source.
 3. **Consistent pseudonyms within a grant.** The same address always gets the same pseudonym (e.g., `Address-KDCM`). External addresses get pseudonyms like `External-7E56`. This allows pattern analysis without revealing identity.
 
 ### Scope Integrity
 
 - **Approval cannot widen the request.** When approving a request, the approver can only narrow the requested `scope` (tighten the `date_range`, drop `addresses`, lower the `disclosure_level`) — never broaden it. A grant can never disclose more than the requester originally asked for and the data owner reviewed.
-- **The grant's scope bounds every response.** The `date_range` and `addresses` on the grant are enforced on all disclosed transaction and log data, so a viewer cannot reach activity outside the window or contracts they were granted.
+- **The grant's scope bounds transaction responses.** `addresses` is a counterparty/contract filter on the subject's own transactions. Addresses must be complete 20-byte hex addresses; date ranges require both bounds with start no later than end.
+- **Data types are explicit.** Supported methods are `transaction_history`, `activity_logs`, and `full_disclosure`. Empty methods permit transaction history only. Approval cannot add a data type that the request did not cover.
+- **Activity access is bounded separately.** Activity reads require `activity_logs` or `full_disclosure`; date bounds apply. Activity requests with address restrictions return 403 because request logs cannot reliably enforce a counterparty filter.
 
 ### Grants Belong to the Grantee
 
@@ -234,42 +245,32 @@ No disclosure-grant reveal is recorded against the grantee for those views, beca
 
 ### Opaque Address IDs
 
-To prevent address correlation, the system uses opaque `address_id` values:
-
-```
-address_id = SHA256(lowercase(address) + ":" + grant_id)[:16]
-```
-
-This ensures:
-
-- Same address has different IDs across different grants
-- Cannot reverse-engineer the real address from the ID
-- Routes are secure: `/grant/{grant_id}/{address_id}`
+Grant pages use the `address_id` issued by the authenticated disclosed-address list. Configure `EXPLORER_PSEUDONYM_KEY` in production to prevent candidate-address guessing against routing IDs and display aliases. Refresh disclosed addresses after deployment or key rotation; do not construct IDs in a client.
 
 ### Fail-Safe Defaults
 
-- Unknown disclosure levels default to **redacted**
+- Empty or unknown stored disclosure levels render as **redacted**; newly submitted scopes reject unknown levels
 - Missing viewer identity returns no disclosed addresses
-- Expired or revoked grants return **403 Forbidden**
+- Expired or revoked grants deny access; Explorer activity returns **404 Not Found**, while resolve and transaction endpoints return **403 Forbidden**
 
 ### Error responses are opaque
 
-Every disclosure endpoint returns generic error bodies — never the underlying error type, SQL state, or token-validation reason. The same shape is used for "token expired", "token revoked", "token never existed", and "token belongs to another grant", so a client cannot use error messages to enumerate valid grant IDs or distinguish a banned token from a typo.
+Disclosure endpoints return generic error bodies rather than underlying error types, SQL states, or token-validation details. Invalid, expired, and revoked bearer tokens receive the same authentication error. A valid token used for a different grant is denied with 403. Explorer grant endpoints return 404 for grants outside the caller's authority and for transaction details unavailable at the grant's disclosure level.
 
 | Class | Status | Body |
 |-------|--------|------|
 | Missing or malformed token | `401 Unauthorized` | `{"error": "authentication required"}` |
-| Token rejected (any reason) | `401 Unauthorized` | `{"error": "invalid disclosure token"}` |
+| Invalid, expired, or revoked token | `401 Unauthorized` | `{"error": "invalid disclosure token"}` |
 | Caller may not perform this action | `403 Forbidden` | `{"error": "access denied"}` |
 | Grant or referenced resource does not exist | `404 Not Found` | `{"error": "grant not found"}` |
 | Malformed request body | `400 Bad Request` | `{"error": "invalid request body"}` |
 | Server-side failure | `500 Internal Server Error` | `{"error": "<operation> failed"}` (generic; details in proxy logs only) |
 
-Operators triage from `slog.Error` / `slog.Warn` log lines, which carry the full error context (grant_id, request_id, underlying error). The client side intentionally cannot tell the difference between adjacent failure modes.
+Operators can use server logs to diagnose internal failures; client error bodies omit those details.
 
 ## Audit Trail
 
-Every access to disclosed data is logged:
+Successful disclosed-data reads write an audit event. Audit failures are logged by the server but do not block the read:
 
 ```json
 {

@@ -25,11 +25,12 @@ obtains viewer-filtered chain data only through OPS.
 
 ## Start, test, restart, stop
 
-Use a fresh stack when moving from the original V2 development branch to the
-main-reconciled branch. Main's published migration 071 remains unchanged; V2's
-previous migrations 071–081 are now 072–082. Databases initialized by main
-through 071 upgrade normally. Databases initialized by the old V2 branch have
-different migration identities and must not be opened by the reconciled binary.
+Use a fresh stack whenever V2 is reconciled with main. Main's published
+migrations keep their numbers; V2's migrations follow them and are now 073–083
+(main's 072 landed after the first reconciliation, which had numbered V2's
+072–082; before it they were 071–081). Databases initialized by main through 072
+upgrade normally. Databases initialized by an earlier V2 branch have different
+migration identities and must not be opened by the reconciled binary.
 Keep their backup and original worktree if their local data is still needed;
 start a separate database for reconciliation checks. Do not edit `schema_version`
 to make an old V2 database appear compatible.

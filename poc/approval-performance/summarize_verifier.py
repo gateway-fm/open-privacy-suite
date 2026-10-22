@@ -1,0 +1,198 @@
+#!/usr/bin/env python3
+"""Summarize saved Besu verifier runs without starting or changing any services.
+
+Input contains jdk/, bouncy-castle/ and approvals-off/ from the historical
+comparison runner. Plain JSON and gzip-compressed evidence are supported.
+This reports existing measurements; it does not establish a new benchmark run.
+"""
+import argparse
+import collections
+import gzip
+import hashlib
+import json
+import math
+from pathlib import Path
+import re
+
+CASES = ("jdk", "bouncy-castle", "approvals-off")
+PREFIX = "privacyproxy_approval_delivery_seconds_"
+LABEL = r'([a-zA-Z_][a-zA-Z0-9_]*)="((?:[^"\\\n]|\\[\\n"])*)"'
+
+
+def read_json(path):
+    if path.is_file():
+        return json.loads(path.read_text())
+    with gzip.open(str(path) + ".gz", "rt") as stream:
+        return json.load(stream)
+
+
+def metrics(path):
+    """Keep individual series until after reset detection; aggregate in the report."""
+    values = {}
+    with path.open() as stream:
+        for line in stream:
+            if not line.startswith(("privacyproxy_approval_", "ops_approval_")):
+                continue
+            match = re.fullmatch(r'([^ {]+)(?:\{([^}]+)\})?\s+([^\s]+)\s*', line)
+            if not match:
+                raise ValueError(f"malformed approval metric in {path.name}")
+            name, labels, value = match.groups()
+            if labels and not re.fullmatch(rf'\s*{LABEL}(?:\s*,\s*{LABEL})*\s*,?\s*', labels):
+                raise ValueError(f"malformed approval metric labels in {path.name}: {name}")
+            pairs = re.findall(LABEL, labels or "")
+            labels = dict(pairs)
+            if len(labels) != len(pairs):
+                raise ValueError(f"duplicate approval metric label in {path.name}: {name}")
+            value = float(value)
+            if not math.isfinite(value):
+                raise ValueError(f"non-finite metric: {name}")
+            if value < 0 and name.endswith(("_total", "_count", "_sum", "_bucket")):
+                raise ValueError(f"negative approval counter: {name}")
+            key = (name, tuple(sorted(labels.items())))
+            if key in values:
+                raise ValueError(f"duplicate approval metric in {path.name}: {name}")
+            values[key] = value
+    return values
+
+
+def counter_delta(before, after):
+    result = {}
+    for key in before.keys() | after.keys():
+        if not key[0].endswith(("_total", "_count", "_sum", "_bucket")):
+            continue
+        value = after.get(key, 0) - before.get(key, 0)
+        if value < 0:
+            raise ValueError(f"counter reset or missing series: {key[0]}")
+        result[key] = value
+    return result
+
+
+def total(values, name):
+    return sum(value for (metric, _), value in values.items() if metric == name)
+
+
+def validate_delivery_histogram(values):
+    """Validate each target before aggregation can hide missing or invalid data."""
+    histograms = {}
+    keys = set()
+    for (name, labels), value in values.items():
+        if name not in (PREFIX + "count", PREFIX + "sum", PREFIX + "bucket"):
+            continue
+        keys.add((name, labels))
+        if value < 0 or not math.isfinite(value):
+            raise ValueError("invalid delivery histogram value")
+        group = tuple((key, label) for key, label in labels if key != "le")
+        histogram = histograms.setdefault(group, {"buckets": {}})
+        if name == PREFIX + "bucket":
+            try:
+                bound = float(dict(labels)["le"])
+            except (KeyError, ValueError) as error:
+                raise ValueError("invalid delivery histogram bound") from error
+            if math.isnan(bound) or bound < 0 or bound in histogram["buckets"]:
+                raise ValueError("invalid delivery histogram bound")
+            histogram["buckets"][bound] = value
+        else:
+            if group != labels:
+                raise ValueError("unexpected le label on delivery histogram count or sum")
+            histogram[name.removeprefix(PREFIX)] = value
+    bucket_schema = None
+    for labels, histogram in histograms.items():
+        buckets = histogram["buckets"]
+        if "count" not in histogram or "sum" not in histogram or math.inf not in buckets:
+            raise ValueError(f"incomplete delivery histogram for {dict(labels)}: count, sum and +Inf required")
+        if buckets[math.inf] != histogram["count"]:
+            raise ValueError("delivery histogram does not cover its observation count")
+        if histogram["count"] == 0 and histogram["sum"] != 0:
+            raise ValueError("delivery histogram has a sum without observations")
+        ordered = sorted(buckets.items())
+        if any(a[1] > b[1] for a, b in zip(ordered, ordered[1:])):
+            raise ValueError("delivery histogram buckets are not cumulative")
+        if bucket_schema is not None and buckets.keys() != bucket_schema:
+            raise ValueError("delivery histogram bucket boundaries differ across targets")
+        bucket_schema = buckets.keys()
+    return keys
+
+
+def delivery_latency(delta):
+    validate_delivery_histogram(delta)
+    count = total(delta, PREFIX + "count")
+    if count == 0:
+        return None
+    buckets = collections.defaultdict(float)
+    for (name, labels), value in delta.items():
+        if name == PREFIX + "bucket":
+            bound = float(dict(labels)["le"])
+            buckets[bound] += value
+    ordered = sorted(buckets.items())
+    bounds = {}
+    for label, fraction in (("p50", .5), ("p95", .95), ("p99", .99)):
+        bound = next(bound for bound, value in ordered if value >= math.ceil(fraction * count))
+        bounds[label] = bound * 1000 if math.isfinite(bound) else None
+    return {"mean_ms": total(delta, PREFIX + "sum") * 1000 / count,
+            "histogram_count": count, "percentile_upper_bounds_ms": bounds}
+
+
+def digest(path):
+    with path.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def summarize_case(directory):
+    report = read_json(directory / "transactions-report.json")
+    if report.get("error") or report["status"]["status"] != "completed":
+        raise ValueError(f"{directory.name}: run did not complete successfully")
+    config = read_json(directory / "verifier-config.json")
+    before, after = [metrics(directory / f"metrics-{phase}.txt") for phase in ("before", "after")]
+    histogram_keys = validate_delivery_histogram(before)
+    if histogram_keys != validate_delivery_histogram(after):
+        raise ValueError("delivery histogram series differ between snapshots")
+    if config.get("gate") and not histogram_keys:
+        raise ValueError("missing delivery histogram for approvals-enabled run")
+    histogram_targets = {labels for name, labels in histogram_keys if name == PREFIX + "count"}
+    for snapshot in (before, after):
+        confirmation_targets = {labels for name, labels in snapshot
+                                if name == "privacyproxy_approval_confirmed_total"}
+        if confirmation_targets != histogram_targets:
+            raise ValueError("approval confirmation series must match delivery histogram targets in both snapshots")
+    delta = counter_delta(before, after)
+    count = total(delta, PREFIX + "count")
+    receipts = read_json(directory / "receipts.json")
+    logs = read_json(directory / "transactions.json")
+    missing = {row["hash"].lower() for row in receipts if row["receipt"] is None}
+    statuses = {row["txHash"].lower(): row.get("status", "unknown") for row in logs if row.get("txHash")}
+    return {"case": directory.name, "config": config,
+            "receipts": report["receipts"],
+            "generator": {key: report["status"].get(key) for key in
+                          ("txSent", "txConfirmed", "txFailed", "status", "elapsedMs")},
+            "missing_by_generator_status": dict(collections.Counter(statuses.get(tx, "unknown") for tx in missing)),
+            "approval_delivery": delivery_latency(delta),
+            "mean_approvals_per_batch": total(delta, "privacyproxy_approval_confirmed_total") / count if count else None,
+            "loadgen_sha256": report["loadgen_sha256"],
+            "source_files_sha256": {path.name: digest(path) for path in sorted(directory.iterdir())
+                                    if path.is_file() and path.suffix in (".json", ".txt", ".gz")}}
+
+
+def write_summary(path, result):
+    text = json.dumps(result, indent=2, allow_nan=False) + "\n"
+    with path.open("x") as stream:
+        stream.write(text)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--input", required=True, type=Path, help="directory holding all three saved cases")
+    parser.add_argument("--output", required=True, type=Path, help="new output file; never overwrites evidence")
+    args = parser.parse_args()
+    source = args.input.resolve()
+    output = args.output.resolve()
+    if output == source or source in output.parents:
+        parser.error("output must be outside the input evidence directory")
+    if output.exists():
+        parser.error("output already exists")
+    result = {"kind": "summary-of-existing-evidence",
+              "full_transaction_cases": [summarize_case(source / case) for case in CASES]}
+    write_summary(output, result)
+
+
+if __name__ == "__main__":
+    main()

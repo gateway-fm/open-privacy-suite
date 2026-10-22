@@ -1,0 +1,54 @@
+name: Approval contract
+on:
+  pull_request:
+    paths:
+      - 'internal/nodeapproval/**'
+      - 'proto/ops/approvals/**'
+      - 'integrations/**'
+      - 'scripts/approval_contract.py'
+      - 'scripts/tests/test_approval_contract.py'
+      - '.github/workflows/approval-contract.yml'
+      - 'go.mod'
+      - 'go.sum'
+  push:
+    branches: [main]
+    paths:
+      - 'internal/nodeapproval/**'
+      - 'proto/ops/approvals/**'
+      - 'integrations/**'
+      - 'scripts/approval_contract.py'
+      - 'scripts/tests/test_approval_contract.py'
+      - '.github/workflows/approval-contract.yml'
+      - 'go.mod'
+      - 'go.sum'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  sender-contract:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: python3 -B -m unittest discover -s scripts/tests -p test_approval_contract.py
+      - run: python3 scripts/approval_contract.py --upstream
+      - name: Install pinned protobuf generators
+        run: |
+          mkdir -p .tmp/approval-protoc
+          curl --fail --location --silent --show-error https://github.com/protocolbuffers/protobuf/releases/download/v28.2/protoc-28.2-linux-x86_64.zip --output .tmp/approval-protoc.zip
+          echo '2febfd42b59ce93a28eb789019a470a3dd0449619bc04f84dad1333da261dec1  .tmp/approval-protoc.zip' | sha256sum --check
+          unzip -q .tmp/approval-protoc.zip -d .tmp/approval-protoc
+          echo "$PWD/.tmp/approval-protoc/bin" >> "$GITHUB_PATH"
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.1
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Verify generated bindings match the pinned schema
+        run: |
+          go generate ./internal/nodeapproval/approvalpb
+          git diff --exit-code -- internal/nodeapproval/approvalpb
+      - run: go test -race ./internal/nodeapproval/...
+      - run: python3 scripts/approval_contract.py

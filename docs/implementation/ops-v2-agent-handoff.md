@@ -100,7 +100,7 @@ Paths below are relative to the worktree root.
 |---|---|---|
 | Compiler, set encoding and digest binding | `internal/policydsl/{validate,generate,compile,artifact_set}.go` | `per_group_test.go`, `per_group_vectors_test.go`, `testdata/per-group-v1.json` |
 | Review and atomic activation | `internal/configuration/execution.go`, `internal/db/configuration_revision_execution.go` | `internal/db/execution_artifact_set_test.go` |
-| Storage and feed export | `internal/db/migrations/082_execution_artifact_sets.sql`, `execution_policy_store.go`, `node_policy_export.go` | Database execution/export tests |
+| Storage and feed export | `internal/db/migrations/083_execution_artifact_sets.sql`, `execution_policy_store.go`, `node_policy_export.go` | Database execution/export tests |
 | Signed wire, deltas and simulation | `internal/nodepolicy/{envelope,feed,state,simulation,client}.go` | `internal/nodepolicy/group_artifacts_test.go` |
 | Node selection and enforcement | `node/reth/src/{facts,policy,context,runtime,wire,stream}.rs` | `node/reth/tests/{group_artifacts,facts_adapter,diagnostics}.rs` |
 | HTTP compile window and candidates | `internal/server/{admin_configuration,node_simulation}.go` | `configuration_execution_deadline_test.go`, `node_simulation_test.go` |

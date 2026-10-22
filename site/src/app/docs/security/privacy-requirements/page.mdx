@@ -18,7 +18,7 @@ Private addresses and their transaction activity are hidden from unauthorized vi
 
 1. **JSON-RPC proxy layer** — when a client queries the Ethereum node directly through the proxy (e.g. `eth_getTransactionByHash`), responses are filtered based on whether the caller is a participant in the transaction. Non-participants receive `null` or have individual entries removed from arrays.
 
-2. **Explorer API layer** — when the block explorer fetches structured data through the Open Privacy Suite's Explorer API, each entity (transaction, log, token transfer, etc.) is individually processed through the redaction engine. Addresses are replaced with `[PRIVATE]`, values zeroed, and entries dropped according to the viewer's permission level and the [disclosure level](/docs/disclosure) assigned to each address.
+2. **Explorer API layer** — when the block explorer fetches structured data through the Open Privacy Suite's Explorer API, each entity (transaction, log, token transfer, etc.) is individually processed through the redaction engine. Addresses are replaced with `[PRIVATE]`, values zeroed, and entries dropped according to the viewer's own permissions. Consent-based [disclosure](/docs/disclosure) is available through separate grant APIs.
 
 Both layers work in concert. A viewer who bypasses the block explorer and queries the JSON-RPC endpoint directly will receive the same privacy enforcement — the proxy is the sole gateway.
 
@@ -108,60 +108,21 @@ Block-level data is always public. Blocks are consensus-layer infrastructure, no
 
 ## Disclosure Levels
 
-A viewer holding an approved disclosure **grant** sees the granted target's
-addresses subject to the grant's `scope.disclosure_level`. The level controls
-the substitution applied to every address field on every response surface — not
-just the auditor dashboard. The mapping:
+Disclosure grants affect only dedicated grant endpoints. They never change visibility, masking, lists, counts, or address access on regular JSON-RPC or Explorer APIs, in either read profile. The Explorer Transactions page combines the regular feed with grant-scoped transactions and labels disclosed rows.
 
-| `disclosure_level` | `VisibilityLevel` (internal) | What the auditor sees for the granted address |
-|---|---|---|
-| `full` | `VisibilityFull` | Real hex address (`0xa32c…94cd`). For regulatory subpoenas. |
-| `pseudonymous` | `VisibilityPseudonymous` | Stable alias `Address-XXXX` (4-letter human-readable, consistent per address). The alias is **non-reversible** — it reveals nothing about the underlying address and cannot be turned back into it — so counterparty patterns are inferable but the raw address never reaches the client. Set `EXPLORER_PSEUDONYM_KEY` in production to also make aliases **non-enumerable** (an attacker cannot recompute the alias from a candidate address). |
-| `redacted` | `VisibilityRedacted` | `[PRIVATE]` placeholder. Timing / direction / gas / status visible, no counterparty correlation. |
-| _missing / unknown_ | `VisibilityRedacted` (fail-safe) | Legacy or malformed grants do **not** silently upgrade to Full. |
+| Grant API response | Full | Pseudonymous | Redacted (including empty stored level) |
+|---|---|---|---|
+| Subject | Real address | Stable alias | `[PRIVATE]` |
+| Counterparty | Real address | Grant-specific alias, or `Mine` for the viewer | `[PRIVATE]` |
+| Transaction hash and value | Included | Withheld | Withheld |
+| Calldata and detail lookup | Full-only detail endpoint, within scope | Unavailable | Unavailable |
+| Timing, block/index, gas, status, direction | Included | Included | Included |
 
-### Where the level is applied — cross-surface matrix
+The block/index position is disclosed at all levels so the client can order and de-duplicate rows. A viewer with raw-chain access can identify the transaction from that position. Non-Full responses omit ENS names and the subject DID. Set `EXPLORER_PSEUDONYM_KEY` in production to prevent candidate-address guessing against aliases and opaque routing identifiers.
 
-Every surface that renders a `from` / `to` / log / holder address routes the
-real address through `applyRedaction(addr, level)`. So the field value the
-client receives is the *substituted* string (`Address-XXXX` / `[PRIVATE]`), not
-the raw address.
+Each grant keeps its own consented dates, counterparty/contract filter, permitted data types, and disclosure level. Requester membership, grant expiry and revocation are checked on every read. Approval can narrow consent but cannot widen it. A regular row and a disclosed row may be combined for display, but a grant never changes what a regular API call returns.
 
-| Surface | `full` grant | `pseudonymous` grant | `redacted` grant | No grant |
-|---|---|---|---|---|
-| `GET /tx/:hash` — `from` / `to` (granted party) | Real address | `Address-XXXX` | `[PRIVATE]` | `[PRIVATE]` or row dropped |
-| `GET /tx/:hash` — counterparty in a tx involving the granted party — see note | Real address | `Address-XXXX` (counterparty demoted to lens) | `[PRIVATE]` | Per counterparty's own visibility |
-| `GET /block/:n` — embedded txs | Real address | `Address-XXXX` (all parties under lens) | `[PRIVATE]` | Row dropped (participant check) |
-| `GET /address/:addr` — tx list (rows for granted target) | Real address | `Address-XXXX` (granted party + all counterparties under lens) | `[PRIVATE]` (timing-only audit) | 404 / 403 |
-| Token transfer rows (`/transfers`) | Real address | `Address-XXXX` (granted party + counterparty) | `[PRIVATE]` | `[PRIVATE]` or row dropped |
-| Event logs — emitter address | Real address | `Address-XXXX` | `[PRIVATE]`; topics + `data` zeroed | Log denied or `[PRIVATE]` |
-| Event logs — indexed address topics | Real address | Topic slot zeroed (`0x000…000`) — see note | Topic slot zeroed | Topic slot zeroed |
-| Event logs — non-indexed `address` ABI params in `data` | Real address | Zeroed (the alias is a human-readable string, not an address, so it can't occupy a 32-byte slot) | Zeroed | Zeroed |
-| Holder list (`/address/:contract/holders`) | Real holder address | `Address-XXXX` row | `[PRIVATE]` row | Row dropped |
-| Auditor dashboard (`PrivacyDashboard → Disclosed Addresses`) | Real address | `Address-XXXX` | `[PRIVATE]` | Empty list |
-| Granted-address page (`/grant/:grantId/:addressId`) — all parties | Real address (granted target shown, counterparties as real) | `Address-XXXX` granted target + `External-XXXX` counterparty (deterministic per `(addr, grant_id)`) + `Mine` for viewer-linked addresses | `[PRIVATE]` for every party | 404 |
-| `value` (ETH / token amount) on a tx involving the granted address | Visible | Visible | Visible (timing-only audit explicitly preserves value) | Hidden |
-| `inputData` (calldata) on a tx involving the granted address | Visible | Visible | Visible | Hidden |
-
-> **Note on the counterparty-pseudonymisation rule (lens).** When a tx is visible to the viewer **only** because of a pseudonymous-level disclosure grant on one of its parties, every other party in that tx is also rendered with a pseudonym — not their real address. This is the "limited audit lens": the auditor sees the granted party's activity, including who they transacted with as a pseudonym, but cannot tie those counterparties back to real addresses. Without this rule the same tx would show the granted party as `Address-XXXX` and a public-contract counterparty (e.g. USDC) as the real `0x…` hex, leaking through the lens.
->
-> The lens is bypassed when the viewer is a **direct participant** in the tx (the from / to is their own linked address, or they're a participant via log / calldata signals): they already know the counterparty via their own wallet, so the lens adds no privacy. `visibleTo` shares (explicit hash-share by the sender) are similarly exempt.
->
-> The granted-address page (`/grant/:grantId/:addressId`) uses a richer label set — `Address-XXXX` for the granted target, `External-XXXX` for non-granted counterparties (deterministic per `(addr, grant_id)` so the auditor can spot recurring counterparties without resolving them), and `Mine` for the viewer's own linked addresses. The regular tx-list surfaces use `Address-XXXX` uniformly because the per-grant deterministic salt isn't available in that context.
-
-> **Note on event topics with pseudonymous grants.** ABI-indexed address parameters live in 32-byte topic slots and must be valid hex. The `Address-XXXX` alias is a human-readable string, not an address, so it cannot be encoded into a topic slot; and the real address must never be placed there, since a topic like `0x000…0a32c…94cd` would leak it directly. So for pseudonymous grants the redactor zeros the slot — the auditor sees that the event mentioned a granted-target address but not the address itself inside the topics array. The emitter address (rendered separately) is still substituted to `Address-XXXX`.
-
-### Precedence
-
-When multiple sources claim a stake on the same address (own-address +
-disclosure grant, RBAC group + disclosure grant, two grants with different
-levels), the **most permissive** wins. Rank order: `Hidden < Redacted <
-Pseudonymous < Full`. A `redacted` grant cannot downgrade visibility the
-viewer already has via ownership or RBAC; a `full` grant overrides a
-co-existing `pseudonymous` grant on the same address.
-
-For the full grant workflow (request → approval → expiration → revocation)
-see [Selective Disclosure](/docs/disclosure).
+[Selective Disclosure](/docs/disclosure) describes the request, approval and audit workflow. View-as disables grant access and removes disclosed rows from the composed page.
 
 ---
 
@@ -182,20 +143,17 @@ Outcomes:
   rendered as `[PRIVATE]`; financial fields (value, calldata, error) are
   cleared. Timing / block / gas remain visible.
 - **keep + real** — row stays with the granted-side address shown as its
-  real hex (or as `Address-XXXX` under a pseudonymous grant — refer to
-  the field-rendering matrix above for the substitution).
-- **keep + lens** — kept, but every counterparty is demoted to the
-  granting lens (`Address-XXXX` for pseudonymous grants, `[PRIVATE]` for
-  redacted grants). Field-rendering matrix governs the exact substitution.
+  real hex.
 
-| Surface | Own tx (viewer is participant) | RBAC-visible (org member sees own-org contracts) | Hidden (no relation) | Disclosure grant `full` | Disclosure grant `pseudonymous` | Disclosure grant `redacted` |
-|---|---|---|---|---|---|---|
-| `GET /transactions` (list) | keep + real | keep + real | drop | keep + real | keep + lens | keep + `[PRIVATE]` (timing-only audit) |
-| `GET /transactions/:hash` (by-hash) | keep + real | keep + real | 404 | keep + real | keep + lens | keep + `[PRIVATE]` |
-| `GET /transactions/:hash/transfers` | keep + real | keep + real | drop | keep + real | keep + lens | keep + `[PRIVATE]` |
-| `GET /transactions/:hash/internal` | keep + real | keep + real | drop | inherits parent (keep) | inherits parent (keep + lens) | inherits parent (keep + `[PRIVATE]`) |
-| `GET /transactions/:hash/logs` | keep (participant override) | keep (emitting-contract visible) | drop (emitting contract Hidden) | keep + real (grant on emitting contract) | keep + lens | drop (Hidden) / keep + zeroed (Redacted) |
-| `GET /block/:n` → embedded txs | per-tx participant check | per-tx visibility check | drop | keep + real | keep + lens | keep + `[PRIVATE]` |
+
+| Surface | Own tx (viewer is participant) | RBAC-visible (org member sees own-org contracts) | Hidden (no relation) | Any disclosure grant |
+|---|---|---|---|---|
+| `GET /transactions` (list) | keep + real | keep + real | drop | No additional access |
+| `GET /transactions/:hash` (by-hash) | keep + real | keep + real | 404 | No additional access |
+| `GET /transactions/:hash/transfers` | keep + real | keep + real | drop | No additional access |
+| `GET /transactions/:hash/internal` | keep + real | keep + real | drop | No additional access |
+| `GET /transactions/:hash/logs` | keep (participant override) | keep (emitting-contract visible) | drop (emitting contract Hidden) | No additional access |
+| `GET /block/:n` → embedded txs | per-tx participant check | per-tx visibility check | drop | No additional access |
 
 **Where the "inherits parent" rows come from.** The internal-tx / transfer
 / log feeds for a given `tx_hash` route their drop decision through the
@@ -294,36 +252,25 @@ any one of them is a privacy or UX regression:
    the field-rendering axis decides *what shape* it takes when it
    does. Mixing the two axes in one drop predicate is a known
    bug class.
-5. **Disclosure-grant rows survive regardless of counterparty privacy.**
-   When the viewer holds an active disclosure grant on either tx party
-   (any level: `full`, `pseudonymous`, `redacted`), the row survives
-   in `/transactions`, `/transactions/:hash`, `/transfers`, and
-   `/internal` regardless of the counterparty's own visibility.
-   Field-level rendering follows the grant level: `full` reveals
-   the counterparty's real address (audited as a regulatory subpoena
-   reveal — `RedactStats.GrantFullReveals` → `rbac_audit_log` with
-   `resource_type=disclosure_grant`); `pseudonymous` renders both
-   parties under the `Address-XXXX` lens; `redacted` renders both
-   as `[PRIVATE]` with `value` preserved (proof-of-activity audit
-   lens). Participants and `visibleTo` recipients bypass the grant
-   lens — they already know the counterparty via their own wallet.
-   Pinned by an integration test.
+5. **Disclosure grants do not affect regular rows.**
+   Full, pseudonymous, and redacted grants add no rows or private fields to
+   regular transaction, transfer, internal-call, log, block or address responses.
+   Disclosed transactions come only from the grant feed, within consented scope,
+   and grant accesses are audited separately.
 6. **A row kept for coherence reveals nothing new.**
    When a viewer gets a transaction only because of one of its token
    transfers (for an org admin, a transfer involving any org contract;
-   for anyone else, a transfer involving their own wallet or the
-   subject of a full disclosure grant, or a transfer whose two sides
+   for anyone else, a transfer involving their own wallet, or a transfer whose two sides
    they both see — such as a mint into a contract they hold a
    grant on — on a token their grant gives event access to), the
    transaction is **keep + `[PRIVATE]`**: every address renders at the viewer's
    own visibility, so another user's wallet stays `[PRIVATE]` and
    calldata and nonce are cleared beside it. Value is cleared too,
    except under `ORG_ADMIN_VIEW_USER_TXS` (counted in the audit log)
-   or a disclosure grant's lens. That transfer follows the normal
+   . That transfer follows the normal
    rules; other transfers and the transaction's internal calls are
    not kept by it.
-   Only a `visibleTo` share by the sender, a disclosure grant
-   (through its lens) or the viewer's own participation reveals those
+   Only a `visibleTo` share by the sender or the viewer's own participation reveals those
    addresses. A contract grant alone does not keep another user's
    transaction for members who are not admins when its transfer has a
    side they cannot see.
@@ -367,7 +314,7 @@ To achieve the maximum redaction coverage described in this document:
 
 2. **Assign all deployed contracts to the correct organization.** The redaction engine determines visibility by checking whether a contract address is registered to an organization. Contracts that are not registered to any organization are treated as public. Register contracts with the same organization as their deployer.
 
-3. **Assign disclosure levels to sensitive addresses.** Addresses that are not explicitly registered receive default public visibility. Ensure that all addresses that should be private are registered to an organization and assigned the appropriate disclosure level. See [Selective Disclosure](/docs/disclosure).
+3. **Use consented grants for audit access.** Keep regular permissions scoped to the viewer and use the dedicated [Selective Disclosure](/docs/disclosure) APIs for approved audits.
 
 <Callout type="warning">
   Addresses that are not registered to any organization are treated as public and

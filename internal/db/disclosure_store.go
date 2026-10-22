@@ -792,6 +792,20 @@ func (d *DB) DeleteExpiredDisclosureReports(ctx context.Context) (int64, error) 
 
 // Activity data access
 
+// disclosureActivityDateBounds converts consent bounds to PostgreSQL's
+// microsecond precision without widening them: round the start up and end
+// down. Canonical UTC digits also avoid the audit store's naive timestamp
+// column interpreting a caller/host time zone.
+func disclosureActivityDateBounds(dr *disclosure.DateRange) (string, string) {
+	start := dr.Start.UTC().Truncate(time.Microsecond)
+	if start.Before(dr.Start) {
+		start = start.Add(time.Microsecond)
+	}
+	end := dr.End.UTC().Truncate(time.Microsecond)
+	const layout = "2006-01-02 15:04:05.000000"
+	return start.Format(layout), end.Format(layout)
+}
+
 func (d *DB) GetDisclosureActivityLogs(ctx context.Context, userExternalID string, scope *disclosure.Scope, limit, offset int) ([]*disclosure.ActivityLogEntry, error) {
 	query := `SELECT id, method, status_code, ip_address, created_at
 		FROM access_logs WHERE external_id = $1`
@@ -799,14 +813,19 @@ func (d *DB) GetDisclosureActivityLogs(ctx context.Context, userExternalID strin
 	argIdx := 2
 
 	if scope != nil {
-		if len(scope.Methods) > 0 {
-			query += fmt.Sprintf(` AND method = ANY($%d)`, argIdx)
-			args = append(args, scope.Methods)
-			argIdx++
+		validated, err := scope.ForRead()
+		if err != nil {
+			return nil, err
 		}
+		if len(validated.Addresses) != 0 {
+			return nil, disclosure.ErrScopeOutOfBounds
+		}
+		scope = &validated
+
 		if scope.DateRange != nil {
-			query += fmt.Sprintf(` AND created_at >= $%d AND created_at <= $%d`, argIdx, argIdx+1)
-			args = append(args, scope.DateRange.Start, scope.DateRange.End)
+			query += fmt.Sprintf(` AND created_at >= $%d::timestamp AND created_at <= $%d::timestamp`, argIdx, argIdx+1)
+			start, end := disclosureActivityDateBounds(scope.DateRange)
+			args = append(args, start, end)
 			argIdx += 2
 		}
 	}
@@ -836,7 +855,7 @@ func (d *DB) GetDisclosureActivityLogs(ctx context.Context, userExternalID strin
 		logs = append(logs, log)
 	}
 
-	return logs, nil
+	return logs, rows.Err()
 }
 
 func (d *DB) GetDisclosureActivitySummary(ctx context.Context, userExternalID string, scope *disclosure.Scope) (*disclosure.ActivitySummary, error) {
@@ -846,14 +865,19 @@ func (d *DB) GetDisclosureActivitySummary(ctx context.Context, userExternalID st
 	argIdx := 2
 
 	if scope != nil {
-		if len(scope.Methods) > 0 {
-			whereClause += fmt.Sprintf(` AND method = ANY($%d)`, argIdx)
-			args = append(args, scope.Methods)
-			argIdx++
+		validated, err := scope.ForRead()
+		if err != nil {
+			return nil, err
 		}
+		if len(validated.Addresses) != 0 {
+			return nil, disclosure.ErrScopeOutOfBounds
+		}
+		scope = &validated
+
 		if scope.DateRange != nil {
-			whereClause += fmt.Sprintf(` AND created_at >= $%d AND created_at <= $%d`, argIdx, argIdx+1)
-			args = append(args, scope.DateRange.Start, scope.DateRange.End)
+			whereClause += fmt.Sprintf(` AND created_at >= $%d::timestamp AND created_at <= $%d::timestamp`, argIdx, argIdx+1)
+			start, end := disclosureActivityDateBounds(scope.DateRange)
+			args = append(args, start, end)
 			argIdx += 2
 		}
 	}
@@ -903,7 +927,7 @@ func (d *DB) GetDisclosureActivitySummary(ctx context.Context, userExternalID st
 		summary.MethodBreakdown[method] = count
 	}
 
-	return summary, nil
+	return summary, rows.Err()
 }
 
 // Implement the Store interface methods by wrapping the prefixed methods
@@ -1028,19 +1052,42 @@ type GrantActivityBounds struct {
 // Returns (nil, nil) when the grant does not exist.
 func (d *DB) GetGrantActivityBounds(ctx context.Context, grantID string) (*GrantActivityBounds, error) {
 	var b GrantActivityBounds
+	var rawScope []byte
 	err := d.conn.QueryRowContext(ctx, `
 		SELECT u.external_id,
 		       to_char(g.granted_at, 'YYYY-MM-DD HH24:MI:SS.US'),
-		       to_char(g.expires_at, 'YYYY-MM-DD HH24:MI:SS.US')
+		       to_char(g.expires_at, 'YYYY-MM-DD HH24:MI:SS.US'), g.scope
 		FROM disclosure_grants g
 		JOIN disclosure_requests dr ON dr.id = g.request_id
 		JOIN users u ON u.id = dr.target_user_id
-		WHERE g.id = $1`, grantID).Scan(&b.ExternalID, &b.GrantedAt, &b.ExpiresAt)
+		WHERE g.id = $1`, grantID).Scan(&b.ExternalID, &b.GrantedAt, &b.ExpiresAt, &rawScope)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("failed to resolve grant activity bounds: %w", err)
+	}
+	var scope disclosure.Scope
+	if err := json.Unmarshal(rawScope, &scope); err != nil {
+		return nil, fmt.Errorf("invalid grant activity scope: %w", err)
+	}
+	scope, err = scope.ForRead()
+	if err != nil {
+		return nil, err
+	}
+	if err := scope.ValidateActivity(); err != nil {
+		return nil, err
+	}
+	// Keep the existing grant-validity window, narrowed by the consented data
+	// dates. UTC digit strings preserve the split audit database comparison.
+	if scope.DateRange != nil {
+		start, end := disclosureActivityDateBounds(scope.DateRange)
+		if start > b.GrantedAt {
+			b.GrantedAt = start
+		}
+		if end < b.ExpiresAt {
+			b.ExpiresAt = end
+		}
 	}
 	return &b, nil
 }
@@ -1637,55 +1684,4 @@ func (d *DB) ListAllDisclosureGrantsForTarget(ctx context.Context, targetUserID 
 
 func (d *DB) ListAllGrantsForTarget(ctx context.Context, targetUserID string) ([]*disclosure.GrantWithRequest, error) {
 	return d.ListAllDisclosureGrantsForTarget(ctx, targetUserID)
-}
-
-// ViewerHasFullDisclosureGrant checks whether viewerDID has an active disclosure
-// grant with "full" disclosure level that covers the given target address.
-//
-// The check joins disclosure_grants → disclosure_requests → users → eth_address_links
-// to verify:
-//  1. The grant is active (not expired, not revoked)
-//  2. The requester_did matches the viewer
-//  3. The target user owns the address
-//  4. The grant scope has disclosure_level = "full"
-//  5. The viewer is a current member of the org the disclosure was created in
-//     (M13 defence-in-depth: prevents cross-org leakage even if C3 is partially
-//     exploited and a disclosure request is forged against a foreign-org user).
-//
-// This is used by address-specific explorer endpoints to upgrade visibility for
-// full disclosure recipients without modifying GetBatchVisibility (G17 preserved).
-//
-// Under an impersonation (disclosure.WithoutViewerGrants) it is always false:
-// the grants belong to the viewer, not to the admin viewing as them (RD-1318).
-func (d *DB) ViewerHasFullDisclosureGrant(ctx context.Context, viewerDID, targetAddress string) (bool, error) {
-	if viewerDID == "" || targetAddress == "" || disclosure.ViewerGrantsSuppressed(ctx) {
-		return false, nil
-	}
-
-	query := `
-		SELECT EXISTS (
-			SELECT 1
-			FROM disclosure_grants g
-			JOIN disclosure_requests r ON g.request_id = r.id
-			JOIN users target_u ON r.target_user_id = target_u.id
-			JOIN eth_address_links eal ON eal.did = target_u.external_id
-			JOIN users viewer_u ON viewer_u.external_id = $1
-			JOIN user_memberships m ON m.user_id = viewer_u.id
-			JOIN groups gr ON gr.id = m.group_id
-			WHERE r.requester_did = $1
-			  AND LOWER(eal.eth_address) = LOWER($2)
-			  AND eal.revoked = false
-			  AND g.revoked_at IS NULL
-			  AND g.expires_at > NOW()
-			  AND g.scope->>'disclosure_level' = 'full'
-			  AND gr.org_id = r.org_id
-			  AND (m.expires_at IS NULL OR m.expires_at > NOW())
-		)`
-
-	var exists bool
-	err := d.conn.QueryRowContext(ctx, query, viewerDID, targetAddress).Scan(&exists)
-	if err != nil {
-		return false, fmt.Errorf("failed to check disclosure grant: %w", err)
-	}
-	return exists, nil
 }

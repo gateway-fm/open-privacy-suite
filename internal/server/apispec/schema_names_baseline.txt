@@ -2,9 +2,15 @@
 # Guarded by schema_names_test.go: a name disappearing from the
 # document is a client-visible rename and must be allowlisted.
 # Refresh from the regenerated spec when a rename is intentional.
+big.Int
 data
 iden3comm.AttachData
 iden3comm.Attachment
+internal_server.policyCheckArtifacts
+internal_server.policyCheckRequest
+internal_server.policyCheckResponse
+internal_server.policyCheckRPCBlock
+internal_server.policyCheckSubject
 math_big.Int
 privacy-proxy_internal_apimodels.APIError
 privacy-proxy_internal_apimodels.APIMessage
@@ -106,6 +112,7 @@ privacy-proxy_internal_apimodels.ExtraWildcardInfo
 privacy-proxy_internal_apimodels.GrantActivityLogEntry
 privacy-proxy_internal_apimodels.GrantActivityLogsResponse
 privacy-proxy_internal_apimodels.GrantTransaction
+privacy-proxy_internal_apimodels.GrantTransactionDetail
 privacy-proxy_internal_apimodels.GrantTransactionsResponse
 privacy-proxy_internal_apimodels.GroupAccessRequest
 privacy-proxy_internal_apimodels.GroupBatchDeletePreviewEntry

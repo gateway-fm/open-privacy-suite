@@ -22,7 +22,7 @@ delivery ports and signing secrets must be restricted. See [operations](OPERATIO
 
 | Integration | Supported upstream | Toolchain | Artifact |
 |---|---|---|---|
-| Besu | 26.8.1, Maven 26.8.1-d97cbd6 | Temurin 25.0.4.1+1, Gradle 9.0.0 | `ops-besu-approvals-0.1.0-besu-26.8.1.jar` |
+| Besu | 26.8.1, Maven 26.8.1-d97cbd6 | Temurin 25.0.4.1+1, Gradle 9.2.1 | `ops-besu-approvals-0.1.0-besu-26.8.1.jar` |
 | Reth | 2.5.2, commit `5a6940e351fed80458fe6c9da8581cbe4b8bd036` | Rust 1.98.1, protoc | `ops-reth-approvals` |
 
 The machine-readable pins are in [compatibility.json](compatibility.json). Besu's plugin API is
@@ -43,11 +43,17 @@ python3 node-approvals/build.py reth
 ```
 
 Each command runs native tests and packages a separate directory under `.tmp/approval-release/`
-with the artifact, checksums, version, source commit, toolchain, compatibility and operator guide.
+with the artifact, checksums, version, source repository and commit, toolchain, compatibility and operator guide.
 A dirty build is identified in `build.json`; release builds must have `source_dirty: false`.
 Use `--output` for a fresh destination when rebuilding. Verify `SHA256SUMS` before installation.
 The Besu archive is reproducibly ordered; this does not promise identical native binaries across
 toolchains or operating systems. Reth bundles name the host OS and architecture.
+
+Bundled documentation links use `--repository OWNER/REPO` when supplied, otherwise
+`GITHUB_REPOSITORY` in CI, or the local checkout's `origin` (GitHub HTTPS or SSH URL).
+Use the explicit option for checkouts with a local mirror or custom SSH alias, for example
+`--repository LFDT-Permissioned-Privacy-Control/permissioned-privacy-control`.
+The selected repository must contain the checkout's commit so the links resolve.
 
 CI builds both targets, runs their unit tests, shared vectors, real-node scenarios and OPS HTTP
 scenarios, then retains candidate artifacts. Publishing a release is a separate maintainer action

@@ -310,11 +310,8 @@ func assertStrictTransfers(t *testing.T, v rpViewer, body []byte, got []explorer
 	}
 }
 
-// Under strict an approved disclosure grant is the one surviving exception on
-// the explorer: an auditor granted full disclosure of the sender U opens U's
-// transaction, and nothing else. JSON-RPC has no grant path: the same viewer
-// gets null.
-func TestReadProfile_Strict_DisclosureGrantSurvives(t *testing.T) {
+// Strict RPC and Explorer reads both ignore disclosure grants.
+func TestReadProfile_Strict_DisclosureGrantIgnored(t *testing.T) {
 	f := setupRPFixture(t)
 	router := f.explorerRouter()
 	f.wireExplorer(rbac.ReadProfileStrict)
@@ -339,18 +336,17 @@ func TestReadProfile_Strict_DisclosureGrantSurvives(t *testing.T) {
 	require.NoError(t, err)
 
 	code, body := f.explorerGet(t, router, auditor, "/api/v1/explorer/transactions/"+rpTx1)
-	require.Equal(t, http.StatusOK, code, "the granted user's tx: %s", body)
+	require.Equal(t, http.StatusNotFound, code, "disclosure grants do not admit strict transactions: %s", body)
 	var revealAudits int
 	require.NoError(t, f.conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM rbac_audit_log WHERE action='access' AND resource_type='disclosure_grant' AND new_value::jsonb->>'target'=$1`, rpTx1).Scan(&revealAudits))
-	assert.Positive(t, revealAudits, "a full disclosure reveal is audited")
+	assert.Zero(t, revealAudits, "regular reads never audit a grant reveal")
 	code, body = f.explorerGet(t, router, auditor, "/api/v1/explorer/transactions/"+rpTx2)
 	assert.Equal(t, http.StatusNotFound, code, "a tx of a user not under the grant: %s", body)
 	code, body = f.explorerGet(t, router, auditor, "/api/v1/explorer/transactions?limit=50")
 	require.Equal(t, http.StatusOK, code, string(body))
 	var granted []explorer.Transaction
 	require.NoError(t, json.Unmarshal(body, &granted))
-	require.Len(t, granted, 1)
-	assert.Equal(t, rpTx1, strings.ToLower(granted[0].Hash))
+	require.Empty(t, granted)
 
 	p := f.rpProcessor(rbac.ReadProfileStrict)
 	raw := rpEnvelope(t, rpTxObject(rpTx1, rpE, rpData))

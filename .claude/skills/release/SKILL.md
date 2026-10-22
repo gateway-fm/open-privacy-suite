@@ -5,26 +5,28 @@ description: Draft and publish a GitHub release for Open Privacy Suite with a co
 
 # Release
 
-Produce a GitHub Release for `gateway-fm/open-privacy-suite` whose notes are **operator-focused, precise, and short** — someone deploying the upgrade reads it in under two minutes and knows exactly what changed, what they MUST do, and how to verify it worked.
+Produce a GitHub Release for the current project's repository whose notes are **operator-focused, precise, and short** — someone deploying the upgrade reads it in under two minutes and knows exactly what changed, what they MUST do, and how to verify it worked.
 
 Never paste Linear descriptions or raw commit subjects. Judge what actually matters (business logic, client-visible features, security) and say it in plain language. Everything below is derived from the **code/diff**, not from tickets.
 
 ## 0. Inputs
 
+- **Repository:** resolve it once from this checkout with `RELEASE_REPO=$(gh repo view --json nameWithOwner --jq .nameWithOwner)` and verify it against `git remote -v` and the user's intended destination. If a fork/default-repository setting or `GH_REPO` selects a different project, resolve that mismatch before continuing. Keep this value for every query, release command and link below, and show it alongside the drafted notes. Never fall back to Gateway when working in LFDT.
 - **Target tag** (e.g. `v0.13.0`, or `v0.13.0-rc.1` for a pre-release). If not given, infer the next semver from the latest release + the size/nature of changes and **confirm with the user** before proceeding.
 - **Range** = `<previous tag>..<target>`.
-  - Previous tag: `gh release view --repo gateway-fm/open-privacy-suite --json tagName -q .tagName` (latest), or `git describe --tags --abbrev=0`.
+  - Previous tag: `gh release view --repo "$RELEASE_REPO" --json tagName -q .tagName` (latest), or a local tag verified to belong to the selected repository.
   - If the target tag doesn't exist yet, use `<previous tag>..HEAD` on `main`.
+  - For LFDT's first release after the single-root import, there may be no previous tag in this repository. Describe it as the initial release, review its imported source and subsequent commits, and link to the target tag's tree instead of inventing a cross-repository comparison.
 
 ## 1. Gather the actual changes (read the evidence — don't guess)
 
-- **Merged PRs in range:** `gh pr list --repo gateway-fm/open-privacy-suite --state merged --base main --limit 300 --json number,title,mergedAt,labels`, keep those merged after the previous tag's date; cross-check with `git log --oneline <range>`.
+- **Merged PRs in range:** `gh pr list --repo "$RELEASE_REPO" --state merged --base main --limit 300 --json number,title,mergedAt,labels`, keep those merged after the previous tag's date; cross-check with `git log --oneline <range>`.
 - **Migrations:** `git diff --name-status <range> -- internal/db/migrations internal/db/migrations_audit`. Open each new `*.sql`; state in one line WHAT it changes and whether it's expand-only (safe/auto) or needs a manual/ordered step or a separate DB.
 - **Env & config surface** — added / removed / renamed / newly-required keys and secrets:
   - `git diff <range> -- .env.example config.example.toml`
   - new required `getEnv*(...)` reads in `internal/config/*.go`
   - additions to `secretKeys` in `internal/config/file.go` (secret-class → MUST be injected via the secret store; rejected from the TOML config file)
-- **Docker images** the release publishes (from `.github/workflows/release.yml`): `gatewayfm/privacy-proxy-backend` and `gatewayfm/privacy-proxy-frontend`, tag = the version **without** the leading `v` (`type=semver,pattern={{version}}`, `latest=false`).
+- **Docker images:** inspect `.github/workflows/release.yml`, including its repository guards. Currently only Gateway releases publish `gatewayfm/privacy-proxy-backend` and `gatewayfm/privacy-proxy-frontend`, with the version **without** the leading `v` (`type=semver,pattern={{version}}`, `latest=false`). LFDT releases currently publish source only; keep the Docker images heading and state "None — this is a source-only release; LFDT image publishing is not configured." Do not invent image tags for LFDT releases. Enabling LFDT image publication requires a separate reviewed change.
 - **Breaking / behavior changes:** scan PR titles + labels + diffs for renamed routes, changed response shapes, tightened auth gates, changed defaults.
 
 ## 2. Classify — keep only what an operator or the business cares about
@@ -60,9 +62,8 @@ Then, in this exact section order (keep the `##` headers verbatim — the CI lin
 - Envs/configs still honored but going away, and what to move to. OMIT this section entirely if none.
 
 ## Docker images
-- `gatewayfm/privacy-proxy-backend:<version>`
-- `gatewayfm/privacy-proxy-frontend:<version>`
-(version = the tag without the leading `v`, e.g. `0.13.0-rc.1`)
+- List full image names and versions actually published for the selected repository.
+- For an LFDT source-only release: "None — this is a source-only release; LFDT image publishing is not configured."
 
 ## Compatible versions
 The suite is deployed as three components, so name the sibling versions this
@@ -73,7 +74,7 @@ together (the RC lineage counts: a GA promoted from `rc.N` inherits whatever
 
 | Component | Version | Images |
 |---|---|---|
-| Open Privacy Suite | `vX.Y.Z` | `gatewayfm/privacy-proxy-backend:X.Y.Z`, `gatewayfm/privacy-proxy-frontend:X.Y.Z` |
+| Open Privacy Suite | `vX.Y.Z` | Actual published images, or "Source only; no images published" |
 | ops-explorer | `vA.B.C` | `gatewayfm/block-explorer-api:A.B.C`, `gatewayfm/block-explorer-api-privacy:A.B.C`, `gatewayfm/block-explorer-public-api:A.B.C`, `gatewayfm/block-explorer-frontend:A.B.C` |
 | ops-indexer | `vD.E.F` | `ghcr.io/gateway-fm/chain-indexer:D.E.F`, `gatewayfm/chain-indexer:D.E.F` |
 
@@ -86,19 +87,21 @@ something they cannot pull.
 ## Verify after deploy
 - 2–4 concrete checks: an endpoint that should now behave a certain way, a migration row/column present, a specific log line or metric. Precise enough for infra to run without asking.
 
-**Full changelog:** https://github.com/gateway-fm/open-privacy-suite/compare/<previous tag>...<target tag>
+**Full changelog:** https://github.com/<resolved RELEASE_REPO>/compare/<previous tag>...<target tag>
 ```
+
+Substitute the resolved repository in the URL. For an initial release without a previous tag, use `https://github.com/<resolved RELEASE_REPO>/tree/<target tag>` and identify it as the initial source snapshot; retain the `Full changelog:` label required by the lint.
 
 Rules: no section longer than it needs to be; omit the optional empty section (Deprecations) rather than writing "None"; Highlights are business-first, not a changelog dump.
 
 ## 4. Confirm, then publish
 
-- Show the drafted notes to the user. **Do NOT publish unprompted.**
+- Show the selected repository and drafted notes to the user. **Do NOT publish unprompted.**
 - On approval, create as a **draft** first:
-  `gh release create <tag> --repo gateway-fm/open-privacy-suite --title "<tag>" --notes-file <file> --draft --target main`
+  `gh release create <tag> --repo "$RELEASE_REPO" --title "<tag>" --notes-file <file> --draft --target main`
   (add `--prerelease` for an `-rc`/`-beta`/`-alpha` tag). Share the draft URL.
-- Publish only on an explicit "publish": `gh release edit <tag> --repo gateway-fm/open-privacy-suite --draft=false`.
-- **Heads-up:** publishing / pushing the `v*` tag triggers `deploy-docs.yml` (docs-site republish, version badge = the tag) and `release.yml` (immutable, multi-arch Docker images — a tag can never be re-cut, only superseded). Make sure this release's docs are already merged to `main` first.
+- Publish only on an explicit "publish": `gh release edit <tag> --repo "$RELEASE_REPO" --draft=false`.
+- **Workflow effects:** `deploy-docs.yml` handles `v*` tag pushes when enabled (Gateway, or `DOCS_PAGES_ENABLED=true` with Pages configured). `release.yml` handles published releases, but its image jobs currently run only in Gateway. An LFDT release does not publish images to Gateway accounts. Make sure this release's docs are already merged to `main` first; published version tags must not be reused.
 
 ## 5. Enforcement — this skill is guidance; the CI lint is the gate
 

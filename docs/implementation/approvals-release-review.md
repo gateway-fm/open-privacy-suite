@@ -167,6 +167,21 @@ packages (adding `rand_pcg` 0.10.2) and OSV reports no new findings. The Rust au
 benchmark's hash-pinned lockfile does not contain `quinn-proto`, is unchanged, and its 52 registry
 packages still have no findings.
 
+### Besu build-tool follow-up, 15 October 2026
+
+PR #546 updates Shadow from 9.2.2 to 9.6.1 and JUnit from 5.12.2 to 6.1.3.
+Shadow 9.6.1 requires Gradle 9.2 or later; Gradle 9.0.0 fails during plugin
+configuration because the provider-based `addVariantsFromConfiguration` API is absent.
+The workflow, compatibility manifest and supported-toolchain table now pin Gradle
+**9.2.1** together. The supported Besu distribution, JDK and plugin runtime dependencies
+stay at their existing versions.
+
+Local validation with the pinned JDK passed all 105 Java tests, the thin-JAR check,
+the Besu dependency audit with its existing reviewed exceptions, Go approval race tests,
+23 standard real-Besu checks and all four OPS HTTP scenarios. The optional Lineth
+coexistence scenarios were skipped because those additional plugin JARs were not installed.
+Linux compatibility CI remains required before publication.
+
 ## Validation record
 
 The [Besu verifier follow-up](../../poc/approval-performance/BESU-VERIFIER-2026-09-29.md)

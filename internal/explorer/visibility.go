@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"sort"
 	"strings"
-	"time"
 )
 
 // VisibilityLevel represents how much of an address's data is visible
@@ -24,7 +23,6 @@ type VisibilityReason string
 
 const (
 	ReasonOwnAddress          VisibilityReason = "own_address"
-	ReasonDisclosureGrant     VisibilityReason = "disclosure_grant"
 	ReasonPublicAddress       VisibilityReason = "public_address"
 	ReasonNoAccess            VisibilityReason = "no_access"
 	ReasonRBACGroupMember     VisibilityReason = "rbac_group_member"
@@ -34,13 +32,10 @@ const (
 
 // AddressVisibility represents the visibility status of a single address
 type AddressVisibility struct {
-	Address   string           `json:"address"`
-	Visible   bool             `json:"visible"`
-	Level     VisibilityLevel  `json:"level"`
-	Reason    VisibilityReason `json:"reason"`
-	Pseudonym *string          `json:"pseudonym,omitempty"`
-	GrantID   *string          `json:"grant_id,omitempty"`
-	ExpiresAt *time.Time       `json:"expires_at,omitempty"`
+	Address string           `json:"address"`
+	Visible bool             `json:"visible"`
+	Level   VisibilityLevel  `json:"level"`
+	Reason  VisibilityReason `json:"reason"`
 }
 
 // GeneratePseudonym creates a stable, non-reversible pseudonym for an address.
@@ -72,14 +67,14 @@ func GeneratePseudonym(address string, key []byte) string {
 
 // StrictAllowlist returns the explorer list allowlist of the strict read
 // profile (RD-1299) from a viewer's detailed visibility: the viewer's own
-// linked addresses and addresses under an approved disclosure grant, lowercased
+// linked addresses, lowercased
 // and sorted. Visibility through a contract grant, an admin role or a visibleTo
 // share adds nothing. An empty map (for example after a failed lookup) yields
 // an empty allowlist, which hides every row.
 func StrictAllowlist(detailed map[string]AddressVisibility) []string {
 	out := make([]string, 0, len(detailed))
 	for addr, meta := range detailed {
-		if meta.Reason == ReasonOwnAddress || meta.Reason == ReasonDisclosureGrant {
+		if meta.Reason == ReasonOwnAddress {
 			out = append(out, strings.ToLower(addr))
 		}
 	}
@@ -91,7 +86,20 @@ func StrictAllowlist(detailed map[string]AddressVisibility) []string {
 // The ID is derived from the address and grant ID to be unique per grant.
 // SECURITY: This allows routing without revealing the real address.
 func GenerateAddressID(address string, grantID string) string {
+	return GenerateAddressIDKeyed(address, grantID, nil)
+}
+
+// GenerateAddressIDKeyed is GenerateAddressID keyed with a server secret (the
+// explorer pseudonym key): without the key, a grantee who knows the grant id
+// cannot test candidate addresses against an address_id. With an empty key it
+// equals GenerateAddressID.
+func GenerateAddressIDKeyed(address, grantID string, key []byte) string {
 	data := strings.ToLower(address) + ":" + grantID
-	hash := sha256.Sum256([]byte(data))
-	return hex.EncodeToString(hash[:8]) // 16 hex chars
+	if len(key) == 0 {
+		hash := sha256.Sum256([]byte(data))
+		return hex.EncodeToString(hash[:8]) // 16 hex chars
+	}
+	mac := hmac.New(sha256.New, key)
+	mac.Write([]byte(data))
+	return hex.EncodeToString(mac.Sum(nil)[:8])
 }

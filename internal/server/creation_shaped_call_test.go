@@ -465,7 +465,9 @@ func TestCreationShapedCall_AccessCheckAndDryRunParity(t *testing.T) {
 	dr.proxy = proxy.New(f.canary.srv.URL)
 	f.canary.setFrame(f.creationFrame(traceFrame{Type: "STATICCALL", From: f.created, To: f.foreignAddr}))
 
-	for _, did := range []string{f.callerDID, f.deployerDID} {
+	// A nested foreign frame is outside the org-local dry-run scope, so the
+	// deploy holder gets indeterminate rather than a definitive deny.
+	for did, want := range map[string]string{f.callerDID: "deny", f.deployerDID: "indeterminate"} {
 		w := dryRunPost(t, dr, f.orgA, "jwt_admin", adminDID, map[string]any{
 			"user_did": did,
 			"rpc":      apimodels.DryRunRPCBlock{Method: "eth_call", Params: creationParams(creationCode)},
@@ -473,7 +475,7 @@ func TestCreationShapedCall_AccessCheckAndDryRunParity(t *testing.T) {
 		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 		var resp dryRunResponse
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-		assert.Equal(t, "deny", resp.Decision, "dry-run as %s", did)
+		assert.Equal(t, want, resp.Decision, "dry-run as %s", did)
 	}
 	assert.Zero(t, f.canary.forwards.Load(), "a denied dry-run must not forward the call")
 }

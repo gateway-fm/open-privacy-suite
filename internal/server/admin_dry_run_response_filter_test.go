@@ -1136,12 +1136,8 @@ func TestDryRun_OwnDeploymentOfOtherOrgContract_IsNull_RD1308(t *testing.T) {
 	assert.Equal(t, "null", string(drfResult(t, resp.Response)), "fail closed: %s", raw)
 }
 
-// Embedded-address redaction counts only disclosure grants requested in the
-// path org: a Full grant the member holds through org P does not unzero the
-// disclosed subject in an org-O dry-run. Since RD-1318 both surfaces also
-// carry the mark that suppresses every disclosure grant, so this end-to-end
-// check holds under either rule; the org clause on its own is pinned at the
-// resolver in TestDisclosureGrants_SuppressedUnderImpersonationMark_RD1318.
+// Direct, dry-run and View-as reads all ignore disclosure grants, including
+// grants requested in a different organization.
 func TestDryRun_DisclosureGrantFromOtherOrg_NotApplied_RD1308(t *testing.T) {
 	f := setupDRFFixture(t)
 	ctx := context.Background()
@@ -1163,8 +1159,8 @@ func TestDryRun_DisclosureGrantFromOtherOrg_NotApplied_RD1308(t *testing.T) {
 	const h = "0x1308000000000000000000000000000000000000000000000000000000000042"
 	params := []any{map[string]any{"address": drfContractO, "fromBlock": "0x1", "toBlock": "0x1"}}
 	body := drfEnvelope(t, []any{drfTransferLog(drfContractO, drfMemberEOA, subjectEOA, h, "0x0")})
-	require.Contains(t, strings.ToLower(string(f.production(t, rbac.MethodGetLogs, params, body))), bare(subjectEOA),
-		"control: the member's own call shows the subject it holds a grant on")
+	require.NotContains(t, strings.ToLower(string(f.production(t, rbac.MethodGetLogs, params, body))), bare(subjectEOA),
+		"ordinary RPC reads ignore disclosure grants outside impersonation too")
 	f.serve(rbac.MethodGetLogs, body)
 	resp, raw := f.dryRun(t, rbac.MethodGetLogs, params)
 	assert.Contains(t, strings.ToLower(string(resp.Response)), bare(drfMemberEOA), "the log stays admitted: %s", raw)

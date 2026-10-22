@@ -38,6 +38,104 @@
                 },
                 "type": "object"
             },
+            "internal_server.policyCheckArtifacts": {
+                "description": "Artifacts appear only on allow in full_simulation mode: the raw, unredacted trace and logs.",
+                "properties": {
+                    "logs": {
+                        "items": {},
+                        "type": "array",
+                        "uniqueItems": false
+                    },
+                    "trace": {}
+                },
+                "type": "object"
+            },
+            "internal_server.policyCheckRPCBlock": {
+                "properties": {
+                    "method": {
+                        "type": "string"
+                    },
+                    "params": {
+                        "items": {},
+                        "type": "array",
+                        "uniqueItems": false
+                    }
+                },
+                "required": [
+                    "method"
+                ],
+                "type": "object"
+            },
+            "internal_server.policyCheckRequest": {
+                "properties": {
+                    "operation": {
+                        "$ref": "#/components/schemas/internal_server.policyCheckRPCBlock"
+                    },
+                    "org_id": {
+                        "description": "OrgID is optional; omitted, CheckAccess resolves it as a live request would.",
+                        "type": "string"
+                    },
+                    "subject": {
+                        "$ref": "#/components/schemas/internal_server.policyCheckSubject"
+                    }
+                },
+                "required": [
+                    "operation",
+                    "subject"
+                ],
+                "type": "object"
+            },
+            "internal_server.policyCheckResponse": {
+                "properties": {
+                    "artifacts": {
+                        "$ref": "#/components/schemas/internal_server.policyCheckArtifacts"
+                    },
+                    "decision": {
+                        "enum": [
+                            "allow",
+                            "deny",
+                            "indeterminate"
+                        ],
+                        "type": "string"
+                    },
+                    "reason": {
+                        "description": "Reason is set on deny (denied) and indeterminate (outside_oracle_scope, not_simulated).",
+                        "enum": [
+                            "denied",
+                            "outside_oracle_scope",
+                            "not_simulated"
+                        ],
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "internal_server.policyCheckSubject": {
+                "oneOf": [
+                    {
+                        "properties": {
+                            "did": {
+                                "type": "string"
+                            }
+                        },
+                        "required": [
+                            "did"
+                        ],
+                        "type": "object"
+                    },
+                    {
+                        "properties": {
+                            "address": {
+                                "type": "string"
+                            }
+                        },
+                        "required": [
+                            "address"
+                        ],
+                        "type": "object"
+                    }
+                ]
+            },
             "math_big.Int": {
                 "type": "object"
             },
@@ -1514,6 +1612,11 @@
             "privacy-proxy_internal_apimodels.DryRunResponseDoc": {
                 "properties": {
                     "decision": {
+                        "enum": [
+                            "allow",
+                            "deny",
+                            "indeterminate"
+                        ],
                         "example": "allow",
                         "type": "string"
                     },
@@ -2056,6 +2159,79 @@
                     "tx_hash": {
                         "description": "only for full disclosure",
                         "type": "string"
+                    },
+                    "tx_index": {
+                        "description": "TxIndex is the transaction's position in its block, at every level, so\na client can order disclosed rows among other rows and de-duplicate a\nrow that carries no hash (RD-1353).",
+                        "type": "integer"
+                    },
+                    "value": {
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "privacy-proxy_internal_apimodels.GrantTransactionDetail": {
+                "properties": {
+                    "block_number": {
+                        "type": "integer"
+                    },
+                    "block_timestamp": {
+                        "type": "integer"
+                    },
+                    "contract_address": {
+                        "type": "string"
+                    },
+                    "direction": {
+                        "description": "\"in\", \"out\", \"self\"",
+                        "type": "string"
+                    },
+                    "disclosure_level": {
+                        "type": "string"
+                    },
+                    "error": {
+                        "type": "string"
+                    },
+                    "from": {
+                        "type": "string"
+                    },
+                    "gas_limit": {
+                        "type": "integer"
+                    },
+                    "gas_price": {
+                        "type": "integer"
+                    },
+                    "gas_used": {
+                        "type": "integer"
+                    },
+                    "input_data": {
+                        "type": "string"
+                    },
+                    "max_fee_per_gas": {
+                        "type": "integer"
+                    },
+                    "max_priority_fee_per_gas": {
+                        "type": "integer"
+                    },
+                    "nonce": {
+                        "type": "integer"
+                    },
+                    "revert_reason": {
+                        "type": "string"
+                    },
+                    "status": {
+                        "type": "integer"
+                    },
+                    "to": {
+                        "type": "string"
+                    },
+                    "tx_hash": {
+                        "type": "string"
+                    },
+                    "tx_index": {
+                        "type": "integer"
+                    },
+                    "tx_type": {
+                        "type": "integer"
                     },
                     "value": {
                         "type": "string"
@@ -4795,14 +4971,22 @@
                     "view_logs",
                     "view_transactions",
                     "view_summary",
-                    "export_report"
+                    "export_report",
+                    "view_transaction",
+                    "list_addresses",
+                    "resolve_address",
+                    "view_events"
                 ],
                 "type": "string",
                 "x-enum-varnames": [
                     "ActionViewLogs",
                     "ActionViewTransactions",
                     "ActionViewSummary",
-                    "ActionExportReport"
+                    "ActionExportReport",
+                    "ActionViewTransaction",
+                    "ActionListAddresses",
+                    "ActionResolveAddress",
+                    "ActionViewEvents"
                 ]
             },
             "privacy-proxy_internal_disclosure.Grant": {
@@ -4998,14 +5182,18 @@
                     "access_logs",
                     "transactions",
                     "summary",
-                    "report"
+                    "report",
+                    "addresses",
+                    "events"
                 ],
                 "type": "string",
                 "x-enum-varnames": [
                     "ResourceAccessLogs",
                     "ResourceTransactions",
                     "ResourceSummary",
-                    "ResourceReport"
+                    "ResourceReport",
+                    "ResourceAddresses",
+                    "ResourceEvents"
                 ]
             },
             "privacy-proxy_internal_disclosure.Scope": {
@@ -5025,7 +5213,7 @@
                         "$ref": "#/components/schemas/privacy-proxy_internal_disclosure.DisclosureLevel"
                     },
                     "methods": {
-                        "description": "Specific RPC methods to disclose",
+                        "description": "Data categories: activity_logs, transaction_history, full_disclosure",
                         "items": {
                             "type": "string"
                         },
@@ -5580,7 +5768,6 @@
             "privacy-proxy_internal_explorer.VisibilityReason": {
                 "enum": [
                     "own_address",
-                    "disclosure_grant",
                     "public_address",
                     "no_access",
                     "rbac_group_member",
@@ -5590,7 +5777,6 @@
                 "type": "string",
                 "x-enum-varnames": [
                     "ReasonOwnAddress",
-                    "ReasonDisclosureGrant",
                     "ReasonPublicAddress",
                     "ReasonNoAccess",
                     "ReasonRBACGroupMember",
@@ -6699,6 +6885,12 @@
                 "description": "JWT issued by the auth endpoints, sent as `Authorization: Bearer \u003ctoken\u003e`.",
                 "scheme": "bearer",
                 "type": "http"
+            },
+            "CrossOrgOracleToken": {
+                "description": "Dedicated token of the cross-org authorization oracle (CROSS_ORG_AUTHORIZATION_ORACLE_TOKEN). Accepted by that endpoint only, from a private-network source address; admin, operator and JWT credentials are not accepted there.",
+                "in": "header",
+                "name": "X-Cross-Org-Authorization-Oracle-Token",
+                "type": "apiKey"
             }
         }
     },
@@ -8441,6 +8633,113 @@
                 ]
             }
         },
+        "/api/v1/admin/cross-org-authorization-oracle": {
+            "post": {
+                "description": "Cross-organization privacy-policy oracle for an explicitly trusted infrastructure caller. Disabled by default (CROSS_ORG_AUTHORIZATION_ORACLE_MODE=disabled), in which case it answers 404. Subject is a DID or Ethereum address. Operation is a JSON-RPC method and params. The answer is decision=allow, deny or indeterminate. deny means policy was evaluated inside the oracle scope (the organizations in CROSS_ORG_AUTHORIZATION_ORACLE_ORG_IDS) and refuses the call. indeterminate means the oracle cannot judge: reason=outside_oracle_scope when the subject, the requested or resolved organization, the target or a nested call is outside that scope; reason=not_simulated when the method executes EVM code the oracle does not trace, including a targeted eth_createAccessList, which live RPC keeps on its entry-point check without a trace. The oracle never consults an organization outside the scope. Callers should proceed on allow, block on deny, and on indeterminate not block on the oracle but let the live call decide. Authority scope: the token holder may query any member of any allowlisted organization; the operator allowlist is the consent boundary. In verdict_only mode the response carries only the decision and its coarse reason. In full_simulation mode an allow also carries artifacts, the raw, unredacted trace and logs of the simulated call, by design; where the operator must not be able to access tenant data, use verdict_only. Per-organization consent is planned as follow-up work. EVM execution methods use debug_traceCall with the same upstream credential as live calls. Write methods also run a side-effect-free compliance preview. The endpoint does not submit the call or consume a travel-rule record. A supplied sender must link to the subject. Requests share one global concurrency cap (MAX_CONCURRENT_REQUESTS in flight); request-rate limits belong to the upstream RPC proxy. Traces use the subject organization's upstream API key, or the default key, so they count against that key's upstream quota; an upstream 429 is returned as 429 with its Retry-After. debug_traceCall and debug_traceTransaction are not supported (400). Admin, operator, and JWT credentials are not accepted. Every request that reaches evaluation writes one operator-only entry (no organization) to the hash-chained RBAC audit log, including a 429 or 503 after evaluation started; if that write fails the answer is withheld (500). Early 400s (malformed body, subject or method) and the concurrency-cap 429 are not audited. Operational failures (concurrency cap, upstream 429, trace errors or timeouts) return 429 or 503, never a policy verdict.",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/internal_server.policyCheckRequest"
+                            }
+                        }
+                    },
+                    "description": "subject, operation, and optional org_id",
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/internal_server.policyCheckResponse"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "invalid body, missing, over-long or unsupported operation.method, an invalid subject address, or subject has neither/both of did and address"
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "missing or invalid X-Cross-Org-Authorization-Oracle-Token"
+                    },
+                    "403": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "source address not on the private network"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "the oracle is disabled (CROSS_ORG_AUTHORIZATION_ORACLE_MODE=disabled)"
+                    },
+                    "429": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "global concurrency cap reached, or upstream 429 (Retry-After passed through); operational, not a policy verdict"
+                    },
+                    "500": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "internal error (includes audit-log write failure, response withheld)"
+                    },
+                    "503": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "policy simulation unavailable (upstream trace failure); operational, not a policy verdict"
+                    }
+                },
+                "security": [
+                    {
+                        "CrossOrgOracleToken": []
+                    }
+                ],
+                "summary": "Check whether a subject would be allowed to make an RPC call",
+                "tags": [
+                    "Admin: RBAC"
+                ]
+            }
+        },
         "/api/v1/admin/dev/deploy-demo-erc20": {
             "post": {
                 "description": "Deploys a DemoToken (DEMO) ERC-20 contract via the configured node and returns its address and transaction hash. Self-gated to non-production builds: returns 403 when running in production. Optionally registers the deployed contract to an organization (and grants it to the deployer's group) when org_id is supplied. Requires an admin token and a private-network source address.",
@@ -8774,7 +9073,7 @@
         },
         "/api/v1/admin/disclosure/grants/{grant_id}/events": {
             "get": {
-                "description": "Returns the disclosure access audit trail for a grant — each event records when the grant's data was viewed, by whom, and what resource was accessed. Requires a valid grant token (X-Disclosure-Token header or token query parameter) that must belong to the grant named in the path — a token for a different grant is rejected (403).",
+                "description": "Returns the disclosure access audit trail for a grant — each event records when the grant's data was viewed, by whom, and what resource was accessed. The requester must remain an active member of the request organization. Non-full grants omit viewer IPs and address-bearing summaries; this read is also recorded. Requires a valid grant token (X-Disclosure-Token header or token query parameter) that must belong to the grant named in the path — a token for a different grant is rejected (403).",
                 "parameters": [
                     {
                         "description": "Disclosure grant ID",
@@ -8854,6 +9153,16 @@
                         },
                         "description": "source address not on the private network, or token does not match the grant"
                     },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "grant unavailable to the current requester or organization"
+                    },
                     "500": {
                         "content": {
                             "application/json": {
@@ -8878,7 +9187,7 @@
         },
         "/api/v1/admin/disclosure/grants/{grant_id}/logs": {
             "get": {
-                "description": "Returns the target user's RPC activity log entries authorized by a disclosure grant. Requires a valid grant token (X-Disclosure-Token header or token query parameter) that must belong to the grant named in the path — a token for a different grant is rejected (403). Results are bounded to the grant's scope and time window; each access is itself recorded as a disclosure event.",
+                "description": "Returns the target user's RPC activity log entries authorized by a disclosure grant. Requires a valid grant token (X-Disclosure-Token header or token query parameter) that must belong to the grant named in the path — a token for a different grant is rejected (403). The requester must remain an active member of the request organization. Requires activity_logs or full_disclosure; address-filtered activity is denied because activity records cannot establish that filter. Results honor the scope date range. Non-full grants omit IP addresses. Each read is recorded as a disclosure event.",
                 "parameters": [
                     {
                         "description": "Disclosure grant ID",
@@ -8957,6 +9266,16 @@
                             }
                         },
                         "description": "source address not on the private network, or token does not match the grant"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "grant unavailable to the current requester or organization"
                     },
                     "500": {
                         "content": {
@@ -9064,6 +9383,16 @@
                             }
                         },
                         "description": "source address not on the private network, or token does not match the grant"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "grant unavailable to the current requester or organization"
                     },
                     "500": {
                         "content": {
@@ -9175,7 +9504,7 @@
         },
         "/api/v1/admin/disclosure/grants/{grant_id}/summary": {
             "get": {
-                "description": "Returns aggregated activity statistics (request counts, per-method breakdown, date range) for the target user's activity authorized by a disclosure grant. Requires a valid grant token (X-Disclosure-Token header or token query parameter) that must belong to the grant named in the path — a token for a different grant is rejected (403). The access is recorded as a disclosure event.",
+                "description": "Returns aggregated activity statistics (request counts, per-method breakdown, date range) for the target user's activity authorized by a disclosure grant. Requires a valid grant token (X-Disclosure-Token header or token query parameter) that must belong to the grant named in the path — a token for a different grant is rejected (403). The requester must remain a current member of the request organization. Requires activity_logs or full_disclosure; address-filtered activity is denied. Reads, including cached reports, are recorded as disclosure events.",
                 "parameters": [
                     {
                         "description": "Disclosure grant ID",
@@ -9233,6 +9562,16 @@
                             }
                         },
                         "description": "source address not on the private network, or token does not match the grant"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "grant unavailable to the current requester or organization"
                     },
                     "500": {
                         "content": {
@@ -9448,7 +9787,7 @@
                                 }
                             }
                         },
-                        "description": "invalid body, or org_id required (ambiguous multi-org caller)"
+                        "description": "invalid body or scope, or org_id required (ambiguous multi-org caller)"
                     },
                     "401": {
                         "content": {
@@ -13907,7 +14246,7 @@
         },
         "/api/v1/admin/orgs/{org_id}/dry-run": {
             "post": {
-                "description": "In Reth policy mode, execution requests use the node evaluator; diagnostic bypass requires a human administrator and remains organization-scoped.\nEvaluates \"what would this user see if they made this RPC call?\" in the path org, without mutating chain state. Read methods are forwarded, and the response goes through the same privacy filter as the user's own call, evaluated in the path org only: the user's contract grants, admin role and visibleTo shares from other organizations do not apply, and the user's disclosure grants never apply (a grant discloses to the grantee alone); a transaction or receipt the user may not read, or one sent to or deploying another organization's contract, comes back null; logs are filtered, and embedded addresses the user cannot see are redacted. Write methods (eth_sendTransaction / eth_sendRawTransaction) are translated to debug_traceCall so the RBAC verdict, the events the tx would emit, and the subset the user would see in its receipt can be inspected. If the user's view cannot be produced, nothing from the node is returned (500). Requires a tier-2 org-admin JWT of the path org: X-Admin-Token credentials (both the full super-admin token and the operator token) are explicitly rejected, since impersonation reads tenant data as the user. The impersonated user must exist and be a member of the path org, else an opaque 404. Every evaluation is written to the impersonation audit log fail-closed. Under the strict read privacy profile (PRIVACY_READ_PROFILE=strict) read methods are refused with 403 before anything is forwarded (the refusal is audited), and a simulated send returns only the allow/deny verdict, without the trace or its logs. Supported methods: eth_call, eth_getLogs, eth_getTransactionReceipt, eth_getTransactionByHash, eth_getBalance, eth_getCode, eth_getStorageAt, eth_blockNumber, eth_chainId, eth_sendTransaction, eth_sendRawTransaction.\nClient state/block override options are unsupported regardless of the selected user's role, including admins.",
+                "description": "In Reth policy mode, execution requests use the node evaluator and return allow or deny, never indeterminate; diagnostic bypass requires a human administrator and remains organization-scoped.\nEvaluates \"what would this user see if they made this RPC call?\" in the path org, without mutating chain state. Returns allow or deny for definitive local decisions. If nested execution reaches a contract owned by another organization, returns decision=indeterminate and reason=external_scope_required without evaluating that foreign policy. eth_call is traced with debug_traceCall even when live eth_call tracing is disabled, so its verdict can be stricter than live (indeterminate where live allows), and it needs a node that supports debug_traceCall. Read methods are forwarded, and the response goes through the same privacy filter as the user's own call, evaluated in the path org only: the user's contract grants, admin role and visibleTo shares from other organizations do not apply, and the user's disclosure grants never apply (a grant discloses to the grantee alone); a transaction or receipt the user may not read, or one sent to or deploying another organization's contract, comes back null; logs are filtered, and embedded addresses the user cannot see are redacted. Write methods (eth_sendTransaction / eth_sendRawTransaction) are translated to debug_traceCall so the RBAC verdict, the events the tx would emit, and the subset the user would see in its receipt can be inspected. If the user's view cannot be produced, nothing from the node is returned (500). Requires a tier-2 org-admin JWT of the path org: X-Admin-Token credentials (both the full super-admin token and the operator token) are explicitly rejected, since impersonation reads tenant data as the user. The impersonated user must exist and be a member of the path org, else an opaque 404. Every evaluation is written to the impersonation audit log fail-closed. Under the strict read privacy profile (PRIVACY_READ_PROFILE=strict) read methods are refused with 403 before anything is forwarded (the refusal is audited), and a simulated send returns only the allow/deny verdict, without the trace or its logs. Supported methods: eth_call, eth_getLogs, eth_getTransactionReceipt, eth_getTransactionByHash, eth_getBalance, eth_getCode, eth_getStorageAt, eth_blockNumber, eth_chainId, eth_sendTransaction, eth_sendRawTransaction.\nClient state/block override options are unsupported regardless of the selected user's role, including admins.",
                 "parameters": [
                     {
                         "description": "Organization ID (UUID)",
@@ -14008,7 +14347,17 @@
                                 }
                             }
                         },
-                        "description": "upstream node error or trace failure"
+                        "description": "upstream node error on a forwarded read, or the node does not support debug_traceCall (permanent; eth_call and write methods need it)"
+                    },
+                    "503": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "trace (timeout, transient upstream failure) or compliance preview unavailable"
                     }
                 },
                 "security": [
@@ -19940,7 +20289,7 @@
         },
         "/api/v1/explorer/grant/{grant_id}/activity": {
             "get": {
-                "description": "Returns activity-log entries (method, status code, timestamp only) for a disclosure grant the caller holds. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered: a valid JWT is required, the viewer DID must match the grant's requester, the grant scope must include activity_logs or full_disclosure, and only entries inside the grant's validity window are returned. Fail-closed: anonymous callers are rejected, and \"grant missing\"/\"not your grant\"/\"expired\" all return the same 404 to prevent enumeration. Under the View-as mirror it always returns 404: the target's grants are not available to the admin viewing as them.",
+                "description": "Returns activity-log entries (method, status code, timestamp only) for a disclosure grant the caller holds. The requester must remain a current member of the grant's organization. Grant scope is enforced on the server, and successful reads are audited. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered: a valid JWT is required, the viewer DID must match the grant's requester, the grant scope must include activity_logs or full_disclosure, and only entries inside the grant's validity window are returned. Fail-closed: anonymous callers are rejected, and \"grant missing\"/\"not your grant\"/\"expired\" all return the same 404 to prevent enumeration. Under the View-as mirror it always returns 404: the target's grants are not available to the admin viewing as them.",
                 "parameters": [
                     {
                         "description": "Disclosure grant ID",
@@ -20009,7 +20358,7 @@
                                 }
                             }
                         },
-                        "description": "grant scope does not include activity_logs"
+                        "description": "grant scope does not permit activity logs or restricts addresses"
                     },
                     "404": {
                         "content": {
@@ -20040,7 +20389,7 @@
         },
         "/api/v1/explorer/grant/{grant_id}/resolve/{address_id}": {
             "get": {
-                "description": "Resolves an opaque address_id (issued by viewable-addresses) back to grant-scoped disclosure data for the explorer backend. Private network only (serves the explorer backend); not reachable through the public ingress. The response is scoped to the grant's disclosure level: the real address is returned ONLY for a \"full\" grant; a \"pseudonymous\" grant returns a stable pseudonym and no real address; other levels return neither. Fail-closed: a revoked or expired grant, or an address_id that does not belong to the grant, yields 403/404. Under the View-as mirror it always returns 404: the target's grants are not available to the admin viewing as them.",
+                "description": "Resolves an opaque address_id (issued by viewable-addresses) back to grant-scoped disclosure data for the explorer backend. The requester must remain a current member of the grant's organization. Grant scope is enforced on the server, and successful reads are audited. Private network only (serves the explorer backend); not reachable through the public ingress. The response is scoped to the grant's disclosure level: the real address is returned ONLY for a \"full\" grant; a \"pseudonymous\" grant returns a stable pseudonym and no real address; other levels return neither. Fail-closed: a revoked or expired grant, or an address_id that does not belong to the grant, yields 403/404. Under the View-as mirror it always returns 404: the target's grants are not available to the admin viewing as them.",
                 "parameters": [
                     {
                         "description": "Disclosure grant ID",
@@ -20100,7 +20449,7 @@
                                 }
                             }
                         },
-                        "description": "grant has been revoked or has expired"
+                        "description": "grant is inactive or its scope does not permit this data"
                     },
                     "404": {
                         "content": {
@@ -20131,7 +20480,7 @@
         },
         "/api/v1/explorer/grant/{grant_id}/{address_id}/transactions": {
             "get": {
-                "description": "Returns transactions for a disclosed address, rendered at the grant's disclosure level. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the grant: \"full\" reveals real addresses, hashes and values; \"pseudonymous\" replaces addresses with stable pseudonyms and hides values and hashes; \"redacted\" (or any unknown level) shows only direction, gas, status and timing with \"[PRIVATE]\" counterparties. Fail-closed: a revoked or expired grant, or an address_id that does not belong to the grant, yields 403/404. Under the View-as mirror it always returns 404: the target's grants are not available to the admin viewing as them.",
+                "description": "Returns transactions for a disclosed address, rendered at the grant's disclosure level. The requester must remain a current member of the grant's organization. Grant scope is enforced on the server, and successful reads are audited. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the grant: \"full\" reveals real addresses, hashes and values; \"pseudonymous\" replaces addresses with stable pseudonyms and hides values and hashes; \"redacted\" (including an empty or unknown stored level) shows only direction, gas, status and timing with \"[PRIVATE]\" counterparties. Fail-closed: a revoked or expired grant, or an address_id that does not belong to the grant, yields 403/404. Under the View-as mirror it always returns 404: the target's grants are not available to the admin viewing as them.",
                 "parameters": [
                     {
                         "description": "Disclosure grant ID",
@@ -20216,7 +20565,7 @@
                                 }
                             }
                         },
-                        "description": "grant has been revoked or has expired"
+                        "description": "grant is inactive or its scope does not permit this data"
                     },
                     "404": {
                         "content": {
@@ -20240,6 +20589,111 @@
                     }
                 },
                 "summary": "Grant-scoped transactions for a disclosed address",
+                "tags": [
+                    "Explorer"
+                ]
+            }
+        },
+        "/api/v1/explorer/grant/{grant_id}/{address_id}/transactions/{tx_hash}": {
+            "get": {
+                "description": "Returns a transaction involving the disclosed address within an active Full grant's consented date and address scope. The authenticated requester must remain a member of the grant's organization. Pseudonymous and redacted grants, a transaction outside scope, and View-as return 404. Transactions require transaction_history or full_disclosure permission. The access is audited. Private network only; not reachable through public ingress.",
+                "parameters": [
+                    {
+                        "description": "Disclosure grant ID",
+                        "in": "path",
+                        "name": "grant_id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Opaque address identifier from viewable-addresses",
+                        "in": "path",
+                        "name": "address_id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Transaction hash (0x-prefixed, 32 bytes)",
+                        "in": "path",
+                        "name": "tx_hash",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.GrantTransactionDetail"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "invalid transaction hash"
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "authentication required"
+                    },
+                    "403": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "inactive grant or transaction history not permitted"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "grant or transaction not available"
+                    },
+                    "500": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/privacy-proxy_internal_apimodels.APIError"
+                                }
+                            }
+                        },
+                        "description": "lookup failed"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Grant-scoped transaction detail",
                 "tags": [
                     "Explorer"
                 ]
@@ -21480,7 +21934,7 @@
         },
         "/api/v1/explorer/viewable-addresses": {
             "get": {
-                "description": "Lists the viewer's own linked addresses plus addresses disclosed to them via active disclosure grants. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: the viewer DID comes from a validated JWT (or the impersonation override) — never from a query param — and for non-full grants the disclosed address is a pseudonym or \"[PRIVATE]\", never the real address. Fail-closed: with no resolvable viewer, only empty lists are returned. Under the View-as mirror no disclosed addresses are listed: the target's grants are not available to the admin viewing as them.",
+                "description": "Lists the viewer's own linked addresses plus addresses disclosed to them via active disclosure grants. The requester must remain a current member of the grant's organization. Grant scope is enforced on the server, and successful reads are audited. Private network only (serves the explorer backend); not reachable through the public ingress. The response is privacy-filtered for the resolved viewer: the viewer DID comes from a validated JWT (or the impersonation override) — never from a query param — and for non-full grants the disclosed address is a pseudonym or \"[PRIVATE]\", never the real address. Fail-closed: with no resolvable viewer, only empty lists are returned. Under the View-as mirror no disclosed addresses are listed: the target's grants are not available to the admin viewing as them.",
                 "parameters": [
                     {
                         "description": "Viewer wallet address (0x-prefixed hex), echoed back for display only. The viewer identity is resolved solely from the JWT — a wallet value never resolves a DID (RD-1164 #7).",
@@ -21877,7 +22331,7 @@
                                 }
                             }
                         },
-                        "description": "request cannot be approved (e.g. not pending or expired)"
+                        "description": "malformed body, invalid or widened scope, or request cannot be approved"
                     },
                     "401": {
                         "content": {

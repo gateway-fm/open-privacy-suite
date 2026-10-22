@@ -52,24 +52,14 @@ func rd1079Engine() *RedactionEngine {
 		},
 		detailedMap: map[string]AddressVisibility{
 			rd1079Charlie: {Level: VisibilityHidden},
-			rd1079Eve:     {Level: VisibilityPseudonymous, Reason: ReasonDisclosureGrant, Visible: true},
+			rd1079Eve:     {Level: VisibilityPseudonymous, Reason: ReasonNoAccess, Visible: true},
 			rd1079Token:   {Level: VisibilityHidden},
 		},
 		linkedAddrs: nil, // viewer is NOT a transfer participant
 	}}
 }
 
-// TestRedactTransfers_PseudonymousGrant_CounterpartyNotLeaked_RD1079 pins the
-// fix: a non-participant viewer holding a *pseudonymous* disclosure grant on
-// the transfer recipient (Eve) must see the counterparty (Charlie) rendered
-// pseudonymously — never in full real hex.
-//
-// The leak happened because the RD-1009 transfer-participant union put the
-// parent tx hash into RedactOpts.VisibleTxHashes, which force-revealed both tx
-// addresses and skipped the disclosure-grant counterparty lens. The fix routes
-// those hashes through VisibilityFilter.RowSurvivalTxHashes instead, so they
-// never reach the redactor as a visibleTo override — modelled here by NOT
-// setting RedactOpts.VisibleTxHashes.
+// A pseudonymous recipient does not authorize a nonparticipant transfer.
 func TestRedactTransfers_PseudonymousGrant_CounterpartyNotLeaked_RD1079(t *testing.T) {
 	engine := rd1079Engine()
 	transfers := []TokenTransfer{{
@@ -85,27 +75,13 @@ func TestRedactTransfers_PseudonymousGrant_CounterpartyNotLeaked_RD1079(t *testi
 	if err != nil {
 		t.Fatalf("RedactTransfers: %v", err)
 	}
-	if len(got) != 1 {
-		t.Fatalf("transfer row should survive via the pseudonymous grant, got %d rows", len(got))
+	if len(got) != 0 {
+		t.Fatalf("a pseudonymous recipient does not admit an unrelated private sender: %+v", got)
 	}
-	if got[0].From == rd1079Charlie {
-		t.Errorf("RD-1079 leak: counterparty rendered in full real hex %q; expected a pseudonym", rd1079Charlie)
-	}
-	if got[0].From != GeneratePseudonym(rd1079Charlie, nil) {
-		t.Errorf("counterparty should render pseudonymously, got From=%q want %q", got[0].From, GeneratePseudonym(rd1079Charlie, nil))
-	}
-	if got[0].To != GeneratePseudonym(rd1079Eve, nil) {
-		t.Errorf("grant subject should render at its own pseudonym, got To=%q want %q", got[0].To, GeneratePseudonym(rd1079Eve, nil))
-	}
+
 }
 
-// TestRedactTransfers_VisibleToOverride_RevealsCounterparty_RD1079Repro is the
-// bug reproduction / mutation check. A genuine visibleTo share of the parent tx
-// (ListedTxHashes) does force-reveal the counterparty Charlie in full hex — the
-// sender shared the tx with this viewer. The same hash reaching the redactor
-// only through the transfer-participant union (VisibleTxHashes without a
-// listing) must NOT: since RD-1316 the union only keeps the row, so the
-// pseudonymous counterparty lens still applies.
+// Only a genuine visibleTo share, never the transfer union, reveals a private sender.
 func TestRedactTransfers_VisibleToOverride_RevealsCounterparty_RD1079Repro(t *testing.T) {
 	engine := rd1079Engine()
 	transfers := []TokenTransfer{{
@@ -133,13 +109,8 @@ func TestRedactTransfers_VisibleToOverride_RevealsCounterparty_RD1079Repro(t *te
 	if err != nil {
 		t.Fatalf("RedactTransfers (union): %v", err)
 	}
-	if len(got) != 1 {
-		t.Fatalf("the union keeps the row, got %d", len(got))
+	if len(got) != 0 {
+		t.Fatalf("a union-only hash must not admit an unrelated private transfer: %+v", got)
 	}
-	if got[0].From != GeneratePseudonym(rd1079Charlie, nil) {
-		t.Errorf("RD-1316: a union-only hash must leave the pseudonymous lens in charge; got From=%q", got[0].From)
-	}
-	if label := got[0].AddressMetadata[rd1079Charlie]; label == ReasonVisibleToGrant || label == ReasonParticipantOverride {
-		t.Errorf("a lens-rendered counterparty keeps its own reason, got %q", label)
-	}
+
 }

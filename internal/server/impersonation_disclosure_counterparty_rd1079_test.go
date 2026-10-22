@@ -2,15 +2,11 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
-
-	"privacy-proxy/internal/apimodels"
-	"privacy-proxy/internal/explorer"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -19,7 +15,7 @@ import (
 
 // TestImpersonation_DisclosureCounterparty_NoAdminBleed_RD1079 verifies
 // the disclosure rendering policy for direct and impersonated viewers.
-// Disclosure grants apply only to their grantee's direct session.
+// Disclosure grants never affect regular address reads in either session.
 func TestImpersonation_DisclosureCounterparty_NoAdminBleed_RD1079(t *testing.T) {
 	srv, database, conn := setupTestServerForExplorerTransactions(t)
 	ctx := context.Background()
@@ -130,50 +126,13 @@ func TestImpersonation_DisclosureCounterparty_NoAdminBleed_RD1079(t *testing.T) 
 		router.ServeHTTP(w, req)
 		return w
 	}
-	getTransfers := func(subject, override string) []explorer.TokenTransfer {
-		w := fetch(subject, override)
-		require.Equal(t, http.StatusOK, w.Code, "transfers endpoint should return 200")
-		var resp apimodels.AddressTransfersResponse
-		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-		return resp.Transfers
-	}
-
-	// Control — Admin views DIRECTLY (subject=admin, no override). The admin's
-	// FULL grant on Eve drives the union and reveals the counterparty in full
-	// hex. This proves the admin genuinely has broader visibility, so the
-	// View-as result below cannot be a false negative.
-	adminView := getTransfers(adminDID, "")
-	require.Len(t, adminView, 1, "admin should see Eve's transfer")
-	require.Equalf(t, charlieEOA, adminView[0].From,
-		"control: admin's full grant must reveal the counterparty in full hex (got %q)", adminView[0].From)
-
-	// Control — Dave views DIRECTLY: his PSEUDONYMOUS grant governs, the
-	// counterparty is pseudonymised, never the real hex, never "Shared".
-	asDaveHimself := getTransfers(daveDID, "")
-	require.Len(t, asDaveHimself, 1, "Dave sees Eve's transfer through his own grant")
-	require.Equalf(t, explorer.GeneratePseudonym(charlieEOA, nil), asDaveHimself[0].From,
-		"counterparty must render as Dave's pseudonymous lens, got %q", asDaveHimself[0].From)
-	require.Equalf(t, explorer.GeneratePseudonym(eveEOA, nil), asDaveHimself[0].To,
-		"disclosed subject must render at her pseudonym, got %q", asDaveHimself[0].To)
-	require.NotEqualf(t, explorer.ReasonVisibleToGrant, asDaveHimself[0].AddressMetadata[charlieEOA],
-		"counterparty must not carry the visible_to_grant/\"Shared\" label under a pseudonymous grant")
-	require.Equal(t, explorer.ReasonDisclosureGrant, asDaveHimself[0].AddressMetadata[eveEOA],
-		"disclosed subject should be tagged disclosure_grant")
-
-	// The actual test — Admin views-AS Dave (subject=admin, override=Dave).
-	// Neither the admin's own FULL grant nor Dave's grant applies: grants
-	// belong to their grantee, never to an admin viewing as them (RD-1318).
-	// Without a grant Eve is hidden from Dave's view, so her address page is
-	// not found — and no form of Charlie or Eve (hex, pseudonym, grant label)
-	// reaches the admin.
-	w := fetch(adminDID, daveDID)
-	require.Equal(t, http.StatusNotFound, w.Code, "View-as Dave without his grant: %s", w.Body.String())
-	body := strings.ToLower(w.Body.String())
-	for _, hiddenValue := range []string{
-		strings.TrimPrefix(charlieEOA, "0x"), strings.TrimPrefix(eveEOA, "0x"),
-		strings.ToLower(explorer.GeneratePseudonym(charlieEOA, nil)), strings.ToLower(explorer.GeneratePseudonym(eveEOA, nil)),
-		string(explorer.ReasonDisclosureGrant),
-	} {
-		require.NotContainsf(t, body, hiddenValue, "View-as returned %q: %s", hiddenValue, w.Body.String())
+	// Direct and impersonated sessions all use ordinary address visibility.
+	for _, session := range []struct{ subject, override string }{{adminDID, ""}, {daveDID, ""}, {adminDID, daveDID}} {
+		w := fetch(session.subject, session.override)
+		require.Equal(t, http.StatusNotFound, w.Code, "ordinary address page: %s", w.Body.String())
+		body := strings.ToLower(w.Body.String())
+		for _, hidden := range []string{strings.TrimPrefix(charlieEOA, "0x"), strings.TrimPrefix(eveEOA, "0x"), "disclosure_grant"} {
+			require.NotContains(t, body, hidden)
+		}
 	}
 }

@@ -49,6 +49,8 @@ permissions:
 jobs:
   prep:
     name: Confirm intent + resolve tag
+    # The dependent jobs publish to Gateway's Docker Hub repositories.
+    if: ${{ github.repository == 'gateway-fm/open-privacy-suite' }}
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.meta.outputs.tag }}

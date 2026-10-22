@@ -191,7 +191,7 @@ A user with linked address `0xAlice` would see Transfer logs where `0xAlice` is 
 
 ### Embedded address redaction within a kept log
 
-Keeping a log entry does not mean returning it verbatim. A single event can carry several addresses — a sender, a recipient, and other parties — and a user entitled to see the event because *one* of those addresses is theirs is not necessarily entitled to see the others. Once a log is kept, every embedded address the user is not entitled to see — in the indexed topics **and** in the ABI-decoded event data — is zeroed out (`0x000…0`). Only the addresses the user can see are returned in the clear: their own linked addresses, addresses in contracts they hold a grant on, public addresses, and addresses shared with them by a disclosure grant.
+Keeping a log entry does not mean returning it verbatim. A single event can carry several addresses — a sender, a recipient, and other parties — and a user entitled to see the event because *one* of those addresses is theirs is not necessarily entitled to see the others. Once a log is kept, every embedded address the user is not entitled to see — in the indexed topics **and** in the ABI-decoded event data — is zeroed out (`0x000…0`). Only the addresses the user can see are returned in the clear: their own linked addresses, addresses in contracts they hold a grant on, and public addresses. Disclosure grants never change regular RPC or Explorer masking; disclosed data is available only through the dedicated [grant API](/docs/disclosure).
 
 This makes `eth_getLogs`, transaction receipts, and the block explorer reveal the **same** set of addresses to a given user — a log fetched over JSON-RPC exposes nothing the explorer would have hidden, and vice versa.
 

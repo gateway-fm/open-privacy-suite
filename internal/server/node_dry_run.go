@@ -70,7 +70,7 @@ func (s *Server) handleNodeDryRun(c *gin.Context, req apimodels.DryRunRequest, u
 	} else {
 		response.Response, _ = json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "result": out.Result})
 	}
-	if err := s.recordImpersonation(c.Request.Context(), c.GetString("admin_subject"), user.ExternalID, c.Param("org_id"), req.RPC, response.Decision, "", c.GetString("correlation_id")); err != nil {
+	if err := s.recordImpersonation(c.Request.Context(), c.GetString("admin_subject"), user.ExternalID, c.Param("org_id"), req.RPC, response.Decision, "", c.GetString("correlation_id"), ""); err != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "diagnostic audit unavailable"})
 		return
 	}

@@ -1041,3 +1041,56 @@ func TestValidateTrace_ClientDelegatedPreregistrationUsesStorageContext(t *testi
 		})
 	}
 }
+
+func TestValidateTrace_EvaluationScope(t *testing.T) {
+	const (
+		own     = "0x1111111111111111111111111111111111111111"
+		inScope = "0x2222222222222222222222222222222222222222"
+		outside = "0x3333333333333333333333333333333333333333"
+	)
+	store := NewMockTraceStore()
+	store.AddOwnedAddress("org-a", own)
+	store.AddOwnedAddress("org-b", inScope)
+	store.AddOwnedAddress("org-c", outside)
+	scope := WithEvaluationScope(func(orgID string) bool { return orgID == "org-a" || orgID == "org-b" })
+	userOrgs := map[string]bool{"org-a": true}
+
+	for _, tc := range []struct {
+		name    string
+		targets []string
+		kind    DenialKind
+		target  string
+		orgID   string
+	}{
+		{name: "out-of-scope frame", targets: []string{own, outside}, kind: DenialKindOutOfScope, target: outside, orgID: "org-c"},
+		{name: "in-scope foreign frame wins", targets: []string{own, outside, inScope}, kind: DenialKindForeignOrg, target: inScope},
+		{name: "own frames only", targets: []string{own}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			trace := &tracer.TraceResult{}
+			for _, to := range tc.targets {
+				trace.CallTargets = append(trace.CallTargets, tracer.CallTarget{Type: "CALL", From: own, To: to})
+			}
+			result, err := NewTraceValidator(store).ValidateTrace(context.Background(), userOrgs, trace, false, scope)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result.DenialKind != tc.kind || result.DeniedTarget != tc.target || result.DeniedOrgID != tc.orgID {
+				t.Fatalf("got kind=%q target=%q org=%q", result.DenialKind, result.DeniedTarget, result.DeniedOrgID)
+			}
+			if result.Allowed != (tc.kind == DenialKindNone) {
+				t.Fatalf("allowed=%v for kind %q", result.Allowed, tc.kind)
+			}
+		})
+	}
+
+	// Without the option an out-of-scope owner is an ordinary foreign deny.
+	trace := &tracer.TraceResult{CallTargets: []tracer.CallTarget{{Type: "CALL", From: own, To: outside}}}
+	result, err := NewTraceValidator(store).ValidateTrace(context.Background(), userOrgs, trace, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.DenialKind != DenialKindForeignOrg {
+		t.Fatalf("got kind=%q, want foreign_org", result.DenialKind)
+	}
+}

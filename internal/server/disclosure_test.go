@@ -126,6 +126,21 @@ func createTestOrgForHandler(t *testing.T, database *db.DB, slug string) string 
 	return orgID
 }
 
+// createDisclosureRequesterInOrg seeds a live grantee in the request's org.
+func createDisclosureRequesterInOrg(t *testing.T, database *db.DB, orgID string) string {
+	t.Helper()
+	ctx := context.Background()
+	did := "did:test:disclosure-requester:" + uuid.NewString()
+	userID, groupID := uuid.NewString(), uuid.NewString()
+	_, err := database.Conn().ExecContext(ctx, `INSERT INTO users (id,external_id,kyc,banned,metadata) VALUES ($1,$2,false,false,'{}')`, userID, did)
+	require.NoError(t, err)
+	_, err = database.Conn().ExecContext(ctx, `INSERT INTO groups (id,org_id,slug,name,depth,path) VALUES ($1,$2,$3,'Disclosure viewer',0,$4)`, groupID, orgID, "viewer-"+groupID, "viewer-"+groupID)
+	require.NoError(t, err)
+	_, err = database.Conn().ExecContext(ctx, `INSERT INTO user_memberships (id,user_id,group_id,source) VALUES ($1,$2,$3,'admin')`, uuid.NewString(), userID, groupID)
+	require.NoError(t, err)
+	return did
+}
+
 // setupDisclosureRouter creates a router with disclosure routes for testing
 func setupDisclosureRouter(srv *Server) *gin.Engine {
 	gin.SetMode(gin.TestMode)
@@ -182,8 +197,8 @@ func TestCreateDisclosureRequest(t *testing.T) {
 				"target_user_id": testTargetUserID,
 				"org_id":         testOrgID,
 				"scope": map[string]any{
-					"methods":   []string{"eth_call", "eth_getBalance"},
-					"addresses": []string{"0x1234"},
+					"methods":   []string{disclosure.MethodFullDisclosure},
+					"addresses": []string{"0x1234567890abcdef1234567890abcdef12345678"},
 				},
 				"reason":           "Compliance audit",
 				"legal_basis":      "GDPR Article 6(1)(c)",
@@ -324,7 +339,7 @@ func TestGetDisclosureRequest(t *testing.T) {
 		ID:           uuid.New().String(),
 		TargetUserID: targetUserID,
 		OrgID:        testOrgID,
-		Scope:        disclosure.Scope{Methods: []string{"eth_call"}},
+		Scope:        disclosure.Scope{Methods: []string{disclosure.MethodActivityLogs}},
 		Reason:       "Test get request",
 		Status:       disclosure.StatusPending,
 		RequestedAt:  time.Now(),
@@ -449,7 +464,7 @@ func TestApproveDisclosureRequest(t *testing.T) {
 					ID:           uuid.New().String(),
 					TargetUserID: userID,
 					OrgID:        testOrgID,
-					Scope:        disclosure.Scope{Methods: []string{"eth_call"}},
+					Scope:        disclosure.Scope{Methods: []string{disclosure.MethodActivityLogs}},
 					Reason:       "Approve test",
 					Status:       disclosure.StatusPending,
 					RequestedAt:  time.Now(),
@@ -477,7 +492,7 @@ func TestApproveDisclosureRequest(t *testing.T) {
 					ID:           uuid.New().String(),
 					TargetUserID: userID,
 					OrgID:        testOrgID,
-					Scope:        disclosure.Scope{Methods: []string{"eth_call", "eth_sendTransaction"}},
+					Scope:        disclosure.Scope{Methods: []string{disclosure.MethodFullDisclosure}},
 					Reason:       "Narrow scope test",
 					Status:       disclosure.StatusPending,
 					RequestedAt:  time.Now(),
@@ -487,7 +502,7 @@ func TestApproveDisclosureRequest(t *testing.T) {
 			},
 			body: map[string]any{
 				"scope": map[string]any{
-					"methods": []string{"eth_call"}, // Narrowed from original
+					"methods": []string{disclosure.MethodActivityLogs}, // Narrowed from original
 				},
 				"grant_duration_hours": 12,
 				"reason":               "Approved with limited scope",
@@ -776,11 +791,13 @@ func TestGetDisclosureLogs(t *testing.T) {
 	}
 
 	// Create pending request (must be pending to be approved)
+	requesterDID := createDisclosureRequesterInOrg(t, database, testOrgID)
 	req := &disclosure.Request{
+		RequesterDID: requesterDID,
 		ID:           uuid.New().String(),
 		TargetUserID: userID,
 		OrgID:        testOrgID,
-		Scope:        disclosure.Scope{Methods: []string{"eth_call"}},
+		Scope:        disclosure.Scope{Methods: []string{disclosure.MethodActivityLogs}},
 		Reason:       "Logs test",
 		Status:       disclosure.StatusPending,
 		RequestedAt:  time.Now(),
@@ -888,11 +905,13 @@ func TestGetDisclosureSummary(t *testing.T) {
 	}
 
 	// Create pending request (must be pending to be approved)
+	requesterDID := createDisclosureRequesterInOrg(t, database, testOrgID)
 	req := &disclosure.Request{
+		RequesterDID: requesterDID,
 		ID:           uuid.New().String(),
 		TargetUserID: userID,
 		OrgID:        testOrgID,
-		Scope:        disclosure.Scope{},
+		Scope:        disclosure.Scope{Methods: []string{disclosure.MethodActivityLogs}},
 		Reason:       "Summary test",
 		Status:       disclosure.StatusPending,
 		RequestedAt:  time.Now(),
@@ -939,11 +958,13 @@ func TestGetDisclosureReport(t *testing.T) {
 	}
 
 	// Create pending request (must be pending to be approved)
+	requesterDID := createDisclosureRequesterInOrg(t, database, testOrgID)
 	req := &disclosure.Request{
+		RequesterDID: requesterDID,
 		ID:           uuid.New().String(),
 		TargetUserID: userID,
 		OrgID:        testOrgID,
-		Scope:        disclosure.Scope{},
+		Scope:        disclosure.Scope{Methods: []string{disclosure.MethodActivityLogs}},
 		Reason:       "Report test",
 		Status:       disclosure.StatusPending,
 		RequestedAt:  time.Now(),
@@ -1020,11 +1041,13 @@ func TestGetDisclosureEvents(t *testing.T) {
 	userID, _ := createTestUser(t, database, jwtService, "did:test:events")
 
 	// Create pending request (must be pending to be approved)
+	requesterDID := createDisclosureRequesterInOrg(t, database, testOrgID)
 	req := &disclosure.Request{
+		RequesterDID: requesterDID,
 		ID:           uuid.New().String(),
 		TargetUserID: userID,
 		OrgID:        testOrgID,
-		Scope:        disclosure.Scope{},
+		Scope:        disclosure.Scope{Methods: []string{disclosure.MethodActivityLogs}},
 		Reason:       "Events test",
 		Status:       disclosure.StatusPending,
 		RequestedAt:  time.Now(),
@@ -1150,11 +1173,13 @@ func TestDisclosureGrant_Revocation(t *testing.T) {
 	userID, _ := createTestUser(t, database, jwtService, "did:test:revocation")
 
 	// Create request (must be pending to be approved)
+	requesterDID := createDisclosureRequesterInOrg(t, database, testOrgID)
 	req := &disclosure.Request{
+		RequesterDID: requesterDID,
 		ID:           uuid.New().String(),
 		TargetUserID: userID,
 		OrgID:        testOrgID,
-		Scope:        disclosure.Scope{},
+		Scope:        disclosure.Scope{Methods: []string{disclosure.MethodActivityLogs}},
 		Reason:       "Revocation test",
 		Status:       disclosure.StatusPending,
 		RequestedAt:  time.Now(),
@@ -1214,6 +1239,8 @@ func TestDisclosure_FullWorkflow(t *testing.T) {
 	// 1. Create target user
 	targetUserID, targetToken := createTestUser(t, database, jwtService, "did:test:workflow:target")
 
+	requesterDID := createDisclosureRequesterInOrg(t, database, defaultOrgID)
+
 	// 2. Create some activity for the target user
 	for i := 0; i < 10; i++ {
 		database.LogAccess(context.Background(), "did:test:workflow:target", "eth_call", 200, "127.0.0.1")
@@ -1223,8 +1250,9 @@ func TestDisclosure_FullWorkflow(t *testing.T) {
 	// Note: requester_user_id is optional, so we don't provide it to avoid FK constraint
 	createReqBody := map[string]any{
 		"target_user_id": targetUserID,
+		"requester_did":  requesterDID,
 		"scope": map[string]any{
-			"methods": []string{"eth_call"},
+			"methods": []string{disclosure.MethodActivityLogs},
 		},
 		"reason":           "Regulatory audit",
 		"legal_basis":      "Court order #12345",
@@ -1345,7 +1373,7 @@ func TestDisclosure_FullWorkflow(t *testing.T) {
 
 	// Verify event IPs are recorded
 	for _, e := range events {
-		assert.Equal(t, "192.168.1.100", e.ViewerIP)
+		assert.Empty(t, e.ViewerIP, "non-full grant responses withhold viewer IPs")
 	}
 
 	// 10. Target user views active grants

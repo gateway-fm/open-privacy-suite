@@ -417,28 +417,17 @@ func TestRedactInternalTransactions_UnionDoesNotKeepPrivateFrames_RD1316(t *test
 // A Full disclosure grant on the transfer recipient still reveals the
 // counterparty — on the transfer row, through the audited counterparty lens,
 // not through the union.
-func TestRedactTransfers_FullGrantCounterpartyViaLensNotUnion_RD1316(t *testing.T) {
-	const grantee = "0x1316000000000000000000000000000000000e02"
-	engine := rd1316Engine(map[string]AddressVisibility{
-		grantee: {Level: VisibilityFull, Reason: ReasonDisclosureGrant, Visible: true},
-	})
-	stats := &RedactStats{}
-	opts := unionOpts(false)
-	opts.Stats = stats
-	transfer := TokenTransfer{TxHash: rd1316Hash, TokenAddress: rd1316Token, From: rd1316EOA, To: grantee, Value: "1000"}
-	got, err := engine.RedactTransfers(context.Background(), []TokenTransfer{transfer}, "did:auditor", opts)
+// A Full address does not reveal an unrelated transfer counterparty, even if
+// the parent hash survived through the transfer union.
+func TestRedactTransfers_FullRecipientDoesNotRevealCounterparty_RD1316(t *testing.T) {
+	const recipient = "0x1316000000000000000000000000000000000e02"
+	engine := rd1316Engine(map[string]AddressVisibility{recipient: {Level: VisibilityFull, Reason: ReasonRBACGroupMember, Visible: true}})
+	transfer := TokenTransfer{TxHash: rd1316Hash, TokenAddress: rd1316Token, From: rd1316EOA, To: recipient, Value: "1000"}
+	got, err := engine.RedactTransfers(context.Background(), []TokenTransfer{transfer}, "did:auditor", unionOpts(false))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || got[0].From != rd1316EOA {
-		t.Fatalf("a Full grant on the recipient reveals the counterparty, got %+v", got)
-	}
-	if stats.GrantFullReveals != 1 {
-		t.Errorf("the Full-grant reveal must be counted for the audit log, got %d", stats.GrantFullReveals)
-	}
-	// The lens reveal keeps the counterparty's own reason (§3.7.2): neither
-	// "Shared" (no listing) nor "Counterparty" (the viewer took no part).
-	if got[0].AddressMetadata[rd1316EOA] != ReasonNoAccess {
-		t.Errorf("counterparty label = %q, want its own reason %q", got[0].AddressMetadata[rd1316EOA], ReasonNoAccess)
+	if len(got) != 0 {
+		t.Fatalf("the union cannot admit an unrelated one-side-hidden transfer: %+v", got)
 	}
 }

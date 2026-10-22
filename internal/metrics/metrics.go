@@ -100,6 +100,9 @@ type Metrics struct {
 	// Audit hash chain integrity (RD-858)
 	AuditChainIntegrityViolations *prometheus.CounterVec
 
+	// Cross-org authorization oracle answers that could not be judged
+	CrossOrgOracleIndeterminateTotal *prometheus.CounterVec
+
 	// Pending deployments
 	PendingDeployments prometheus.Gauge
 
@@ -233,6 +236,12 @@ func New(version string) *Metrics {
 			Help:      "Total audit hash-chain integrity violations detected by the scheduled verifier, labelled by chain and reason. NON-ZERO MEANS POTENTIAL TAMPERING — alert immediately. RD-858.",
 		}, []string{"chain", "reason"}),
 
+		CrossOrgOracleIndeterminateTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "cross_org_oracle_indeterminate_total",
+			Help:      "Cross-org authorization oracle answers of indeterminate, by reason. Recurring answers usually mean a setup gap.",
+		}, []string{"reason"}),
+
 		PendingDeployments: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: namespace,
 			Name:      "pending_deployments",
@@ -258,6 +267,7 @@ func New(version string) *Metrics {
 		m.PricingFetchesTotal, m.PricingFetchDuration, m.PricingConsecutiveFailures,
 		m.SIEMBatchesTotal, m.SIEMEventsDroppedTotal,
 		m.AuditChainIntegrityViolations,
+		m.CrossOrgOracleIndeterminateTotal,
 		m.PendingDeployments,
 		m.Info,
 	)

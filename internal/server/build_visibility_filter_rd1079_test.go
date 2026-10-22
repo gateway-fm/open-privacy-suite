@@ -9,16 +9,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestBuildVisibilityFilter_DisclosureGrant_UnionDrivenByFullOnly_RD1079
-// verifies that only Full disclosure grants contribute parent-row hashes.
-// The union preserves rows; the grant lens determines address rendering.
-func TestBuildVisibilityFilter_DisclosureGrant_UnionDrivenByFullOnly_RD1079(t *testing.T) {
+// TestBuildVisibilityFilter_DisclosureGrant_NeverDrivesUnion_RD1079
+// verifies that disclosure grants never contribute parent-row hashes.
+func TestBuildVisibilityFilter_DisclosureGrant_NeverDrivesUnion_RD1079(t *testing.T) {
 	cases := []struct {
 		level         string
 		wantTxInUnion bool
 		reason        string
 	}{
-		{"full", true, "a full disclosure grant is entitled to see counterparties — drives the union like an admin"},
+		{"full", false, "a full disclosure grant cannot drive ordinary transfer unions"},
 		{"pseudonymous", false, "RD-1079: a pseudonymous grant must NOT force-reveal the subject's counterparty"},
 		{"redacted", false, "RD-1079: a redacted grant must NOT force-reveal the subject's counterparty"},
 	}
@@ -131,12 +130,11 @@ func TestBuildVisibilityFilter_DisclosureGrant_UnionDrivenByFullOnly_RD1079(t *t
 			require.NotNil(t, filter)
 			require.True(t, filter.AllPrivate)
 
-			// The disclosed subject's EOA is always in VisibleAddresses — the
-			// /transfers row survives at SQL level regardless of grant level.
-			require.Containsf(t, filter.VisibleAddresses, eveEOA,
-				"disclosed subject EOA must be in VisibleAddresses for SQL row-survival (level=%s)", tc.level)
+			// A disclosure subject cannot enter the ordinary SQL allowlist.
+			require.NotContainsf(t, filter.VisibleAddresses, eveEOA,
+				"disclosed subject EOA must not enter the ordinary SQL allowlist (level=%s)", tc.level)
 
-			// The parent tx only enters the full-reveal union when the grant is Full.
+			// No disclosure level may drive the transfer union.
 			if tc.wantTxInUnion {
 				require.Containsf(t, filter.VisibleTxHashes, txHash,
 					"level=%s: %s", tc.level, tc.reason)

@@ -75,7 +75,7 @@ func setupRD1318Fixture(t *testing.T) *rd1318Fixture {
 
 	// The subject approved a Full disclosure (with activity logs) to the grantee.
 	reqID := uuid.New().String()
-	scope := `{"disclosure_level":"full","methods":["activity_logs"]}`
+	scope := `{"disclosure_level":"full","methods":["full_disclosure"]}`
 	exec(`INSERT INTO disclosure_requests (id, requester_did, target_user_id, org_id, scope, reason, status, requested_at)
 		VALUES ($1, $2, $3, $4, $5::jsonb, 'rd1318', 'approved', NOW())`, reqID, rd1318GranteeDID, subjectUID, orgID, scope)
 	grantID := uuid.New().String()
@@ -194,17 +194,16 @@ func TestViewAs_ExplorerVisibilityIgnoresTheGrant_RD1318(t *testing.T) {
 	}
 
 	own := f.direct(t, "/transactions/"+f.txHash)
-	require.Equal(t, http.StatusOK, own.Code, "control: the grantee sees the subject's tx through the grant: %s", own.Body.String())
-	require.Contains(t, strings.ToLower(own.Body.String()), strings.TrimPrefix(rd1318SubjectEOA, "0x"))
+	require.Equal(t, http.StatusNotFound, own.Code, "regular by-hash reads ignore grants: %s", own.Body.String())
+	require.NotContains(t, strings.ToLower(own.Body.String()), strings.TrimPrefix(rd1318SubjectEOA, "0x"))
 
-	// The list endpoint is the positive control for a Full-grant reveal
-	// audit recorded against the grantee.
+	// Ordinary lists neither reveal private counterparties nor audit a grant read.
 	before := countGrantReveals()
 	ownList := f.direct(t, "/transactions?limit=25")
 	require.Equal(t, http.StatusOK, ownList.Code)
-	require.Contains(t, strings.ToLower(ownList.Body.String()), strings.TrimPrefix(rd1318Peer, "0x"), "control: the grant reveals the counterparty")
+	require.NotContains(t, strings.ToLower(ownList.Body.String()), strings.TrimPrefix(rd1318Peer, "0x"), "regular lists ignore grants")
 	revealsByGrantee := countGrantReveals()
-	require.Positive(t, revealsByGrantee-before, "control: the grantee's own reveal is audit-logged")
+	require.Equal(t, before, revealsByGrantee, "regular reads do not audit a disclosure reveal")
 
 	w := f.viewAs(t, "/transactions/"+f.txHash)
 	assert.Equal(t, http.StatusNotFound, w.Code, "without the grant the subject's tx is hidden from the grantee's view: %s", w.Body.String())
@@ -218,16 +217,15 @@ func TestViewAs_ExplorerVisibilityIgnoresTheGrant_RD1318(t *testing.T) {
 	assert.Equal(t, revealsByGrantee, countGrantReveals(), "no grant reveal may be recorded in the grantee's name while an admin views as them")
 
 	ownAddr := f.direct(t, "/addresses/"+rd1318SubjectEOA+"/transactions")
-	require.Equal(t, http.StatusOK, ownAddr.Code, "control: the grantee opens the subject's page through the grant: %s", ownAddr.Body.String())
+	require.Equal(t, http.StatusNotFound, ownAddr.Code, "regular address pages ignore grants: %s", ownAddr.Body.String())
 	w = f.viewAs(t, "/addresses/"+rd1318SubjectEOA+"/transactions")
 	assert.Equal(t, http.StatusNotFound, w.Code, "address page: %s", w.Body.String())
 	assert.Contains(t, w.Body.String(), "address not found")
 	assert.NotContains(t, strings.ToLower(w.Body.String()), strings.TrimPrefix(rd1318Peer, "0x"), "address page: %s", w.Body.String())
 }
 
-// The visibility resolver ignores the viewer's grants under the mark the
-// impersonation surfaces set — the layer that embedded-address redaction on the
-// RPC mirror and the dry-run read through.
+// Ordinary visibility ignores disclosure grants with and without the
+// impersonation mark used by the grant API.
 func TestDisclosureGrants_SuppressedUnderImpersonationMark_RD1318(t *testing.T) {
 	f := setupRD1318Fixture(t)
 	ctx := context.Background()
@@ -235,7 +233,7 @@ func TestDisclosureGrants_SuppressedUnderImpersonationMark_RD1318(t *testing.T) 
 
 	vis, err := f.srv.db.GetBatchVisibilityDetailed(ctx, rd1318GranteeDID, []string{rd1318SubjectEOA})
 	require.NoError(t, err)
-	require.Equal(t, explorer.VisibilityFull, vis[rd1318SubjectEOA].Level, "control: the grant makes the subject Full")
+	require.Equal(t, explorer.VisibilityHidden, vis[rd1318SubjectEOA].Level, "ordinary visibility ignores grants")
 
 	vis, err = f.srv.db.GetBatchVisibilityDetailed(marked, rd1318GranteeDID, []string{rd1318SubjectEOA})
 	require.NoError(t, err)
@@ -244,32 +242,20 @@ func TestDisclosureGrants_SuppressedUnderImpersonationMark_RD1318(t *testing.T) 
 	require.NoError(t, err)
 	assert.Equal(t, explorer.VisibilityHidden, plain[rd1318SubjectEOA])
 
-	has, err := f.srv.db.ViewerHasFullDisclosureGrant(ctx, rd1318GranteeDID, rd1318SubjectEOA)
-	require.NoError(t, err)
-	require.True(t, has, "control")
-	has, err = f.srv.db.ViewerHasFullDisclosureGrant(marked, rd1318GranteeDID, rd1318SubjectEOA)
-	require.NoError(t, err)
-	assert.False(t, has)
-
-	// The mark, not the RD-1308 org pin, is what hides the grant on the
-	// impersonation surfaces. Pinned to the org the grant was requested in,
-	// without the mark, the grant still applies; pinned to another org it does
-	// not (the pin's own clause); both surfaces carry the pin AND the mark.
+	// Ordinary visibility ignores grants with or without an org scope/mark.
 	level := func(ctx context.Context) explorer.VisibilityLevel {
 		t.Helper()
 		v, err := f.srv.db.GetBatchVisibilityDetailed(ctx, rd1318GranteeDID, []string{rd1318SubjectEOA})
 		require.NoError(t, err)
 		return v[rd1318SubjectEOA].Level
 	}
-	assert.Equal(t, explorer.VisibilityFull, level(withViewerOrgScope(ctx, f.orgID)), "the org pin alone keeps a grant requested in the pinned org")
+	assert.Equal(t, explorer.VisibilityHidden, level(withViewerOrgScope(ctx, f.orgID)), "a matching org scope does not admit a disclosure grant")
 	assert.Equal(t, explorer.VisibilityHidden, level(withViewerOrgScope(ctx, uuid.New().String())), "the org pin drops a grant requested in another org")
 	assert.Equal(t, explorer.VisibilityHidden, level(withViewerOrgScope(marked, f.orgID)), "pin plus mark, as on dry-run and the View-as RPC mirror")
 }
 
 // A traced write's logs_visible_to_user is the receipt the user would see, and
-// it too is built without their disclosure grants. The grant is requested in
-// the dry-run's own org, so the RD-1308 org pin keeps it: only the RD-1318
-// mark can be what hides the subject.
+// it too is built without disclosure grants, including same-org grants.
 func TestDryRun_TraceLogsVisibleToUser_IgnoreTheUsersDisclosureGrant_RD1318(t *testing.T) {
 	f := setupDRFFixture(t)
 	ctx := context.Background()
@@ -288,8 +274,7 @@ func TestDryRun_TraceLogsVisibleToUser_IgnoreTheUsersDisclosureGrant_RD1318(t *t
 		VALUES ($1, $2, 'rd1318hash', $3::jsonb, NOW(), NOW() + interval '1 day')`, uuid.New().String(), reqID, scope)
 	require.NoError(t, err)
 
-	// Controls: the member's own receipt shows the subject, and so does the
-	// resolver pinned to org O without the mark.
+	// The member's own receipt also masks the subject, including under an org scope.
 	const h = "0x1318000000000000000000000000000000000000000000000000000000000042"
 	f.txByHash[h] = drfTx(drfMemberEOA, drfContractO, h)
 	receipt := drfEnvelope(t, map[string]any{
@@ -298,11 +283,11 @@ func TestDryRun_TraceLogsVisibleToUser_IgnoreTheUsersDisclosureGrant_RD1318(t *t
 		"logsBloom": "0x" + strings.Repeat("0", 512),
 		"logs":      []any{drfTransferLog(drfContractO, drfMemberEOA, subjectEOA, h, "0x0")},
 	})
-	require.Contains(t, strings.ToLower(string(f.production(t, rbac.MethodGetTransactionReceipt, []any{h}, receipt))), bare(subjectEOA),
-		"control: the member's own receipt shows the subject it holds a grant on")
+	require.NotContains(t, strings.ToLower(string(f.production(t, rbac.MethodGetTransactionReceipt, []any{h}, receipt))), bare(subjectEOA),
+		"ordinary receipt fields ignore disclosure grants")
 	vis, err := f.ts.db.GetBatchVisibilityDetailed(withViewerOrgScope(ctx, f.orgO), drfMemberDID, []string{subjectEOA})
 	require.NoError(t, err)
-	require.Equal(t, explorer.VisibilityFull, vis[subjectEOA].Level, "control: the org pin alone keeps this same-org grant")
+	require.Equal(t, explorer.VisibilityHidden, vis[subjectEOA].Level, "ordinary visibility ignores grants even in the same org")
 
 	f.serve("debug_traceCall", drfEnvelope(t, map[string]any{
 		"type": "CALL", "from": drfMemberEOA, "to": drfContractO, "gas": "0x0", "gasUsed": "0x0", "input": "0x", "value": "0x0",
@@ -322,10 +307,8 @@ func TestDryRun_TraceLogsVisibleToUser_IgnoreTheUsersDisclosureGrant_RD1318(t *t
 	assert.NotContains(t, visible, bare(subjectEOA), "the member's disclosure grant must not reveal the subject to the admin: %s", raw)
 }
 
-// The dry-run and the View-as RPC mirror mark their context the same way:
-// embedded addresses in a log are redacted as the user would see them WITHOUT
-// their disclosure grants, while the user's own call shows the disclosed
-// subject.
+// Direct RPC, dry-run, and View-as all mask embedded private addresses
+// independently of the viewer's disclosure grants.
 func TestDryRunAndViewAsRPC_DoNotUseTheUsersDisclosureGrants_RD1318(t *testing.T) {
 	f := setupRD1318Fixture(t)
 	ctx := context.Background()
@@ -370,7 +353,7 @@ func TestDryRunAndViewAsRPC_DoNotUseTheUsersDisclosureGrants_RD1318(t *testing.T
 	own := f.srv.jsonrpcProcessor.applyResponseFilter(ctx,
 		&ProcessRequest{Method: rbac.MethodGetLogs, Params: params, UserID: rd1318GranteeDID},
 		&rbac.AccessCheckResult{Allowed: true, UserID: granteeUID, OrgID: f.orgID}, body)
-	require.Contains(t, strings.ToLower(string(own)), subject, "control: the grantee's own call shows the disclosed subject")
+	require.NotContains(t, strings.ToLower(string(own)), subject, "ordinary RPC log reads ignore disclosure grants")
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) {

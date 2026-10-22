@@ -26,6 +26,12 @@ The proxy protects its audit trail against silent tampering with a SHA-256 hash 
 
 `compliance_logs` chaining is an optional layer you can add. The shape mirrors `rbac_audit_log` — same chain mechanism, separate seed.
 
+`rbac_audit_log` holds runtime security events as well as RBAC changes. Each query to the
+[cross-org authorization oracle](/docs/rbac#cross-organization-authorization-oracle) that reaches evaluation is one
+`cross_org_oracle.query` entry, and enabling the oracle writes a `cross_org_oracle.enabled` entry at startup. Oracle query
+entries never carry an organization, so they are operator-only: no tenant audit view shows them, even when the request
+names that tenant. If an entry cannot be written, the oracle returns no answer.
+
 ---
 
 ## How verification works

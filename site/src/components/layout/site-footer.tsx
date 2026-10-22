@@ -15,7 +15,7 @@ export function SiteFooter() {
               Docs
             </Link>
             <a
-              href="https://github.com/gateway-fm/open-privacy-suite"
+              href="https://github.com/LFDT-Permissioned-Privacy-Control/permissioned-privacy-control"
               target="_blank"
               rel="noopener noreferrer"
               className="hover:text-foreground transition-colors"

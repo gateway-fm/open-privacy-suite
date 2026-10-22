@@ -29,6 +29,35 @@ func setupGrantActivityRouter(srv *Server) *gin.Engine {
 	return router
 }
 
+func TestGrantActivityLogs_DataScopeBoundsRD1353(t *testing.T) {
+	srv, database := setupTestServerForExplorer(t)
+	router := setupGrantActivityRouter(srv)
+	targetID := createTestUserForExplorer(t, database, testTargetDID)
+	createTestUserForExplorer(t, database, testViewerDID)
+	grantID := createGrantWithScope(t, database, testViewerDID, targetID, []string{"activity_logs"}, time.Now().Add(time.Hour))
+	seedAccessLogs(t, database, testTargetDID, 3)
+	now := time.Now().UTC()
+	scope := fmt.Sprintf(`{"methods":["activity_logs"],"date_range":{"start":%q,"end":%q}}`, now.Add(-80*time.Second).Format(time.RFC3339Nano), now.Add(-40*time.Second).Format(time.RFC3339Nano))
+	_, err := database.Conn().ExecContext(context.Background(), `UPDATE disclosure_grants SET scope=$1 WHERE id=$2`, scope, grantID)
+	require.NoError(t, err)
+	get := func() *httptest.ResponseRecorder {
+		r := httptest.NewRequest("GET", "/api/v1/explorer/grant/"+grantID+"/activity", nil)
+		addBearerToken(t, r, srv, testViewerDID)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, r)
+		return w
+	}
+	w := get()
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var response apimodels.GrantActivityLogsResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+	assert.Len(t, response.Logs, 1)
+	assert.Equal(t, 1, response.Total)
+	_, err = database.Conn().ExecContext(context.Background(), `UPDATE disclosure_grants SET scope='{"methods":["activity_logs"],"addresses":["0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]}' WHERE id=$1`, grantID)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusForbidden, get().Code, "address filters cannot be ignored")
+}
+
 // createGrantWithScope creates a disclosure grant with specific scope methods.
 // The grant's granted_at is set to 1 hour in the past so that recently-seeded
 // access logs (which use NOW() or NOW() - small offset) fall within the grant window.
@@ -36,10 +65,7 @@ func createGrantWithScope(t *testing.T, database *db.DB, requesterDID, targetUse
 	t.Helper()
 	ctx := context.Background()
 
-	defaultOrgID := "00000000-0000-0000-0000-000000000001"
-	_, _ = database.Conn().ExecContext(ctx,
-		"INSERT INTO organizations (id, slug, name, settings) VALUES ($1, $2, $3, '{}') ON CONFLICT (id) DO NOTHING",
-		defaultOrgID, "default", "Default Organization")
+	defaultOrgID, _ := ensureDefaultOrgMembership(t, database, requesterDID)
 
 	requestID := uuid.New().String()
 	scope := `{"methods":[]}`
@@ -312,10 +338,7 @@ func TestGrantActivityLogs_LogsWithinGrantTimeBoundsOnly(t *testing.T) {
 
 	// Create grant with explicit time bounds: granted_at = 1 hour ago, expires = 1 hour from now
 	createTestUserForExplorer(t, database, testViewerDID)
-	defaultOrgID := "00000000-0000-0000-0000-000000000001"
-	_, _ = database.Conn().ExecContext(ctx,
-		"INSERT INTO organizations (id, slug, name, settings) VALUES ($1, $2, $3, '{}') ON CONFLICT (id) DO NOTHING",
-		defaultOrgID, "default", "Default Organization")
+	defaultOrgID, _ := ensureDefaultOrgMembership(t, database, testViewerDID)
 
 	scope := `{"methods":["activity_logs"]}`
 	requestID := uuid.New().String()
