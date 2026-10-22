@@ -12,8 +12,9 @@ on:
 
 env:
   # Pinned to the patch release carrying the standard-library advisory fixes
-  # govulncheck checks for; keep this in lockstep with the go.mod toolchain.
-  GO_VERSION: '1.26.9'
+  # govulncheck checks for; keep this in lockstep with the go line in go.mod
+  # and mcp/go.mod.
+  GO_VERSION: '1.26.10'
   NODE_VERSION: '20'
   # Minimum coverage threshold (percentage).
   # Set to 44 because explorer/store.go (954 lines of SQL queries against the
