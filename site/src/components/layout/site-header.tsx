@@ -52,7 +52,7 @@ export function SiteHeader() {
           <VersionSelector />
           <Button variant="ghost" size="icon" asChild>
             <a
-              href="https://github.com/gateway-fm/open-privacy-suite"
+              href="https://github.com/LFDT-Permissioned-Privacy-Control/permissioned-privacy-control"
               target="_blank"
               rel="noopener noreferrer"
             >

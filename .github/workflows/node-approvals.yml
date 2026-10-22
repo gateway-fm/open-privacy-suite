@@ -41,6 +41,12 @@ jobs:
           go-version-file: go.mod
       - name: Validate advisory review guards
         run: python3 -B -m unittest discover -s node-approvals -p test_audit_dependencies.py
+      - name: Validate bundle source links
+        if: matrix.node == 'besu'
+        run: python3 -B -m unittest discover -s node-approvals -p test_build.py
+      - name: Validate benchmark evidence tools
+        if: matrix.node == 'besu'
+        run: python3 -B -m unittest discover -s poc/approval-performance -p test_verifier_summary.py
       - name: Validate Docker demo lifecycle
         if: matrix.node == 'reth'
         run: |
@@ -68,7 +74,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
         if: matrix.node == 'besu'
         with:
-          gradle-version: '9.0.0'
+          gradle-version: '9.2.1'
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable, explicitly selected toolchain
         if: matrix.node == 'reth'
         with:

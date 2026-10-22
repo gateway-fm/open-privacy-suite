@@ -48,15 +48,20 @@ notice items from the lockfiles include:
   to be MIT-licensed.
 - forge-std is expected to be Apache-2.0/MIT.
 - Solady is expected to be MIT-licensed.
-- `tools/wallet-emulator-js` must either be published under an
-  Apache-compatible license or removed/replaced before public release.
 
-## Gateway Repositories In The Coordinated Release
+## Optional External Tools
 
-- `gateway-fm/open-privacy-suite`
+`gateway-fm/wallet-emulator-js` is an optional staging authentication tool,
+obtained and installed separately under its own license. Its source is not
+included in this distribution, and it is not registered as a submodule.
+Only the staging helper commands use it through `WALLET_EMULATOR_DIR`;
+application builds and CI test workflows do not require it. See CONTRIBUTING.md.
+
+## Project and Companion Repositories
+
+- `LFDT-Permissioned-Privacy-Control/permissioned-privacy-control`
 - `gateway-fm/ops-indexer`
 - `gateway-fm/ops-explorer`
-- `gateway-fm/wallet-emulator-js` if retained as a submodule
 
 Each repository and any related images should publish its own LICENSE, NOTICE,
 third-party notices, SBOM, and source-to-image mapping.

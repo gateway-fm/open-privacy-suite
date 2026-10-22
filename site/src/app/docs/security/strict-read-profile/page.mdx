@@ -62,7 +62,7 @@ Addresses of other users embedded in an admitted event stay masked, as under `st
   - lifecycle events such as `Initialized(uint8)` or `Upgraded(address indexed implementation)`, where the implementation is a contract and not a user;
   - events whose address parameter is not indexed, for example `Paused(address account)`.
 
-  Applications that rely on such events do not see them under `strict`. Emit each party that must see the event as an indexed `address` parameter, or give the reader an approved disclosure grant.
+  Applications that rely on such events do not see them under `strict`. Emit each party that must see the event as an indexed `address` parameter. Disclosure grants do not change ordinary event admission.
 </Callout>
 
 ---
@@ -84,7 +84,7 @@ Addresses of other users embedded in an admitted event stay masked, as under `st
 | Admin test-request of a transaction, receipt, log or block read | Returns the node's answer | Refused (HTTP 403) before the node is called, and recorded in the access log. Address-state reads are still served |
 | `debug_traceTransaction` | The call tree (`callTracer`) for a participant, an admin of the contract the transaction called, or a `visibleTo` recipient, and only when the caller has access to every contract in the returned call tree. Any other caller with trace access is refused (HTTP 403) | The top-level call frame only (see above), for a participant. Anyone else gets not found |
 
-The only access strict keeps beyond participation and indexed addresses is an approved [selective disclosure](/docs/disclosure) grant on the Explorer Data API. A disclosure grant does not add JSON-RPC access.
+Approved [selective disclosure](/docs/disclosure) grants apply only through dedicated grant endpoints. They add no access to regular JSON-RPC or Explorer reads. The Explorer UI combines regular transactions with scoped grant transactions.
 
 ---
 

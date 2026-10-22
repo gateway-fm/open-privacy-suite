@@ -73,7 +73,7 @@ RPC calls under View-as to a [dry-run](/docs/rbac#admin-dry-run--impersonation) 
 | The target's own transactions with addresses no organization owns | Yes (their own activity) |
 | The target's own transactions or receipts with another organization's contract (including deploying one) | No — returned as `null` |
 
-One limit is **disclosure grants**. A grant is approved by its data owner for the grantee only, so while an admin views as the grantee none of the grantee's grants apply: grant pages return 404, no disclosed addresses are listed, and disclosed parties render as the target would see them without the grant. The same holds for [dry-run](/docs/rbac#admin-dry-run--impersonation). See [Selective Disclosure](/docs/disclosure). Transactions shared with the target through `visibleTo` are not disclosure grants and continue to follow the surface's method and organization rules.
+One limit is **disclosure grants**. A grant is approved by its data owner for the grantee only, so while an admin views as the grantee none of the grantee's grants apply: grant pages return 404, no disclosed addresses or cached disclosed transaction rows are shown, and regular reads always use the target's own permissions. The same holds for [dry-run](/docs/rbac#admin-dry-run--impersonation). See [Selective Disclosure](/docs/disclosure). Transactions shared with the target through `visibleTo` are not disclosure grants and continue to follow the surface's method and organization rules.
 
 ---
 

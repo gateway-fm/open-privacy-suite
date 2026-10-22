@@ -66,6 +66,7 @@ func createFullDisclosureGrant(
 	createTestUserForExplorer(t, database, requesterDID)
 	targetUserID := createTestUserForExplorer(t, database, targetDID)
 	linkEthAddressToUser(t, database, targetDID, targetAddr)
+	ensureDefaultOrgMembership(t, database, requesterDID)
 
 	// Ensure default org exists
 	defaultOrgID := "00000000-0000-0000-0000-000000000001"
@@ -156,25 +157,15 @@ func TestGrantVisibilityMatrix(t *testing.T) {
 			assert.Equal(t, gs.TargetAddr, *resp.RealAddress)
 		})
 
-		// --- Transactions ---
-		// The grant transactions endpoint does NOT check scope methods; it only uses disclosure_level.
-		// With full level and activity_logs scope, the transactions endpoint still returns data.
-		// The UI is responsible for hiding/showing the tab based on scope_methods from resolve.
-		t.Run("Transactions_200_FullLevel", func(t *testing.T) {
+		// Activity consent alone cannot disclose on-chain transactions.
+		t.Run("Transactions_403_OutsideScope", func(t *testing.T) {
 			req := httptest.NewRequest("GET",
 				"/api/v1/explorer/grant/"+gs.GrantID+"/"+gs.AddressID+"/transactions", nil)
 			addBearerToken(t, req, srv, gs.RequesterDID)
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, req)
-
-			require.Equal(t, http.StatusOK, w.Code)
-			var resp apimodels.GrantTransactionsResponse
-			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-			assert.Equal(t, "full", resp.DisclosureLevel)
-			// Full level shows real addresses
-			for _, tx := range resp.Transactions {
-				assert.NotNil(t, tx.TxHash, "full level should include tx hash")
-			}
+			require.Equal(t, http.StatusForbidden, w.Code)
+			assert.NotContains(t, w.Body.String(), gs.TargetAddr)
 		})
 
 		// --- Activity Logs ---

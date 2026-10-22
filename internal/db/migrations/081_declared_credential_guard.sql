@@ -1,7 +1,7 @@
 -- WHAT: the projection barrier stops exempting key-only writes to group_access
 -- rows whose credential a reviewed groups document declared.
--- WHY: 076 lets an UPDATE that changes only rpc_api_key (and updated_at) pass,
--- so an operator can rotate an operational key on a managed stream. Since 079
+-- WHY: 077 lets an UPDATE that changes only rpc_api_key (and updated_at) pass,
+-- so an operator can rotate an operational key on a managed stream. Since 080
 -- a document may declare the credential (rpc_api_key_source IS NOT NULL);
 -- the same exemption would let a legacy writer that raced the first activation
 -- overwrite the declared ciphertext while the row still says "declared". The
@@ -13,7 +13,7 @@
 -- AUTHORITATIVE RECORD: the reviewed groups revision (configuration_revisions)
 -- plus its transactional audit; this migration writes no audit rows.
 -- EXPAND-ONLY / ROLE SEPARATION: replaces one function body in place; every
--- trigger created by 076 keeps pointing at it. Grants are unchanged.
+-- trigger created by 077 keeps pointing at it. Grants are unchanged.
 CREATE OR REPLACE FUNCTION configuration_guard_projection() RETURNS TRIGGER LANGUAGE plpgsql AS $$
 DECLARE
     row_data JSONB;

@@ -1,0 +1,38 @@
+#!/usr/bin/env python3
+"""Sequential original/fixed/off comparison on fresh, disposable full stacks."""
+import gzip,hashlib,json,os,shutil,subprocess,sys
+from pathlib import Path
+
+HERE=Path(__file__).resolve().parent
+ROOT=HERE.parents[1]
+NAME='ops-besu-approvals-0.1.0-besu-26.8.1.jar'
+candidate=HERE/'candidate'/NAME
+candidate.parent.mkdir(exist_ok=True)
+shutil.copy2(ROOT/'node-approvals/besu/build/libs'/NAME,candidate)
+output=HERE/'performance';output.mkdir(exist_ok=True)
+cases=[('jdk',HERE/'baseline'/NAME,True),('bouncy-castle',candidate,True),('approvals-off',candidate,False)]
+for name,jar,gate in cases:
+    directory=output/name
+    env=dict(os.environ,VERIFIER_COMPARE_JAR=str(jar))
+    args=[sys.executable,str(HERE/'run_transactions.py'),'--node','besu','--rate','5000','--seconds','60','--output',str(directory)]
+    if not gate:args.append('--no-gate')
+    print('START',name,flush=True)
+    with (output/(name+'.log')).open('w') as log:
+        process=subprocess.Popen(args,cwd=ROOT,env=env,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True)
+        for line in process.stdout:
+            log.write(line);log.flush()
+            if line.startswith('{'):print(name,line.strip(),flush=True)
+        code=process.wait()
+    if code!=0:raise RuntimeError(f'{name} failed; inspect {output/(name+".log")}')
+    (directory/'verifier-config.json').write_text(json.dumps({'gate':gate,'plugin_sha256':hashlib.sha256(jar.read_bytes()).hexdigest(),'ops_binary_sha256':hashlib.sha256((ROOT/'.tmp/ops-server').read_bytes()).hexdigest(),'diagnostics':False,'policy_or_crypto_bypass':False,'max_batch':32,'verify_workers':2,'max_in_flight':8,'node_http_max_conns_per_host':int(env.get('VERIFIER_COMPARE_NODE_CONNS','256')),'max_concurrent_requests':5000},indent=2)+'\n')
+    # The child has closed its ExitStack and waited for its own processes/containers.
+    for pattern in ('*/data','*/audit-buffer'):
+        for state in (directory/'scratch').glob(pattern):shutil.rmtree(state)
+    for path in directory.rglob('*'):
+        if path.is_file() and path.stat().st_size>1_000_000 and path.suffix!='.gz' and path.name!='transactions-report.json':
+            with path.open('rb') as src,gzip.open(str(path)+'.gz','wb',compresslevel=6) as dst:shutil.copyfileobj(src,dst)
+            path.unlink()
+    print('DONE',name,flush=True)
+# Leave the private fixture distribution on the newly built plugin.
+shutil.copy2(candidate,ROOT/'.tmp/besu-review-private/plugins'/NAME)
+print('ALL PERFORMANCE CASES COMPLETE',flush=True)

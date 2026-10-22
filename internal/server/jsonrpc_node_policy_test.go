@@ -43,6 +43,9 @@ func (s *nodeRPCStore) GetContractOwnerOrgID(context.Context, string) (string, e
 func (s *nodeRPCStore) ListUserMembershipsWithDetails(context.Context, string) ([]*rbac.MembershipWithDetails, error) {
 	return []*rbac.MembershipWithDetails{{Group: &rbac.Group{ID: "group-node", OrgID: "org-node"}}}, nil
 }
+func (s *nodeRPCStore) ListActiveUserMembershipsWithDetails(ctx context.Context, userID string) ([]*rbac.MembershipWithDetails, error) {
+	return s.ListUserMembershipsWithDetails(ctx, userID)
+}
 func (s *nodeRPCStore) GetCachedPermissions(_ context.Context, user, org string) (*rbac.EffectivePermissions, error) {
 	return &rbac.EffectivePermissions{UserID: user, OrgID: org, AllowedMethods: s.methods, ContractAccess: map[string]rbac.ContractAccess{}, ExpiresAt: time.Now().Add(time.Hour)}, nil
 }

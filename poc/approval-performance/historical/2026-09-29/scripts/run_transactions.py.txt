@@ -1,0 +1,51 @@
+#!/usr/bin/env python3
+"""Use the existing full-stack benchmark, with receiver metric snapshots and batched
+post-run receipt reads. No production instrumentation or policy/crypto bypasses.
+"""
+import os,sys,urllib.request
+from pathlib import Path
+
+ROOT=Path(__file__).resolve().parents[2]
+ORIGINAL=ROOT/'poc/approval-performance/transactions.py'
+sys.path.insert(0,str(ORIGINAL.parent))
+os.environ['OPS_APPROVAL_DIAGNOSTICS']='0'
+os.environ['GASSTORM_LOADGEN_SOURCE']=str(ROOT/'.tmp/gasstorm-patched/loadgenerator-72ba1d5392a63acb')
+os.environ['OPS_BESU_HOME']=str(ROOT/'.tmp/besu-review-private')
+
+def node_metrics(stack,output,suffix):
+    if stack.plugin:
+        with urllib.request.urlopen(f'http://127.0.0.1:{stack.node.metrics_port}/metrics',timeout=15) as response:
+            (output/f'besu-metrics-{suffix}.txt').write_bytes(response.read())
+
+source=ORIGINAL.read_text()
+source=source.replace('    name = "transactions-" + args.node', '    ops_env["NODE_HTTP_MAX_CONNS_PER_HOST"] = os.environ.get("VERIFIER_COMPARE_NODE_CONNS", "256")\n    name = "transactions-" + args.node')
+source=source.replace('    h = g.h\n', '''    h = g.h
+    h.SCRATCH = output / "scratch"
+    if os.environ.get("VERIFIER_COMPARE_JAR"):
+        h.PLUGIN_JAR = Path(os.environ["VERIFIER_COMPARE_JAR"])
+''')
+for suffix in ('before','after'):
+    old=f'(output / "metrics-{suffix}.txt").write_text(read_metrics(stack))'
+    assert old in source
+    source=source.replace(old,old+f'\n            node_metrics(stack,output,"{suffix}")')
+source=source.replace('                samples.append({"at_ms": int(time.time()*1000), **status})', '''                samples.append({"at_ms": int(time.time()*1000), **status})
+                if len(samples) % 20 == 0:
+                    print(json.dumps({"elapsed_ms":status.get("elapsedMs"),"sent":status.get("txSent"),"confirmed":status.get("txConfirmed"),"failed":status.get("txFailed")}),flush=True)''')
+batch='''
+            def receipt_batch(hashes):
+                body=[{"jsonrpc":"2.0","id":i,"method":"eth_getTransactionReceipt","params":[tx]} for i,tx in enumerate(hashes)]
+                req=urllib.request.Request(stack.node.rpc_url,json.dumps(body).encode(),{"Content-Type":"application/json"})
+                with urllib.request.urlopen(req,timeout=40) as response: replies=json.loads(response.read())
+                assert isinstance(replies,list) and len(replies)==len(hashes)
+                out=[]
+                for reply in replies:
+                    assert "error" not in reply,reply
+                    r=reply["result"]
+                    out.append({"hash":hashes[reply["id"]],"receipt":None if r is None else {k:r[k] for k in ("transactionHash","blockHash","blockNumber","status")}})
+                return out
+'''
+needle='            try:\n                with concurrent.futures.ThreadPoolExecutor(max_workers=16) as pool:'
+assert needle in source
+source=source.replace(needle,batch+'\n            try:\n                with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:')
+source=source.replace('receipts = list(pool.map(receipt, by_hash))','hash_list=list(by_hash)\n                    receipts=[row for batch in pool.map(receipt_batch,[hash_list[i:i+100] for i in range(0,len(hash_list),100)]) for row in batch]')
+exec(compile(source,str(ORIGINAL),'exec'),{'__name__':'__main__','__file__':str(ORIGINAL),'node_metrics':node_metrics})

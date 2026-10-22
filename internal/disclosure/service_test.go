@@ -470,9 +470,10 @@ func TestCreateRequest(t *testing.T) {
 			targetUserID:    "target-456",
 			orgID:           "org-789",
 			scope: Scope{
-				Methods:   []string{"eth_call", "eth_getBalance"},
-				Addresses: []string{"0x1234"},
-				DateRange: &DateRange{Start: time.Now().Add(-24 * time.Hour), End: time.Now()},
+				Methods:         []string{"transaction_history", "activity_logs"},
+				Addresses:       []string{"0x00000000000000000000000000000000000012aB"},
+				DateRange:       &DateRange{Start: time.Now().Add(-24 * time.Hour), End: time.Now()},
+				DisclosureLevel: DisclosurePseudonymous,
 			},
 			reason:     "Compliance audit",
 			legalBasis: "GDPR Article 6(1)(c)",
@@ -502,6 +503,42 @@ func TestCreateRequest(t *testing.T) {
 			storeErr:        errors.New("database error"),
 			wantErr:         true,
 		},
+		{
+			name:         "unknown method rejected (RD-1353)",
+			requesterDID: "did:privado:auditor123",
+			targetUserID: "target-456",
+			orgID:        "org-789",
+			scope:        Scope{Methods: []string{"eth_call"}},
+			reason:       "Test",
+			wantErr:      true,
+		},
+		{
+			name:         "inverted date range rejected (RD-1353)",
+			requesterDID: "did:privado:auditor123",
+			targetUserID: "target-456",
+			orgID:        "org-789",
+			scope:        Scope{DateRange: &DateRange{Start: time.Now(), End: time.Now().Add(-time.Hour)}},
+			reason:       "Test",
+			wantErr:      true,
+		},
+		{
+			name:         "malformed address rejected (RD-1353)",
+			requesterDID: "did:privado:auditor123",
+			targetUserID: "target-456",
+			orgID:        "org-789",
+			scope:        Scope{Addresses: []string{"0x1234"}},
+			reason:       "Test",
+			wantErr:      true,
+		},
+		{
+			name:         "unknown level rejected (RD-1353)",
+			requesterDID: "did:privado:auditor123",
+			targetUserID: "target-456",
+			orgID:        "org-789",
+			scope:        Scope{DisclosureLevel: "everything"},
+			reason:       "Test",
+			wantErr:      true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -524,11 +561,21 @@ func TestCreateRequest(t *testing.T) {
 
 			if tt.wantErr {
 				assert.Error(t, err)
+				if tt.storeErr == nil {
+					assert.ErrorIs(t, err, ErrInvalidScope)
+					assert.Empty(t, store.requests, "an invalid scope is never stored")
+				}
 				return
 			}
 
 			require.NoError(t, err)
 			assert.NotEmpty(t, req.ID)
+			want, nerr := tt.scope.Normalize()
+			require.NoError(t, nerr)
+			assert.Equal(t, want, req.Scope, "the stored scope is the normalised one")
+			if tt.scope.DisclosureLevel == "" {
+				assert.Equal(t, DisclosureRedacted, req.Scope.DisclosureLevel, "an empty level is stored as redacted")
+			}
 			assert.Equal(t, tt.targetUserID, req.TargetUserID)
 			assert.Equal(t, tt.orgID, req.OrgID)
 			assert.Equal(t, tt.reason, req.Reason)
@@ -574,7 +621,7 @@ func TestApproveRequest(t *testing.T) {
 				ID:           "req-123",
 				TargetUserID: "target-user",
 				OrgID:        "org-1",
-				Scope:        Scope{Methods: []string{"eth_call"}},
+				Scope:        Scope{Methods: []string{"transaction_history"}, DisclosureLevel: DisclosureFull},
 				Reason:       "Audit",
 				Status:       StatusPending,
 				RequestedAt:  time.Now(),
@@ -592,14 +639,14 @@ func TestApproveRequest(t *testing.T) {
 				ID:           "req-124",
 				TargetUserID: "target-user",
 				OrgID:        "org-1",
-				Scope:        Scope{Methods: []string{"eth_call", "eth_sendTransaction"}},
+				Scope:        Scope{Methods: []string{"transaction_history", "activity_logs"}, DisclosureLevel: DisclosureFull},
 				Reason:       "Audit",
 				Status:       StatusPending,
 				RequestedAt:  time.Now(),
 			},
 			requestID:     "req-124",
 			decidedByUser: "approver-user",
-			narrowedScope: &Scope{Methods: []string{"eth_call"}}, // Narrow to only eth_call
+			narrowedScope: &Scope{Methods: []string{"transaction_history"}, DisclosureLevel: DisclosureFull}, // Narrow to transactions only
 			grantDuration: 12 * time.Hour,
 			reason:        "Approved with limited scope",
 			wantErr:       nil,
@@ -650,13 +697,13 @@ func TestApproveRequest(t *testing.T) {
 				ID:           "req-127",
 				TargetUserID: "target-user",
 				OrgID:        "org-1",
-				Scope:        Scope{Methods: []string{"eth_call"}},
+				Scope:        Scope{Methods: []string{"activity_logs"}},
 				Status:       StatusPending,
 				RequestedAt:  time.Now(),
 			},
 			requestID:     "req-127",
 			decidedByUser: "approver-user",
-			narrowedScope: &Scope{Methods: []string{"eth_call", "debug_traceCall"}}, // widens beyond request
+			narrowedScope: &Scope{Methods: []string{"activity_logs", "transaction_history"}}, // widens beyond request
 			grantDuration: 24 * time.Hour,
 			reason:        "should be rejected",
 			wantErr:       ErrScopeOutOfBounds,
@@ -677,6 +724,42 @@ func TestApproveRequest(t *testing.T) {
 			grantDuration: 24 * time.Hour,
 			reason:        "should be rejected",
 			wantErr:       ErrScopeOutOfBounds,
+		},
+		{
+			// RD-1353: an empty level is redacted, so it cannot be "narrowed"
+			// to pseudonymous or full.
+			name: "reject escalation from an empty (redacted) level",
+			setupRequest: &Request{
+				ID:           "req-129",
+				TargetUserID: "target-user",
+				OrgID:        "org-1",
+				Status:       StatusPending,
+				RequestedAt:  time.Now(),
+			},
+			requestID:     "req-129",
+			decidedByUser: "approver-user",
+			narrowedScope: &Scope{DisclosureLevel: DisclosurePseudonymous},
+			grantDuration: 24 * time.Hour,
+			reason:        "should be rejected",
+			wantErr:       ErrScopeOutOfBounds,
+		},
+		{
+			// RD-1353: a request stored before scopes were validated cannot be
+			// approved with a scope the grant API would not understand.
+			name: "reject approving an invalid legacy scope",
+			setupRequest: &Request{
+				ID:           "req-130",
+				TargetUserID: "target-user",
+				OrgID:        "org-1",
+				Scope:        Scope{Methods: []string{"eth_call"}},
+				Status:       StatusPending,
+				RequestedAt:  time.Now(),
+			},
+			requestID:     "req-130",
+			decidedByUser: "approver-user",
+			grantDuration: 24 * time.Hour,
+			reason:        "should be rejected",
+			wantErr:       ErrInvalidScope,
 		},
 	}
 
@@ -715,12 +798,14 @@ func TestApproveRequest(t *testing.T) {
 			assert.NotEmpty(t, grant.GrantTokenHash) // Placeholder hash for DID-based auth
 			assert.True(t, grant.ExpiresAt.After(time.Now()))
 
-			// Verify scope
+			// Verify scope: the granted scope is stored normalised (RD-1353).
+			want := tt.setupRequest.Scope
 			if tt.narrowedScope != nil {
-				assert.Equal(t, *tt.narrowedScope, grant.Scope)
-			} else {
-				assert.Equal(t, tt.setupRequest.Scope, grant.Scope)
+				want = *tt.narrowedScope
 			}
+			want, nerr := want.Normalize()
+			require.NoError(t, nerr)
+			assert.Equal(t, want, grant.Scope)
 
 			// Verify request status was updated
 			req := store.requests[tt.requestID]
@@ -732,7 +817,7 @@ func TestApproveRequest(t *testing.T) {
 // TestScopeIsSubsetOf covers the RD-1164 #9 approval bound: an approved
 // (narrowed) scope may never grant more than the request. An empty dimension on
 // the child means "unrestricted" and is therefore NOT a subset of a restricted
-// parent; empty disclosure level is treated as full (most revealing) downstream.
+// parent; an empty disclosure level is redacted (RD-1353), the least revealing.
 func TestScopeIsSubsetOf(t *testing.T) {
 	jan := &DateRange{Start: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), End: time.Date(2026, 1, 31, 23, 59, 59, 0, time.UTC)}
 	q1 := &DateRange{Start: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), End: time.Date(2026, 3, 31, 23, 59, 59, 0, time.UTC)}
@@ -743,10 +828,10 @@ func TestScopeIsSubsetOf(t *testing.T) {
 		parent Scope
 		want   bool
 	}{
-		{"method subset", Scope{Methods: []string{"eth_call"}}, Scope{Methods: []string{"eth_call", "eth_getLogs"}}, true},
-		{"method superset rejected", Scope{Methods: []string{"eth_call", "debug_traceCall"}}, Scope{Methods: []string{"eth_call"}}, false},
-		{"empty child under method-restricted parent rejected", Scope{}, Scope{Methods: []string{"eth_call"}}, false},
-		{"any child under unrestricted parent", Scope{Methods: []string{"eth_call"}}, Scope{}, true},
+		{"method subset", Scope{Methods: []string{MethodActivityLogs}}, Scope{Methods: []string{MethodFullDisclosure}}, true},
+		{"method superset rejected", Scope{Methods: []string{MethodFullDisclosure}}, Scope{Methods: []string{MethodActivityLogs}}, false},
+		{"empty child under method-restricted parent rejected", Scope{}, Scope{Methods: []string{MethodActivityLogs}}, false},
+		{"transaction history under empty parent", Scope{Methods: []string{MethodTransactionHistory}}, Scope{}, true},
 		{"address subset case-insensitive", Scope{Addresses: []string{"0xABC"}}, Scope{Addresses: []string{"0xabc", "0xdef"}}, true},
 		{"address superset rejected", Scope{Addresses: []string{"0xabc", "0x999"}}, Scope{Addresses: []string{"0xabc"}}, false},
 		{"date range within", Scope{DateRange: jan}, Scope{DateRange: q1}, true},
@@ -754,7 +839,8 @@ func TestScopeIsSubsetOf(t *testing.T) {
 		{"unbounded child under bounded parent rejected", Scope{}, Scope{DateRange: jan}, false},
 		{"level narrowing full to pseudonymous", Scope{DisclosureLevel: DisclosurePseudonymous}, Scope{DisclosureLevel: DisclosureFull}, true},
 		{"level escalation pseudonymous to full rejected", Scope{DisclosureLevel: DisclosureFull}, Scope{DisclosureLevel: DisclosurePseudonymous}, false},
-		{"empty level (=full) escalates pseudonymous parent", Scope{}, Scope{DisclosureLevel: DisclosurePseudonymous}, false},
+		{"empty level (=redacted) under a pseudonymous parent", Scope{}, Scope{DisclosureLevel: DisclosurePseudonymous}, true},
+		{"pseudonymous child escalates an empty-level (=redacted) parent", Scope{DisclosureLevel: DisclosurePseudonymous}, Scope{}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1117,7 +1203,7 @@ func TestGetActivityLogs(t *testing.T) {
 			setupGrant: &Grant{
 				ID:        "grant-600",
 				RequestID: "req-600",
-				Scope:     Scope{Methods: []string{"eth_call"}},
+				Scope:     Scope{Methods: []string{MethodActivityLogs}},
 				GrantedAt: time.Now(),
 				ExpiresAt: time.Now().Add(24 * time.Hour),
 			},
@@ -1219,7 +1305,7 @@ func TestGetActivitySummary(t *testing.T) {
 			setupGrant: &Grant{
 				ID:        "grant-700",
 				RequestID: "req-700",
-				Scope:     Scope{Methods: []string{"eth_call"}},
+				Scope:     Scope{Methods: []string{MethodActivityLogs}},
 				GrantedAt: time.Now(),
 				ExpiresAt: time.Now().Add(24 * time.Hour),
 			},
@@ -1297,7 +1383,7 @@ func TestGenerateComplianceReport(t *testing.T) {
 			setupGrant: &Grant{
 				ID:        "grant-800",
 				RequestID: "req-800",
-				Scope:     Scope{Methods: []string{"eth_call"}},
+				Scope:     Scope{Methods: []string{MethodActivityLogs}},
 				GrantedAt: time.Now(),
 				ExpiresAt: time.Now().Add(24 * time.Hour),
 			},
@@ -1317,7 +1403,7 @@ func TestGenerateComplianceReport(t *testing.T) {
 			setupGrant: &Grant{
 				ID:        "grant-801",
 				RequestID: "req-801",
-				Scope:     Scope{},
+				Scope:     Scope{Methods: []string{MethodActivityLogs}},
 				GrantedAt: time.Now(),
 				ExpiresAt: time.Now().Add(24 * time.Hour),
 			},
@@ -1337,7 +1423,7 @@ func TestGenerateComplianceReport(t *testing.T) {
 			setupGrant: &Grant{
 				ID:        "grant-802",
 				RequestID: "req-802",
-				Scope:     Scope{},
+				Scope:     Scope{Methods: []string{MethodActivityLogs}},
 				GrantedAt: time.Now(),
 				ExpiresAt: time.Now().Add(24 * time.Hour),
 			},
@@ -1357,7 +1443,7 @@ func TestGenerateComplianceReport(t *testing.T) {
 			setupGrant: &Grant{
 				ID:        "grant-803",
 				RequestID: "req-803",
-				Scope:     Scope{},
+				Scope:     Scope{Methods: []string{MethodActivityLogs}},
 				GrantedAt: time.Now(),
 				ExpiresAt: time.Now().Add(24 * time.Hour),
 			},

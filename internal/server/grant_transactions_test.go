@@ -310,11 +310,13 @@ func TestGrantTransactions_RevokedGrant(t *testing.T) {
 }
 
 func TestGrantTransactions_InvalidGrant(t *testing.T) {
-	srv, _, _ := setupTestServerForExplorerTransactions(t)
+	srv, database, _ := setupTestServerForExplorerTransactions(t)
 	router := setupGrantTransactionsRouter(srv)
 
 	req := httptest.NewRequest("GET",
 		"/api/v1/explorer/grant/nonexistent-grant/some-address-id/transactions", nil)
+	createTestUserForExplorer(t, database, testViewerDID)
+	addBearerToken(t, req, srv, testViewerDID)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 

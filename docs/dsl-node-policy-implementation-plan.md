@@ -235,7 +235,7 @@ why, and what changed for a headless client is `docs/implementation/api-migratio
 | Reth runtime (D) | Guarded Reth v2.5.2 with per-frame policy evaluation, candidate simulation, scoped diagnostics, finalized status, restart recovery; 75 SDK integration tests | `reth-runtime.md` |
 | Full stack acceptance | 12 scenarios pass on the isolated OPS + guarded Reth + indexer + explorer stack, including restart and a rerun after the final rebuild | `ops-reth-stack.md` |
 | Headless SDK | TypeScript client generated from the OpenAPI document; offline tests and a live stack smoke | `../implementation/headless-sdk.md` |
-| Migration | Expand-only migrations 072–077; populated-DB import of legacy grants into the first execution document | `deployment-migration.md`, `lifecycle-import.md` |
+| Migration | Expand-only migrations 073–083; populated-DB import of legacy grants into the first execution document | `deployment-migration.md`, `lifecycle-import.md` |
 
 Measured, not claimed: the load harness sustains ~10–11 mined transactions per
 second end to end on a shared laptop with 1 s development blocks, with no wrong

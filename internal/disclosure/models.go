@@ -25,6 +25,14 @@ const (
 	ActionViewTransactions EventAction = "view_transactions"
 	ActionViewSummary      EventAction = "view_summary"
 	ActionExportReport     EventAction = "export_report"
+	// ActionViewTransaction: one disclosed transaction read by hash.
+	ActionViewTransaction EventAction = "view_transaction"
+	// ActionListAddresses: the grant listed among the viewer's disclosed
+	// addresses (the subject's addresses at the grant's level).
+	ActionListAddresses EventAction = "list_addresses"
+	// ActionResolveAddress: a disclosed address resolved by its address_id.
+	ActionResolveAddress EventAction = "resolve_address"
+	ActionViewEvents     EventAction = "view_events"
 )
 
 // ResourceType represents the type of resource accessed in a disclosure event.
@@ -35,6 +43,8 @@ const (
 	ResourceTransactions ResourceType = "transactions"
 	ResourceSummary      ResourceType = "summary"
 	ResourceReport       ResourceType = "report"
+	ResourceAddresses    ResourceType = "addresses"
+	ResourceEvents       ResourceType = "events"
 )
 
 // ReportType represents the type of compliance report.
@@ -60,7 +70,7 @@ const (
 
 // Scope defines what data can be accessed in a disclosure.
 type Scope struct {
-	Methods         []string        `json:"methods,omitempty"`          // Specific RPC methods to disclose
+	Methods         []string        `json:"methods,omitempty"`          // Data categories: activity_logs, transaction_history, full_disclosure
 	Addresses       []string        `json:"addresses,omitempty"`        // Specific contract addresses
 	DateRange       *DateRange      `json:"date_range,omitempty"`       // Time period
 	DisclosureLevel DisclosureLevel `json:"disclosure_level,omitempty"` // How much address detail to reveal
@@ -74,20 +84,20 @@ type DateRange struct {
 
 // Request represents a disclosure request from an authorized party.
 type Request struct {
-	ID               string        `json:"id"`
-	RequesterUserID  *string       `json:"requester_user_id,omitempty"` // Who is requesting (may be external)
-	RequesterDID     string        `json:"requester_did,omitempty"`     // DID of authorized viewer (for block explorer auth)
-	TargetUserID     string        `json:"target_user_id"`              // Whose data is being requested
-	OrgID            string        `json:"org_id"`
-	Scope            Scope         `json:"scope"`
-	Reason           string        `json:"reason"`
-	LegalBasis       string        `json:"legal_basis,omitempty"` // GDPR article, court order, etc.
-	Status           RequestStatus `json:"status"`
-	RequestedAt      time.Time     `json:"requested_at"`
-	ExpiresAt        *time.Time    `json:"expires_at,omitempty"` // When request expires if not acted upon
-	DecidedAt        *time.Time    `json:"decided_at,omitempty"`
-	DecidedByUserID  *string       `json:"decided_by_user_id,omitempty"`
-	DecisionReason   string        `json:"decision_reason,omitempty"`
+	ID              string        `json:"id"`
+	RequesterUserID *string       `json:"requester_user_id,omitempty"` // Who is requesting (may be external)
+	RequesterDID    string        `json:"requester_did,omitempty"`     // DID of authorized viewer (for block explorer auth)
+	TargetUserID    string        `json:"target_user_id"`              // Whose data is being requested
+	OrgID           string        `json:"org_id"`
+	Scope           Scope         `json:"scope"`
+	Reason          string        `json:"reason"`
+	LegalBasis      string        `json:"legal_basis,omitempty"` // GDPR article, court order, etc.
+	Status          RequestStatus `json:"status"`
+	RequestedAt     time.Time     `json:"requested_at"`
+	ExpiresAt       *time.Time    `json:"expires_at,omitempty"` // When request expires if not acted upon
+	DecidedAt       *time.Time    `json:"decided_at,omitempty"`
+	DecidedByUserID *string       `json:"decided_by_user_id,omitempty"`
+	DecisionReason  string        `json:"decision_reason,omitempty"`
 }
 
 // Grant represents an active disclosure grant (approved request with access token).
@@ -134,11 +144,11 @@ type Report struct {
 
 // RequestWithDetails includes request with related user information.
 type RequestWithDetails struct {
-	Request         *Request `json:"request"`
-	RequesterDID    string   `json:"requester_did,omitempty"`
-	TargetDID       string   `json:"target_did"`
-	DecidedByDID    string   `json:"decided_by_did,omitempty"`
-	ActiveGrantID   *string  `json:"active_grant_id,omitempty"`
+	Request       *Request `json:"request"`
+	RequesterDID  string   `json:"requester_did,omitempty"`
+	TargetDID     string   `json:"target_did"`
+	DecidedByDID  string   `json:"decided_by_did,omitempty"`
+	ActiveGrantID *string  `json:"active_grant_id,omitempty"`
 }
 
 // GrantWithRequest includes grant with its associated request.

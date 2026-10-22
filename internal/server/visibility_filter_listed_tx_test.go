@@ -30,9 +30,6 @@ func TestRedactOptsFromFilter_ListedTxHashesAreOnlyGenuineListings(t *testing.T)
 	require.Equal(t, map[string]bool{listed: true}, opts.ListedTxHashes, "only tx_visible_to hashes, lowercased")
 	require.True(t, opts.VisibleTxHashes[union], "the union still drives row survival")
 
-	// The disclosure-address copy keeps the listing.
-	cp := (&Server{}).addDisclosureAddressToFilter(filter, "0x"+strings.Repeat("cc", 20))
-	require.Equal(t, filter.ListedTxHashes, cp.ListedTxHashes)
 }
 
 func TestBuildVisibilityFilter_ListedTxHashesExcludeTransferUnion(t *testing.T) {

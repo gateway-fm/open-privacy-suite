@@ -1,0 +1,107 @@
+import collections, gzip, hashlib, json, math, re
+from pathlib import Path
+import xml.etree.ElementTree as ET
+
+ROOT = Path(__file__).resolve().parents[2]
+HERE = Path(__file__).resolve().parent
+
+def digest(path):
+    h = hashlib.sha256()
+    with path.open('rb') as f:
+        for block in iter(lambda: f.read(1024 * 1024), b''):
+            h.update(block)
+    return h.hexdigest()
+
+def read_json(path):
+    if path.exists():
+        return json.loads(path.read_text())
+    with gzip.open(str(path) + '.gz', 'rt') as f:
+        return json.load(f)
+
+def metrics(path):
+    values = {}
+    if not path.exists():
+        return values
+    for line in path.read_text().splitlines():
+        if not line or line.startswith('#'):
+            continue
+        match = re.fullmatch(r'([^ {]+)(?:\{([^}]+)\})?\s+([^ ]+)', line)
+        if not match:
+            continue
+        name, label_string, value = match.groups()
+        labels = dict(re.findall(r'(\w+)="([^"]*)"', label_string or ''))
+        labels.pop('target', None)
+        key = (name, tuple(sorted(labels.items())))
+        values[key] = values.get(key, 0) + float(value)
+    return values
+
+def metric_rows(values, prefix):
+    return [{'name': n, 'labels': dict(labels), 'value': v}
+            for (n, labels), v in sorted(values.items()) if n.startswith(prefix)]
+
+cases = []
+for name in ['jdk', 'bouncy-castle', 'approvals-off']:
+    directory = HERE / 'performance' / name
+    report = read_json(directory / 'transactions-report.json')
+    assert not report.get('error'), report.get('error')
+    before, after = [metrics(directory / ('metrics-' + phase + '.txt')) for phase in ['before', 'after']]
+    delta = {k: v - before.get(k, 0) for k, v in after.items()}
+    old_node, node = [metrics(directory / ('besu-metrics-' + phase + '.txt')) for phase in ['before', 'after']]
+    node_delta = {k: v - old_node.get(k, 0) for k, v in node.items()}
+    def total(family):
+        return sum(v for (n, _), v in delta.items() if n == 'privacyproxy_approval_' + family)
+    count = total('delivery_seconds_count')
+    buckets = sorted((float(dict(labels)['le']), v) for (n, labels), v in delta.items()
+                     if n == 'privacyproxy_approval_delivery_seconds_bucket')
+    latency = None if not count else {'mean_ms': total('delivery_seconds_sum') * 1000 / count,
+        'histogram_count': count,
+        'cumulative_buckets_seconds': {str(b): n for b, n in buckets},
+        'percentile_upper_bounds_ms': {p: next(b for b, n in buckets if n >= math.ceil(q * count)) * 1000
+                                      for p, q in [('p50', .5), ('p95', .95), ('p99', .99)]}}
+    receipts = read_json(directory / 'receipts.json')
+    logs = read_json(directory / 'transactions.json')
+    missing = {row['hash'] for row in receipts if row['receipt'] is None}
+    statuses = {r['txHash'].lower(): r.get('status', 'unknown') for r in logs if r.get('txHash')}
+    errors = collections.Counter(r.get('errorMessage') or r.get('error') for r in logs
+                                 if r.get('errorMessage') or r.get('error'))
+    cases.append({'case': name, 'config': read_json(directory / 'verifier-config.json'),
+        'receipts': report['receipts'], 'generator': {k: report['status'].get(k)
+            for k in ['txSent', 'txConfirmed', 'txFailed', 'status', 'elapsedMs']},
+        'missing_by_generator_status': dict(collections.Counter(statuses.get(tx, 'unknown') for tx in missing)),
+        'generator_error_counts': dict(errors), 'approval_delivery': latency,
+        'mean_approvals_per_batch': total('confirmed_total') / count if count else None,
+        'approval_counter_deltas': metric_rows({k:v for k,v in delta.items() if k[0].endswith('_total')}, 'privacyproxy_approval_'),
+        'producer_counter_deltas': metric_rows({k:v for k,v in node_delta.items() if k[0].endswith('_total')}, 'ops_approval_'),
+        'producer_final_gauges': metric_rows({k:v for k,v in node.items() if not k[0].endswith('_total')}, 'ops_approval_'),
+        'loadgen_sha256': report['loadgen_sha256'],
+        'source_files_sha256': {str(p.relative_to(directory)): digest(p) for p in directory.iterdir()
+                                if p.is_file() and p.suffix in ['.json', '.txt', '.gz']},
+        'memory_sampling_error': report.get('memory_sampling_error')})
+
+test_results = [ET.parse(p).getroot() for p in (ROOT / 'node-approvals/besu/build/test-results/test').glob('TEST-*.xml')]
+test_counts = {key: sum(int(r.attrib.get(key, 0)) for r in test_results)
+               for key in ['tests', 'failures', 'errors', 'skipped']}
+scenarios = read_json(HERE / 'scenarios-summary.json')
+probe = read_json(ROOT / '.tmp/besu-bottleneck/verification-probe/summary.json')
+probe['delivery_cases'] = [c for c in probe['delivery_cases'] if not c['case'].startswith('smoke')]
+evidence = {
+    'measured_on': '2026-09-29', 'hardware': 'Apple M2 Max, 12 cores, 32 GiB, macOS 26.6.1',
+    'source_base': '61d91e15816603b3c775443abe9174bdab685d64', 'candidate_source_dirty': True,
+    'runtime': {'besu': '26.8.1', 'java': 'Temurin 25.0.4.1+1', 'go': '1.26.6', 'bouncycastle': '1.84'},
+    'settings': {'requested_tps': 5000, 'sending_seconds': 60, 'wallets': 10,
+        'transaction_type': 'ETH transfer', 'node_http_max_conns_per_host': 256,
+        'nominal_block_interval_seconds': 1, 'build_window_seconds': .8, 'gas_limit': 200000000,
+        'identity': 'local mock; real RBAC, policy, preflight and signatures', 'diagnostics': False},
+    'excluded_attempt': read_json(HERE / 'performance-default-aborted/EXCLUDED.json'),
+    'validation': {'java': test_counts, 'real_besu': {'passed': sum(r['passed'] for r in scenarios),
+        'total': len(scenarios)}, 'ops_http': read_json(HERE / 'http/demo.json')},
+    'advisory_audit': read_json(HERE / 'advisories-reviewed.json'),
+    'source_files_sha256': {str(p.relative_to(ROOT)): digest(p) for p in [
+        ROOT / 'node-approvals/besu/src/main/java/ops/approvals/ApprovalVerifier.java',
+        ROOT / 'node-approvals/besu/build.gradle', HERE / 'run_transactions.py', HERE / 'run_performance.py']},
+    'focused_probe': probe, 'full_transaction_cases': cases}
+target = ROOT / 'poc/approval-performance/evidence/besu-verifier-2026-09-29.json'
+target.write_text(json.dumps(evidence, indent=2, allow_nan=False) + '\n')
+print(json.dumps([{'case': c['case'], 'receipts': c['receipts'], 'delivery': c['approval_delivery'],
+                   'generator': c['generator'], 'errors': c['generator_error_counts'],
+                   'producer': c['producer_counter_deltas']} for c in cases], indent=2))

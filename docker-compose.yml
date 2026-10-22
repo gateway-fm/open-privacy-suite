@@ -93,6 +93,9 @@ services:
       - JWT_SECRET=${JWT_SECRET:-dev-jwt-secret-do-not-use-in-production-1234567890}
       - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET:-dev-refresh-secret-do-not-use-in-production-0987654321}
       - ADMIN_API_TOKEN=${ADMIN_API_TOKEN}
+      - CROSS_ORG_AUTHORIZATION_ORACLE_MODE=${CROSS_ORG_AUTHORIZATION_ORACLE_MODE:-disabled}
+      - CROSS_ORG_AUTHORIZATION_ORACLE_TOKEN=${CROSS_ORG_AUTHORIZATION_ORACLE_TOKEN:-}
+      - CROSS_ORG_AUTHORIZATION_ORACLE_ORG_IDS=${CROSS_ORG_AUTHORIZATION_ORACLE_ORG_IDS:-}
       - MOCK_SIGNATURES=true  # Allow mock signatures for demo recordings (never enable in production)
       - ALLOW_MOCK_LOGIN=true  # Allow mock JWZ tokens for dev/testing (never enable in production)
       - DEMO_AUTO_AUTH_DELAY=${DEMO_AUTO_AUTH_DELAY:-}  # Auto-complete auth after N seconds for demos (empty = disabled)

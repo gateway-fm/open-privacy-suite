@@ -1,0 +1,37 @@
+{
+  "measured_on": "2026-09-29",
+  "source_base": "61d91e15816603b3c775443abe9174bdab685d64",
+  "preserved_on": "2026-10-15",
+  "artifacts": [
+    {
+      "original_path": ".tmp/besu-verifier-change/run_transactions.py",
+      "preserved_path": "scripts/run_transactions.py.txt",
+      "sha256": "6782fd99fba7f0335ec3f2140bf5081359f5c98206096caff9fec59ae389278a",
+      "changes": "none"
+    },
+    {
+      "original_path": ".tmp/besu-verifier-change/run_performance.py",
+      "preserved_path": "scripts/run_performance.py.txt",
+      "sha256": "05631f63dbef1e954bf304e26787dc1ebd797a97ab9b00be3ee0660bd05bbf58",
+      "changes": "none"
+    },
+    {
+      "original_path": ".tmp/besu-verifier-change/summarize.py",
+      "preserved_path": "scripts/summarize.py.txt",
+      "sha256": "7b985916311234480e9e68baa6bc96c7379c73e77918bb6b75680a3e0d8f3db0",
+      "changes": "none"
+    },
+    {
+      "original_path": ".tmp/besu-bottleneck/REPORT.md",
+      "preserved_path": "besu-bottleneck.md",
+      "original_sha256": "d5ae6dde6f401af2aab3edfa904509f220100bb73f8e24b058b8d2ee666c80bd",
+      "changes": "historical status note and relative links only"
+    },
+    {
+      "original_path": ".tmp/besu-bottleneck/verification-probe/REPORT.md",
+      "preserved_path": "besu-verification.md",
+      "original_sha256": "36df57ecc2ba3b85200ebbf4d6c7525825e8b3bedd2ba28cdae5f957c4dc920a",
+      "changes": "historical status note and relative links only"
+    }
+  ]
+}

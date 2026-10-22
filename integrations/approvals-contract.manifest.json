@@ -1,0 +1,21 @@
+{
+  "version": "1.0.0",
+  "wire_service": "ops.approvals.v1.ApprovalDelivery",
+  "envelope": "OPS_APPROVAL_BATCH_V2",
+  "files": {
+    "contract/vectors/batch.json": "d8e456ca3728139a80645b0d556432865c6f094dc66754283ad1605c2c3b526b",
+    "contract/vectors/call-batch.json": "10d106932b8088b68680a62bc69296a50c9bf884d9c31ef45994eca8c269081d",
+    "contract/vectors/call-v3.json": "9eae6f1fe73bb85e9b5343b570777304230d175268bfa39070e92f370951ff2d",
+    "contract/vectors/fingerprint.json": "a71ccc94bf5a07a4ca892a646c05fa499dc7786e44ccaec55c0130726a67a79a",
+    "docs/fingerprints.md": "a9141c7d7e5852548eda842796faeddad608a2e9d1b7ecf6cf64ac5821f56064",
+    "docs/implementation/approvals-wire-contract.md": "4310f52751c8331433dc1ca65cd4a935c3a7e6b78860502daba1fb24cb980bc5",
+    "proto/ops/approvals/v1/approvals.proto": "eaca68c0042512f056f01bfe949e93939de2db20d281b04e2008b4b83632c90e"
+  },
+  "ops_files": {
+    "proto/ops/approvals/v1/approvals.proto": "proto/ops/approvals/v1/approvals.proto",
+    "contract/vectors/batch.json": "internal/nodeapproval/testdata/batch.json",
+    "contract/vectors/call-batch.json": "internal/nodeapproval/testdata/call-batch.json",
+    "contract/vectors/call-v3.json": "internal/nodeapproval/testdata/call-v3.json",
+    "contract/vectors/fingerprint.json": "internal/nodeapproval/testdata/fingerprint.json"
+  }
+}

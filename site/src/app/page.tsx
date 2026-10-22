@@ -46,7 +46,7 @@ export default function HomePage() {
               </Button>
               <Button size="lg" variant="outline" asChild>
                 <a
-                  href="https://github.com/gateway-fm/open-privacy-suite"
+                  href="https://github.com/LFDT-Permissioned-Privacy-Control/permissioned-privacy-control"
                   target="_blank"
                   rel="noopener noreferrer"
                 >

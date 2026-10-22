@@ -44,7 +44,7 @@ func newCountingDB(visMap VisibilityMap, linkedAddrs []string) *countingDB {
 		case VisibilityHidden, VisibilityRedacted:
 			reason = ReasonNoAccess
 		case VisibilityPseudonymous:
-			reason = ReasonDisclosureGrant
+			reason = ReasonNoAccess
 		}
 		detailed[addr] = AddressVisibility{Address: addr, Level: lvl, Reason: reason}
 	}

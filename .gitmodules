@@ -1,6 +1,3 @@
 [submodule "contracts/lib/forge-std"]
 	path = contracts/lib/forge-std
 	url = https://github.com/foundry-rs/forge-std
-[submodule "tools/wallet-emulator-js"]
-	path = tools/wallet-emulator-js
-	url = https://github.com/gateway-fm/wallet-emulator-js.git

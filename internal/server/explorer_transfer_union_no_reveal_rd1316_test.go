@@ -255,10 +255,7 @@ func TestExplorer_TransferReceiverSeesSenderAsParticipant_RD1316(t *testing.T) {
 	}
 }
 
-// A Full disclosure grant on a transfer recipient keeps the parent tx (the
-// grant subject drives the union), with the tx-level parties at the viewer's
-// own level. The counterparty is revealed on the transfer row by the Full-grant
-// lens (its GrantFullReveals count is pinned by the redactor tests).
+// A Full disclosure grant cannot drive a transfer union or reveal a transfer.
 func TestExplorer_FullDisclosureGrantOnRecipient_RD1316(t *testing.T) {
 	f := setupRD1316Fixture(t)
 	ctx := context.Background()
@@ -293,23 +290,13 @@ func TestExplorer_FullDisclosureGrantOnRecipient_RD1316(t *testing.T) {
 	require.False(t, f.srv.isViewerAdmin(ctx, auditorDID), "precondition: the auditor is not an admin")
 
 	rr := f.get(t, auditorDID, "/transactions/"+f.hash)
-	require.Equal(t, http.StatusOK, rr.Code, "the grant subject's transfer keeps its parent tx: %s", rr.Body.String())
-	var tx explorer.Transaction
-	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &tx))
-	assert.Equal(t, "[PRIVATE]", tx.From, "the tx sender is not the grant subject: it stays at the viewer's own level")
-	assert.Nil(t, tx.Nonce)
-	assert.Empty(t, tx.InputData)
-	assert.Empty(t, string(tx.Value))
-	requireNoForeignIdentity(t, rr.Body.String(), "auditor tx", rd1316EOA, rd1316Callee)
-
+	require.Equal(t, http.StatusNotFound, rr.Code, "disclosure subjects do not drive the transfer union: %s", rr.Body.String())
 	rr = f.get(t, auditorDID, "/transactions/"+f.hash+"/transfers")
 	require.Equal(t, http.StatusOK, rr.Code)
 	var transfers []explorer.TokenTransfer
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &transfers))
-	require.Len(t, transfers, 1, "only the grant subject's transfer: %s", rr.Body.String())
-	assert.Equal(t, eveWallet, strings.ToLower(transfers[0].To))
-	assert.Equal(t, rd1316EOA, strings.ToLower(transfers[0].From), "the Full lens reveals the counterparty on the transfer row")
-	assert.Equal(t, explorer.ReasonNoAccess, transfers[0].AddressMetadata[rd1316EOA], "the lens reveal keeps the counterparty's own reason")
+	require.Empty(t, transfers, "the disclosure grant cannot retain a transfer")
+
 }
 
 // addMember creates a non-admin user holding a grant on each contract (via a

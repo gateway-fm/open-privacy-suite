@@ -11,47 +11,47 @@
 Key facts: the chain itself is not encrypted — privacy is enforced at the
 access layer, so production deployments must make the proxy the only path to
 the node. The operator of the proxy is trusted; the guarantees are between
-users and organizations. Repository: https://github.com/gateway-fm/open-privacy-suite
+users and organizations. Repository: https://github.com/LFDT-Permissioned-Privacy-Control/permissioned-privacy-control
 — it ships a one-command seeded demo (`make quickstart`: two banks + a
 regulator with ready-to-use tokens; see ONBOARDING.md) and an MCP server
 (`mcp/`, ~94 tools) so AI agents can drive the product directly.
 
 ## Start here
 
-- [What It Does — plain-language capabilities and trust model](https://gateway-fm.github.io/open-privacy-suite/docs/what-it-does/)
-- [Quick Start — run it locally](https://gateway-fm.github.io/open-privacy-suite/docs/getting-started/)
-- [Evaluator onboarding guide (repo)](https://github.com/gateway-fm/open-privacy-suite/blob/main/ONBOARDING.md)
-- [Architecture](https://gateway-fm.github.io/open-privacy-suite/docs/architecture/)
+- [What It Does — plain-language capabilities and trust model](https://lfdt-permissioned-privacy-control.github.io/permissioned-privacy-control/docs/what-it-does/)
+- [Quick Start — run it locally](https://lfdt-permissioned-privacy-control.github.io/permissioned-privacy-control/docs/getting-started/)
+- [Evaluator onboarding guide (repo)](https://github.com/LFDT-Permissioned-Privacy-Control/permissioned-privacy-control/blob/main/ONBOARDING.md)
+- [Architecture](https://lfdt-permissioned-privacy-control.github.io/permissioned-privacy-control/docs/architecture/)
 
 ## Features
 
-- [RBAC — orgs, groups, claims, contract grants](https://gateway-fm.github.io/open-privacy-suite/docs/rbac/)
-- [Security model — request filtering, cross-org isolation](https://gateway-fm.github.io/open-privacy-suite/docs/security/)
-- [Response filtering / redaction](https://gateway-fm.github.io/open-privacy-suite/docs/security/response-filtering/)
-- [Privacy requirements and boundaries](https://gateway-fm.github.io/open-privacy-suite/docs/security/privacy-requirements/)
-- [Selective disclosure — consent-based grants](https://gateway-fm.github.io/open-privacy-suite/docs/disclosure/)
-- [Compliance — KYC gating, travel rule](https://gateway-fm.github.io/open-privacy-suite/docs/compliance/)
-- [Privacy-filtered block explorer](https://gateway-fm.github.io/open-privacy-suite/docs/explorer/)
-- [Authentication — ZK proofs, SSO, wallet linking](https://gateway-fm.github.io/open-privacy-suite/docs/authentication/)
+- [RBAC — orgs, groups, claims, contract grants](https://lfdt-permissioned-privacy-control.github.io/permissioned-privacy-control/docs/rbac/)
+- [Security model — request filtering, cross-org isolation](https://lfdt-permissioned-privacy-control.github.io/permissioned-privacy-control/docs/security/)
+- [Response filtering / redaction](https://lfdt-permissioned-privacy-control.github.io/permissioned-privacy-control/docs/security/response-filtering/)
+- [Privacy requirements and boundaries](https://lfdt-permissioned-privacy-control.github.io/permissioned-privacy-control/docs/security/privacy-requirements/)
+- [Selective disclosure — consent-based grants](https://lfdt-permissioned-privacy-control.github.io/permissioned-privacy-control/docs/disclosure/)
+- [Compliance — KYC gating, travel rule](https://lfdt-permissioned-privacy-control.github.io/permissioned-privacy-control/docs/compliance/)
+- [Privacy-filtered block explorer](https://lfdt-permissioned-privacy-control.github.io/permissioned-privacy-control/docs/explorer/)
+- [Authentication — ZK proofs, SSO, wallet linking](https://lfdt-permissioned-privacy-control.github.io/permissioned-privacy-control/docs/authentication/)
 
 ## API
 
-- [API overview and auth model](https://gateway-fm.github.io/open-privacy-suite/docs/api/)
-- [Interactive OpenAPI 3.1 reference (149 operations)](https://gateway-fm.github.io/open-privacy-suite/api-reference/)
-- [OpenAPI document (JSON)](https://gateway-fm.github.io/open-privacy-suite/openapi.json)
-- [MCP server — drive the product from an AI agent](https://github.com/gateway-fm/open-privacy-suite/blob/main/docs/mcp.md)
+- [API overview and auth model](https://lfdt-permissioned-privacy-control.github.io/permissioned-privacy-control/docs/api/)
+- [Interactive OpenAPI 3.1 reference (149 operations)](https://lfdt-permissioned-privacy-control.github.io/permissioned-privacy-control/api-reference/)
+- [OpenAPI document (JSON)](https://lfdt-permissioned-privacy-control.github.io/permissioned-privacy-control/openapi.json)
+- [MCP server — drive the product from an AI agent](https://github.com/LFDT-Permissioned-Privacy-Control/permissioned-privacy-control/blob/main/docs/mcp.md)
 
 ## Operations
 
-- [Operator deployment — production topology and requirements](https://gateway-fm.github.io/open-privacy-suite/docs/operator-deployment/)
-- [User onboarding for operators](https://gateway-fm.github.io/open-privacy-suite/docs/operator-onboarding/)
-- [Configuration reference](https://gateway-fm.github.io/open-privacy-suite/docs/configuration/)
-- [Audit log integrity](https://gateway-fm.github.io/open-privacy-suite/docs/security/audit-integrity/)
+- [Operator deployment — production topology and requirements](https://lfdt-permissioned-privacy-control.github.io/permissioned-privacy-control/docs/operator-deployment/)
+- [User onboarding for operators](https://lfdt-permissioned-privacy-control.github.io/permissioned-privacy-control/docs/operator-onboarding/)
+- [Configuration reference](https://lfdt-permissioned-privacy-control.github.io/permissioned-privacy-control/docs/configuration/)
+- [Audit log integrity](https://lfdt-permissioned-privacy-control.github.io/permissioned-privacy-control/docs/security/audit-integrity/)
 
 ## Optional
 
-- [Contract deployment through the proxy](https://gateway-fm.github.io/open-privacy-suite/docs/deployment/)
-- [Azure AD / Entra ID SSO](https://gateway-fm.github.io/open-privacy-suite/docs/azure-ad/)
-- [Scaling](https://gateway-fm.github.io/open-privacy-suite/docs/scaling/)
-- [Backup & disaster recovery](https://gateway-fm.github.io/open-privacy-suite/docs/backup-recovery/)
-- [Troubleshooting](https://gateway-fm.github.io/open-privacy-suite/docs/troubleshooting/)
+- [Contract deployment through the proxy](https://lfdt-permissioned-privacy-control.github.io/permissioned-privacy-control/docs/deployment/)
+- [Azure AD / Entra ID SSO](https://lfdt-permissioned-privacy-control.github.io/permissioned-privacy-control/docs/azure-ad/)
+- [Scaling](https://lfdt-permissioned-privacy-control.github.io/permissioned-privacy-control/docs/scaling/)
+- [Backup & disaster recovery](https://lfdt-permissioned-privacy-control.github.io/permissioned-privacy-control/docs/backup-recovery/)
+- [Troubleshooting](https://lfdt-permissioned-privacy-control.github.io/permissioned-privacy-control/docs/troubleshooting/)

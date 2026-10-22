@@ -7,7 +7,7 @@
     "version": "26.8.1",
     "maven_version": "26.8.1-d97cbd6",
     "java": "25.0.4.1+1",
-    "gradle": "9.0.0",
+    "gradle": "9.2.1",
     "archive_url": "https://github.com/besu-eth/besu/releases/download/26.8.1/besu-26.8.1.tar.gz",
     "archive_sha256": "0e0ed9cc0d8fa9091081b6c5d4646f15bbf7e33a6eb1e9f7bfb2ef831fe9aaf4"
   },

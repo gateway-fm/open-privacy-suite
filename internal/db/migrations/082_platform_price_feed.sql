@@ -9,7 +9,7 @@
 -- AUTHORITATIVE RECORD: the active platform revision (configuration_revisions)
 -- plus its transactional audit; this migration writes no audit rows.
 -- EXPAND-ONLY / ROLE SEPARATION: new operational table with app grants. Rows
--- are written only by the platform projection: the 075 barrier below refuses
+-- are written only by the platform projection: the 077 barrier below refuses
 -- any other writer once a platform revision is active. The interval bounds
 -- and the format list live in the document validator, not in CHECKs, so a
 -- wider bound or a second format later is a code change, not a DROP CONSTRAINT.

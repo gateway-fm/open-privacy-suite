@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -35,6 +36,12 @@ func NewService(store Store) *DefaultService {
 
 // CreateRequest creates a new disclosure request.
 func (s *DefaultService) CreateRequest(ctx context.Context, requesterUserID, requesterDID, targetUserID, orgID string, scope Scope, reason, legalBasis string, expiresIn *time.Duration) (*Request, error) {
+	// RD-1353: the scope is what the subject will be asked to consent to and
+	// what the grant API enforces, so it is validated and stored normalised.
+	scope, err := scope.Normalize()
+	if err != nil {
+		return nil, err
+	}
 	req := &Request{
 		ID:           uuid.New().String(),
 		RequesterDID: requesterDID,
@@ -86,17 +93,31 @@ func (s *DefaultService) ApproveRequest(ctx context.Context, requestID, decidedB
 	// scope must stay within the request's bounds. Previously the narrowed scope
 	// simply replaced the requested one, leaving ErrScopeOutOfBounds dead code
 	// and letting an approver grant more than was asked.
-	grantedScope := req.Scope
+	requestedScope, err := req.Scope.Normalize()
+	if err != nil {
+		return nil, err
+	}
+	grantedScope := requestedScope
 	if narrowedScope != nil {
 		// Merge: unset fields in the narrowed scope inherit from the request, so
 		// a partial narrowing (e.g. only lowering the disclosure level) does not
 		// accidentally widen the untouched dimensions. The merged scope must then
 		// stay within the request's bounds — an approval may only narrow.
-		merged := mergeNarrowedScope(req.Scope, *narrowedScope)
-		if !merged.isSubsetOf(req.Scope) {
+		merged, err := mergeNarrowedScope(requestedScope, *narrowedScope).Normalize()
+		if err != nil {
+			return nil, err
+		}
+		if !merged.isSubsetOf(requestedScope) {
 			return nil, ErrScopeOutOfBounds
 		}
 		grantedScope = merged
+	}
+	// RD-1353: a granted scope is validated and stored normalised, so a request
+	// stored before scopes were validated cannot mint a grant the grant API
+	// would read ambiguously (an empty level becomes redacted).
+	grantedScope, err = grantedScope.Normalize()
+	if err != nil {
+		return nil, err
 	}
 
 	// Create grant - use a placeholder hash since we're using DID-based auth now
@@ -144,24 +165,14 @@ func mergeNarrowedScope(base, override Scope) Scope {
 
 // isSubsetOf reports whether s stays within the bounds of parent — i.e. it does
 // not grant anything parent does not (RD-1164 #9). An unset dimension on parent
-// (empty Methods/Addresses, nil DateRange) imposes no restriction there.
+// (empty Addresses or nil DateRange) imposes no restriction there. Empty
+// Methods permits transaction history only.
 func (s Scope) isSubsetOf(parent Scope) bool {
-	// Methods: if parent restricts methods, s must also restrict them and only
-	// to a subset. An empty s.Methods means "no method restriction" — broader
-	// than a restricted parent — so it is NOT a subset.
-	if len(parent.Methods) > 0 {
-		if len(s.Methods) == 0 {
-			return false
-		}
-		allowed := make(map[string]bool, len(parent.Methods))
-		for _, m := range parent.Methods {
-			allowed[m] = true
-		}
-		for _, m := range s.Methods {
-			if !allowed[m] {
-				return false
-			}
-		}
+	// Categories are capabilities, not RPC names: full_disclosure includes both
+	// data classes, while an empty list covers transactions only.
+	if s.AllowsTransactionHistory() && !parent.AllowsTransactionHistory() ||
+		s.AllowsActivityLogs() && !parent.AllowsActivityLogs() {
+		return false
 	}
 	// Addresses: same rule, case-insensitive on the hex address.
 	if len(parent.Addresses) > 0 {
@@ -192,17 +203,16 @@ func (s Scope) isSubsetOf(parent Scope) bool {
 }
 
 // disclosureRank orders disclosure levels by how much they reveal (higher =
-// more revealing). Empty/unspecified is treated as full disclosure because the
-// consuming handlers default "" to full (see server.resolveAddressID /
-// getGrantTransactions), so it must rank highest for the subset test.
+// more revealing), by the level a read renders at (Scope.EffectiveLevel): an
+// empty or unknown level is redacted (RD-1353), the least revealing.
 func disclosureRank(l DisclosureLevel) int {
-	switch l {
+	switch (Scope{DisclosureLevel: l}).EffectiveLevel() {
+	case DisclosureFull:
+		return 3
 	case DisclosurePseudonymous:
 		return 2
-	case DisclosureRedacted:
+	default:
 		return 1
-	default: // DisclosureFull and "" (defaults to full downstream)
-		return 3
 	}
 }
 
@@ -267,8 +277,17 @@ func (s *DefaultService) ValidateGrantToken(ctx context.Context, token string) (
 	if err != nil {
 		return nil, err
 	}
+	if req == nil || req.Status != StatusApproved {
+		return nil, ErrGrantNotActive
+	}
+	scope, err := grant.Scope.ForRead()
+	if err != nil {
+		return nil, err
+	}
+	grantCopy := *grant
+	grantCopy.Scope = scope
 
-	return &GrantWithRequest{Grant: grant, Request: req}, nil
+	return &GrantWithRequest{Grant: &grantCopy, Request: req}, nil
 }
 
 // RevokeGrant revokes a disclosure grant.
@@ -294,8 +313,15 @@ func (s *DefaultService) GetActivityLogs(ctx context.Context, grantID, viewerUse
 		return nil, ErrGrantNotFound
 	}
 
-	if !grantWithReq.Grant.IsActive() {
+	if grantWithReq.Request == nil || grantWithReq.Request.Status != StatusApproved || !grantWithReq.Grant.IsActive() {
 		return nil, ErrGrantNotActive
+	}
+	scope, err := grantWithReq.Grant.Scope.ForRead()
+	if err != nil {
+		return nil, err
+	}
+	if err := scope.ValidateActivity(); err != nil {
+		return nil, err
 	}
 
 	// Get target user's external ID from internal ID
@@ -306,7 +332,7 @@ func (s *DefaultService) GetActivityLogs(ctx context.Context, grantID, viewerUse
 	}
 
 	// Query activity logs using the external ID
-	logs, err := s.store.GetActivityLogs(ctx, targetUserExternalID, &grantWithReq.Grant.Scope, limit, offset)
+	logs, err := s.store.GetActivityLogs(ctx, targetUserExternalID, &scope, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -326,8 +352,20 @@ func (s *DefaultService) GetActivityLogs(ctx context.Context, grantID, viewerUse
 		event.ViewerUserID = &viewerUserID
 	}
 
-	_ = s.store.CreateEvent(ctx, event) // Best effort logging
+	s.recordReadEvent(ctx, event)
 
+	if scope.EffectiveLevel() != DisclosureFull {
+		rendered := make([]*ActivityLogEntry, 0, len(logs))
+		for _, entry := range logs {
+			if entry == nil {
+				continue
+			}
+			copy := *entry
+			copy.IPAddress = ""
+			rendered = append(rendered, &copy)
+		}
+		logs = rendered
+	}
 	return logs, nil
 }
 
@@ -341,8 +379,15 @@ func (s *DefaultService) GetActivitySummary(ctx context.Context, grantID, viewer
 		return nil, ErrGrantNotFound
 	}
 
-	if !grantWithReq.Grant.IsActive() {
+	if grantWithReq.Request == nil || grantWithReq.Request.Status != StatusApproved || !grantWithReq.Grant.IsActive() {
 		return nil, ErrGrantNotActive
+	}
+	scope, err := grantWithReq.Grant.Scope.ForRead()
+	if err != nil {
+		return nil, err
+	}
+	if err := scope.ValidateActivity(); err != nil {
+		return nil, err
 	}
 
 	req := grantWithReq.Request
@@ -351,7 +396,7 @@ func (s *DefaultService) GetActivitySummary(ctx context.Context, grantID, viewer
 		return nil, fmt.Errorf("failed to get target user external ID: %w", err)
 	}
 
-	summary, err := s.store.GetActivitySummary(ctx, targetUserExternalID, &grantWithReq.Grant.Scope)
+	summary, err := s.store.GetActivitySummary(ctx, targetUserExternalID, &scope)
 	if err != nil {
 		return nil, err
 	}
@@ -372,7 +417,7 @@ func (s *DefaultService) GetActivitySummary(ctx context.Context, grantID, viewer
 		event.ViewerUserID = &viewerUserID
 	}
 
-	_ = s.store.CreateEvent(ctx, event)
+	s.recordReadEvent(ctx, event)
 
 	return summary, nil
 }
@@ -387,8 +432,15 @@ func (s *DefaultService) GenerateComplianceReport(ctx context.Context, grantID, 
 		return nil, ErrGrantNotFound
 	}
 
-	if !grantWithReq.Grant.IsActive() {
+	if grantWithReq.Request == nil || grantWithReq.Request.Status != StatusApproved || !grantWithReq.Grant.IsActive() {
 		return nil, ErrGrantNotActive
+	}
+	scope, err := grantWithReq.Grant.Scope.ForRead()
+	if err != nil {
+		return nil, err
+	}
+	if err := scope.ValidateActivity(); err != nil {
+		return nil, err
 	}
 
 	// Check for cached report
@@ -397,7 +449,12 @@ func (s *DefaultService) GenerateComplianceReport(ctx context.Context, grantID, 
 		return nil, err
 	}
 	if existing != nil {
-		return existing, nil
+		event := &Event{GrantID: grantID, Action: ActionExportReport, ResourceType: ResourceReport, ViewerIP: viewerIP, AccessedAt: time.Now(), DataSummary: &DataSummary{RecordCount: 1}}
+		if viewerUserID != "" {
+			event.ViewerUserID = &viewerUserID
+		}
+		s.recordReadEvent(ctx, event)
+		return renderReport(existing, scope), nil
 	}
 
 	// Generate new report based on type
@@ -411,7 +468,7 @@ func (s *DefaultService) GenerateComplianceReport(ctx context.Context, grantID, 
 
 	switch reportType {
 	case ReportActivitySummary:
-		summary, err := s.store.GetActivitySummary(ctx, targetUserExternalID, &grantWithReq.Grant.Scope)
+		summary, err := s.store.GetActivitySummary(ctx, targetUserExternalID, &scope)
 		if err != nil {
 			return nil, err
 		}
@@ -440,7 +497,7 @@ func (s *DefaultService) GenerateComplianceReport(ctx context.Context, grantID, 
 		}
 
 	case ReportCompliance:
-		summary, err := s.store.GetActivitySummary(ctx, targetUserExternalID, &grantWithReq.Grant.Scope)
+		summary, err := s.store.GetActivitySummary(ctx, targetUserExternalID, &scope)
 		if err != nil {
 			return nil, err
 		}
@@ -479,16 +536,41 @@ func (s *DefaultService) GenerateComplianceReport(ctx context.Context, grantID, 
 		ViewerIP:     viewerIP,
 		AccessedAt:   time.Now(),
 		DataSummary: &DataSummary{
-			Methods: []string{string(reportType)},
+			RecordCount: 1,
+			Methods:     []string{string(reportType)},
 		},
 	}
 	if viewerUserID != "" {
 		event.ViewerUserID = &viewerUserID
 	}
 
-	_ = s.store.CreateEvent(ctx, event)
+	s.recordReadEvent(ctx, event)
 
-	return report, nil
+	return renderReport(report, scope), nil
+}
+
+func (s *DefaultService) recordReadEvent(ctx context.Context, event *Event) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if err := s.store.CreateEvent(ctx, event); err != nil {
+		slog.ErrorContext(ctx, "failed to record disclosure read", "action", event.Action, "err", err)
+	}
+}
+
+// Reports may have been cached under an earlier rendering policy. Project
+// non-full responses onto the report schema instead of trusting cached fields.
+func renderReport(report *Report, scope Scope) *Report {
+	if scope.EffectiveLevel() == DisclosureFull {
+		return report
+	}
+	copy := *report
+	copy.ReportData = make(map[string]any)
+	for _, key := range []string{"type", "total_requests", "successful_count", "failed_count", "unique_methods", "method_breakdown", "date_range", "generated_at", "checked_at", "is_clear", "sanctions_clear", "kyc_verified", "activity_summary"} {
+		if value, ok := report.ReportData[key]; ok {
+			copy.ReportData[key] = value
+		}
+	}
+	return &copy
 }
 
 // GetMyPendingRequests returns pending disclosure requests for a user.

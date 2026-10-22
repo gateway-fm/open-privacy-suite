@@ -1,6 +1,10 @@
 package server
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -203,7 +207,7 @@ func (s *Server) disclosureUserMiddleware() gin.HandlerFunc {
 // @Produce      json
 // @Param        request body apimodels.CreateDisclosureRequestBody true "disclosure request (target_user_id and reason required)"
 // @Success      201 {object} disclosure.Request
-// @Failure      400 {object} apimodels.APIError "invalid body, or org_id required (ambiguous multi-org caller)"
+// @Failure      400 {object} apimodels.APIError "invalid body or scope, or org_id required (ambiguous multi-org caller)"
 // @Failure      401 {object} apimodels.APIError "missing or invalid admin token"
 // @Failure      403 {object} apimodels.APIError "source address not on the private network, or org_id / target_user_id outside the caller's scope"
 // @Failure      500 {object} apimodels.APIError
@@ -266,6 +270,10 @@ func (s *Server) createDisclosureRequest(c *gin.Context) {
 		expiresIn,
 	)
 	if err != nil {
+		if errors.Is(err, disclosure.ErrInvalidScope) {
+			respondBadRequest(c, "invalid disclosure scope")
+			return
+		}
 		slog.Error("disclosure: create request failed", "err", err, "target_user_id", input.TargetUserID, "org_id", orgID)
 		respondInternalError(c, "failed to create disclosure request")
 		return
@@ -788,7 +796,7 @@ func (s *Server) getAllMyDisclosureRequests(c *gin.Context) {
 // @Param        request_id path string true "Disclosure request ID"
 // @Param        request body apimodels.ApproveDisclosureRequestBody false "optional scope narrowing, grant duration, and reason"
 // @Success      200 {object} apimodels.DisclosureApproveResponse
-// @Failure      400 {object} apimodels.APIError "request cannot be approved (e.g. not pending or expired)"
+// @Failure      400 {object} apimodels.APIError "malformed body, invalid or widened scope, or request cannot be approved"
 // @Failure      401 {object} apimodels.APIError "missing or invalid token, or no matching user"
 // @Failure      403 {object} apimodels.APIError "request does not target the caller's data"
 // @Failure      404 {object} apimodels.APIError "request not found"
@@ -805,8 +813,18 @@ func (s *Server) approveDisclosureRequest(c *gin.Context) {
 		Reason             string            `json:"reason"`
 	}
 
-	// Allow empty body - all fields are optional
-	_ = c.ShouldBindJSON(&input)
+	// An omitted body keeps the requested scope; a malformed narrowing must
+	// never accidentally approve the original, broader request.
+	decoder := json.NewDecoder(c.Request.Body)
+	if err := decoder.Decode(&input); err != nil && !errors.Is(err, io.EOF) {
+		respondBadRequest(c, "invalid approval body")
+		return
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		respondBadRequest(c, "invalid approval body")
+		return
+	}
 
 	// Default grant duration: 24 hours
 	grantDuration := 24 * time.Hour
@@ -1020,10 +1038,71 @@ func (s *Server) validateDisclosureToken(c *gin.Context) (*disclosure.GrantWithR
 	return s.disclosureService.ValidateGrantToken(c.Request.Context(), token)
 }
 
+// authorizeLegacyDisclosureRead keeps token possession separate from current
+// eligibility: the named grant, its request org and the requester's live
+// membership are rechecked on every read.
+func (s *Server) authorizeLegacyDisclosureRead(c *gin.Context, activity bool) (*disclosure.GrantWithRequest, bool) {
+	if !disclosureGrantsApply(c) {
+		respondNotFound(c, "grant not found")
+		return nil, false
+	}
+	gw, err := s.validateDisclosureToken(c)
+	if err != nil || gw == nil || gw.Grant == nil || gw.Request == nil {
+		respondUnauthorized(c, "invalid disclosure token")
+		return nil, false
+	}
+	if gw.Grant.ID != c.Param("grant_id") {
+		respondForbidden(c, "token does not match grant")
+		return nil, false
+	}
+	if !s.grantRequesterEligible(c.Request.Context(), gw, gw.Request.RequesterDID) || !inScope(c, gw.Request.OrgID) {
+		respondNotFound(c, "grant not found")
+		return nil, false
+	}
+	scope, err := gw.Grant.Scope.ForRead()
+	if err != nil {
+		respondNotFound(c, "grant not found")
+		return nil, false
+	}
+	gw.Grant.Scope = scope
+	if activity && scope.ValidateActivity() != nil {
+		respondForbidden(c, "grant scope does not permit these activity logs")
+		return nil, false
+	}
+	return gw, true
+}
+
+func (s *Server) legacyDisclosureViewerID(c *gin.Context, gw *disclosure.GrantWithRequest) string {
+	if userID, ok := c.Get("user_id"); ok {
+		if id, ok := userID.(string); ok && id != "" {
+			return id
+		}
+	}
+	user, err := s.db.GetUserByExternalID(c.Request.Context(), gw.Request.RequesterDID)
+	if err != nil || user == nil {
+		slog.Error("disclosure: audit viewer lookup failed", "err", err)
+		return ""
+	}
+	return user.ID
+}
+
+func (s *Server) recordLegacyDisclosureRead(c *gin.Context, gw *disclosure.GrantWithRequest, action disclosure.EventAction, resource disclosure.ResourceType, count int) {
+	viewerID := s.legacyDisclosureViewerID(c, gw)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), 5*time.Second)
+	defer cancel()
+	event := &disclosure.Event{GrantID: gw.Grant.ID, Action: action, ResourceType: resource, DataSummary: &disclosure.DataSummary{RecordCount: count}, AccessedAt: time.Now(), ViewerIP: c.ClientIP()}
+	if viewerID != "" {
+		event.ViewerUserID = &viewerID
+	}
+	if err := s.db.CreateDisclosureEvent(ctx, event); err != nil {
+		slog.Error("disclosure: access audit write failed", "action", action, "err", err)
+	}
+}
+
 // getDisclosureLogs gets activity logs via disclosure grant
 //
 // @Summary      Get activity logs for a grant
-// @Description  Returns the target user's RPC activity log entries authorized by a disclosure grant. Requires a valid grant token (X-Disclosure-Token header or token query parameter) that must belong to the grant named in the path — a token for a different grant is rejected (403). Results are bounded to the grant's scope and time window; each access is itself recorded as a disclosure event.
+// @Description  Returns the target user's RPC activity log entries authorized by a disclosure grant. Requires a valid grant token (X-Disclosure-Token header or token query parameter) that must belong to the grant named in the path — a token for a different grant is rejected (403). The requester must remain an active member of the request organization. Requires activity_logs or full_disclosure; address-filtered activity is denied because activity records cannot establish that filter. Results honor the scope date range. Non-full grants omit IP addresses. Each read is recorded as a disclosure event.
 // @Tags         Admin: disclosure
 // @Produce      json
 // @Param        grant_id path string true "Disclosure grant ID"
@@ -1034,21 +1113,15 @@ func (s *Server) validateDisclosureToken(c *gin.Context) (*disclosure.GrantWithR
 // @Success      200 {array} disclosure.ActivityLogEntry
 // @Failure      401 {object} apimodels.APIError "missing or invalid admin token, or invalid/absent disclosure token"
 // @Failure      403 {object} apimodels.APIError "source address not on the private network, or token does not match the grant"
+// @Failure      404 {object} apimodels.APIError "grant unavailable to the current requester or organization"
 // @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/disclosure/grants/{grant_id}/logs [get]
 func (s *Server) getDisclosureLogs(c *gin.Context) {
 	grantID := c.Param("grant_id")
 
-	grantWithReq, err := s.validateDisclosureToken(c)
-	if err != nil {
-		slog.Warn("disclosure: token validation failed (logs)", "err", err, "grant_id", grantID)
-		respondUnauthorized(c, "invalid disclosure token")
-		return
-	}
-
-	if grantWithReq.Grant.ID != grantID {
-		respondForbidden(c, "token does not match grant")
+	grantWithReq, ok := s.authorizeLegacyDisclosureRead(c, true)
+	if !ok {
 		return
 	}
 
@@ -1066,10 +1139,7 @@ func (s *Server) getDisclosureLogs(c *gin.Context) {
 	}
 
 	viewerIP := c.ClientIP()
-	viewerUserID := ""
-	if uid, exists := c.Get("user_id"); exists {
-		viewerUserID = uid.(string)
-	}
+	viewerUserID := s.legacyDisclosureViewerID(c, grantWithReq)
 
 	logs, err := s.disclosureService.GetActivityLogs(c.Request.Context(), grantID, viewerUserID, viewerIP, limit, offset)
 	if err != nil {
@@ -1084,7 +1154,7 @@ func (s *Server) getDisclosureLogs(c *gin.Context) {
 // getDisclosureSummary gets activity summary via disclosure grant
 //
 // @Summary      Get activity summary for a grant
-// @Description  Returns aggregated activity statistics (request counts, per-method breakdown, date range) for the target user's activity authorized by a disclosure grant. Requires a valid grant token (X-Disclosure-Token header or token query parameter) that must belong to the grant named in the path — a token for a different grant is rejected (403). The access is recorded as a disclosure event.
+// @Description  Returns aggregated activity statistics (request counts, per-method breakdown, date range) for the target user's activity authorized by a disclosure grant. Requires a valid grant token (X-Disclosure-Token header or token query parameter) that must belong to the grant named in the path — a token for a different grant is rejected (403). The requester must remain a current member of the request organization. Requires activity_logs or full_disclosure; address-filtered activity is denied. Reads, including cached reports, are recorded as disclosure events.
 // @Tags         Admin: disclosure
 // @Produce      json
 // @Param        grant_id path string true "Disclosure grant ID"
@@ -1093,29 +1163,20 @@ func (s *Server) getDisclosureLogs(c *gin.Context) {
 // @Success      200 {object} disclosure.ActivitySummary
 // @Failure      401 {object} apimodels.APIError "missing or invalid admin token, or invalid/absent disclosure token"
 // @Failure      403 {object} apimodels.APIError "source address not on the private network, or token does not match the grant"
+// @Failure      404 {object} apimodels.APIError "grant unavailable to the current requester or organization"
 // @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/disclosure/grants/{grant_id}/summary [get]
 func (s *Server) getDisclosureSummary(c *gin.Context) {
 	grantID := c.Param("grant_id")
 
-	grantWithReq, err := s.validateDisclosureToken(c)
-	if err != nil {
-		slog.Warn("disclosure: token validation failed (summary)", "err", err, "grant_id", grantID)
-		respondUnauthorized(c, "invalid disclosure token")
-		return
-	}
-
-	if grantWithReq.Grant.ID != grantID {
-		respondForbidden(c, "token does not match grant")
+	grantWithReq, ok := s.authorizeLegacyDisclosureRead(c, true)
+	if !ok {
 		return
 	}
 
 	viewerIP := c.ClientIP()
-	viewerUserID := ""
-	if uid, exists := c.Get("user_id"); exists {
-		viewerUserID = uid.(string)
-	}
+	viewerUserID := s.legacyDisclosureViewerID(c, grantWithReq)
 
 	summary, err := s.disclosureService.GetActivitySummary(c.Request.Context(), grantID, viewerUserID, viewerIP)
 	if err != nil {
@@ -1141,6 +1202,7 @@ func (s *Server) getDisclosureSummary(c *gin.Context) {
 // @Failure      400 {object} apimodels.APIError "invalid report type"
 // @Failure      401 {object} apimodels.APIError "missing or invalid admin token, or invalid/absent disclosure token"
 // @Failure      403 {object} apimodels.APIError "source address not on the private network, or token does not match the grant"
+// @Failure      404 {object} apimodels.APIError "grant unavailable to the current requester or organization"
 // @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/disclosure/grants/{grant_id}/report/{report_type} [get]
@@ -1148,15 +1210,8 @@ func (s *Server) getDisclosureReport(c *gin.Context) {
 	grantID := c.Param("grant_id")
 	reportTypeStr := c.Param("report_type")
 
-	grantWithReq, err := s.validateDisclosureToken(c)
-	if err != nil {
-		slog.Warn("disclosure: token validation failed (report)", "err", err, "grant_id", grantID)
-		respondUnauthorized(c, "invalid disclosure token")
-		return
-	}
-
-	if grantWithReq.Grant.ID != grantID {
-		respondForbidden(c, "token does not match grant")
+	grantWithReq, ok := s.authorizeLegacyDisclosureRead(c, true)
+	if !ok {
 		return
 	}
 
@@ -1170,10 +1225,7 @@ func (s *Server) getDisclosureReport(c *gin.Context) {
 	}
 
 	viewerIP := c.ClientIP()
-	viewerUserID := ""
-	if uid, exists := c.Get("user_id"); exists {
-		viewerUserID = uid.(string)
-	}
+	viewerUserID := s.legacyDisclosureViewerID(c, grantWithReq)
 
 	report, err := s.disclosureService.GenerateComplianceReport(c.Request.Context(), grantID, viewerUserID, viewerIP, reportType)
 	if err != nil {
@@ -1188,7 +1240,7 @@ func (s *Server) getDisclosureReport(c *gin.Context) {
 // getDisclosureEvents gets disclosure access events for a grant
 //
 // @Summary      Get access events for a grant
-// @Description  Returns the disclosure access audit trail for a grant — each event records when the grant's data was viewed, by whom, and what resource was accessed. Requires a valid grant token (X-Disclosure-Token header or token query parameter) that must belong to the grant named in the path — a token for a different grant is rejected (403).
+// @Description  Returns the disclosure access audit trail for a grant — each event records when the grant's data was viewed, by whom, and what resource was accessed. The requester must remain an active member of the request organization. Non-full grants omit viewer IPs and address-bearing summaries; this read is also recorded. Requires a valid grant token (X-Disclosure-Token header or token query parameter) that must belong to the grant named in the path — a token for a different grant is rejected (403).
 // @Tags         Admin: disclosure
 // @Produce      json
 // @Param        grant_id path string true "Disclosure grant ID"
@@ -1199,21 +1251,15 @@ func (s *Server) getDisclosureReport(c *gin.Context) {
 // @Success      200 {array} disclosure.Event
 // @Failure      401 {object} apimodels.APIError "missing or invalid admin token, or invalid/absent disclosure token"
 // @Failure      403 {object} apimodels.APIError "source address not on the private network, or token does not match the grant"
+// @Failure      404 {object} apimodels.APIError "grant unavailable to the current requester or organization"
 // @Failure      500 {object} apimodels.APIError
 // @Security     AdminToken
 // @Router       /api/v1/admin/disclosure/grants/{grant_id}/events [get]
 func (s *Server) getDisclosureEvents(c *gin.Context) {
 	grantID := c.Param("grant_id")
 
-	grantWithReq, err := s.validateDisclosureToken(c)
-	if err != nil {
-		slog.Warn("disclosure: token validation failed (events)", "err", err, "grant_id", grantID)
-		respondUnauthorized(c, "invalid disclosure token")
-		return
-	}
-
-	if grantWithReq.Grant.ID != grantID {
-		respondForbidden(c, "token does not match grant")
+	grantWithReq, ok := s.authorizeLegacyDisclosureRead(c, false)
+	if !ok {
 		return
 	}
 
@@ -1237,6 +1283,16 @@ func (s *Server) getDisclosureEvents(c *gin.Context) {
 		return
 	}
 
+	if grantWithReq.Grant.Scope.EffectiveLevel() != disclosure.DisclosureFull {
+		for _, event := range events {
+			event.ViewerIP = ""
+			if event.DataSummary != nil {
+				event.DataSummary.Addresses = nil
+				event.DataSummary.Methods = nil
+			}
+		}
+	}
+	s.recordLegacyDisclosureRead(c, grantWithReq, disclosure.ActionViewEvents, disclosure.ResourceEvents, len(events))
 	c.JSON(http.StatusOK, events)
 }
 

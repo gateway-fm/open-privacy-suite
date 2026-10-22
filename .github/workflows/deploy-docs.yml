@@ -22,6 +22,9 @@ concurrency:
 
 jobs:
   build:
+    # Preserve the existing deployment. A new host enables Pages and sets
+    # DOCS_PAGES_ENABLED=true before this workflow publishes there.
+    if: ${{ github.repository == 'gateway-fm/open-privacy-suite' || vars.DOCS_PAGES_ENABLED == 'true' }}
     runs-on: ubuntu-latest
     defaults:
       run:

@@ -64,3 +64,8 @@ func generalAPIInfo() {}
 // @in   header
 // @name X-Admin-Token
 // @description Admin API token (full admin, or the restricted operator token). Admin endpoints additionally require a private-network source address.
+
+// @securitydefinitions.apikey CrossOrgOracleToken
+// @in   header
+// @name X-Cross-Org-Authorization-Oracle-Token
+// @description Dedicated token of the cross-org authorization oracle (CROSS_ORG_AUTHORIZATION_ORACLE_TOKEN). Accepted by that endpoint only, from a private-network source address; admin, operator and JWT credentials are not accepted there.
