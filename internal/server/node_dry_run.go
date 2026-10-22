@@ -28,6 +28,11 @@ func (s *Server) handleNodeDryRun(c *gin.Context, req apimodels.DryRunRequest, u
 		params = buildTxParams(from, to, data, value)
 	}
 	if method == "eth_sendTransaction" || method == "eth_sendRawTransaction" {
+		// Live sends are refused by compliance before they reach the node, so
+		// the diagnostic previews it first, without writing compliance logs.
+		if s.dryRunWriteComplianceBlocked(c, c.Request.Context(), c.GetString("admin_subject"), user.ExternalID, c.Param("org_id"), user, req.RPC) {
+			return
+		}
 		if len(params) != 1 {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid simulation call"})
 			return

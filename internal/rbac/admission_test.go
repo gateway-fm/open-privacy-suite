@@ -44,6 +44,9 @@ func (s *admissionStore) ListUserMembershipsWithDetails(context.Context, string)
 	}
 	return out, nil
 }
+func (s *admissionStore) ListActiveUserMembershipsWithDetails(ctx context.Context, userID string) ([]*MembershipWithDetails, error) {
+	return s.ListUserMembershipsWithDetails(ctx, userID)
+}
 func (s *admissionStore) GetContractOwnerOrgID(context.Context, string) (string, error) {
 	return s.owner, nil
 }

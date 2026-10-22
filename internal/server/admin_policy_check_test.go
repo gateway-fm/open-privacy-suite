@@ -16,6 +16,7 @@ import (
 	"privacy-proxy/internal/apimodels"
 	"privacy-proxy/internal/audit"
 	"privacy-proxy/internal/compliance"
+	"privacy-proxy/internal/config"
 	"privacy-proxy/internal/db"
 	"privacy-proxy/internal/metrics"
 	"privacy-proxy/internal/proxy"
@@ -1579,5 +1580,16 @@ func TestPolicyCheck_IndeterminateCountedOnEveryPath(t *testing.T) {
 			assertOracleAnswer(t, w, oracleDecisionIndeterminate, oracleReasonOutsideScope)
 			assert.Equal(t, 1.0, oracleIndeterminateCount(t, f.srv.metrics, oracleReasonOutsideScope))
 		})
+	}
+}
+
+// The oracle answers from OPS's own rules; with node policy execution it stays
+// unreachable even if configuration validation was skipped.
+func TestPolicyCheck_DisabledUnderNodePolicyExecution(t *testing.T) {
+	for _, mode := range []string{"verdict_only", "full_simulation"} {
+		s := &Server{config: &config.Config{CrossOrgAuthorizationOracleMode: mode}}
+		require.True(t, s.crossOrgAuthorizationOracleEnabled(), mode)
+		s.config.NodePolicy = config.NodePolicyConfig{Mode: "reth"}
+		require.False(t, s.crossOrgAuthorizationOracleEnabled(), mode)
 	}
 }

@@ -9,8 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"privacy-proxy/internal/apimodels"
+	"privacy-proxy/internal/compliance"
 	"privacy-proxy/internal/config"
 	"privacy-proxy/internal/nodepolicy"
 	"privacy-proxy/internal/policydsl"
@@ -244,4 +246,38 @@ func TestNodeCandidatePreviewAllowsReadonlySelfAndNeverImpersonation(t *testing.
 		require.NotContains(t, response.Body.String(), "0xdeadbeef")
 		require.NotContains(t, response.Body.String(), "0xabcdef")
 	}
+}
+
+func TestNodeDryRunSendAppliesCompliancePreview(t *testing.T) {
+	f := configurationAPI(t)
+	s := f.server
+	s.config.ReadProfile = rbac.ReadProfileStandard
+	network := nodepolicy.Network{ChainID: 31337, DeploymentID: "preview-test"}
+	s.config.NodePolicy = config.NodePolicyConfig{Mode: "reth", ChainID: network.ChainID, DeploymentID: network.DeploymentID}
+	s.rateLimiter = middleware.NewRateLimiter(middleware.RateLimiterCleanupInterval)
+	t.Cleanup(s.rateLimiter.Stop)
+	s.rbacAccessCtrl = rbac.NewAccessController(s.db, time.Second)
+	t.Cleanup(s.rbacAccessCtrl.Stop)
+	n := &previewNode{source: s.db, network: network, result: json.RawMessage(`{"result":{"type":"CALL"},"policy":{"would_allow":true,"decisions":[]}}`)}
+	var err error
+	s.nodeExecution, err = newNodeExecutionBridge(s.db, n, nodepolicy.Signer{KeyID: "test", PrivateKey: ed25519.NewKeyFromSeed(make([]byte, 32))}, network, time.Minute, nil)
+	require.NoError(t, err)
+	target, err := s.db.GetUser(t.Context(), f.readonlyUserID)
+	require.NoError(t, err)
+	from := "0x" + strings.Repeat("11", 20)
+	sanctioned := "0x" + strings.Repeat("22", 20)
+	require.NoError(t, s.db.SystemLinkEthAddress(t.Context(), target.ExternalID, from))
+	require.NoError(t, s.db.UpsertComplianceConfig(t.Context(), &compliance.ComplianceConfig{ID: uuid.New().String(), OrgID: f.orgID, Enabled: true}))
+	require.NoError(t, s.db.AddSanctionedAddress(t.Context(), &compliance.SanctionedAddress{ID: uuid.New().String(), OrgID: &f.orgID, Address: sanctioned, Reason: "test"}))
+	s.complianceChecker = compliance.NewChecker(s.db, time.Hour, time.Hour)
+
+	body := map[string]any{"user_did": target.ExternalID, "rpc": map[string]any{"method": "eth_sendTransaction", "params": []any{map[string]any{"from": from, "to": sanctioned, "value": "0x1"}}}}
+	response := f.request(t, f.admin, http.MethodPost, "/api/v1/admin/orgs/"+f.orgID+"/dry-run", body)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.JSONEq(t, `{"decision":"deny","reason":"compliance"}`, response.Body.String())
+	require.Zero(t, n.calls, "a compliance denial must not reach the node")
+	var decision, reason string
+	require.NoError(t, s.db.Conn().QueryRowContext(t.Context(), `SELECT decision, reason FROM impersonation_log WHERE org_id=$1 ORDER BY created_at DESC LIMIT 1`, f.orgID).Scan(&decision, &reason))
+	require.Equal(t, "deny", decision)
+	require.Equal(t, ReasonComplianceBlocked, reason)
 }

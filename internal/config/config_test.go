@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"privacy-proxy/internal/rbac"
@@ -536,17 +537,18 @@ func TestCrossOrgAuthorizationOracleValidation(t *testing.T) {
 		cfg.CrossOrgAuthorizationOracleMode = "full_simulation"
 		require.NoError(t, cfg.Validate())
 	})
+	rethPolicy := NodePolicyConfig{Mode: "reth", URL: "http://127.0.0.1:8551", Token: "0123456789abcdef", PrivateKeyFile: "policy.key", KeyID: "k1", ChainID: 1, DeploymentID: "d1", ConsumerID: "producer", FactTTL: 30 * time.Second, IdentityTTL: time.Minute, PublishInterval: time.Second}
 	t.Run("enabled is refused with node policy execution", func(t *testing.T) {
 		for _, mode := range []string{"verdict_only", "full_simulation"} {
 			cfg := base()
 			cfg.CrossOrgAuthorizationOracleMode = mode
-			cfg.NodePolicy = NodePolicyConfig{Mode: "reth"}
-			require.ErrorContains(t, cfg.validateCrossOrgAuthorizationOracle(), "OPS_NODE_POLICY_MODE=reth", mode)
+			cfg.NodePolicy = rethPolicy
+			require.ErrorContains(t, cfg.Validate(), "OPS_NODE_POLICY_MODE=reth", mode)
 		}
 	})
 	t.Run("disabled is accepted with node policy execution", func(t *testing.T) {
-		cfg := &Config{Environment: "development", CrossOrgAuthorizationOracleMode: "disabled", NodePolicy: NodePolicyConfig{Mode: "reth"}}
-		require.NoError(t, cfg.validateCrossOrgAuthorizationOracle())
+		cfg := &Config{Environment: "development", CrossOrgAuthorizationOracleMode: "disabled", NodePolicy: rethPolicy}
+		require.NoError(t, cfg.Validate())
 	})
 }
 

@@ -1850,7 +1850,9 @@ func (s *Server) adminAuthMiddleware() gin.HandlerFunc {
 }
 
 func (s *Server) crossOrgAuthorizationOracleEnabled() bool {
-	if s == nil || s.config == nil {
+	// The oracle answers from OPS's own rules, not the node's execution
+	// policies; config validation refuses the combination, this keeps it shut.
+	if s == nil || s.config == nil || s.config.NodePolicy.Enabled() {
 		return false
 	}
 	switch strings.ToLower(strings.TrimSpace(s.config.CrossOrgAuthorizationOracleMode)) {

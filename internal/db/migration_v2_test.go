@@ -22,8 +22,8 @@ func TestV2UpgradeFromMainPreservesPermissions(t *testing.T) {
 	m, err := migrate.NewMigrator(ctx, conn, "schema_version")
 	require.NoError(t, err)
 	require.NoError(t, m.LoadMigrations(migrations.FS))
-	require.Equal(t, "071_expand_wildcard_allowed_methods.sql", m.Migrations[70].Name)
-	require.NoError(t, m.MigrateTo(ctx, 71))
+	require.Equal(t, "072_impersonation_log_indeterminate.sql", m.Migrations[71].Name)
+	require.NoError(t, m.MigrateTo(ctx, 72))
 
 	org, group := uuid.NewString(), uuid.NewString()
 	_, err = conn.Exec(ctx, `INSERT INTO organizations(id,slug,name) VALUES($1,'v2-upgrade','V2 upgrade')`, org)
@@ -35,8 +35,8 @@ func TestV2UpgradeFromMainPreservesPermissions(t *testing.T) {
 	var auditCount int
 	require.NoError(t, conn.QueryRow(ctx, `SELECT count(*) FROM rbac_audit_log`).Scan(&auditCount))
 
-	// Open the database exactly as the application does on upgrade. Migration
-	// 071 must not be reinterpreted as an execution-policy migration.
+	// Open the database exactly as the application does on upgrade. Main's
+	// published migrations through 072 must not be reinterpreted as V2 ones.
 	d, err := New(dsn)
 	require.NoError(t, err)
 	defer d.Close()
