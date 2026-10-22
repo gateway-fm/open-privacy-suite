@@ -182,6 +182,15 @@ the Besu dependency audit with its existing reviewed exceptions, Go approval rac
 coexistence scenarios were skipped because those additional plugin JARs were not installed.
 Linux compatibility CI remains required before publication.
 
+### Advisory follow-up, 22 October 2026
+
+Go 1.26.10, released on 21 October, fixes a standard-library advisory that Aikido tracks as
+AIKIDO-2026-934590 against both `go.mod` files. Aikido reads the version from the `go` line, which
+stayed at 1.26.0 while the `toolchain` line carried the patch release. The `go` line in both files
+now moves to **Go 1.26.10** and the redundant `toolchain` line is dropped. `GO_VERSION` in CI and
+the privacy-bypass workflow, and the backend builder image, move in lockstep. `govulncheck` v1.5.0
+on Go 1.26.10 reports no reachable or imported-package vulnerabilities.
+
 ## Validation record
 
 The [Besu verifier follow-up](../../poc/approval-performance/BESU-VERIFIER-2026-09-29.md)
